@@ -67,6 +67,20 @@ create table if not exists public.riders (
 );
 create index if not exists riders_tour_idx on public.riders (tour_id);
 
+-- Fahrer-Stammdaten (über Rundfahrten hinweg): beim Import einer neuen Startliste
+-- werden Nation usw. automatisch übernommen, wenn der Name schon bekannt ist.
+create table if not exists public.cyclists (
+  id          bigint generated always as identity primary key,
+  name        text not null unique,
+  nationality text,                                   -- ISO-Code, z. B. 'DK'
+  created_at  timestamptz not null default now()
+);
+alter table public.riders add column if not exists cyclist_id  bigint references public.cyclists (id) on delete set null;
+alter table public.riders add column if not exists nationality text;
+alter table public.riders add column if not exists age         int;
+alter table public.riders add column if not exists young       boolean not null default false;  -- Nachwuchswertung
+
+
 create table if not exists public.stages (
   id                bigint generated always as identity primary key,
   tour_id           text not null references public.tours (id) on delete cascade,
@@ -81,6 +95,11 @@ create table if not exists public.stages (
   constraint stages_unique_number unique (tour_id, number)
 );
 create index if not exists stages_tour_idx on public.stages (tour_id);
+
+-- Etappenprofil: Bergwertungen [{name, cat, km, len, grad}] und Zwischensprints [{name, km}]
+alter table public.stages add column if not exists climbs      jsonb not null default '[]'::jsonb;
+alter table public.stages add column if not exists sprints     jsonb not null default '[]'::jsonb;
+alter table public.stages add column if not exists elevation_m int;
 
 create table if not exists public.stage_tips (
   stage_id   bigint not null references public.stages (id) on delete cascade,
@@ -249,6 +268,32 @@ drop trigger if exists stage_tips_check on public.stage_tips;
 create trigger stage_tips_check
   before insert or update on public.stage_tips
   for each row execute function public.check_stage_tip();
+
+-- Fahrer mit Stammdaten verknüpfen (legt sie bei Bedarf an)
+create or replace function public.link_cyclist()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_id  bigint;
+  v_nat text;
+begin
+  select c.id, c.nationality into v_id, v_nat from public.cyclists c where c.name = new.name;
+  if v_id is null then
+    insert into public.cyclists (name, nationality) values (new.name, new.nationality)
+    on conflict (name) do update set nationality = coalesce(public.cyclists.nationality, excluded.nationality)
+    returning id, nationality into v_id, v_nat;
+  elsif v_nat is null and new.nationality is not null then
+    update public.cyclists set nationality = new.nationality where id = v_id;
+  end if;
+  new.cyclist_id := v_id;
+  new.nationality := coalesce(new.nationality, v_nat);
+  return new;
+end;
+$$;
+
+drop trigger if exists riders_link_cyclist on public.riders;
+create trigger riders_link_cyclist
+  before insert or update of name, nationality on public.riders
+  for each row execute function public.link_cyclist();
 
 -- Bonustipp prüfen: Fahrer bzw. Team gehört zur Rundfahrt
 create or replace function public.check_bonus_tip()
@@ -437,6 +482,7 @@ alter table public.app_settings      enable row level security;
 alter table public.profiles          enable row level security;
 alter table public.tours             enable row level security;
 alter table public.riders            enable row level security;
+alter table public.cyclists          enable row level security;
 alter table public.stages            enable row level security;
 alter table public.stage_tips        enable row level security;
 alter table public.stage_results     enable row level security;
@@ -471,6 +517,13 @@ create policy riders_select on public.riders
   for select to authenticated using (public.is_member() or public.is_admin());
 drop policy if exists riders_admin on public.riders;
 create policy riders_admin on public.riders
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists cyclists_select on public.cyclists;
+create policy cyclists_select on public.cyclists
+  for select to authenticated using (public.is_member() or public.is_admin());
+drop policy if exists cyclists_admin on public.cyclists;
+create policy cyclists_admin on public.cyclists
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
 drop policy if exists stages_select on public.stages;

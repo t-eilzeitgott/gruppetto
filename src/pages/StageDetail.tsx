@@ -7,6 +7,8 @@ import type { Profile, Stage, TourData } from '../lib/types';
 import { Avatar, ProBadge, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar, cx, useTitle, Link } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { Tippers, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
+import { StageProfileCard } from '../ui/StageProfile';
+import { flag } from '../lib/countries';
 
 export function StageDetail({ id }: { id: number }) {
   const { me, data, members, loading, error, reload } = useTourContext();
@@ -44,6 +46,7 @@ export function StageDetail({ id }: { id: number }) {
         {state === 'open' ? <OpenStage stage={stage} data={data} me={me} members={members} now={now} /> : null}
         {state === 'running' ? <RunningStage stage={stage} data={data} me={me} members={members} /> : null}
         {state === 'done' ? <DoneStage stage={stage} data={data} me={me} members={members} /> : null}
+        <StageProfileCard stage={stage} tour={data.tour} />
       </div>
     </>
   );
@@ -139,7 +142,9 @@ function DoneStage({ stage, data, me, members }: { stage: Stage; data: TourData;
     <>
       <section className="winner">
         <span className="muted">Etappensieger</span>
-        <p className="winner__name">{winnerRider?.name ?? '–'}</p>
+        <p className="winner__name">
+          {winnerRider ? <Link to={`/fahrer/${winnerRider.id}`} className="rider-link">{winnerRider.nationality ? `${flag(winnerRider.nationality)} ` : ''}{winnerRider.name}</Link> : '–'}
+        </p>
         {winnerRider ? <span className="muted">{winnerRider.team}</span> : null}
       </section>
 
@@ -199,7 +204,11 @@ function DoneStage({ stage, data, me, members }: { stage: Stage; data: TourData;
               <li key={r.position} className="result-row">
                 <span className="result-row__pos">{r.position}</span>
                 <span className="result-row__main">
-                  <span className="result-row__name">{rider?.name ?? '–'}</span>
+                  {rider ? (
+                    <Link to={`/fahrer/${rider.id}`} className="result-row__name rider-link">
+                      {rider.nationality ? <span className="rider-option__flag" aria-hidden="true">{flag(rider.nationality)}</span> : null}{rider.name}
+                    </Link>
+                  ) : <span className="result-row__name">–</span>}
                   <span className="result-row__team">{rider?.team}</span>
                 </span>
                 <span className="result-row__pts">{pointsByPos.get(r.position) ?? 0}</span>

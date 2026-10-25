@@ -10,6 +10,9 @@ import { KIND_SHORT, fmtDay, stageState, fmtClock } from '../lib/time';
 import type { Rider } from '../lib/types';
 import { Button, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar, cx, toast, useAction, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
+import { StageProfileChart, hasProfile } from '../ui/StageProfile';
+import { flag } from '../lib/countries';
+import { Link } from '../ui/kit';
 import { lastName } from '../ui/bits';
 
 export function TipPicker({ id }: { id: number }) {
@@ -91,6 +94,13 @@ export function TipPicker({ id }: { id: number }) {
           <span>Die anderen sehen deinen Tipp erst ab dem Start · <Countdown to={stage.starts_at} now={now} /></span>
         </Notice>
 
+        {hasProfile(stage) ? (
+          <details className="card profile-mini">
+            <summary>Profil · {stage.climbs?.length ?? 0} Bergwertungen</summary>
+            <StageProfileChart stage={stage} />
+          </details>
+        ) : null}
+
         {defaultLimit !== null ? (
           <p className="muted small">Jeden Fahrer darfst du höchstens {defaultLimit}× pro Rundfahrt tippen.</p>
         ) : null}
@@ -168,7 +178,7 @@ function RiderOption({ rider, selected, remaining, limit, onPick }: {
   else if (exhausted) tag = 'Limit erreicht';
   else if (remaining !== null && limit !== null && remaining < limit) tag = `noch ${remaining}× tippbar`;
   return (
-    <li>
+    <li className="rider-row">
       <button
         type="button"
         className={cx('rider-option', selected && 'is-selected')}
@@ -180,10 +190,16 @@ function RiderOption({ rider, selected, remaining, limit, onPick }: {
         <span className="rider-option__bib">{rider.bib ?? ''}</span>
         <span className="rider-option__main">
           <span className="rider-option__name">{rider.name}</span>
-          <span className="rider-option__team">{rider.team}</span>
+          <span className="rider-option__team">
+            {rider.nationality ? <span className="rider-option__flag" aria-hidden="true">{flag(rider.nationality)}</span> : null}
+            {rider.team}{rider.young ? ' · Nachwuchs' : ''}
+          </span>
           {tag ? <span className={cx('chip', !disabled && 'chip--accent')}>{tag}</span> : null}
         </span>
       </button>
+      <Link to={`/fahrer/${rider.id}`} className="rider-info" ariaLabel={`Profil von ${rider.name}`}>
+        <Icon name="info" size={20} />
+      </Link>
     </li>
   );
 }

@@ -1,6 +1,31 @@
 import type {
-  BonusResult, BonusTip, Profile, Rider, Stage, StageKind, StageResult, StageTip, Tour,
+  BonusResult, BonusTip, Climb, Profile, Rider, Sprint, Stage, StageKind, StageResult, StageTip, Tour,
 } from '../lib/types';
+
+// Nation und Alter der Demo-Fahrer (Beispielwerte)
+const NAT: Record<string, [string, number]> = {
+  'Tadej Pogačar': ['SI', 28], 'Isaac del Toro': ['MX', 23], 'Adam Yates': ['GB', 34], 'Felix Großschartner': ['AT', 33],
+  'Jonas Vingegaard': ['DK', 30], 'Wout van Aert': ['BE', 32], 'Sepp Kuss': ['US', 32], 'Matteo Jorgenson': ['US', 27],
+  'Remco Evenepoel': ['BE', 27], 'Primož Roglič': ['SI', 37], 'Florian Lipowitz': ['DE', 26], 'Giulio Pellizzari': ['IT', 23],
+  'Paul Seixas': ['FR', 20], 'Olav Kooij': ['NL', 25], 'Felix Gall': ['AT', 29], 'Dorian Godon': ['FR', 30],
+  'Juan Ayuso': ['ES', 24], 'Giulio Ciccone': ['IT', 32], 'Mads Pedersen': ['DK', 31], 'Jonathan Milan': ['IT', 26],
+  'Antonio Tiberi': ['IT', 25], 'Lenny Martinez': ['FR', 23], 'Santiago Buitrago': ['CO', 27], 'Phil Bauhaus': ['DE', 32],
+  'Mathieu van der Poel': ['NL', 32], 'Kaden Groves': ['AU', 28], 'Jasper Philipsen': ['BE', 29], 'Silvan Dillier': ['CH', 36],
+  'Thymen Arensman': ['NL', 27], 'Egan Bernal': ['CO', 30], 'Filippo Ganna': ['IT', 30], 'Joshua Tarling': ['GB', 23],
+  'Tim Merlier': ['BE', 34], 'Mikel Landa': ['ES', 37], 'Valentin Paret-Peintre': ['FR', 26], 'Ilan Van Wilder': ['BE', 27],
+  'Arnaud De Lie': ['BE', 25], 'Lennert Van Eetvelt': ['BE', 25], 'Maxim Van Gils': ['BE', 27], 'Jarno Widar': ['BE', 21],
+  'Tom Pidcock': ['GB', 27], 'Fabio Christen': ['CH', 24], 'Damiano Caruso': ['IT', 39], 'Matteo Moschetti': ['IT', 30],
+  'Lorenzo Fortunato': ['IT', 31], 'Christian Scaroni': ['IT', 29], 'Simone Velasco': ['IT', 31], 'Wout Poels': ['NL', 39],
+};
+
+// Beispiel-Profile für einige Demo-Etappen
+const PROFILES: Record<number, { climbs: Climb[]; sprints: Sprint[]; elevation_m: number }> = {
+  2: { climbs: [{ name: 'Colle della Serra', cat: '4', km: 61.4 }], sprints: [{ km: 102.3 }, { km: 151 }], elevation_m: 1250 },
+  4: { climbs: [{ name: 'Colle di Zambla', cat: '2', km: 74.2, len: 13.4, grad: 5.6 }, { name: 'Passo di Dossena', cat: '3', km: 96.8 }, { name: 'Passo San Marco', cat: '1', km: 186, len: 25.1, grad: 6.3 }], sprints: [{ km: 128.5 }], elevation_m: 4100 },
+  7: { climbs: [{ name: 'Pietracolora', cat: '3', km: 128.7 }, { name: 'Corno alle Scale', cat: '1', km: 174, len: 10.8, grad: 6.1 }], sprints: [{ km: 92 }], elevation_m: 3350 },
+  9: { climbs: [{ name: 'San Leo', cat: '3', km: 58.3, len: 4.9, grad: 7.2 }, { name: 'Monte Carpegna', cat: '1', km: 141.5, len: 6, grad: 9.6 }, { name: 'Monte Carpegna', cat: '1', km: 172, len: 6, grad: 9.6 }], sprints: [{ km: 104.7 }], elevation_m: 3900 },
+  20: { climbs: [{ name: 'Passo dell\'Umbrail', cat: '1', km: 121 }, { name: 'Passo dello Stelvio', cat: 'CC', km: 168, len: 21.7, grad: 7.1 }], sprints: [{ km: 66 }], elevation_m: 4600 },
+};
 
 /** Beispieldaten: Giro d'Italia 2027, Sonntag 16. Mai vormittags (Etappe 8 gefahren). */
 export const DEMO_NOW = new Date(2027, 4, 16, 9, 46).getTime();
@@ -35,6 +60,9 @@ export const DEMO_RIDERS: Rider[] = TEAMS.flatMap(([team, riders]) =>
     name,
     team,
     tip_limit: null,
+    nationality: NAT[name]?.[0] ?? null,
+    age: NAT[name]?.[1] ?? null,
+    young: (NAT[name]?.[1] ?? 99) <= 25,
     excluded_from_rest: bib === 1 || bib === 11,
     status: bib === 64 ? 'out' as const : 'active' as const,
   })));
@@ -80,6 +108,9 @@ export const DEMO_STAGES: Stage[] = PLAN.map(([day, h, m, kind, km, from, to], i
   arrival: to,
   distance_km: km,
   results_published: i < 8,
+  climbs: PROFILES[i + 1]?.climbs ?? [],
+  sprints: PROFILES[i + 1]?.sprints ?? [],
+  elevation_m: PROFILES[i + 1]?.elevation_m ?? null,
 }));
 
 const RESULTS: string[][] = [

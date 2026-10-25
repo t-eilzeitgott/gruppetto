@@ -9,7 +9,7 @@ import { fmtRange } from '../lib/time';
 
 const NAV: { to: string; label: string; icon: IconName; match: string[] }[] = [
   { to: '/', label: 'Heute', icon: 'home', match: [''] },
-  { to: '/etappen', label: 'Etappen', icon: 'flag', match: ['etappen', 'etappe', 'tipp'] },
+  { to: '/etappen', label: 'Etappen', icon: 'flag', match: ['etappen', 'etappe', 'tipp', 'fahrer'] },
   { to: '/bonus', label: 'Bonus', icon: 'star', match: ['bonus'] },
   { to: '/rangliste', label: 'Rangliste', icon: 'podium', match: ['rangliste', 'spieler'] },
   { to: '/profil', label: 'Profil', icon: 'user', match: ['profil', 'admin', 'impressum', 'datenschutz'] },

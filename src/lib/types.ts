@@ -46,6 +46,26 @@ export interface Rider {
   tip_limit: number | null;
   excluded_from_rest: boolean;
   status: 'active' | 'out';
+  /** ISO-Ländercode, z. B. 'DK' */
+  nationality?: string | null;
+  /** Alter beim Start der Rundfahrt */
+  age?: number | null;
+  /** startberechtigt in der Nachwuchswertung */
+  young?: boolean;
+}
+
+/** Bergwertung: cat '1'–'4', 'HC' oder 'CC' (Cima Coppi) */
+export interface Climb {
+  name: string;
+  cat: string;
+  km: number;
+  len?: number;
+  grad?: number;
+}
+
+export interface Sprint {
+  km: number;
+  name?: string;
 }
 
 export interface Stage {
@@ -58,6 +78,9 @@ export interface Stage {
   arrival: string | null;
   distance_km: number | null;
   results_published: boolean;
+  climbs?: Climb[];
+  sprints?: Sprint[];
+  elevation_m?: number | null;
 }
 
 export interface StageTip {

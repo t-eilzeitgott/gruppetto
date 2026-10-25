@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { flag } from '../lib/countries';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { source } from '../app/config';
@@ -185,14 +186,16 @@ export function BonusPicker({ category }: { category: BonusCategory }) {
   const selected = picked ?? currentKey;
   const q = normalize(query);
   const isTeam = category === 'team';
+  // Nachwuchswertung: nur startberechtigte Fahrer, sofern die Startliste das kennt
+  const hasYouthFlags = data.riders.some((r) => r.young);
 
   const options: { key: string; title: string; sub: string; disabled?: string }[] = isTeam
     ? [...new Set(data.riders.map((r) => r.team))].sort((a, b) => a.localeCompare(b, 'de'))
       .map((team) => ({ key: `t:${team}`, title: team, sub: `${data.riders.filter((r) => r.team === team).length} Fahrer` }))
-    : data.riders.map((r) => ({
+    : data.riders.filter((r) => !(category === 'youth' && hasYouthFlags && !r.young)).map((r) => ({
       key: `r:${r.id}`,
       title: r.name,
-      sub: r.team,
+      sub: `${r.nationality ? `${flag(r.nationality)} ` : ''}${r.team}${r.age ? ` · ${r.age}\u00a0J.` : ''}`,
       disabled: category === 'rest' && r.excluded_from_rest ? 'ausgeklammert' : undefined,
     }));
   const filtered = options.filter((o) => !q || q.split(' ').every((part) => normalize(`${o.title} ${o.sub}`).includes(part)));

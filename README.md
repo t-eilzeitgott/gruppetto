@@ -28,7 +28,7 @@ Das Grand-Tour-Tippspiel für eure Runde: Giro, Tour und Vuelta – ein Tipp pro
 5. **Verbinden:** In GitHub unter *Settings → Secrets and variables → Actions → Variables* `VITE_SUPABASE_URL` und `VITE_SUPABASE_PUBLISHABLE_KEY` (Publishable key, `sb_publishable_…`) anlegen, dann *Actions → Deploy → Run workflow*.
 6. **Admin:** einmal in der App anmelden, dann im SQL Editor
    `update public.profiles set is_admin = true where id = (select id from auth.users where email = 'deine@mail.de');`
-7. Optional zum Testen: [`supabase/seed_testrunde.sql`](supabase/seed_testrunde.sql) legt eine Testrunde mit 5 Etappen ab morgen an. Danach [`supabase/simulate_testrunde.sql`](supabase/simulate_testrunde.sql) ausführen: Die Datenbank würfelt dann jede Etappe 4 Stunden nach dem Start eine Top 10 aus (pg_cron) und rechnet die Bonuswertungen mit.
+7. Testrunde mit echten Daten: [`supabase/seed_giro2026.sql`](supabase/seed_giro2026.sql) spielt den Giro d'Italia 2026 nach – 184 echte Fahrer, 21 Etappen mit Anstiegen und Sprints, ab morgen eine Etappe pro Tag um 12 Uhr. Das echte Ergebnis erscheint etwa zur echten Zielankunft (pg_cron), Ausstiege und Wertungen wie im Rennen. Die Datei wird von `node scripts/giro2026/build-sql.mjs` aus `scripts/giro2026/` erzeugt (prüft die Daten auf Widersprüche). Die ältere Würfel-Testrunde (`seed_testrunde.sql` + `simulate_testrunde.sql`) gibt es weiterhin.
 
 Ohne die beiden Variablen läuft die App automatisch im Demo-Modus. Der Workflow *Keep-alive* pingt die Datenbank täglich, damit Supabase das Free-Projekt nicht pausiert.
 
