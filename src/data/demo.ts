@@ -6,7 +6,7 @@ import { DEFAULT_SCALE, tipLimit } from '../lib/scoring';
 import { bonusDeadline } from '../lib/time';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
-  type StageInput, type TourInput,
+  type StageInput, type TourInput, type GameId, type GameBest,
 } from './source';
 import {
   DEMO_BONUS_RESULTS, DEMO_BONUS_TIPS, DEMO_ME, DEMO_NOW, DEMO_PROFILES, DEMO_RESULTS, DEMO_RIDERS, DEMO_STAGES,
@@ -154,6 +154,26 @@ export class DemoSource implements DataSource {
   async listStageProfiles(stageIds: number[]): Promise<number[]> {
     await wait(60);
     return stageIds.filter((id) => this.heightProfiles.has(id) || !!demoProfile(this.stages.find((s) => s.id === id)!));
+  }
+
+  private scores: { user_id: string; game: GameId; score: number; at: string }[] = [
+    ['u-felix', 2140], ['u-julian', 1885], ['u-lena', 1630], ['u-christoph', 1410], ['u-tobi', 1190], ['u-anna', 860], ['u-ben', 540],
+  ].map(([user_id, score], i) => ({ user_id: user_id as string, game: 'abfahrt' as GameId, score: score as number, at: new Date(DEMO_NOW - i * 3600e3).toISOString() }));
+
+  async submitScore(game: GameId, score: number): Promise<void> {
+    await wait(80);
+    this.scores.push({ user_id: DEMO_ME, game, score: Math.round(score), at: new Date().toISOString() });
+  }
+
+  async gameLeaderboard(game: GameId): Promise<GameBest[]> {
+    await wait(80);
+    const by = new Map<string, GameBest>();
+    for (const s of this.scores.filter((x) => x.game === game)) {
+      const b = by.get(s.user_id);
+      if (!b) by.set(s.user_id, { user_id: s.user_id, best: s.score, runs: 1, last_at: s.at });
+      else { b.best = Math.max(b.best, s.score); b.runs += 1; if (s.at > b.last_at) b.last_at = s.at; }
+    }
+    return [...by.values()].sort((a, b) => b.best - a.best);
   }
 
   private favorites = new Set<number>([1, 44]);

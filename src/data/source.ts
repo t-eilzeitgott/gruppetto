@@ -8,6 +8,15 @@ export interface SessionUser {
   email: string;
 }
 
+export type GameId = 'abfahrt';
+
+export interface GameBest {
+  user_id: string;
+  best: number;
+  runs: number;
+  last_at: string;
+}
+
 export interface TourInput {
   id: string;
   name: string;
@@ -71,6 +80,9 @@ export interface DataSource {
   loadProfilesFor(stageIds: number[]): Promise<Record<number, ProfilePoint[]>>;
   /** Etappen-IDs mit hinterlegtem Höhenprofil */
   listStageProfiles(stageIds: number[]): Promise<number[]>;
+  /** Minispiele: Lauf speichern und Bestenliste der Runde */
+  submitScore(game: GameId, score: number): Promise<void>;
+  gameLeaderboard(game: GameId): Promise<GameBest[]>;
   /** Lieblingsfahrer (IDs der Fahrer-Stammdaten) */
   listFavorites(): Promise<number[]>;
   setFavorite(cyclistId: number, on: boolean): Promise<void>;

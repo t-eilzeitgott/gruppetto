@@ -80,6 +80,15 @@ export function Profile() {
           </Link>
         ) : null}
 
+        <Link to="/spiel" className="card card--row">
+          <Icon name="zap" />
+          <span className="card__main">
+            <strong>Minispiel „Abfahrt“</strong>
+            <span className="muted">Durch die Kehren rasen, Bestenliste der Runde</span>
+          </span>
+          <Icon name="chevron" className="muted" />
+        </Link>
+
         <Rules data={tourQ.data} />
 
         <section className="card link-list">

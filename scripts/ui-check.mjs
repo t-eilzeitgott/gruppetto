@@ -56,6 +56,7 @@ const PAGES = [
   ['rider-out', '?demo#/fahrer/64'],
   ['stage-profile', '?demo#/etappe/1004'],
   ['tip-profile', '?demo#/tipp/1009', async (p) => { await p.click('.profile-mini > summary'); }],
+  ['game', '?demo#/spiel'],
   ['player', '?demo#/spieler/u-felix'],
   ['player-me', '?demo#/spieler/u-christoph'],
   ['profile', '?demo#/profil'],

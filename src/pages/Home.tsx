@@ -230,6 +230,11 @@ function Tiles({ data, me, next }: { data: TourData; me: Profile; next: Stage | 
         <span className="tile-card__big">{bonus}</span>
         <span className="muted">{data.tour.bonus_final ? 'Endstand' : 'wenn es so bleibt'}</span>
       </Link>
+      <Link to="/spiel" className="tile-card tile-card--game">
+        <span className="muted">Zeitvertreib</span>
+        <span className="tile-card__big">Abfahrt</span>
+        <span className="muted">Minispiel mit Bestenliste</span>
+      </Link>
     </div>
   );
 }

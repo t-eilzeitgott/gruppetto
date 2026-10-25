@@ -241,6 +241,16 @@ select pg_temp.expect_eq((select count(*) from public.stage_profiles), 1, 'Mitgl
 select pg_temp.expect_error($q$ insert into public.stage_profiles (stage_id, points) select id, '[]'::jsonb from public.stages where tour_id = 'open-test' and number = 2 $q$, 'row-level security');
 commit;
 
+-- ---------- Minispiel ----------
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+insert into public.game_scores (game, score) values ('abfahrt', 1200), ('abfahrt', 900);
+select pg_temp.expect_error($q$ insert into public.game_scores (user_id, game, score) values ('00000000-0000-0000-0000-00000000000a', 'abfahrt', 5) $q$, 'row-level security');
+select pg_temp.expect_eq((select best from public.game_leaderboard('abfahrt') limit 1), 1200, 'Bestenliste: beste Punktzahl');
+select pg_temp.expect_eq((select runs from public.game_leaderboard('abfahrt') limit 1), 2, 'Bestenliste: Anzahl Läufe');
+commit;
+
 -- ---------- Anonym ----------
 begin;
 set local role anon;

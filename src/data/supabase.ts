@@ -5,7 +5,7 @@ import type {
 } from '../lib/types';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
-  type StageInput, type TourInput,
+  type StageInput, type TourInput, type GameId, type GameBest,
 } from './source';
 
 interface StoredSession {
@@ -284,6 +284,14 @@ export class SupabaseSource implements DataSource {
     } catch {
       return [];
     }
+  }
+
+  async submitScore(game: GameId, score: number): Promise<void> {
+    await this.rest('game_scores', { method: 'POST', body: { game, score: Math.round(score) }, prefer: 'return=minimal' });
+  }
+
+  async gameLeaderboard(game: GameId): Promise<GameBest[]> {
+    return this.rpc<GameBest[]>('game_leaderboard', { p_game: game });
   }
 
   async listFavorites(): Promise<number[]> {

@@ -19,6 +19,7 @@ import { Player } from '../pages/Player';
 import { RiderPage } from '../pages/Rider';
 import { RidersPage } from '../pages/Riders';
 import { ClimbsPage } from '../pages/Climbs';
+import { GamePage } from '../pages/Game';
 import { Profile } from '../pages/Profile';
 import { Datenschutz, Impressum } from '../pages/Legal';
 import { AdminHome } from '../pages/admin/AdminHome';
@@ -118,6 +119,9 @@ function MemberApp({ me }: { me: ProfileT }) {
         break;
       case 'anstiege':
         page = <ClimbsPage />;
+        break;
+      case 'spiel':
+        page = <GamePage />;
         break;
       case 'profil':
         page = <Profile />;

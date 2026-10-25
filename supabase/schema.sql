@@ -138,6 +138,16 @@ create table if not exists public.stage_profiles (
 );
 alter table public.stage_profiles add column if not exists waypoints jsonb;  -- [{km, alt, name}] Durchfahrtsorte
 
+-- Minispiele: jeder Lauf mit Punktzahl
+create table if not exists public.game_scores (
+  id         bigint generated always as identity primary key,
+  user_id    uuid   not null default auth.uid() references public.profiles (id) on delete cascade,
+  game       text   not null check (game in ('abfahrt')),
+  score      int    not null check (score >= 0 and score < 10000000),
+  created_at timestamptz not null default now()
+);
+create index if not exists game_scores_game_idx on public.game_scores (game, score desc);
+
 -- Wertungsstand nach einer Etappe (z. B. Gesamtwertung Top 10) – sichtbar mit dem Ergebnis
 create table if not exists public.stage_standings (
   stage_id bigint not null references public.stages (id) on delete cascade,
@@ -515,6 +525,7 @@ alter table public.cyclists          enable row level security;
 alter table public.favorite_cyclists enable row level security;
 alter table public.stage_standings   enable row level security;
 alter table public.stage_profiles    enable row level security;
+alter table public.game_scores       enable row level security;
 alter table public.stages            enable row level security;
 alter table public.stage_tips        enable row level security;
 alter table public.stage_results     enable row level security;
@@ -550,6 +561,27 @@ create policy riders_select on public.riders
 drop policy if exists riders_admin on public.riders;
 create policy riders_admin on public.riders
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists game_scores_select on public.game_scores;
+create policy game_scores_select on public.game_scores
+  for select to authenticated using (public.is_member() or public.is_admin());
+drop policy if exists game_scores_insert on public.game_scores;
+create policy game_scores_insert on public.game_scores
+  for insert to authenticated with check (user_id = auth.uid() and public.is_member());
+
+-- Bestenliste: beste Punktzahl je Mitglied
+create or replace function public.game_leaderboard(p_game text)
+returns table (user_id uuid, best int, runs bigint, last_at timestamptz)
+language sql stable set search_path = public as $$
+  select g.user_id, max(g.score)::int, count(*), max(g.created_at)
+    from public.game_scores g
+   where g.game = p_game
+   group by g.user_id
+   order by max(g.score) desc
+   limit 100;
+$$;
+revoke execute on function public.game_leaderboard(text) from public, anon;
+grant  execute on function public.game_leaderboard(text) to authenticated;
 
 drop policy if exists profiles_stage_select on public.stage_profiles;
 create policy profiles_stage_select on public.stage_profiles
