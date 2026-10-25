@@ -9,3 +9,6 @@ psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/tests/supabase_shim.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/schema.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/schema.sql   # zweiter Lauf: wiederholbar?
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/tests/rls_test.sql
+psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_testrunde.sql
+psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_testrunde.sql   # wiederholbar?
+psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Testrunde: ' || (select count(*) from public.stages where tour_id = 'testrunde') || ' Etappen, ' || (select count(*) from public.riders where tour_id = 'testrunde') || ' Fahrer'"

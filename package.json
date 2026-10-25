@@ -1,0 +1,23 @@
+{
+  "name": "gruppetto",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Grand-Tour-Tippspiel für Giro, Tour und Vuelta",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --serve",
+    "test": "node --import tsx --test src/lib/*.test.ts",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test:db": "bash supabase/tests/run.sh"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3"
+  }
+}

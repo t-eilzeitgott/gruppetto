@@ -7,3 +7,4 @@ dist/
 .DS_Store
 test-results/
 screenshots/
+.tmp-*

@@ -1,0 +1,53 @@
+import { useTourData, useNow } from '../../app/hooks';
+import { Link, useTitle } from '../../ui/kit';
+import { Icon, type IconName } from '../../ui/Icon';
+import { AdminPage } from './common';
+import type { Tour } from '../../lib/types';
+import { runningStages } from '../../lib/time';
+
+export function AdminHome() {
+  useTitle('Admin');
+  return (
+    <AdminPage title="Admin" back="/profil">
+      {(tour) => <Sections tour={tour} />}
+    </AdminPage>
+  );
+}
+
+function Sections({ tour }: { tour: Tour }) {
+  const q = useTourData(tour);
+  const now = useNow(60000);
+  const d = q.data;
+  const pending = d ? runningStages(d.stages, now) : [];
+  const jokers = d?.riders.filter((r) => r.tip_limit !== null).length ?? 0;
+  const items: { to: string; icon: IconName; title: string; sub: string; alert?: boolean }[] = [
+    { to: '/admin/rundfahrten', icon: 'calendar', title: 'Rundfahrten', sub: 'Anlegen, Zeitraum, sichtbar, Endstand' },
+    { to: '/admin/etappen', icon: 'flag', title: 'Etappen', sub: d ? `${d.stages.length} angelegt · Tippschluss = Startzeit` : 'Lädt …' },
+    { to: '/admin/startliste', icon: 'users', title: 'Startliste', sub: d ? `${d.riders.length} Fahrer · ${jokers} mit Joker-Limit` : 'Lädt …' },
+    {
+      to: '/admin/ergebnis',
+      icon: 'trophy',
+      title: 'Etappenergebnis',
+      sub: pending.length ? `Etappe\u00a0${pending.map((s) => s.number).join(', ')} wartet auf das Ergebnis` : 'Top 10 eintragen und veröffentlichen',
+      alert: pending.length > 0,
+    },
+    { to: '/admin/bonus', icon: 'star', title: 'Bonuswertungen', sub: tour.bonus_final ? 'Endstand eingetragen' : 'Zwischenstand für die Hochrechnung' },
+    { to: '/admin/mitglieder', icon: 'user', title: 'Mitglieder & Einladung', sub: 'Einladungscode, Admins, Pro' },
+  ];
+  return (
+    <ul className="list admin-list">
+      {items.map((it) => (
+        <li key={it.to}>
+          <Link to={it.to} className="card card--row">
+            <span className={it.alert ? 'accent' : ''}><Icon name={it.icon} /></span>
+            <span className="card__main">
+              <strong>{it.title}</strong>
+              <span className={it.alert ? 'accent' : 'muted'}>{it.sub}</span>
+            </span>
+            <Icon name="chevron" className="muted" />
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}

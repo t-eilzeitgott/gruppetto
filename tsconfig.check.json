@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src", "scripts/stubs/react.d.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}
