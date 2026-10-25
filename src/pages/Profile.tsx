@@ -251,14 +251,9 @@ function ProCard() {
       ) : (
         <>
           <ul>
-            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z" /></svg><span>Pro-Abzeichen neben deinem Namen – in Rangliste, Etappen und Profil</span></li>
-            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z" /></svg><span>Weitere Extras folgen</span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z" /></svg><span>Legendäres Badge am Profil</span></li>
           </ul>
-          {requested ? (
-            <p className="muted">Angefragt – sobald der Admin freischaltet, erscheint dein Abzeichen.</p>
-          ) : (
-            <p className="hint">Es wird nichts bezahlt. Die Anfrage wird nur vermerkt, der Admin schaltet Pro frei.</p>
-          )}
+          {requested ? <p className="muted">Angefragt – sobald der Admin freischaltet, erscheint dein Badge.</p> : null}
           {act.error ? <ErrorBox error={act.error} /> : null}
           {requested ? (
             <Button variant="secondary" full onClick={() => toggle(false)} busy={act.busy}>Anfrage zurückziehen</Button>
