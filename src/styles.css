@@ -1003,3 +1003,23 @@ tr.is-me > * { background: var(--accent-soft); }
 .course-table tr.is-win td, .course-table tr.is-win th { color: var(--accent); font-weight: 700; }
 
 .terrain-pills { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; }
+
+/* Echtes Höhenprofil (GPX) */
+.profile-chart__seg { opacity: 0.88; }
+.profile-chart__line--real { stroke: var(--text); stroke-width: 1.6; }
+.km-bars-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.km-bars { display: block; width: 100%; height: auto; }
+.km-bars text { font-family: var(--font); }
+.km-bars__val { font-size: 11px; font-weight: 700; fill: var(--text); }
+.km-bars__km { font-size: 10.5px; font-weight: 600; fill: var(--muted); }
+
+/* Admin: GPX-Import */
+.gpx-list { display: flex; flex-direction: column; gap: 8px; }
+.gpx-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px; gap: 6px 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.gpx-row:first-child { border-top: 0; }
+.gpx-row__file { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.gpx-row__meta { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
+.gpx-row__warn { color: var(--neg); }
+.gpx-row select { min-height: 40px; }
+.file-pick { position: relative; display: flex; }
+.file-pick input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }

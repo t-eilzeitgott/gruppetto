@@ -12,7 +12,7 @@ import { KIND_SHORT, fmtDay, stageState, fmtClock } from '../lib/time';
 import type { Rider } from '../lib/types';
 import { Button, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar, cx, toast, useAction, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
-import { StageProfileChart, hasProfile } from '../ui/StageProfile';
+import { ProfileDetails } from '../ui/StageProfile';
 import { flag } from '../lib/countries';
 import { lastName } from '../ui/bits';
 
@@ -98,12 +98,7 @@ export function TipPicker({ id }: { id: number }) {
           <span>Die anderen sehen deinen Tipp erst ab dem Start · <Countdown to={stage.starts_at} now={now} /></span>
         </Notice>
 
-        {hasProfile(stage) ? (
-          <details className="card profile-mini">
-            <summary>Profil · {stage.climbs?.length ?? 0} Bergwertungen</summary>
-            <StageProfileChart stage={stage} />
-          </details>
-        ) : null}
+        <ProfileDetails stage={stage} />
 
         {defaultLimit !== null ? (
           <p className="muted small">Jeden Fahrer darfst du höchstens {defaultLimit}× pro Rundfahrt tippen.</p>

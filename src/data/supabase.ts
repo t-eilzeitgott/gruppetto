@@ -1,3 +1,4 @@
+import type { ProfilePoint } from '../lib/gpx';
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, PointScale, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
   Tour, TourData,
@@ -236,6 +237,37 @@ export class SupabaseSource implements DataSource {
       scale,
       standings,
     };
+  }
+
+  async loadStageProfile(stageId: number): Promise<ProfilePoint[] | null> {
+    try {
+      const rows = await this.rest<{ points: ProfilePoint[] }[]>(`stage_profiles?stage_id=eq.${stageId}&select=points`);
+      return rows[0]?.points ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async saveStageProfile(stageId: number, points: ProfilePoint[] | null, source?: string): Promise<void> {
+    if (!points) {
+      await this.rest(`stage_profiles?stage_id=eq.${stageId}`, { method: 'DELETE' });
+      return;
+    }
+    await this.rest('stage_profiles?on_conflict=stage_id', {
+      method: 'POST',
+      body: { stage_id: stageId, points, source: source ?? null, updated_at: new Date().toISOString() },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+    });
+  }
+
+  async listStageProfiles(stageIds: number[]): Promise<number[]> {
+    if (!stageIds.length) return [];
+    try {
+      const rows = await this.rest<{ stage_id: number }[]>(`stage_profiles?stage_id=in.(${stageIds.join(',')})&select=stage_id`);
+      return rows.map((r) => r.stage_id);
+    } catch {
+      return [];
+    }
   }
 
   async listFavorites(): Promise<number[]> {

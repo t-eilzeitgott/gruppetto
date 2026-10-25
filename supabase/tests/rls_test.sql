@@ -232,6 +232,15 @@ select pg_temp.expect_eq((select count(*) from public.favorite_cyclists), 0, 'Fr
 select pg_temp.expect_error($q$ insert into public.favorite_cyclists (user_id, cyclist_id) select '00000000-0000-0000-0000-00000000000b', id from public.cyclists limit 1 $q$, 'row-level security');
 commit;
 
+-- ---------- Höhenprofile ----------
+insert into public.stage_profiles (stage_id, points) select id, '[[0,100],[10,500]]'::jsonb from public.stages where tour_id = 'open-test' and number = 1;
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+select pg_temp.expect_eq((select count(*) from public.stage_profiles), 1, 'Mitglied sieht Höhenprofil');
+select pg_temp.expect_error($q$ insert into public.stage_profiles (stage_id, points) select id, '[]'::jsonb from public.stages where tour_id = 'open-test' and number = 2 $q$, 'row-level security');
+commit;
+
 -- ---------- Anonym ----------
 begin;
 set local role anon;

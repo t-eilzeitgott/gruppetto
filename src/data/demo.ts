@@ -1,3 +1,4 @@
+import type { ProfilePoint } from '../lib/gpx';
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData,
 } from '../lib/types';
@@ -115,6 +116,25 @@ export class DemoSource implements DataSource {
       scale: DEFAULT_SCALE,
       standings: DEMO_STANDINGS.filter((x) => published.has(x.stage_id)),
     });
+  }
+
+  private heightProfiles = new Map<number, ProfilePoint[]>();
+
+  async loadStageProfile(stageId: number): Promise<ProfilePoint[] | null> {
+    await wait(80);
+    if (this.heightProfiles.has(stageId)) return this.heightProfiles.get(stageId)!;
+    const stage = this.stages.find((s) => s.id === stageId);
+    return stage ? demoProfile(stage) : null;
+  }
+
+  async saveStageProfile(stageId: number, points: ProfilePoint[] | null): Promise<void> {
+    await wait();
+    if (points) this.heightProfiles.set(stageId, points); else this.heightProfiles.delete(stageId);
+  }
+
+  async listStageProfiles(stageIds: number[]): Promise<number[]> {
+    await wait(60);
+    return stageIds.filter((id) => this.heightProfiles.has(id) || !!demoProfile(this.stages.find((s) => s.id === id)!));
   }
 
   private favorites = new Set<number>([1, 44]);
@@ -310,4 +330,30 @@ export class DemoSource implements DataSource {
     this.bonusResults = this.bonusResults.filter((b) => !(b.tour_id === tourId && b.category === category));
     for (const e of entries) this.bonusResults.push({ ...e, tour_id: tourId, category });
   }
+}
+
+/** Beispiel-Höhenprofil für Demo-Etappen mit Anstiegen (aus Länge und Steigung, mit etwas Gelände) */
+function demoProfile(stage: Stage): ProfilePoint[] | null {
+  const climbs = stage.climbs ?? [];
+  const km = stage.distance_km ?? 0;
+  if (!climbs.length || !km) return null;
+  let seed = stage.id * 9301;
+  const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const base = 120 + Math.round(rnd() * 200);
+  const pts: ProfilePoint[] = [];
+  let wobble = 0;
+  for (let k = 0; k <= km + 1e-9; k += 0.5) {
+    wobble = wobble * 0.92 + (rnd() - 0.5) * 14;
+    let h = base + (k / km) * 120 + wobble * 3;
+    for (const c of climbs) {
+      const len = c.len ?? 5;
+      const gain = len * (c.grad ?? 6) * 10;
+      const top = (c.alt ?? base + gain + 200) ;
+      const foot = top - gain;
+      if (k >= c.km - len && k <= c.km) h = Math.max(h, foot + gain * ((k - (c.km - len)) / len));
+      else if (k > c.km && k <= c.km + len * 0.9) h = Math.max(h, top - (top - base) * ((k - c.km) / (len * 0.9)));
+    }
+    pts.push([Math.round(k * 10) / 10, Math.round(h)]);
+  }
+  return pts;
 }

@@ -1,3 +1,4 @@
+import type { ProfilePoint } from '../lib/gpx';
 import type {
   AdminUser, BonusCategory, BonusResult, Profile, Rider, Stage, Tour, TourData, StageKind, TourTheme,
 } from '../lib/types';
@@ -28,6 +29,7 @@ export interface StageInput {
   departure: string | null;
   arrival: string | null;
   distance_km: number | null;
+  elevation_m?: number | null;
 }
 
 export interface RiderInput {
@@ -62,6 +64,11 @@ export interface DataSource {
   loadTours(): Promise<Tour[]>;
   loadTourData(tour: Tour): Promise<TourData>;
   stageTippers(stageId: number): Promise<string[]>;
+  /** Höhenprofil einer Etappe (aus GPX), null wenn keins hinterlegt */
+  loadStageProfile(stageId: number): Promise<ProfilePoint[] | null>;
+  saveStageProfile(stageId: number, points: ProfilePoint[] | null, source?: string): Promise<void>;
+  /** Etappen-IDs mit hinterlegtem Höhenprofil */
+  listStageProfiles(stageIds: number[]): Promise<number[]>;
   /** Lieblingsfahrer (IDs der Fahrer-Stammdaten) */
   listFavorites(): Promise<number[]>;
   setFavorite(cyclistId: number, on: boolean): Promise<void>;

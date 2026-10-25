@@ -3,6 +3,25 @@ import type { Climb, Sprint, Stage, Tour } from '../lib/types';
 import { KIND_LABEL, fmtKm } from '../lib/time';
 import { Icon } from './Icon';
 import { cx, Link } from './kit';
+import { useQuery } from '../app/query';
+import { source } from '../app/config';
+import { eleAt, kmSegments, type ProfilePoint } from '../lib/gpx';
+
+/** Höhenprofil (GPX) einer Etappe – wird nur bei Bedarf geladen und zwischengespeichert */
+export function useStageProfile(stageId: number | null | undefined): ProfilePoint[] | null {
+  const q = useQuery<ProfilePoint[] | null>(stageId ? `profile:${stageId}` : null, () => source.loadStageProfile(stageId!));
+  return q.data ?? null;
+}
+
+/** Farbe nach Steigung (wie in klassischen Profilen) */
+export function gradeColor(g: number): string {
+  if (g >= 12) return '#7a1c2e';
+  if (g >= 9) return '#d9412b';
+  if (g >= 6) return '#ec8a00';
+  if (g >= 3) return '#e5c31a';
+  if (g >= 0) return '#8cc665';
+  return '#6aa9d8';
+}
 
 /** Etappen mit Profildaten (Anstiege, Sprints oder Höhenmeter)? */
 export function hasProfile(stage: Stage): boolean {
@@ -69,7 +88,7 @@ function useWidth(initial = 340) {
  * Etappenprofil: jede Bergwertung mit ihren echten Höhenmetern (Länge × Steigung) über der Strecke.
  * Die Täler dazwischen sind vereinfacht – die Grafik zeigt, wo und wie hart geklettert wird.
  */
-export function StageProfileChart({ stage }: { stage: Stage }) {
+function SchematicChart({ stage }: { stage: Stage }) {
   const { ref, w: W } = useWidth();
   const climbs = [...(stage.climbs ?? [])].sort((a, b) => a.km - b.km);
   const sprints = stage.sprints ?? [];
@@ -114,7 +133,7 @@ export function StageProfileChart({ stage }: { stage: Stage }) {
   });
   const tickStep = km > 150 ? 50 : km > 60 ? 25 : 10;
   const ticks: number[] = [];
-  for (let t = 0; t <= km; t += tickStep) if (x(km) - x(t) >= 34) ticks.push(t);
+  for (let t = 0; t <= km; t += tickStep) if (x(km) - x(t) >= 52) ticks.push(t);
   const yStep = yMax > 1500 ? 500 : 250;
   const yTicks: number[] = [];
   for (let m = yStep; m < yMax; m += yStep) yTicks.push(m);
@@ -176,6 +195,160 @@ export function StageProfileChart({ stage }: { stage: Stage }) {
   );
 }
 
+/** Etappenprofil: echtes Höhenprofil aus GPX, sonst schematisch aus den Bergwertungen */
+export function StageProfileChart({ stage }: { stage: Stage }) {
+  const points = useStageProfile(stage.id);
+  return points && points.length > 1 ? <RealChart stage={stage} points={points} /> : <SchematicChart stage={stage} />;
+}
+
+/** Echtes Höhenprofil, Fläche nach Steigung eingefärbt, mit Bergwertungen und Sprints */
+function RealChart({ stage, points }: { stage: Stage; points: ProfilePoint[] }) {
+  const { ref, w: W } = useWidth();
+  const climbs = [...(stage.climbs ?? [])].sort((a, b) => a.km - b.km);
+  const sprints = stage.sprints ?? [];
+  const gpxKm = points[points.length - 1][0];
+  // km-Angaben der Wertungen beziehen sich auf die offizielle Distanz → auf die GPX-Länge umrechnen
+  const officialKm = stage.distance_km ?? gpxKm;
+  const toGpx = (k: number) => (k / officialKm) * gpxKm;
+  const eles = points.map((p) => p[1]);
+  const minE = Math.min(...eles);
+  const maxE = Math.max(...eles);
+  const span = Math.max(300, maxE - minE);
+  const yStep = span > 1500 ? 500 : span > 600 ? 250 : 100;
+  const yMin = Math.max(0, Math.floor((minE - span * 0.05) / yStep) * yStep);
+  const yMax = Math.ceil((maxE + span * 0.12) / yStep) * yStep;
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - TOP - BOTTOM;
+  const x = (k: number) => PAD_L + (Math.min(Math.max(k, 0), gpxKm) / gpxKm) * plotW;
+  const y = (m: number) => TOP + plotH * (1 - (m - yMin) / (yMax - yMin));
+  const bottom = H - BOTTOM;
+
+  // Linie: auf ca. 1 Punkt pro Pixel verdichten
+  const n = Math.max(2, Math.round(plotW));
+  const line: string[] = [];
+  for (let i = 0; i <= n; i += 1) {
+    const k = (gpxKm * i) / n;
+    line.push(`${x(k).toFixed(1)},${y(eleAt(points, k)).toFixed(1)}`);
+  }
+  // Flächen je Abschnitt nach Steigung färben
+  const segKm = Math.max(0.5, gpxKm / Math.max(40, Math.round(plotW / 3)));
+  const segs: { d: string; color: string }[] = [];
+  for (let k = 0; k < gpxKm - 1e-9; k += segKm) {
+    const k2 = Math.min(gpxKm, k + segKm);
+    const e1 = eleAt(points, k);
+    const e2 = eleAt(points, k2);
+    const grade = ((e2 - e1) / ((k2 - k) * 1000)) * 100;
+    segs.push({
+      d: `M${x(k).toFixed(1)},${bottom} L${x(k).toFixed(1)},${y(e1).toFixed(1)} L${x(k2).toFixed(1)},${y(e2).toFixed(1)} L${x(k2).toFixed(1)},${bottom} Z`,
+      color: gradeColor(grade),
+    });
+  }
+  const rowEnd = [-Infinity, -Infinity];
+  const labels = climbs.map((c) => {
+    const cx = x(toGpx(c.km));
+    const row = cx - rowEnd[0] >= 28 ? 0 : 1;
+    rowEnd[row] = cx;
+    return { c, cx, row };
+  });
+  const tickStep = officialKm > 150 ? 50 : officialKm > 60 ? 25 : 10;
+  const ticks: number[] = [];
+  for (let t = 0; t <= officialKm; t += tickStep) if (x(gpxKm) - x(toGpx(t)) >= 52) ticks.push(t);
+  const yTicks: number[] = [];
+  for (let m = yMin + yStep; m < yMax; m += yStep) yTicks.push(m);
+
+  return (
+    <div ref={ref} className="profile-chart-wrap">
+      <svg className="profile-chart profile-chart--real" viewBox={`0 0 ${W} ${H}`} role="img"
+        aria-label={`Höhenprofil, ${fmtKm(officialKm)}, von ${points[0][1]} m auf ${points[points.length - 1][1]} m, höchster Punkt ${maxE} m`}>
+        {yTicks.map((m) => (
+          <g key={`y${m}`} className="profile-chart__tick">
+            <line x1={PAD_L} x2={W - PAD_R} y1={y(m)} y2={y(m)} className="profile-chart__hgrid" />
+            <text x={PAD_L - 4} y={y(m) + 3.5} textAnchor="end">{m}</text>
+          </g>
+        ))}
+        <text x={PAD_L - 4} y={bottom + 3.5} textAnchor="end" className="profile-chart__unit">m</text>
+        {segs.map((sg, i) => <path key={i} d={sg.d} fill={sg.color} className="profile-chart__seg" />)}
+        <path d={`M${line.join(' L')}`} className="profile-chart__line profile-chart__line--real" />
+        {ticks.map((t) => (
+          <g key={t} className="profile-chart__tick">
+            <line x1={x(toGpx(t))} x2={x(toGpx(t))} y1={bottom} y2={bottom + 4} />
+            <text x={x(toGpx(t))} y={H - 7} textAnchor={t === 0 ? 'start' : 'middle'}>{t}</text>
+          </g>
+        ))}
+        <text x={x(gpxKm)} y={H - 7} textAnchor="end">{fmtKm(officialKm)}</text>
+        {sprints.map((sp, i) => {
+          const k = toGpx(sp.km);
+          const sx = x(k);
+          const sy = y(eleAt(points, k));
+          return (
+            <g key={`s${i}`} className="profile-chart__sprint">
+              <line x1={sx} x2={sx} y1={sy} y2={bottom} />
+              <rect x={sx - 9} y={sy - 24} width="18" height="16" rx="5" />
+              <text x={sx} y={sy - 12.5} textAnchor="middle">S</text>
+            </g>
+          );
+        })}
+        {labels.map(({ c, cx, row }, i) => {
+          const cy = y(eleAt(points, toGpx(c.km)));
+          const ly = 4 + row * 19;
+          const label = CAT_SHORT[c.cat] ?? c.cat;
+          const wPill = label.length > 1 ? 24 : 18;
+          const px = Math.min(Math.max(cx - wPill / 2, 2), W - wPill - 2);
+          return (
+            <g key={`c${i}`}>
+              <line className="profile-chart__lead" x1={cx} x2={cx} y1={ly + 16} y2={cy - 3} />
+              <circle className="profile-chart__dot" cx={cx} cy={cy} r="3.2" />
+              <rect className={catClass(c.cat)} x={px} y={ly} width={wPill} height="16" rx="5" />
+              <text className={`${catClass(c.cat)}-text`} x={px + wPill / 2} y={ly + 11.5} textAnchor="middle">{label}</text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+/** Steigung je Kilometer als Säulen (wie in Anstiegsprofilen) */
+function KmBars({ c, stage, points }: { c: Climb; stage: Stage; points: ProfilePoint[] }) {
+  const { ref, w: W } = useWidth(300);
+  const gpxKm = points[points.length - 1][0];
+  const official = stage.distance_km ?? gpxKm;
+  const scale = gpxKm / official;
+  const len = c.len ?? 5;
+  const top = c.km * scale;
+  const foot = Math.max(0, top - len * scale);
+  const segs = kmSegments(points, foot, top);
+  if (!segs.length) return null;
+  const h = 132;
+  const padB = 22;
+  const padT = 20;
+  const maxG = Math.max(10, ...segs.map((s) => s.grade));
+  const bw = (W - 8) / segs.length;
+  const startE = Math.round(eleAt(points, foot));
+  const endE = Math.round(eleAt(points, top));
+  return (
+    <div ref={ref} className="km-bars-wrap">
+      <svg className="km-bars" viewBox={`0 0 ${W} ${h}`} role="img"
+        aria-label={`Steigung je Kilometer: ${segs.map((s) => `${nf(s.grade)} %`).join(', ')}`}>
+        {segs.map((s, i) => {
+          const g = Math.max(0, s.grade);
+          const bh = ((h - padB - padT) * g) / maxG;
+          const bx = 4 + i * bw;
+          const by = h - padB - bh;
+          return (
+            <g key={i}>
+              <rect x={bx + 1} y={by} width={Math.max(2, bw - 2)} height={Math.max(1, bh)} rx="2" fill={gradeColor(s.grade)} />
+              {bw >= 22 ? <text x={bx + bw / 2} y={by - 4} textAnchor="middle" className="km-bars__val">{nf(s.grade)}</text> : null}
+              {bw >= 14 ? <text x={bx + bw / 2} y={h - 7} textAnchor="middle" className="km-bars__km">{i + 1}</text> : null}
+            </g>
+          );
+        })}
+      </svg>
+      <p className="muted small">Steigung je km (in %) · von {startE.toLocaleString('de-DE')}&nbsp;m auf {endE.toLocaleString('de-DE')}&nbsp;m · aus dem GPX-Höhenprofil</p>
+    </div>
+  );
+}
+
 /** Steigung als Balken auf einer Skala bis 20 % */
 function GradeBar({ label, value }: { label: string; value: number }) {
   const pct = Math.min(100, (value / 20) * 100);
@@ -208,14 +381,27 @@ function ClimbSlope({ c, m }: { c: Climb; m: ClimbMetrics }) {
 
 /** Steckbrief eines Anstiegs */
 export function ClimbSheet({ c, stage, tour }: { c: Climb; stage?: Stage; tour?: Tour }) {
-  const m = climbMetrics(c, stage);
+  const profile = useStageProfile(stage?.id);
+  const base = climbMetrics(c, stage);
+  let m = base;
+  let alt = c.alt;
+  if (profile && profile.length > 1 && stage && c.len) {
+    // Höhen direkt aus dem GPX-Profil
+    const scale = profile[profile.length - 1][0] / (stage.distance_km ?? profile[profile.length - 1][0]);
+    const topE = Math.round(eleAt(profile, c.km * scale));
+    const footE = Math.round(eleAt(profile, Math.max(0, (c.km - c.len) * scale)));
+    alt = alt ?? topE;
+    const gain = Math.max(0, topE - footE);
+    const difficulty = gain * gain / (c.len * 1000 * 10) + (alt > 1000 ? (alt - 1000) / 1000 : 0);
+    m = { ...base, gain: gain || base.gain, footAlt: footE, difficulty };
+  }
   const points = tour?.info?.kom?.[c.cat];
   const facts: [string, string][] = [];
   facts.push(['Gipfel', `km\u00a0${nf(c.km)}${m.finish ? ' · Ziel' : m.toGo !== null ? ` · noch ${nf(m.toGo)}\u00a0km` : ''}`]);
   if (m.foot !== null) facts.push(['Fuß', `km\u00a0${nf(m.foot)}`]);
   if (c.len) facts.push(['Länge', `${nf(c.len)}\u00a0km`]);
   if (m.gain) facts.push(['Höhenmeter', `≈\u00a0${m.gain.toLocaleString('de-DE')}\u00a0m`]);
-  if (c.alt) facts.push(['Gipfelhöhe', `${c.alt.toLocaleString('de-DE')}\u00a0m`]);
+  if (alt) facts.push(['Gipfelhöhe', `${alt.toLocaleString('de-DE')}\u00a0m`]);
   if (m.footAlt) facts.push(['Höhe am Fuß', `≈\u00a0${m.footAlt.toLocaleString('de-DE')}\u00a0m`]);
   if (m.difficulty !== null) facts.push(['Härte (FIETS)', nf(m.difficulty, 1)]);
   return (
@@ -229,7 +415,7 @@ export function ClimbSheet({ c, stage, tour }: { c: Climb; stage?: Stage; tour?:
           {c.max ? <GradeBar label="Max." value={c.max} /> : null}
         </div>
       ) : null}
-      <ClimbSlope c={c} m={m} />
+      {profile && profile.length > 1 && stage ? <KmBars c={c} stage={stage} points={profile} /> : <ClimbSlope c={c} m={m} />}
       {points?.length ? (
         <p className="climb-sheet__points">
           <span className="muted">Bergpunkte:</span>{' '}
@@ -246,7 +432,8 @@ type Point = { km: number; kind: 'climb'; c: Climb } | { km: number; kind: 'spri
 /** Karte mit Profil und aufklappbarer Liste aller Wertungen. */
 export function StageProfileCard({ stage, tour }: { stage: Stage; tour: Tour }) {
   const [open, setOpen] = useState<number | null>(null);
-  if (!hasProfile(stage) && stage.kind !== 'itt' && stage.kind !== 'ttt') return null;
+  const profile = useStageProfile(stage.id);
+  if (!hasProfile(stage) && !profile && stage.kind !== 'itt' && stage.kind !== 'ttt') return null;
   const climbs = stage.climbs ?? [];
   const points: Point[] = [
     ...climbs.map((c) => ({ km: c.km, kind: 'climb' as const, c })),
@@ -316,7 +503,7 @@ export function StageProfileCard({ stage, tour }: { stage: Stage; tour: Tour }) 
         </ol>
       ) : null}
       <p className="hint">
-        Höhe je Anstieg aus Länge × Ø-Steigung, Täler vereinfacht. km-Angaben zum Gipfel. Tippe auf eine Wertung für den Steckbrief.
+        {profile ? 'Höhenprofil aus der GPX-Strecke, Fläche nach Steigung eingefärbt.' : 'Höhe je Anstieg aus Länge × Ø-Steigung, Täler vereinfacht.'} km-Angaben zum Gipfel. Tippe auf eine Wertung für den Steckbrief.
         {pcs ? <> <a href={pcs} target="_blank" rel="noopener noreferrer">Original-Profil bei ProCyclingStats</a></> : null}
       </p>
     </section>
@@ -327,6 +514,7 @@ const WEEKDAY = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Fre
 
 /** „Etappe in Zahlen“: alle Kennzahlen und Regeln der Etappe */
 export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
+  const profile = useStageProfile(stage.id);
   const climbs = stage.climbs ?? [];
   const ms = climbs.map((c) => ({ c, m: climbMetrics(c, stage) }));
   const gainSum = ms.reduce((s, x) => s + (x.m.gain ?? 0), 0);
@@ -344,6 +532,13 @@ export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
   if (stage.distance_km) rows.push(['Distanz', fmtKm(stage.distance_km)]);
   if (stage.elevation_m) rows.push(['Höhenmeter', `${stage.elevation_m.toLocaleString('de-DE')}\u00a0m`]);
   if (stage.elevation_m && stage.distance_km) rows.push(['Hm pro km', nf(stage.elevation_m / stage.distance_km, 1)]);
+  if (profile && profile.length > 1) {
+    const eles = profile.map((p) => p[1]);
+    rows.push(['Start auf', `${profile[0][1].toLocaleString('de-DE')}\u00a0m`]);
+    rows.push(['Ziel auf', `${profile[profile.length - 1][1].toLocaleString('de-DE')}\u00a0m`]);
+    rows.push(['Höchster Punkt (GPX)', `${Math.max(...eles).toLocaleString('de-DE')}\u00a0m`]);
+    rows.push(['Tiefster Punkt (GPX)', `${Math.min(...eles).toLocaleString('de-DE')}\u00a0m`]);
+  }
   rows.push(['Bergwertungen', String(climbs.length)]);
   if (lenSum) rows.push(['Kletter-km (gewertet)', `${nf(lenSum)}\u00a0km`]);
   if (gainSum) rows.push(['Hm in Bergwertungen', `≈\u00a0${gainSum.toLocaleString('de-DE')}\u00a0m`]);
@@ -383,5 +578,18 @@ export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
       ) : null}
       {climbs.length ? <Link to="/anstiege" className="text-link">Alle Anstiege der Rundfahrt</Link> : null}
     </section>
+  );
+}
+
+/** Aufklappbares Profil (z. B. beim Tippen) */
+export function ProfileDetails({ stage }: { stage: Stage }) {
+  const profile = useStageProfile(stage.id);
+  if (!hasProfile(stage) && !profile) return null;
+  const n = stage.climbs?.length ?? 0;
+  return (
+    <details className="card profile-mini">
+      <summary>Profil · {n} {n === 1 ? 'Bergwertung' : 'Bergwertungen'}</summary>
+      <StageProfileChart stage={stage} />
+    </details>
   );
 }

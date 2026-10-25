@@ -129,6 +129,14 @@ create table if not exists public.stage_results (
   constraint stage_results_unique_rider unique (stage_id, rider_id)
 );
 
+-- Höhenprofil einer Etappe aus einer GPX-Datei: [[km, Höhe], …] (separat, wird nur bei Bedarf geladen)
+create table if not exists public.stage_profiles (
+  stage_id   bigint primary key references public.stages (id) on delete cascade,
+  points     jsonb  not null,
+  source     text,
+  updated_at timestamptz not null default now()
+);
+
 -- Wertungsstand nach einer Etappe (z. B. Gesamtwertung Top 10) – sichtbar mit dem Ergebnis
 create table if not exists public.stage_standings (
   stage_id bigint not null references public.stages (id) on delete cascade,
@@ -505,6 +513,7 @@ alter table public.riders            enable row level security;
 alter table public.cyclists          enable row level security;
 alter table public.favorite_cyclists enable row level security;
 alter table public.stage_standings   enable row level security;
+alter table public.stage_profiles    enable row level security;
 alter table public.stages            enable row level security;
 alter table public.stage_tips        enable row level security;
 alter table public.stage_results     enable row level security;
@@ -539,6 +548,13 @@ create policy riders_select on public.riders
   for select to authenticated using (public.is_member() or public.is_admin());
 drop policy if exists riders_admin on public.riders;
 create policy riders_admin on public.riders
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists profiles_stage_select on public.stage_profiles;
+create policy profiles_stage_select on public.stage_profiles
+  for select to authenticated using (public.is_member() or public.is_admin());
+drop policy if exists profiles_stage_admin on public.stage_profiles;
+create policy profiles_stage_admin on public.stage_profiles
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
 drop policy if exists standings_select on public.stage_standings;

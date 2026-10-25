@@ -1,6 +1,8 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { source } from '../../app/config';
-import { invalidate } from '../../app/query';
+import { invalidate, useQuery } from '../../app/query';
+import { parseGpx, stageNumberFromName, type ParsedGpx } from '../../lib/gpx';
+import { Icon } from '../../ui/Icon';
 import { useTourData } from '../../app/hooks';
 import type { Stage, StageKind, Tour } from '../../lib/types';
 import type { StageInput } from '../../data/source';
@@ -26,7 +28,7 @@ function StagesEditor({ tour }: { tour: Tour }) {
   return (
     <>
       <Notice icon="clock">Tippschluss ist die Startzeit der Etappe. Trag sie ein, sobald der Zeitplan feststeht.</Notice>
-      {stages.length === 0 ? <Generator tour={tour} /> : null}
+      {stages.length === 0 ? <Generator tour={tour} /> : <GpxImport stages={stages} />}
       <ul className="list">
         {stages.map((s) => (
           <li key={s.id} className="card">
@@ -206,5 +208,103 @@ function StageForm({ tour, stage, nextNumber, onDone }: { tour: Tour; stage: Sta
         <Button type="submit" busy={save.busy} disabled={!start}>Speichern</Button>
       </div>
     </form>
+  );
+}
+
+interface GpxFile {
+  file: string;
+  parsed: ParsedGpx | null;
+  stageId: number | null;
+}
+
+/** Höhenprofile aus GPX-Dateien für mehrere Etappen auf einmal hinterlegen */
+function GpxImport({ stages }: { stages: Stage[] }) {
+  const ids = stages.map((s) => s.id);
+  const have = useQuery<number[]>(`profiles-list:${ids.join(',')}`, () => source.listStageProfiles(ids));
+  const [files, setFiles] = useState<GpxFile[]>([]);
+  const [takeElevation, setTakeElevation] = useState(true);
+  const save = useAction();
+  const withProfile = new Set(have.data ?? []);
+
+  const onPick = async (list: FileList | null) => {
+    if (!list) return;
+    const read = await Promise.all([...list].map(async (f) => {
+      const text = await f.text();
+      const parsed = parseGpx(text);
+      const n = stageNumberFromName(f.name);
+      const stage = stages.find((s) => s.number === n) ?? null;
+      return { file: f.name, parsed, stageId: stage?.id ?? null };
+    }));
+    setFiles(read.sort((a, b) => (stages.find((s) => s.id === a.stageId)?.number ?? 99) - (stages.find((s) => s.id === b.stageId)?.number ?? 99)));
+  };
+
+  const ready = files.filter((f) => f.parsed && f.stageId !== null);
+  const onSave = () => save.run(async () => {
+    for (const f of ready) {
+      await source.saveStageProfile(f.stageId!, f.parsed!.points, f.file);
+      const stage = stages.find((s) => s.id === f.stageId);
+      if (takeElevation && stage && !stage.elevation_m) await source.updateStage(stage.id, { elevation_m: f.parsed!.gainM });
+      invalidate(`profile:${f.stageId}`);
+    }
+    invalidate('profiles-list:');
+    invalidate('tour:');
+    toast(`${ready.length} ${ready.length === 1 ? 'Höhenprofil' : 'Höhenprofile'} gespeichert`);
+    setFiles([]);
+  });
+
+  return (
+    <section className="card">
+      <span className="eyebrow">Höhenprofile (GPX)</span>
+      <p className="muted">
+        {withProfile.size} von {stages.length} Etappen haben ein echtes Höhenprofil. Lade die GPX-Strecken hoch, gern alle auf einmal –
+        die Etappennummer wird aus dem Dateinamen erkannt (z.&nbsp;B. „stage-7.gpx“).
+      </p>
+      <label className="btn btn--secondary btn--full file-pick">
+        <Icon name="plus" size={18} />
+        <span>GPX-Dateien auswählen</span>
+        <input type="file" accept=".gpx,application/gpx+xml" multiple onChange={(e) => onPick((e.target as HTMLInputElement).files)} />
+      </label>
+      {files.length ? (
+        <>
+          <ul className="gpx-list">
+            {files.map((f, i) => {
+              const stage = stages.find((s) => s.id === f.stageId);
+              const off = f.parsed && stage?.distance_km ? Math.abs(f.parsed.distanceKm - stage.distance_km) / stage.distance_km : 0;
+              return (
+                <li key={i} className="gpx-row">
+                  <span className="gpx-row__file">{f.file}</span>
+                  <select aria-label={`Etappe für ${f.file}`} value={f.stageId ?? ''}
+                    onChange={(e) => {
+                      const v = (e.target as HTMLSelectElement).value;
+                      setFiles(files.map((x, j) => (j === i ? { ...x, stageId: v ? Number(v) : null } : x)));
+                    }}>
+                    <option value="">–</option>
+                    {stages.map((s) => <option key={s.id} value={s.id}>Etappe {s.number}</option>)}
+                  </select>
+                  <span className={cx('gpx-row__meta', (!f.parsed || off > 0.08) && 'gpx-row__warn')}>
+                    {!f.parsed ? 'Keine Höhendaten gefunden – ist das eine GPX-Strecke mit Höhen?' : (
+                      <>
+                        {f.parsed.distanceKm.toLocaleString('de-DE')}&nbsp;km · {f.parsed.gainM.toLocaleString('de-DE')}&nbsp;Hm ·
+                        {' '}{f.parsed.startM}&nbsp;m → {f.parsed.finishM}&nbsp;m · höchster Punkt {f.parsed.maxM}&nbsp;m
+                        {stage?.distance_km && off > 0.08 ? ` · weicht ${Math.round(off * 100)} % von ${stage.distance_km} km ab` : ''}
+                        {stage && withProfile.has(stage.id) ? ' · ersetzt das vorhandene Profil' : ''}
+                      </>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <label className="check">
+            <input type="checkbox" checked={takeElevation} onChange={(e) => setTakeElevation((e.target as HTMLInputElement).checked)} />
+            <span>Höhenmeter übernehmen, wo noch keine eingetragen sind</span>
+          </label>
+          {save.error ? <ErrorBox error={save.error} /> : null}
+          <Button full onClick={onSave} busy={save.busy} disabled={!ready.length}>
+            {ready.length} {ready.length === 1 ? 'Höhenprofil' : 'Höhenprofile'} speichern
+          </Button>
+        </>
+      ) : null}
+    </section>
   );
 }

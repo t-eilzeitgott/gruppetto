@@ -61,3 +61,5 @@ UI-Check mit Playwright (lokal, falls installiert): `node scripts/build.mjs && n
 - `src/lib/pcsParse.ts` – Einlesen kopierter Startlisten und Ergebnisse von procyclingstats.com
 - `src/pages/` – Screens, `src/pages/admin/` – Admin-Bereich
 - Build: esbuild (`scripts/build.mjs`), Deploy: `.github/workflows/deploy.yml`
+
+**Höhenprofile:** Unter *Admin → Etappen → Höhenprofile (GPX)* lassen sich GPX-Strecken für alle Etappen auf einmal hochladen (Etappennummer aus dem Dateinamen). Die App zeigt dann das echte Höhenprofil, nach Steigung eingefärbt, und in jedem Anstieg die Steigung je Kilometer.
