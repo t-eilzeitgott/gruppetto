@@ -10,6 +10,16 @@ export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(' ');
 }
 
+/** Ästhetisches Pro-Abzeichen */
+export function ProBadge({ large }: { large?: boolean }) {
+  return (
+    <span className={cx('pro-badge', large && 'pro-badge--lg')} title="Pro-Mitglied">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z" /></svg>
+      Pro
+    </span>
+  );
+}
+
 /** Interner Link (Hash-Routing mit eigener History). */
 export function Link({ to, className, children, ariaLabel, ariaCurrent }: {
   to: string;

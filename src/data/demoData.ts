@@ -130,6 +130,7 @@ export const DEMO_PROFILES: Profile[] = PEOPLE.map(([id, name, color], i) => ({
   is_member: true,
   is_admin: id === DEMO_ME,
   is_pro: i % 5 === 1,
+  pro_requested_at: i % 5 === 1 || i % 7 === 3 ? '2027-05-01T10:00:00Z' : null,
   created_at: '2027-04-20T18:00:00Z',
 }));
 

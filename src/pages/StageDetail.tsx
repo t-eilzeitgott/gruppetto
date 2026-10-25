@@ -4,7 +4,7 @@ import { useNow } from '../app/hooks';
 import { scoreStage, UNDERDOG_BONUS, DEFAULT_SCALE } from '../lib/scoring';
 import { KIND_LABEL, fmtDay, stageState, fmtClock, fmtKm } from '../lib/time';
 import type { Profile, Stage, TourData } from '../lib/types';
-import { Avatar, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar, cx, useTitle, Link } from '../ui/kit';
+import { Avatar, ProBadge, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar, cx, useTitle, Link } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { Tippers, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
 
@@ -172,7 +172,7 @@ function DoneStage({ stage, data, me, members }: { stage: Stage; data: TourData;
               <Link to={`/spieler/${member!.id}`} className={cx('person-row', member!.id === me.id && 'is-me')}>
                 <Avatar name={member!.display_name} color={member!.avatar_color} size={36} />
                 <span className="person-row__main">
-                  <span className="person-row__name">{member!.display_name}{member!.id === me.id ? ' (du)' : ''}</span>
+                  <span className="person-row__name">{member!.display_name}{member!.id === me.id ? ' (du)' : ''}{member!.is_pro ? <ProBadge /> : null}</span>
                   <span className="person-row__sub">
                     {lastName(riderName(data, score.riderId))} · {score.position ? `${score.position}.` : 'außerhalb Top 10'}
                   </span>

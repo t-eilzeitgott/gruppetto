@@ -28,6 +28,9 @@ create table if not exists public.profiles (
   constraint profiles_display_name_length
     check (display_name is null or char_length(btrim(display_name)) between 2 and 20)
 );
+-- Pro-Anfrage (keine Zahlung, nur Vermerk; der Admin schaltet is_pro frei)
+alter table public.profiles add column if not exists pro_requested_at timestamptz;
+
 create unique index if not exists profiles_display_name_unique
   on public.profiles (lower(display_name));
 
@@ -354,10 +357,25 @@ returns setof uuid language sql stable security definer set search_path = public
   select t.user_id from public.stage_tips t where t.stage_id = p_stage and public.is_member();
 $$;
 
+-- Pro anfragen bzw. Anfrage zurückziehen (2,99 €/Monat, nur als Vermerk)
+create or replace function public.request_pro(p_request boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then
+    raise exception 'not_authenticated' using errcode = 'P0001';
+  end if;
+  update public.profiles
+     set pro_requested_at = case when p_request then coalesce(pro_requested_at, now()) else null end
+   where id = auth.uid();
+end;
+$$;
+
 -- Admin: alle Konten inkl. E-Mail
+drop function if exists public.admin_list_users();
 create or replace function public.admin_list_users()
 returns table (id uuid, email text, display_name text, avatar_color text,
-               is_member boolean, is_admin boolean, is_pro boolean, created_at timestamptz)
+               is_member boolean, is_admin boolean, is_pro boolean, pro_requested_at timestamptz,
+               created_at timestamptz)
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then
@@ -365,7 +383,7 @@ begin
   end if;
   return query
     select p.id, u.email::text, p.display_name, p.avatar_color,
-           p.is_member, p.is_admin, p.is_pro, p.created_at
+           p.is_member, p.is_admin, p.is_pro, p.pro_requested_at, p.created_at
       from public.profiles p
       join auth.users u on u.id = p.id
      order by p.created_at;
@@ -396,6 +414,8 @@ revoke execute on function public.join_group(text, text)                       f
 revoke execute on function public.update_my_profile(text, text)                from public, anon;
 revoke execute on function public.delete_my_account()                          from public, anon;
 revoke execute on function public.stage_tippers(bigint)                        from public, anon;
+revoke execute on function public.request_pro(boolean)                         from public, anon;
+grant  execute on function public.request_pro(boolean)                         to authenticated;
 revoke execute on function public.admin_list_users()                           from public, anon;
 revoke execute on function public.admin_set_flags(uuid, boolean, boolean, boolean) from public, anon;
 grant  execute on function public.join_group(text, text)                       to authenticated;

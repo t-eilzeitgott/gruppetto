@@ -148,6 +148,12 @@ export class DemoSource implements DataSource {
     me.avatar_color = color;
   }
 
+  async requestPro(request: boolean): Promise<void> {
+    await wait();
+    const me = this.profiles.find((p) => p.id === DEMO_ME)!;
+    me.pro_requested_at = request ? me.pro_requested_at ?? new Date(this.now()).toISOString() : null;
+  }
+
   async deleteAccount(): Promise<void> {
     await wait();
     throw new ApiError('Im Demo-Modus kann kein Konto gelöscht werden.');

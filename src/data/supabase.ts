@@ -248,6 +248,10 @@ export class SupabaseSource implements DataSource {
     await this.rpc('update_my_profile', { p_name: name, p_color: color });
   }
 
+  async requestPro(request: boolean): Promise<void> {
+    await this.rpc('request_pro', { p_request: request });
+  }
+
   async deleteAccount(): Promise<void> {
     await this.rpc('delete_my_account');
     this.setSession(null);

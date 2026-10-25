@@ -5,7 +5,7 @@ import { bonusScoresFor, jokerUsage, leaderboard } from '../lib/scoring';
 import { categoryTitle } from '../lib/categories';
 import { bonusDeadline, nextOpenStage, sortStages, fmtClock } from '../lib/time';
 import { BONUS_CATEGORIES } from '../lib/types';
-import { Avatar, Empty, ErrorBox, JerseyTile, Link, Loading, TopBar, cx, useTitle } from '../ui/kit';
+import { Avatar, ProBadge, Empty, ErrorBox, JerseyTile, Link, Loading, TopBar, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { lastName, riderName } from '../ui/bits';
 
@@ -40,6 +40,7 @@ export function Player({ id }: { id: string }) {
         <section className="profile-hero">
           <Avatar name={member.display_name} color={member.avatar_color} size={80} ring="accent" />
           <h2 className="profile-hero__name">{member.display_name}{isMe ? ' (du)' : ''}</h2>
+          {member.is_pro ? <ProBadge large /> : null}
           {row ? <p>Platz&nbsp;{row.rank} · {row.total} Punkte</p> : null}
           {row && row.lastStagePoints !== null ? <p className="muted small">+{row.lastStagePoints} auf der letzten Etappe</p> : null}
         </section>

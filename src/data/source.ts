@@ -66,6 +66,7 @@ export interface DataSource {
   joinGroup(code: string, name: string): Promise<void>;
   updateProfile(name: string, color: string): Promise<void>;
   deleteAccount(): Promise<void>;
+  requestPro(request: boolean): Promise<void>;
   saveStageTip(stageId: number, riderId: number): Promise<void>;
   deleteStageTip(stageId: number): Promise<void>;
   saveBonusTip(tourId: string, category: BonusCategory, riderId: number | null, team: string | null): Promise<void>;

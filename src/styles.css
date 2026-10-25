@@ -509,10 +509,24 @@ a.person-row:hover { background: var(--surface); }
 .rank { width: 24px; flex: none; color: var(--muted); font-size: 14px; text-align: right; }
 .delta { flex: none; min-width: 30px; text-align: right; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .pro-badge {
-  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px;
+  display: inline-flex; align-items: center; gap: 3px;
+  margin-left: 6px; padding: 2px 7px 2px 5px; border-radius: 999px;
   background: var(--accent); color: var(--on-accent);
-  font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: 2px;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; line-height: 1.2;
+  text-transform: uppercase; vertical-align: 2px; white-space: nowrap;
 }
+.pro-badge svg { width: 10px; height: 10px; }
+.pro-badge--lg { font-size: 12px; padding: 3px 9px 3px 7px; margin-left: 0; }
+.pro-badge--lg svg { width: 12px; height: 12px; }
+
+.pro-card { gap: 14px; }
+.pro-card__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pro-card__price { font-size: 28px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
+.pro-card__price span { font-size: 15px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+.pro-card ul { display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; }
+.pro-card li { display: flex; align-items: flex-start; gap: 8px; }
+.pro-card li svg { color: var(--accent); margin-top: 1px; }
 
 .group-row, .group-list > li { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .group-list > li:last-child, .list > .group-row:last-child { border-bottom: 0; }
@@ -799,3 +813,5 @@ tr.is-me > * { background: var(--accent-soft); }
   .stat strong { font-size: 19px; }
   .tabbar__item { font-size: 10.5px; }
 }
+
+.pro-request { align-self: flex-start; margin-top: 4px; white-space: normal; }

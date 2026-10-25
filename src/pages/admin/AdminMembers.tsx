@@ -82,10 +82,12 @@ function InviteCard({ code }: { code: string }) {
 
 function UserList({ users }: { users: AdminUser[] }) {
   const members = users.filter((u) => u.is_member);
+  const requests = users.filter((u) => u.pro_requested_at && !u.is_pro).length;
   const pending = users.filter((u) => !u.is_member);
   return (
     <>
       <h2 className="section-title">{members.length} Mitglieder</h2>
+      {requests ? <p className="muted small">{requests} offene Pro-Anfrage{requests === 1 ? '' : 'n'} – zum Freischalten bei der Person „Pro“ antippen.</p> : null}
       <ul className="list">
         {members.map((u) => <UserRow key={u.id} user={u} />)}
       </ul>
@@ -118,6 +120,9 @@ function UserRow({ user }: { user: AdminUser }) {
         <span className="account__main">
           <strong>{user.display_name ?? 'Noch ohne Namen'}{user.id === me.id ? ' (du)' : ''}</strong>
           <span className="muted break-all">{user.email}</span>
+          {user.pro_requested_at && !user.is_pro ? (
+            <span className="chip chip--accent pro-request">Pro angefragt am {new Date(user.pro_requested_at).toLocaleDateString('de-DE')}</span>
+          ) : null}
         </span>
       </div>
       <div className="toggles" role="group" aria-label={`Rechte für ${user.display_name ?? user.email}`}>

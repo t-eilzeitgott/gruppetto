@@ -6,7 +6,7 @@ import { source } from '../app/config';
 import { leaderboard, seasonLeaderboard, type LeaderRow, type SeasonRow } from '../lib/scoring';
 import { lastPublishedStage, sortStages } from '../lib/time';
 import type { Profile, Tour, TourData } from '../lib/types';
-import { Avatar, Empty, ErrorBox, Link, Loading, PageTitle, Segmented, cx, useTitle } from '../ui/kit';
+import { Avatar, ProBadge, Empty, ErrorBox, Link, Loading, PageTitle, Segmented, cx, useTitle } from '../ui/kit';
 
 export function Leaderboard() {
   useTitle('Rangliste');
@@ -80,6 +80,7 @@ function Podium({ rows, me }: { rows: LeaderRow[]; me: Profile }) {
             <Link to={`/spieler/${r.userId}`} className="podium__link">
               <Avatar name={r.name} color={r.color} size={first ? 72 : 56} ring={first ? 'accent' : 'line'} />
               <span className="podium__name">{r.name}{r.userId === me.id ? ' (du)' : ''}</span>
+              {r.isPro ? <ProBadge /> : null}
               <span className={cx('podium__pts', first && 'accent')}>{r.total} · {r.rank}.</span>
             </Link>
           </li>
@@ -105,7 +106,7 @@ function BoardRow({ row, me }: { row: LeaderRow; me: Profile }) {
         <span className="person-row__main">
           <span className="person-row__name">
             {row.name}{row.userId === me.id ? ' (du)' : ''}
-            {row.isPro ? <span className="pro-badge">Pro</span> : null}
+            {row.isPro ? <ProBadge /> : null}
           </span>
           <span className="person-row__sub segs">
             {row.lastStagePoints !== null ? <span>+{row.lastStagePoints} zuletzt</span> : null}
@@ -146,6 +147,7 @@ function BoardTable({ data, rows, me }: { data: TourData; rows: LeaderRow[]; me:
                   <Link to={`/spieler/${r.userId}`} className="table-person">
                     <Avatar name={r.name} color={r.color} size={28} />
                     <span>{r.name}</span>
+                    {r.isPro ? <ProBadge /> : null}
                   </Link>
                 </th>
                 {stages.map((s) => {

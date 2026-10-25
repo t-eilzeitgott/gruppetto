@@ -13,6 +13,8 @@ export interface Profile {
   is_member: boolean;
   is_admin: boolean;
   is_pro: boolean;
+  /** Pro angefragt (keine Zahlung, nur Vermerk) */
+  pro_requested_at?: string | null;
   created_at: string;
 }
 

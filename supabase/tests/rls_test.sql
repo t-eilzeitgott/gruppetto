@@ -199,6 +199,20 @@ select pg_temp.expect_eq((select count(*) from public.bonus_tips where tour_id =
 select pg_temp.expect_eq((select count(*) from public.bonus_tips where tour_id = 'past-test'), 1, 'Fremde Bonustipps nach Start sichtbar');
 commit;
 
+-- ---------- Pro-Anfrage ----------
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+select public.request_pro(true);
+select pg_temp.expect_error($q$ update public.profiles set is_pro = true where id = auth.uid() $q$, 'permission denied');
+commit;
+select pg_temp.expect_eq((select count(*) from public.profiles where pro_requested_at is not null and not is_pro), 1, 'Pro angefragt, aber nicht aktiv');
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+select pg_temp.expect_eq((select count(*) from public.admin_list_users() where pro_requested_at is not null), 1, 'Admin sieht Pro-Anfrage');
+commit;
+
 -- ---------- Anonym ----------
 begin;
 set local role anon;

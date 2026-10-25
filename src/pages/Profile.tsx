@@ -6,7 +6,7 @@ import { invalidate, resetCache } from '../app/query';
 import { setThemePref, useThemePref, type ThemePref } from '../app/theme';
 import { DEFAULT_SCALE, UNDERDOG_BONUS, BONUS_POINTS } from '../lib/scoring';
 import type { TourData } from '../lib/types';
-import { Avatar, Button, ErrorBox, Link, PageTitle, Segmented, cx, toast, useAction, useTitle } from '../ui/kit';
+import { Avatar, ProBadge, Button, ErrorBox, Link, PageTitle, Segmented, cx, toast, useAction, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { lastName } from '../ui/bits';
 
@@ -46,13 +46,15 @@ export function Profile() {
             <div className="account">
               <Avatar name={me.display_name} color={me.avatar_color} size={56} />
               <div className="account__main">
-                <strong className="account__name">{me.display_name}{me.is_pro ? <span className="pro-badge">Pro</span> : null}</strong>
+                <strong className="account__name">{me.display_name}{me.is_pro ? <ProBadge /> : null}</strong>
                 <span className="muted break-all">{user?.email}</span>
               </div>
               <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>Bearbeiten</Button>
             </div>
           )}
         </section>
+
+        <ProCard />
 
         <section className="card">
           <div className="setting">
@@ -224,6 +226,47 @@ export function Rules({ data }: { data?: TourData }) {
         <h3>Gleichstand</h3>
         <p className="muted">Bei gleicher Punktzahl teilt ihr euch den Platz.</p>
       </div>
+    </section>
+  );
+}
+
+function ProCard() {
+  const { me } = useApp();
+  const act = useAction();
+  const requested = !!me.pro_requested_at;
+  const toggle = (on: boolean) => act.run(async () => {
+    await source.requestPro(on);
+    invalidate('me');
+    toast(on ? 'Pro angefragt' : 'Anfrage zurückgezogen');
+  });
+
+  return (
+    <section className="card card--accent pro-card" aria-labelledby="pro-title">
+      <div className="pro-card__head">
+        <h2 id="pro-title" className="card__title">gruppetto Pro</h2>
+        {me.is_pro ? <ProBadge large /> : <p className="pro-card__price">2,99&nbsp;€<span> / Monat</span></p>}
+      </div>
+      {me.is_pro ? (
+        <p className="muted">Dein Pro-Abo ist aktiv. Das Abzeichen siehst du und alle anderen neben deinem Namen.</p>
+      ) : (
+        <>
+          <ul>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z" /></svg><span>Pro-Abzeichen neben deinem Namen – in Rangliste, Etappen und Profil</span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z" /></svg><span>Weitere Extras folgen</span></li>
+          </ul>
+          {requested ? (
+            <p className="muted">Angefragt – sobald der Admin freischaltet, erscheint dein Abzeichen.</p>
+          ) : (
+            <p className="hint">Es wird nichts bezahlt. Die Anfrage wird nur vermerkt, der Admin schaltet Pro frei.</p>
+          )}
+          {act.error ? <ErrorBox error={act.error} /> : null}
+          {requested ? (
+            <Button variant="secondary" full onClick={() => toggle(false)} busy={act.busy}>Anfrage zurückziehen</Button>
+          ) : (
+            <Button full onClick={() => toggle(true)} busy={act.busy}>Pro anfragen</Button>
+          )}
+        </>
+      )}
     </section>
   );
 }
