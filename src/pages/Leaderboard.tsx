@@ -4,9 +4,10 @@ import { useMembers, useNow, useTourData } from '../app/hooks';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import { leaderboard, seasonLeaderboard, type LeaderRow, type SeasonRow } from '../lib/scoring';
-import { lastPublishedStage, sortStages } from '../lib/time';
-import type { Profile, Tour, TourData } from '../lib/types';
+import { fmtDayTime, lastPublishedStage, sortStages } from '../lib/time';
+import type { Profile, Stage, Tour, TourData } from '../lib/types';
 import { Avatar, ProBadge, Empty, ErrorBox, Link, Loading, PageTitle, Segmented, cx, useTitle } from '../ui/kit';
+import { Icon } from '../ui/Icon';
 
 export function Leaderboard() {
   useTitle('Rangliste');
@@ -39,6 +40,9 @@ function TourBoard({ tour, me }: { tour: Tour; me: Profile }) {
   const data = tourQ.data;
   const members = membersQ.data;
   const rows = useMemo(() => (data && members ? leaderboard(data, members) : []), [data, members]);
+  const next: Stage | undefined = data ? sortStages(data.stages).find((s) => new Date(s.starts_at).getTime() > now) : undefined;
+  const tipQ = useQuery<string[]>(next ? `tippers:${next.id}` : null, () => source.stageTippers(next!.id));
+  const tipped = tipQ.data ? new Set(tipQ.data) : null;
 
   if (tourQ.error || membersQ.error) return <ErrorBox error={tourQ.error ?? membersQ.error} onRetry={() => { tourQ.reload(); membersQ.reload(); }} />;
   if (!data || !members) return <Loading />;
@@ -46,11 +50,7 @@ function TourBoard({ tour, me }: { tour: Tour; me: Profile }) {
   const last = lastPublishedStage(data.stages);
   const started = data.stages.some((s) => new Date(s.starts_at).getTime() <= now);
   if (!last && !started) {
-    return (
-      <Empty icon="podium" title="Noch keine Punkte">
-        Die Rangliste startet mit dem ersten Etappenergebnis. {rows.length} Teilnehmer sind dabei.
-      </Empty>
-    );
+    return <PreStartBoard members={members} next={next} tipped={tipped} me={me} />;
   }
 
   return (
@@ -59,16 +59,16 @@ function TourBoard({ tour, me }: { tour: Tour; me: Profile }) {
         {rows.length} Teilnehmer · {last ? `Stand nach Etappe\u00a0${last.number}` : 'noch kein Ergebnis'}
         {data.tour.bonus_final ? ' · inkl. Bonuspunkte' : ' · Bonuspunkte kommen am Ende dazu'}
       </p>
-      <Podium rows={rows.slice(0, 3)} me={me} />
+      <Podium rows={rows.slice(0, 3)} me={me} next={next} tipped={tipped} />
       <ul className="list board-list">
-        {rows.slice(3).map((r) => <BoardRow key={r.userId} row={r} me={me} />)}
+        {rows.slice(3).map((r) => <BoardRow key={r.userId} row={r} me={me} next={next} tipped={tipped} />)}
       </ul>
       <BoardTable data={data} rows={rows} me={me} />
     </>
   );
 }
 
-function Podium({ rows, me }: { rows: LeaderRow[]; me: Profile }) {
+function Podium({ rows, me, next, tipped }: { rows: LeaderRow[]; me: Profile; next?: Stage; tipped: Set<string> | null }) {
   if (!rows.length) return null;
   const order = rows.length >= 3 ? [rows[1], rows[0], rows[2]] : rows;
   return (
@@ -82,6 +82,7 @@ function Podium({ rows, me }: { rows: LeaderRow[]; me: Profile }) {
               <span className="podium__name">{r.name}{r.userId === me.id ? ' (du)' : ''}</span>
               {r.isPro ? <ProBadge /> : null}
               <span className={cx('podium__pts', first && 'accent')}>{r.total} · {r.rank}.</span>
+              {next && tipped ? <TipState next={next} done={tipped.has(r.userId)} short /> : null}
             </Link>
           </li>
         );
@@ -97,7 +98,14 @@ function Delta({ row }: { row: LeaderRow }) {
   return <span className={cx('delta', up ? 'pos' : 'neg')} aria-label={`${up ? 'aufgestiegen' : 'abgerutscht'} um ${n}`}>{up ? '↑' : '↓'} {n}</span>;
 }
 
-function BoardRow({ row, me }: { row: LeaderRow; me: Profile }) {
+function TipState({ next, done, short }: { next: Stage; done: boolean; short?: boolean }) {
+  const label = short ? '' : <>Etappe&nbsp;{next.number} </>;
+  return done
+    ? <span className="tip-state is-done"><Icon name="check" size={14} stroke={2.4} />{label}getippt</span>
+    : <span className="tip-state">{label}offen</span>;
+}
+
+function BoardRow({ row, me, next, tipped }: { row: LeaderRow; me: Profile; next?: Stage; tipped: Set<string> | null }) {
   return (
     <li>
       <Link to={`/spieler/${row.userId}`} className={cx('person-row', row.userId === me.id && 'is-me')}>
@@ -111,12 +119,55 @@ function BoardRow({ row, me }: { row: LeaderRow; me: Profile }) {
           <span className="person-row__sub segs">
             {row.lastStagePoints !== null ? <span>+{row.lastStagePoints} zuletzt</span> : null}
             {row.bonusProjection && !row.bonusPoints ? <span>Bonus-Prognose {row.bonusProjection}</span> : null}
+            {next && tipped ? <TipState next={next} done={tipped.has(row.userId)} /> : null}
           </span>
         </span>
         <Delta row={row} />
         <span className="points points--lg">{row.total}</span>
       </Link>
     </li>
+  );
+}
+
+/** Vor dem ersten Start: alle Teilnehmer mit Tippstand für Etappe 1 */
+function PreStartBoard({ members, next, tipped, me }: { members: Profile[]; next?: Stage; tipped: Set<string> | null; me: Profile }) {
+  const list = members
+    .filter((m) => m.is_member && m.display_name)
+    .sort((a, b) => (a.display_name ?? '').localeCompare(b.display_name ?? '', 'de', { sensitivity: 'base' }));
+  const done = tipped ? list.filter((m) => tipped.has(m.id)).length : null;
+  return (
+    <>
+      <p className="muted small">
+        {list.length} Teilnehmer · noch keine Punkte
+        {next ? <> · Etappe&nbsp;{next.number} startet {fmtDayTime(next.starts_at)}</> : null}
+      </p>
+      {next && done !== null ? (
+        <p className="pre-board__count"><strong>{done} von&nbsp;{list.length}</strong> haben für Etappe&nbsp;{next.number} getippt</p>
+      ) : null}
+      <ul className="list">
+        {list.map((m) => {
+          const ok = tipped?.has(m.id);
+          return (
+            <li key={m.id}>
+              <Link to={`/spieler/${m.id}`} className={cx('person-row', m.id === me.id && 'is-me')}>
+                <Avatar name={m.display_name} color={m.avatar_color} size={36} />
+                <span className="person-row__main">
+                  <span className="person-row__name">
+                    {m.display_name}{m.id === me.id ? ' (du)' : ''}
+                    {m.is_pro ? <ProBadge /> : null}
+                  </span>
+                </span>
+                {next && tipped ? (
+                  <span className={cx('chip', ok && 'chip--accent')}>
+                    {ok ? <><Icon name="check" size={14} stroke={2.4} />Getippt</> : 'Noch offen'}
+                  </span>
+                ) : null}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

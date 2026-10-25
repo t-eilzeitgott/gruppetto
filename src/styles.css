@@ -815,3 +815,8 @@ tr.is-me > * { background: var(--accent-soft); }
 }
 
 .pro-request { align-self: flex-start; margin-top: 4px; white-space: normal; }
+
+/* Tippstand in der Rangliste */
+.tip-state { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; color: var(--muted); font-size: 13px; font-weight: 500; }
+.tip-state.is-done { color: var(--accent); font-weight: 600; }
+.pre-board__count { font-size: 15px; }
