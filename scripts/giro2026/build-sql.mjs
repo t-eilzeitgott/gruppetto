@@ -8,6 +8,28 @@ import { STAGES, RESULTS, GC, FINAL, EXCLUDED_FROM_REST, REGULATIONS } from './r
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..');
 const TOUR = 'giro-2026';
+// Offizielles Roadbook: Durchfahrtsorte mit Höhe, Bergwertungen (km, Höhe, Kategorie), Sprints, Red Bull KM
+const ROADBOOK = JSON.parse(readFileSync(join(here, 'roadbook.json'), 'utf8'));
+const TEXTS = JSON.parse(readFileSync(join(here, 'texts.de.json'), 'utf8'));
+for (const s of STAGES) {
+  const r = ROADBOOK[s.n - 1];
+  if (r.gpm.length !== s.climbs.length) throw new Error(`Etappe ${s.n}: Roadbook hat ${r.gpm.length} Bergwertungen, Daten ${s.climbs.length}`);
+  s.climbs.forEach((c, i) => {
+    const g = r.gpm[i];
+    c.km = g.km;
+    c.alt = g.alt;
+    c.cat = /coppi/i.test(g.cat) ? 'CC' : String(g.cat);
+  });
+  s.sprints = [
+    ...r.sprints.map((x) => ({ km: x.km, name: x.name, kind: 'sprint' })),
+    ...(r.redbull_km ? [{ km: r.redbull_km, name: 'Red Bull KM', kind: 'redbull' }] : []),
+  ].sort((a, b) => a.km - b.km);
+  s.km = r.waypoints[r.waypoints.length - 1].km;
+  s.waypoints = r.waypoints.map((w) => ({ km: w.km, alt: w.alt, name: w.name }));
+  s.feed = r.feed;
+  s.route = TEXTS.route[String(s.n)];
+  s.finale = TEXTS.finale[String(s.n)];
+}
 
 const q = (v) => (v === null || v === undefined || v === '' ? 'null' : `'${String(v).replace(/'/g, "''")}'`);
 
@@ -125,10 +147,10 @@ w(STAGES.map((s) => {
   const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] !== undefined && o[k] !== null).map((k) => [k, o[k]]));
   const climbs = JSON.stringify(s.climbs.map((c) => pick(c, ['name', 'cat', 'km', 'len', 'grad', 'max', 'alt'])));
   const info = JSON.stringify(pick({
-    original_date: s.date, start_real: s.info?.start, finish_real: s.info?.finish,
+    original_date: s.date, start_real: s.info?.start, finish_real: s.info?.finish, route: s.route, finale: s.finale, feed: s.feed,
     neutral_km: s.neutral, three_sec: s.threeSec,
-  }, ['original_date', 'start_real', 'finish_real', 'neutral_km', 'three_sec']));
-  const sprints = JSON.stringify((s.sprints ?? []).map((x) => ({ km: x.km, ...(x.name ? { name: x.name } : {}) })));
+  }, ['original_date', 'start_real', 'finish_real', 'neutral_km', 'three_sec', 'route', 'finale', 'feed']));
+  const sprints = JSON.stringify((s.sprints ?? []).map((x) => pick(x, ['km', 'name', 'kind'])));
   const start = `((((now() at time zone 'Europe/Berlin')::date + ${s.n})::timestamp + time '12:00') at time zone 'Europe/Berlin')`;
   return `  (${q(TOUR)}, ${s.n}, ${start}, ${q(s.kind)}, ${q(s.from)}, ${q(s.to)}, ${s.km}, ${s.elevation ?? 'null'}, ${q(climbs)}::jsonb, ${q(sprints)}::jsonb, ${q(info)}::jsonb)`;
 }).join(',\n') + ';');
@@ -137,6 +159,17 @@ w();
 w('-- Startliste (184 Fahrer)');
 w('insert into public.riders (tour_id, bib, name, team, nationality, age, young, excluded_from_rest) values');
 w(riders.map((r) => `  (${q(TOUR)}, ${r.bib}, ${q(r.name)}, ${q(r.team)}, ${q(r.nat)}, ${r.age}, ${r.young}, ${EXCLUDED_FROM_REST.includes(r.name)})`).join(',\n') + ';');
+w();
+
+w('-- Höhenprofile aus den Durchfahrtstabellen des Roadbooks');
+w('insert into public.stage_profiles (stage_id, points, waypoints, source)');
+w('select s.id, x.points, x.waypoints, \'Roadbook Giro d\'\'Italia 2026\' from (values');
+w(STAGES.map((s) => {
+  const pts = JSON.stringify(s.waypoints.map((p) => [p.km, p.alt]));
+  const wps = JSON.stringify(s.waypoints);
+  return `  (${s.n}, ${q(pts)}::jsonb, ${q(wps)}::jsonb)`;
+}).join(',\n'));
+w(`) as x(number, points, waypoints) join public.stages s on s.tour_id = ${q(TOUR)} and s.number = x.number;`);
 w();
 
 w(`-- ---------------------------------------------------------------------

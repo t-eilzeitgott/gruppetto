@@ -1,4 +1,4 @@
-import type { ProfilePoint } from '../lib/gpx';
+import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData,
 } from '../lib/types';
@@ -120,11 +120,19 @@ export class DemoSource implements DataSource {
 
   private heightProfiles = new Map<number, ProfilePoint[]>();
 
-  async loadStageProfile(stageId: number): Promise<ProfilePoint[] | null> {
+  async loadStageProfile(stageId: number): Promise<StageProfileData | null> {
     await wait(80);
-    if (this.heightProfiles.has(stageId)) return this.heightProfiles.get(stageId)!;
+    if (this.heightProfiles.has(stageId)) return { points: this.heightProfiles.get(stageId)! };
     const stage = this.stages.find((s) => s.id === stageId);
-    return stage ? demoProfile(stage) : null;
+    const points = stage ? demoProfile(stage) : null;
+    if (!points || !stage) return null;
+    // Beispiel-Durchfahrtsorte: Start, jede Bergwertung, Ziel
+    const waypoints = [
+      { km: 0, alt: points[0][1], name: (stage.departure ?? 'Start').toUpperCase() },
+      ...(stage.climbs ?? []).map((c) => ({ km: c.km, alt: points.find((p) => p[0] >= c.km)?.[1] ?? 0, name: c.name })),
+      { km: stage.distance_km ?? 0, alt: points[points.length - 1][1], name: (stage.arrival ?? 'Ziel').toUpperCase() },
+    ];
+    return { points, waypoints, source: 'Demo' };
   }
 
   async saveStageProfile(stageId: number, points: ProfilePoint[] | null): Promise<void> {

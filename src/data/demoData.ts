@@ -23,7 +23,7 @@ const PROFILES: Record<number, { climbs: Climb[]; sprints: Sprint[]; elevation_m
   2: { climbs: [{ name: 'Colle della Serra', cat: '4', km: 61.4 }], sprints: [{ km: 102.3 }, { km: 151 }], elevation_m: 1250 },
   4: { climbs: [{ name: 'Colle di Zambla', cat: '2', km: 74.2, len: 13.4, grad: 5.6 }, { name: 'Passo di Dossena', cat: '3', km: 96.8 }, { name: 'Passo San Marco', cat: '1', km: 186, len: 25.1, grad: 6.3 }], sprints: [{ km: 128.5 }], elevation_m: 4100 },
   7: { climbs: [{ name: 'Pietracolora', cat: '3', km: 128.7 }, { name: 'Corno alle Scale', cat: '1', km: 174, len: 10.8, grad: 6.1 }], sprints: [{ km: 92 }], elevation_m: 3350 },
-  9: { climbs: [{ name: 'San Leo', cat: '3', km: 58.3, len: 4.9, grad: 7.2, max: 12 }, { name: 'Monte Carpegna', cat: '1', km: 141.5, len: 6, grad: 9.6, max: 14, alt: 1340 }, { name: 'Monte Carpegna', cat: '1', km: 172, len: 6, grad: 9.6, max: 14, alt: 1340 }], sprints: [{ km: 104.7 }], elevation_m: 3900 },
+  9: { climbs: [{ name: 'San Leo', cat: '3', km: 58.3, len: 4.9, grad: 7.2, max: 12 }, { name: 'Monte Carpegna', cat: '1', km: 141.5, len: 6, grad: 9.6, max: 14, alt: 1340 }, { name: 'Monte Carpegna', cat: '1', km: 172, len: 6, grad: 9.6, max: 14, alt: 1340 }], sprints: [{ km: 104.7, name: 'Urbino', kind: 'sprint' }, { km: 160.2, name: 'Red Bull KM', kind: 'redbull' }], elevation_m: 3900 },
   20: { climbs: [{ name: 'Passo dell\'Umbrail', cat: '1', km: 121 }, { name: 'Passo dello Stelvio', cat: 'CC', km: 168, len: 21.7, grad: 7.1, max: 14, alt: 2758 }], sprints: [{ km: 66 }], elevation_m: 4600 },
 };
 
@@ -117,6 +117,13 @@ export const DEMO_STAGES: Stage[] = PLAN.map(([day, h, m, kind, km, from, to], i
   climbs: PROFILES[i + 1]?.climbs ?? [],
   sprints: PROFILES[i + 1]?.sprints ?? [],
   elevation_m: PROFILES[i + 1]?.elevation_m ?? null,
+  info: i + 1 === 9 ? {
+    original_date: '2026-05-16',
+    route: 'Beispieltext: Erst flach an der Adria entlang, dann ins Hinterland über San Leo und zweimal hinauf zum Monte Carpegna – beim zweiten Mal ist oben das Ziel.',
+    finale: 'Beispieltext: Die letzten 6 km steigen konstant um 9–10 %, mit einer Rampe von 14 % kurz vor dem Ziel. Zielgerade 150 m, 7 m breit.',
+    feed: '61.2 - 118.4',
+    neutral_km: 3,
+  } : undefined,
 }));
 
 const RESULTS: string[][] = [

@@ -1,4 +1,4 @@
-import type { ProfilePoint } from '../lib/gpx';
+import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, PointScale, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
   Tour, TourData,
@@ -239,12 +239,18 @@ export class SupabaseSource implements DataSource {
     };
   }
 
-  async loadStageProfile(stageId: number): Promise<ProfilePoint[] | null> {
+  async loadStageProfile(stageId: number): Promise<StageProfileData | null> {
     try {
-      const rows = await this.rest<{ points: ProfilePoint[] }[]>(`stage_profiles?stage_id=eq.${stageId}&select=points`);
-      return rows[0]?.points ?? null;
+      const rows = await this.rest<StageProfileData[]>(`stage_profiles?stage_id=eq.${stageId}&select=points,waypoints,source`);
+      return rows[0] ?? null;
     } catch {
-      return null;
+      try {
+        // ältere Datenbank ohne Spalte „waypoints“
+        const rows = await this.rest<StageProfileData[]>(`stage_profiles?stage_id=eq.${stageId}&select=points`);
+        return rows[0] ?? null;
+      } catch {
+        return null;
+      }
     }
   }
 

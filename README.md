@@ -63,3 +63,5 @@ UI-Check mit Playwright (lokal, falls installiert): `node scripts/build.mjs && n
 - Build: esbuild (`scripts/build.mjs`), Deploy: `.github/workflows/deploy.yml`
 
 **Höhenprofile:** Unter *Admin → Etappen → Höhenprofile (GPX)* lassen sich GPX-Strecken für alle Etappen auf einmal hochladen (Etappennummer aus dem Dateinamen). Die App zeigt dann das echte Höhenprofil, nach Steigung eingefärbt, und in jedem Anstieg die Steigung je Kilometer.
+
+**Roadbook-Daten (Giro 2026):** `scripts/giro2026/roadbook.json` stammt aus den Durchfahrtstabellen des offiziellen Roadbooks (`pdftotext -layout` + `roadbook_extract.py`): rund 730 Durchfahrtsorte mit Kilometer und Höhe, alle Bergwertungen mit Gipfelhöhe, Zwischensprints, Red Bull KM und Verpflegungszonen. Daraus entstehen die Höhenprofile in `seed_giro2026.sql`. Strecken- und Finaltexte sind in `texts.de.json` übersetzt. Ein später hochgeladenes GPX ersetzt die Profilpunkte, die Durchfahrtsorte bleiben.

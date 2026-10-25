@@ -7,7 +7,7 @@ import type { Profile, Stage, TourData } from '../lib/types';
 import { Avatar, ProBadge, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar, cx, useTitle, Link } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { Tippers, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
-import { StageFactsCard, StageProfileCard } from '../ui/StageProfile';
+import { StageFactsCard, StageProfileCard, StageRouteCard } from '../ui/StageProfile';
 import { flag } from '../lib/countries';
 
 export function StageDetail({ id }: { id: number }) {
@@ -46,6 +46,7 @@ export function StageDetail({ id }: { id: number }) {
         {state === 'open' ? <OpenStage stage={stage} data={data} me={me} members={members} now={now} /> : null}
         {state === 'running' ? <RunningStage stage={stage} data={data} me={me} members={members} /> : null}
         {state === 'done' ? <DoneStage stage={stage} data={data} me={me} members={members} /> : null}
+        <StageRouteCard stage={stage} />
         <StageProfileCard stage={stage} tour={data.tour} />
         <StageFactsCard stage={stage} tour={data.tour} />
       </div>

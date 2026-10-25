@@ -2,7 +2,9 @@
 // Quellen: Wikipedia (Etappen, Top 10, Gesamtwertung je Etappe, Endwertungen, Startliste),
 // kirolakeitb.eus (Anstiege mit Kategorie und Kilometer), cyclingstage.com / Sky Sport /
 // giroditalia.it, oasport.it (Längen, Steigungen, Maximalsteigung), Eurosport (Höhenmeter),
-// tuttobiciweb.it (Reglement: Neutralisation, 3-Sekunden-Regel), Sky Sport (Fahrplan, Gipfelhöhen).
+// tuttobiciweb.it (Reglement: Neutralisation, 3-Sekunden-Regel), Sky Sport (Fahrplan).
+// Kilometer, Höhen und Kategorien der Bergwertungen, Sprints und Red Bull KM kommen beim Erzeugen
+// aus roadbook.json (offizielles Roadbook „Garibaldi“) und überschreiben die Werte hier.
 // cat: '1'–'4' Bergwertung, 'CC' = Cima Coppi (höchster Punkt des Giro)
 
 // len/grad/max: Länge (km), Ø- und Maximalsteigung (%), alt: Gipfelhöhe (m, wo bekannt)
@@ -24,7 +26,7 @@ export const STAGES = [
     climbs: [{ name: 'Prestieri', cat: '3', km: 27, len: 13, grad: 5, max: 9 },
       { name: 'Montagna Grande di Viggiano', cat: '2', km: 154, len: 6.6, grad: 9.1, max: 15 }],
     sprints: [{ km: 174.2 }] },
-  { n: 6, date: '2026-05-14', from: 'Paestum', to: 'Neapel', km: 142, kind: 'flat', time: '3:19:30', elevation: 500, neutral: 5, threeSec: true,
+  { n: 6, date: '2026-05-14', from: 'Paestum', to: 'Neapel', km: 141, kind: 'flat', time: '3:19:30', elevation: 500, neutral: 5, threeSec: true,
     climbs: [{ name: "Cava de' Tirreni", cat: '4', km: 40.1, len: 7.1, grad: 2.7, max: 8 }] },
   { n: 7, date: '2026-05-15', from: 'Formia', to: 'Blockhaus', km: 244, kind: 'mountain', time: '6:09:15', elevation: 4600,
     info: { start: '10:55', finish: 'ca. 17:15' },

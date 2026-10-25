@@ -5,12 +5,22 @@ import { Icon } from './Icon';
 import { cx, Link } from './kit';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
-import { eleAt, kmSegments, type ProfilePoint } from '../lib/gpx';
+import { eleAt, kmSegments, type ProfilePoint, type StageProfileData, type Waypoint } from '../lib/gpx';
 
-/** Höhenprofil (GPX) einer Etappe – wird nur bei Bedarf geladen und zwischengespeichert */
-export function useStageProfile(stageId: number | null | undefined): ProfilePoint[] | null {
-  const q = useQuery<ProfilePoint[] | null>(stageId ? `profile:${stageId}` : null, () => source.loadStageProfile(stageId!));
+function useProfileData(stageId: number | null | undefined): StageProfileData | null {
+  const q = useQuery<StageProfileData | null>(stageId ? `profile:${stageId}` : null, () => source.loadStageProfile(stageId!));
   return q.data ?? null;
+}
+
+/** Höhenprofil (GPX/Roadbook) einer Etappe – wird nur bei Bedarf geladen und zwischengespeichert */
+export function useStageProfile(stageId: number | null | undefined): ProfilePoint[] | null {
+  const d = useProfileData(stageId);
+  return d?.points && d.points.length > 1 ? d.points : null;
+}
+
+/** Durchfahrtsorte mit Höhe (aus dem Roadbook) */
+export function useStageWaypoints(stageId: number | null | undefined): Waypoint[] | null {
+  return useProfileData(stageId)?.waypoints ?? null;
 }
 
 /** Farbe nach Steigung (wie in klassischen Profilen) */
@@ -168,10 +178,10 @@ function SchematicChart({ stage }: { stage: Stage }) {
           const sx = x(s.km);
           const sy = y(height(s.km));
           return (
-            <g key={`s${i}`} className="profile-chart__sprint">
+            <g key={`s${i}`} className={cx('profile-chart__sprint', s.kind === 'redbull' && 'is-redbull')}>
               <line x1={sx} x2={sx} y1={sy} y2={H - BOTTOM} />
               <rect x={sx - 9} y={sy - 24} width="18" height="16" rx="5" />
-              <text x={sx} y={sy - 12.5} textAnchor="middle">S</text>
+              <text x={sx} y={sy - 12.5} textAnchor="middle">{s.kind === 'redbull' ? 'R' : 'S'}</text>
             </g>
           );
         })}
@@ -204,6 +214,7 @@ export function StageProfileChart({ stage }: { stage: Stage }) {
 /** Echtes Höhenprofil, Fläche nach Steigung eingefärbt, mit Bergwertungen und Sprints */
 function RealChart({ stage, points }: { stage: Stage; points: ProfilePoint[] }) {
   const { ref, w: W } = useWidth();
+  const waypoints = useStageWaypoints(stage.id) ?? [];
   const climbs = [...(stage.climbs ?? [])].sort((a, b) => a.km - b.km);
   const sprints = stage.sprints ?? [];
   const gpxKm = points[points.length - 1][0];
@@ -276,15 +287,19 @@ function RealChart({ stage, points }: { stage: Stage; points: ProfilePoint[] }) 
           </g>
         ))}
         <text x={x(gpxKm)} y={H - 7} textAnchor="end">{fmtKm(officialKm)}</text>
+        {waypoints.map((wp, i) => (
+          <circle key={`w${i}`} cx={x(toGpx(wp.km))} cy={y(eleAt(points, toGpx(wp.km)))} r="1.7" className="profile-chart__wp" />
+        ))}
         {sprints.map((sp, i) => {
           const k = toGpx(sp.km);
           const sx = x(k);
           const sy = y(eleAt(points, k));
+          const rb = sp.kind === 'redbull';
           return (
-            <g key={`s${i}`} className="profile-chart__sprint">
+            <g key={`s${i}`} className={cx('profile-chart__sprint', rb && 'is-redbull')}>
               <line x1={sx} x2={sx} y1={sy} y2={bottom} />
               <rect x={sx - 9} y={sy - 24} width="18" height="16" rx="5" />
-              <text x={sx} y={sy - 12.5} textAnchor="middle">S</text>
+              <text x={sx} y={sy - 12.5} textAnchor="middle">{rb ? 'R' : 'S'}</text>
             </g>
           );
         })}
@@ -311,40 +326,60 @@ function RealChart({ stage, points }: { stage: Stage; points: ProfilePoint[] }) 
 /** Steigung je Kilometer als Säulen (wie in Anstiegsprofilen) */
 function KmBars({ c, stage, points }: { c: Climb; stage: Stage; points: ProfilePoint[] }) {
   const { ref, w: W } = useWidth(300);
+  const waypoints = useStageWaypoints(stage.id) ?? [];
   const gpxKm = points[points.length - 1][0];
   const official = stage.distance_km ?? gpxKm;
   const scale = gpxKm / official;
   const len = c.len ?? 5;
   const top = c.km * scale;
   const foot = Math.max(0, top - len * scale);
-  const segs = kmSegments(points, foot, top);
+  // dichtes Profil (GPX): Steigung je km; sonst Abschnitte zwischen den Durchfahrtsorten
+  const inside = points.filter((p) => p[0] > foot && p[0] < top).length;
+  const dense = inside >= len * 1.5;
+  let segs: { from: number; to: number; grade: number; label?: string }[];
+  if (dense) {
+    segs = kmSegments(points, foot, top).map((sg, i) => ({ ...sg, label: String(i + 1) }));
+  } else {
+    const cuts = [foot, ...waypoints.map((w) => w.km * scale).filter((k) => k > foot + 0.3 && k < top - 0.3), top];
+    segs = [];
+    for (let i = 1; i < cuts.length; i += 1) {
+      const a = cuts[i - 1];
+      const b = cuts[i];
+      const grade = ((eleAt(points, b) - eleAt(points, a)) / ((b - a) * 1000)) * 100;
+      segs.push({ from: a, to: b, grade: Math.round(grade * 10) / 10, label: `${nf(b - a)} km` });
+    }
+  }
   if (!segs.length) return null;
   const h = 132;
   const padB = 22;
   const padT = 20;
-  const maxG = Math.max(10, ...segs.map((s) => s.grade));
-  const bw = (W - 8) / segs.length;
+  const maxG = Math.max(10, ...segs.map((sg) => sg.grade));
+  const total = top - foot;
+  const xOf = (k: number) => 4 + ((k - foot) / total) * (W - 8);
   const startE = Math.round(eleAt(points, foot));
   const endE = Math.round(eleAt(points, top));
   return (
     <div ref={ref} className="km-bars-wrap">
       <svg className="km-bars" viewBox={`0 0 ${W} ${h}`} role="img"
-        aria-label={`Steigung je Kilometer: ${segs.map((s) => `${nf(s.grade)} %`).join(', ')}`}>
-        {segs.map((s, i) => {
-          const g = Math.max(0, s.grade);
+        aria-label={`Steigung ${dense ? 'je Kilometer' : 'je Abschnitt'}: ${segs.map((sg) => `${nf(sg.grade)} %`).join(', ')}`}>
+        {segs.map((sg, i) => {
+          const g = Math.max(0, sg.grade);
           const bh = ((h - padB - padT) * g) / maxG;
-          const bx = 4 + i * bw;
+          const bx = xOf(sg.from);
+          const bw = xOf(sg.to) - bx;
           const by = h - padB - bh;
           return (
             <g key={i}>
-              <rect x={bx + 1} y={by} width={Math.max(2, bw - 2)} height={Math.max(1, bh)} rx="2" fill={gradeColor(s.grade)} />
-              {bw >= 22 ? <text x={bx + bw / 2} y={by - 4} textAnchor="middle" className="km-bars__val">{nf(s.grade)}</text> : null}
-              {bw >= 14 ? <text x={bx + bw / 2} y={h - 7} textAnchor="middle" className="km-bars__km">{i + 1}</text> : null}
+              <rect x={bx + 1} y={by} width={Math.max(2, bw - 2)} height={Math.max(1, bh)} rx="2" fill={gradeColor(sg.grade)} />
+              {bw >= 24 ? <text x={bx + bw / 2} y={by - 4} textAnchor="middle" className="km-bars__val">{nf(sg.grade)}</text> : null}
+              {bw >= (dense ? 14 : 40) ? <text x={bx + bw / 2} y={h - 7} textAnchor="middle" className="km-bars__km">{sg.label}</text> : null}
             </g>
           );
         })}
       </svg>
-      <p className="muted small">Steigung je km (in %) · von {startE.toLocaleString('de-DE')}&nbsp;m auf {endE.toLocaleString('de-DE')}&nbsp;m · aus dem GPX-Höhenprofil</p>
+      <p className="muted small">
+        Steigung {dense ? 'je km' : 'je Abschnitt zwischen den Durchfahrtsorten'} (in %) · von {startE.toLocaleString('de-DE')}&nbsp;m auf {endE.toLocaleString('de-DE')}&nbsp;m
+      </p>
     </div>
   );
 }
@@ -468,13 +503,23 @@ export function StageProfileCard({ stage, tour }: { stage: Stage; tour: Tour }) 
                     </span>
                   </>
                 ) : (
-                  <>
-                    <span className="badge badge--sprint">S</span>
-                    <span className="profile-points__main">
-                      <strong>{p.s.name ?? 'Zwischensprint'}</strong>
-                      <span className="muted">Punktewertung{sprintPts ? ` · ${sprintPts.join('/')}` : ''}</span>
-                    </span>
-                  </>
+                  p.s.kind === 'redbull' ? (
+                    <>
+                      <span className="badge badge--redbull">R</span>
+                      <span className="profile-points__main">
+                        <strong>Red Bull KM</strong>
+                        <span className="muted">Zeitbonus{tour.info?.redbull_bonus ? ` ${tour.info.redbull_bonus.map((b) => `${b}″`).join('/')}` : ''}</span>
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="badge badge--sprint">S</span>
+                      <span className="profile-points__main">
+                        <strong>{p.s.name ? `Sprint ${p.s.name}` : 'Zwischensprint'}</strong>
+                        <span className="muted">Punktewertung{sprintPts ? ` · ${sprintPts.join('/')}` : ''}</span>
+                      </span>
+                    </>
+                  )
                 )}
                 <Icon name="chevron" size={16} className={cx('profile-points__chev', open === i && 'is-open')} />
               </button>
@@ -482,8 +527,9 @@ export function StageProfileCard({ stage, tour }: { stage: Stage; tour: Tour }) 
                 p.kind === 'climb' ? <ClimbSheet c={p.c} stage={stage} tour={tour} /> : (
                   <div className="climb-sheet">
                     <p className="muted small">
-                      Zwischensprint bei km {nf(p.km)}, noch {stage.distance_km ? nf(stage.distance_km - p.km) : '–'} km bis ins Ziel.
-                      {sprintPts ? ` Punkte für die Punktewertung: ${sprintPts.join(', ')}.` : ''}
+                      {p.s.kind === 'redbull'
+                        ? `Red Bull KM bei km ${nf(p.km)}, noch ${stage.distance_km ? nf(stage.distance_km - p.km) : '–'} km bis ins Ziel. Zeitgutschrift für die ersten drei${tour.info?.redbull_bonus ? ` (${tour.info.redbull_bonus.map((b) => `${b}″`).join(', ')})` : ''}${tour.info?.redbull_points ? `, Punkte für die eigene Red-Bull-Wertung: ${tour.info.redbull_points.join(', ')}` : ''}.`
+                        : `Zwischensprint${p.s.name ? ` in ${p.s.name}` : ''} bei km ${nf(p.km)}, noch ${stage.distance_km ? nf(stage.distance_km - p.km) : '–'} km bis ins Ziel.${sprintPts ? ` Punkte für die Punktewertung: ${sprintPts.join(', ')}.` : ''}`}
                     </p>
                   </div>
                 )
@@ -502,8 +548,9 @@ export function StageProfileCard({ stage, tour }: { stage: Stage; tour: Tour }) 
           </li>
         </ol>
       ) : null}
+      <Waypoints stage={stage} />
       <p className="hint">
-        {profile ? 'Höhenprofil aus der GPX-Strecke, Fläche nach Steigung eingefärbt.' : 'Höhe je Anstieg aus Länge × Ø-Steigung, Täler vereinfacht.'} km-Angaben zum Gipfel. Tippe auf eine Wertung für den Steckbrief.
+        {profile ? 'Höhenprofil aus der Strecke, Fläche nach Steigung eingefärbt.' : 'Höhe je Anstieg aus Länge × Ø-Steigung, Täler vereinfacht.'} km-Angaben zum Gipfel. Tippe auf eine Wertung für den Steckbrief.
         {pcs ? <> <a href={pcs} target="_blank" rel="noopener noreferrer">Original-Profil bei ProCyclingStats</a></> : null}
       </p>
     </section>
@@ -547,7 +594,10 @@ export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
   if (hardest) rows.push(['Härtester Anstieg', `${hardest.c.name} (${nf(hardest.m.difficulty ?? 0)})`]);
   if (last && stage.distance_km) rows.push(['Letzte Bergwertung', `${last.name} · ${climbMetrics(last, stage).finish ? 'im Ziel' : `${nf(stage.distance_km - last.km)} km vor dem Ziel`}`]);
   if (komTotal) rows.push(['Bergpunkte für Sieger', `${komTotal} Punkte`]);
-  if (stage.sprints?.length) rows.push(['Zwischensprints', stage.sprints.map((s) => `km\u00a0${nf(s.km)}`).join(', ')]);
+  const sp = (stage.sprints ?? []).filter((s) => s.kind !== 'redbull');
+  const rbk = (stage.sprints ?? []).find((s) => s.kind === 'redbull');
+  if (sp.length) rows.push(['Zwischensprint', sp.map((s) => `km\u00a0${nf(s.km)}${s.name ? ` · ${s.name}` : ''}`).join(', ')]);
+  if (rbk) rows.push(['Red Bull KM', `km\u00a0${nf(rbk.km)}`]);
 
   const rules: [string, string][] = [];
   if (info.original_date) {
@@ -560,6 +610,7 @@ export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
   if (tour.info?.redbull_bonus && stage.kind !== 'itt' && stage.kind !== 'ttt') rules.push(['Red Bull KM', `${tour.info.redbull_bonus.map((b) => `${b}″`).join(' / ')} Bonus`]);
   if (info.neutral_km) rules.push(['Neutralisation', `letzte ${info.neutral_km} km (Sturz/Defekt = gleiche Zeit)`]);
   if (info.three_sec) rules.push(['3-Sekunden-Regel', 'Lücke erst ab 3 Sekunden']);
+  if (info.feed) rules.push(['Verpflegung', `km ${info.feed.replace(/\s*-\s*/g, ' · ')}`]);
 
   if (rows.length <= 2 && !rules.length) return null;
   return (
@@ -591,5 +642,53 @@ export function ProfileDetails({ stage }: { stage: Stage }) {
       <summary>Profil · {n} {n === 1 ? 'Bergwertung' : 'Bergwertungen'}</summary>
       <StageProfileChart stage={stage} />
     </details>
+  );
+}
+
+/** Durchfahrtsorte mit Kilometer und Höhe (aufklappbar) */
+function Waypoints({ stage }: { stage: Stage }) {
+  const wps = useStageWaypoints(stage.id);
+  if (!wps || wps.length < 3) return null;
+  const total = stage.distance_km ?? wps[wps.length - 1].km;
+  return (
+    <details className="waypoints">
+      <summary>Durchfahrtsorte · {wps.length}</summary>
+      <div className="table-scroll">
+        <table className="course-table">
+          <thead>
+            <tr><th scope="col" className="num">km</th><th scope="col">Ort</th><th scope="col" className="num">Höhe</th><th scope="col" className="num">bis Ziel</th></tr>
+          </thead>
+          <tbody>
+            {wps.map((w, i) => (
+              <tr key={i}>
+                <td className="num">{nf(w.km)}</td>
+                <th scope="row" className="waypoints__name">{w.name}</th>
+                <td className="num">{w.alt.toLocaleString('de-DE')}&nbsp;m</td>
+                <td className="num muted">{nf(Math.max(0, total - w.km))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
+/** Streckenbeschreibung und Finale aus dem Roadbook */
+export function StageRouteCard({ stage }: { stage: Stage }) {
+  const info = stage.info ?? {};
+  if (!info.route && !info.finale) return null;
+  return (
+    <section className="card" aria-labelledby={`route-${stage.id}`}>
+      <h2 id={`route-${stage.id}`} className="eyebrow">Die Strecke</h2>
+      {info.route ? <p className="route-text">{info.route}</p> : null}
+      {info.finale ? (
+        <>
+          <h3 className="eyebrow sheet-sub">Finale</h3>
+          <p className="route-text">{info.finale}</p>
+        </>
+      ) : null}
+      <p className="hint">Quelle: offizielles Roadbook des Giro d’Italia.</p>
+    </section>
   );
 }

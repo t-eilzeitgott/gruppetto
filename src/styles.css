@@ -1023,3 +1023,11 @@ tr.is-me > * { background: var(--accent-soft); }
 .gpx-row select { min-height: 40px; }
 .file-pick { position: relative; display: flex; }
 .file-pick input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.profile-chart__sprint.is-redbull rect { fill: #c8102e; }
+.profile-chart__sprint.is-redbull line { stroke: #c8102e; }
+.profile-chart__wp { fill: var(--bg); stroke: var(--text); stroke-width: 1; opacity: 0.7; }
+.badge--redbull { background: #c8102e; }
+.waypoints > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 6px 0; }
+.waypoints .table-scroll { margin-top: 6px; }
+.waypoints__name { font-weight: 500; white-space: normal !important; min-width: 120px; }
+.route-text { font-size: 15px; line-height: 1.55; }

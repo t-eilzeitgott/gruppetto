@@ -136,6 +136,7 @@ create table if not exists public.stage_profiles (
   source     text,
   updated_at timestamptz not null default now()
 );
+alter table public.stage_profiles add column if not exists waypoints jsonb;  -- [{km, alt, name}] Durchfahrtsorte
 
 -- Wertungsstand nach einer Etappe (z. B. Gesamtwertung Top 10) – sichtbar mit dem Ergebnis
 create table if not exists public.stage_standings (

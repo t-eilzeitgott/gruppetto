@@ -1,6 +1,20 @@
 /** Höhenprofil: Punkte [km, Höhe in m] */
 export type ProfilePoint = [number, number];
 
+export interface Waypoint {
+  km: number;
+  alt: number;
+  name: string;
+}
+
+/** Gespeichertes Höhenprofil einer Etappe */
+export interface StageProfileData {
+  points: ProfilePoint[];
+  /** Durchfahrtsorte (aus dem Roadbook) */
+  waypoints?: Waypoint[] | null;
+  source?: string | null;
+}
+
 export interface ParsedGpx {
   points: ProfilePoint[];
   distanceKm: number;

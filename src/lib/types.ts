@@ -70,6 +70,11 @@ export interface StageInfo {
   finish_real?: string;
   neutral_km?: number;
   three_sec?: boolean;
+  /** Streckenbeschreibung und Finale (aus dem Roadbook) */
+  route?: string;
+  finale?: string;
+  /** Verpflegungszonen, z. B. „36.6 - 70.6 - 103.1“ */
+  feed?: string;
 }
 
 export interface TourInfo {
@@ -97,6 +102,8 @@ export interface Climb {
 export interface Sprint {
   km: number;
   name?: string;
+  /** 'sprint' = Zwischensprint (Punktewertung), 'redbull' = Red Bull KM (Zeitbonus) */
+  kind?: 'sprint' | 'redbull';
 }
 
 export interface Stage {
