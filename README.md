@@ -28,7 +28,7 @@ Das Grand-Tour-Tippspiel für eure Runde: Giro, Tour und Vuelta – ein Tipp pro
 5. **Verbinden:** In GitHub unter *Settings → Secrets and variables → Actions → Variables* `VITE_SUPABASE_URL` und `VITE_SUPABASE_PUBLISHABLE_KEY` (Publishable key, `sb_publishable_…`) anlegen, dann *Actions → Deploy → Run workflow*.
 6. **Admin:** einmal in der App anmelden, dann im SQL Editor
    `update public.profiles set is_admin = true where id = (select id from auth.users where email = 'deine@mail.de');`
-7. Optional zum Testen: [`supabase/seed_testrunde.sql`](supabase/seed_testrunde.sql) legt eine Testrunde mit 5 Etappen ab morgen an.
+7. Optional zum Testen: [`supabase/seed_testrunde.sql`](supabase/seed_testrunde.sql) legt eine Testrunde mit 5 Etappen ab morgen an. Danach [`supabase/simulate_testrunde.sql`](supabase/simulate_testrunde.sql) ausführen: Die Datenbank würfelt dann jede Etappe 4 Stunden nach dem Start eine Top 10 aus (pg_cron) und rechnet die Bonuswertungen mit.
 
 Ohne die beiden Variablen läuft die App automatisch im Demo-Modus. Der Workflow *Keep-alive* pingt die Datenbank täglich, damit Supabase das Free-Projekt nicht pausiert.
 
