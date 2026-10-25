@@ -67,6 +67,8 @@ export interface DataSource {
   /** Höhenprofil einer Etappe (aus GPX), null wenn keins hinterlegt */
   loadStageProfile(stageId: number): Promise<StageProfileData | null>;
   saveStageProfile(stageId: number, points: ProfilePoint[] | null, source?: string): Promise<void>;
+  /** Höhenprofile mehrerer Etappen auf einmal (für Mini-Profile in Listen) */
+  loadProfilesFor(stageIds: number[]): Promise<Record<number, ProfilePoint[]>>;
   /** Etappen-IDs mit hinterlegtem Höhenprofil */
   listStageProfiles(stageIds: number[]): Promise<number[]>;
   /** Lieblingsfahrer (IDs der Fahrer-Stammdaten) */

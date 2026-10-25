@@ -1031,3 +1031,6 @@ tr.is-me > * { background: var(--accent-soft); }
 .waypoints .table-scroll { margin-top: 6px; }
 .waypoints__name { font-weight: 500; white-space: normal !important; min-width: 120px; }
 .route-text { font-size: 15px; line-height: 1.55; }
+.mini-profile { display: block; width: 100%; height: 22px; margin: 3px 0 2px; }
+.mini-profile__area { fill: var(--accent-soft); }
+.mini-profile__line { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linejoin: round; }

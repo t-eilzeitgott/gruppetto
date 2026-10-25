@@ -140,6 +140,17 @@ export class DemoSource implements DataSource {
     if (points) this.heightProfiles.set(stageId, points); else this.heightProfiles.delete(stageId);
   }
 
+  async loadProfilesFor(stageIds: number[]): Promise<Record<number, ProfilePoint[]>> {
+    await wait(80);
+    const out: Record<number, ProfilePoint[]> = {};
+    for (const id of stageIds) {
+      const st = this.stages.find((s) => s.id === id);
+      const pts = this.heightProfiles.get(id) ?? (st ? demoProfile(st) : null);
+      if (pts) out[id] = pts;
+    }
+    return out;
+  }
+
   async listStageProfiles(stageIds: number[]): Promise<number[]> {
     await wait(60);
     return stageIds.filter((id) => this.heightProfiles.has(id) || !!demoProfile(this.stages.find((s) => s.id === id)!));

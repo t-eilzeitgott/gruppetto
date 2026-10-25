@@ -692,3 +692,41 @@ export function StageRouteCard({ stage }: { stage: Stage }) {
     </section>
   );
 }
+
+/** Kleines Profil für Listen: echtes Höhenprofil, sonst grob aus den Bergwertungen */
+export function MiniProfile({ stage, points }: { stage: Stage; points?: ProfilePoint[] | null }) {
+  const W = 100;
+  const H = 24;
+  const km = stage.distance_km ?? (points?.length ? points[points.length - 1][0] : 0);
+  const climbs = stage.climbs ?? [];
+  if (!km || (!points?.length && !climbs.length && stage.kind !== 'flat' && stage.kind !== 'itt')) return null;
+  const n = 60;
+  let vals: number[];
+  if (points && points.length > 1) {
+    const gk = points[points.length - 1][0];
+    vals = Array.from({ length: n + 1 }, (_, i) => eleAt(points, (gk * i) / n));
+  } else {
+    vals = Array.from({ length: n + 1 }, (_, i) => {
+      const k = (km * i) / n;
+      let h = 0;
+      for (const c of climbs) {
+        const gain = climbMetrics(c).gain ?? CAT_GAIN[c.cat] ?? 200;
+        const len = Math.max(c.len ?? CAT_LEN[c.cat] ?? 5, km * 0.04);
+        if (k <= c.km && k >= c.km - len) h = Math.max(h, gain * (1 - (c.km - k) / len));
+        else if (k > c.km && k <= c.km + len * 0.8) h = Math.max(h, gain * (1 - (k - c.km) / (len * 0.8)));
+      }
+      return h;
+    });
+  }
+  const min = Math.min(...vals);
+  // gemeinsamer Maßstab: 2.000 Höhenmeter füllen die Höhe, flache Etappen bleiben flach
+  const span = Math.max(2000, Math.max(...vals) - min);
+  const y = (v: number) => H - 1.5 - ((v - min) / span) * (H - 3);
+  const d = vals.map((v, i) => `${((i / n) * W).toFixed(2)},${y(v).toFixed(2)}`).join(' L');
+  return (
+    <svg className="mini-profile" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+      <path d={`M0,${H} L${d} L${W},${H} Z`} className="mini-profile__area" />
+      <path d={`M${d}`} className="mini-profile__line" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}

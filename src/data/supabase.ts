@@ -266,6 +266,16 @@ export class SupabaseSource implements DataSource {
     });
   }
 
+  async loadProfilesFor(stageIds: number[]): Promise<Record<number, ProfilePoint[]>> {
+    if (!stageIds.length) return {};
+    try {
+      const rows = await this.rest<{ stage_id: number; points: ProfilePoint[] }[]>(`stage_profiles?stage_id=in.(${stageIds.join(',')})&select=stage_id,points`);
+      return Object.fromEntries(rows.map((r) => [r.stage_id, r.points]));
+    } catch {
+      return {};
+    }
+  }
+
   async listStageProfiles(stageIds: number[]): Promise<number[]> {
     if (!stageIds.length) return [];
     try {
