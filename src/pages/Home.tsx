@@ -8,6 +8,13 @@ import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, Loading, useTitle
 import { Icon } from '../ui/Icon';
 import { KindChip, Tippers, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
 import { TourPicker, Wordmark } from '../ui/Shell';
+import { useApp } from '../app/context';
+import { useQuery } from '../app/query';
+import { source } from '../app/config';
+import type { GameBest } from '../data/source';
+import { GameIcon } from './Game';
+import { Track } from '../game/abfahrt/track';
+import { berlinDayKey } from '../game/abfahrt/rng';
 import type { Profile } from '../lib/types';
 
 export function Home() {
@@ -29,7 +36,10 @@ export function Home() {
     return (
       <>
         {header}
-        <Empty title="Noch keine Rundfahrt">Sobald der Admin eine Rundfahrt anlegt, kannst du hier tippen.</Empty>
+        <div className="stack">
+          <Empty title="Noch keine Rundfahrt">Sobald der Admin eine Rundfahrt anlegt, kannst du hier tippen.</Empty>
+          <GameCard />
+        </div>
       </>
     );
   }
@@ -112,7 +122,36 @@ function HomeBody({ data, members, me, now }: { data: TourData; members: Profile
       {phase === 'finished' ? <FinalCard data={data} board={board} /> : null}
 
       {phase !== 'upcoming' ? <Tiles data={data} me={me} next={next} /> : null}
+
+      <GameCard />
     </>
+  );
+}
+
+/** Minispiel als letzte Karte auf der Startseite */
+function GameCard() {
+  const { me } = useApp();
+  const day = berlinDayKey();
+  const season = useQuery<GameBest[]>('game:abfahrt:season', () => source.gameLeaderboard('abfahrt'));
+  const title = useMemo(() => new Track(day).title, [day]);
+  const idx = season.data?.findIndex((b) => b.user_id === me.id) ?? -1;
+  const mine = idx >= 0 ? season.data![idx] : null;
+  const leader = season.data?.[0];
+  return (
+    <Link to="/spiel" className="card game-card" ariaLabel="Minispiel Abfahrt öffnen">
+      <GameIcon size={56} />
+      <span className="game-card__main">
+        <span className="eyebrow">Minispiel</span>
+        <strong className="game-card__title">Abfahrt</strong>
+        <span className="muted game-card__route">Heute: {title}</span>
+        <span className="game-card__meta">
+          {mine
+            ? `Bestleistung ${mine.best.toLocaleString('de-DE')} · Platz\u00a0${idx + 1}`
+            : leader ? `Rekord ${leader.best.toLocaleString('de-DE')} – schlägst du ihn?` : 'Fahr die erste Bestmarke der Runde'}
+        </span>
+      </span>
+      <Icon name="chevron" className="muted" />
+    </Link>
   );
 }
 
@@ -229,11 +268,6 @@ function Tiles({ data, me, next }: { data: TourData; me: Profile; next: Stage | 
         <span className="muted">{data.tour.bonus_final ? 'Bonuspunkte' : 'Bonus-Hochrechnung'}</span>
         <span className="tile-card__big">{bonus}</span>
         <span className="muted">{data.tour.bonus_final ? 'Endstand' : 'wenn es so bleibt'}</span>
-      </Link>
-      <Link to="/spiel" className="tile-card tile-card--game">
-        <span className="muted">Zeitvertreib</span>
-        <span className="tile-card__big">Abfahrt</span>
-        <span className="muted">Minispiel mit Bestenliste</span>
       </Link>
     </div>
   );

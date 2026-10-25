@@ -12,6 +12,7 @@ declare module 'react' {
   export type ChangeEvent<T = Element> = Event & { currentTarget: T; target: T };
   export type KeyboardEvent<T = Element> = globalThis.KeyboardEvent & { currentTarget: T };
   export type MouseEvent<T = Element> = globalThis.MouseEvent & { currentTarget: T };
+  export type PointerEvent<T = Element> = globalThis.PointerEvent & { currentTarget: T };
   export type CSSProperties = Record<string, string | number | undefined>;
 
   export function useState<S>(initial: S | (() => S)): [S, Dispatch<SetStateAction<S>>];

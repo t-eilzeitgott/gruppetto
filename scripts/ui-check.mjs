@@ -57,6 +57,14 @@ const PAGES = [
   ['stage-profile', '?demo#/etappe/1004'],
   ['tip-profile', '?demo#/tipp/1009', async (p) => { await p.click('.profile-mini > summary'); }],
   ['game', '?demo#/spiel'],
+  ['game-board', '?demo#/spiel', async (p) => { await p.click('.abf-link'); }],
+  ['game-hud', '?demo#/spiel', async (p) => { await p.click('text=Losfahren'); await p.waitForTimeout(3200); }],
+  ['game-over', '?demo#/spiel', async (p) => {
+    await p.click('text=Losfahren');
+    await p.waitForTimeout(2600);
+    await p.evaluate(() => window.__abfahrt.engine().crash('Muuuh – Kuh erwischt'));
+    await p.waitForTimeout(2600);
+  }],
   ['player', '?demo#/spieler/u-felix'],
   ['player-me', '?demo#/spieler/u-christoph'],
   ['profile', '?demo#/profil'],

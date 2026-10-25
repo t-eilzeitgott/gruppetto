@@ -62,6 +62,8 @@ UI-Check mit Playwright (lokal, falls installiert): `node scripts/build.mjs && n
 - `src/pages/` – Screens, `src/pages/admin/` – Admin-Bereich
 - Build: esbuild (`scripts/build.mjs`), Deploy: `.github/workflows/deploy.yml`
 
+**Minispiel „Abfahrt“** (`#/spiel`, Karte unten auf der Startseite): Passabfahrt in Pseudo-3D auf Canvas, ohne Bibliotheken (`src/game/abfahrt/`). Jeden Tag eine neue Strecke für alle (Pass → Almen → Bergwald → Dorf → See oder Weinberge, dann Tunnel zum nächsten Pass), Gegner mit Windschatten, Kehren, Kuppen mit Sprüngen, Kühe und Steinschlag, Kombo-Multiplikator, drei Tagesaufgaben und Ränge nach Gesamtstrecke. Bestmarken der Runde stehen als Torbögen an der Strecke. Gespeichert wird je Lauf Punktzahl und Strecke in `game_scores`; `game_leaderboard(game, since)` liefert Heute- und Saisonwertung.
+
 **Höhenprofile:** Unter *Admin → Etappen → Höhenprofile (GPX)* lassen sich GPX-Strecken für alle Etappen auf einmal hochladen (Etappennummer aus dem Dateinamen). Die App zeigt dann das echte Höhenprofil, nach Steigung eingefärbt, und in jedem Anstieg die Steigung je Kilometer.
 
 **Roadbook-Daten (Giro 2026):** `scripts/giro2026/roadbook.json` stammt aus den Durchfahrtstabellen des offiziellen Roadbooks (`pdftotext -layout` + `roadbook_extract.py`): rund 730 Durchfahrtsorte mit Kilometer und Höhe, alle Bergwertungen mit Gipfelhöhe, Zwischensprints, Red Bull KM und Verpflegungszonen. Daraus entstehen die Höhenprofile in `seed_giro2026.sql`. Strecken- und Finaltexte sind in `texts.de.json` übersetzt. Ein später hochgeladenes GPX ersetzt die Profilpunkte, die Durchfahrtsorte bleiben.

@@ -156,22 +156,32 @@ export class DemoSource implements DataSource {
     return stageIds.filter((id) => this.heightProfiles.has(id) || !!demoProfile(this.stages.find((s) => s.id === id)!));
   }
 
-  private scores: { user_id: string; game: GameId; score: number; at: string }[] = [
-    ['u-felix', 2140], ['u-julian', 1885], ['u-lena', 1630], ['u-christoph', 1410], ['u-tobi', 1190], ['u-anna', 860], ['u-ben', 540],
-  ].map(([user_id, score], i) => ({ user_id: user_id as string, game: 'abfahrt' as GameId, score: score as number, at: new Date(DEMO_NOW - i * 3600e3).toISOString() }));
+  private scores: { user_id: string; game: GameId; score: number; meters: number; at: string }[] = [
+    ['u-felix', 14210, 3480, 2], ['u-julian', 11885, 2950, 30], ['u-lena', 9630, 2610, 5], ['u-christoph', 7410, 2080, 50],
+    ['u-tobi', 6190, 1760, 70], ['u-anna', 4860, 1320, 3], ['u-ben', 2540, 860, 90], ['u-felix', 9800, 2400, 1], ['u-julian', 7300, 2010, 1],
+  ].map(([user_id, score, meters, h]) => ({
+    user_id: user_id as string, game: 'abfahrt' as GameId, score: score as number, meters: meters as number,
+    at: new Date(Date.now() - (h as number) * 3600e3).toISOString(),
+  }));
 
-  async submitScore(game: GameId, score: number): Promise<void> {
+  async submitScore(game: GameId, score: number, meters = 0): Promise<void> {
     await wait(80);
-    this.scores.push({ user_id: DEMO_ME, game, score: Math.round(score), at: new Date().toISOString() });
+    this.scores.push({ user_id: DEMO_ME, game, score: Math.round(score), meters: Math.round(meters), at: new Date().toISOString() });
   }
 
-  async gameLeaderboard(game: GameId): Promise<GameBest[]> {
+  async gameLeaderboard(game: GameId, since?: string): Promise<GameBest[]> {
     await wait(80);
     const by = new Map<string, GameBest>();
-    for (const s of this.scores.filter((x) => x.game === game)) {
+    for (const s of this.scores.filter((x) => x.game === game && (!since || x.at >= since))) {
       const b = by.get(s.user_id);
-      if (!b) by.set(s.user_id, { user_id: s.user_id, best: s.score, runs: 1, last_at: s.at });
-      else { b.best = Math.max(b.best, s.score); b.runs += 1; if (s.at > b.last_at) b.last_at = s.at; }
+      if (!b) by.set(s.user_id, { user_id: s.user_id, best: s.score, best_m: s.meters, runs: 1, total_m: s.meters, last_at: s.at });
+      else {
+        b.best = Math.max(b.best, s.score);
+        b.best_m = Math.max(b.best_m, s.meters);
+        b.runs += 1;
+        b.total_m += s.meters;
+        if (s.at > b.last_at) b.last_at = s.at;
+      }
     }
     return [...by.values()].sort((a, b) => b.best - a.best);
   }

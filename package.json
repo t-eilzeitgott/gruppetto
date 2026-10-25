@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --serve",
-    "test": "node --import tsx --test src/lib/*.test.ts",
+    "test": "node --import tsx --test src/lib/*.test.ts src/game/abfahrt/*.test.ts",
     "typecheck": "tsc -p tsconfig.check.json",
     "test:db": "bash supabase/tests/run.sh"
   },

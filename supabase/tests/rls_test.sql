@@ -245,10 +245,14 @@ commit;
 begin;
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
-insert into public.game_scores (game, score) values ('abfahrt', 1200), ('abfahrt', 900);
+insert into public.game_scores (game, score, meters) values ('abfahrt', 1200, 800), ('abfahrt', 900, 1100);
 select pg_temp.expect_error($q$ insert into public.game_scores (user_id, game, score) values ('00000000-0000-0000-0000-00000000000a', 'abfahrt', 5) $q$, 'row-level security');
 select pg_temp.expect_eq((select best from public.game_leaderboard('abfahrt') limit 1), 1200, 'Bestenliste: beste Punktzahl');
 select pg_temp.expect_eq((select runs from public.game_leaderboard('abfahrt') limit 1), 2, 'Bestenliste: Anzahl Läufe');
+select pg_temp.expect_eq((select best_m from public.game_leaderboard('abfahrt') limit 1), 1100, 'Bestenliste: weiteste Strecke');
+select pg_temp.expect_eq((select total_m from public.game_leaderboard('abfahrt') limit 1)::int, 1900, 'Bestenliste: Gesamtstrecke');
+select pg_temp.expect_eq((select count(*) from public.game_leaderboard('abfahrt', now() + interval '1 hour'))::int, 0, 'Bestenliste: Zeitfilter');
+select pg_temp.expect_error($q$ insert into public.game_scores (game, score, meters) values ('abfahrt', 10, -5) $q$, 'check');
 commit;
 
 -- ---------- Anonym ----------

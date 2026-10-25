@@ -286,12 +286,15 @@ export class SupabaseSource implements DataSource {
     }
   }
 
-  async submitScore(game: GameId, score: number): Promise<void> {
-    await this.rest('game_scores', { method: 'POST', body: { game, score: Math.round(score) }, prefer: 'return=minimal' });
+  async submitScore(game: GameId, score: number, meters?: number): Promise<void> {
+    const body: Record<string, unknown> = { game, score: Math.round(score) };
+    if (meters !== undefined) body.meters = Math.max(0, Math.round(meters));
+    await this.rest('game_scores', { method: 'POST', body, prefer: 'return=minimal' });
   }
 
-  async gameLeaderboard(game: GameId): Promise<GameBest[]> {
-    return this.rpc<GameBest[]>('game_leaderboard', { p_game: game });
+  async gameLeaderboard(game: GameId, since?: string): Promise<GameBest[]> {
+    const rows = await this.rpc<GameBest[]>('game_leaderboard', since ? { p_game: game, p_since: since } : { p_game: game });
+    return rows.map((r) => ({ ...r, best_m: Number(r.best_m ?? 0), total_m: Number(r.total_m ?? 0), runs: Number(r.runs) }));
   }
 
   async listFavorites(): Promise<number[]> {

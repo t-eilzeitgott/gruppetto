@@ -13,7 +13,11 @@ export type GameId = 'abfahrt';
 export interface GameBest {
   user_id: string;
   best: number;
+  /** weiteste Strecke in m */
+  best_m: number;
   runs: number;
+  /** Gesamtstrecke aller Läufe in m */
+  total_m: number;
   last_at: string;
 }
 
@@ -81,8 +85,9 @@ export interface DataSource {
   /** Etappen-IDs mit hinterlegtem Höhenprofil */
   listStageProfiles(stageIds: number[]): Promise<number[]>;
   /** Minispiele: Lauf speichern und Bestenliste der Runde */
-  submitScore(game: GameId, score: number): Promise<void>;
-  gameLeaderboard(game: GameId): Promise<GameBest[]>;
+  submitScore(game: GameId, score: number, meters?: number): Promise<void>;
+  /** beste Läufe je Mitglied, optional nur seit einem Zeitpunkt (z. B. heute) */
+  gameLeaderboard(game: GameId, since?: string): Promise<GameBest[]>;
   /** Lieblingsfahrer (IDs der Fahrer-Stammdaten) */
   listFavorites(): Promise<number[]>;
   setFavorite(cyclistId: number, on: boolean): Promise<void>;

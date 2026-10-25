@@ -147,6 +147,8 @@ create table if not exists public.game_scores (
   created_at timestamptz not null default now()
 );
 create index if not exists game_scores_game_idx on public.game_scores (game, score desc);
+alter table public.game_scores add column if not exists meters int check (meters is null or (meters >= 0 and meters < 1000000));
+create index if not exists game_scores_time_idx on public.game_scores (game, created_at);
 
 -- Wertungsstand nach einer Etappe (z. B. Gesamtwertung Top 10) – sichtbar mit dem Ergebnis
 create table if not exists public.stage_standings (
@@ -569,19 +571,21 @@ drop policy if exists game_scores_insert on public.game_scores;
 create policy game_scores_insert on public.game_scores
   for insert to authenticated with check (user_id = auth.uid() and public.is_member());
 
--- Bestenliste: beste Punktzahl je Mitglied
-create or replace function public.game_leaderboard(p_game text)
-returns table (user_id uuid, best int, runs bigint, last_at timestamptz)
+-- Bestenliste: beste Punktzahl, weiteste Strecke und Gesamtstrecke je Mitglied (optional ab einem Zeitpunkt)
+drop function if exists public.game_leaderboard(text);
+create or replace function public.game_leaderboard(p_game text, p_since timestamptz default null)
+returns table (user_id uuid, best int, best_m int, runs bigint, total_m bigint, last_at timestamptz)
 language sql stable set search_path = public as $$
-  select g.user_id, max(g.score)::int, count(*), max(g.created_at)
+  select g.user_id, max(g.score)::int, coalesce(max(g.meters), 0)::int, count(*), coalesce(sum(g.meters), 0)::bigint, max(g.created_at)
     from public.game_scores g
    where g.game = p_game
+     and (p_since is null or g.created_at >= p_since)
    group by g.user_id
    order by max(g.score) desc
    limit 100;
 $$;
-revoke execute on function public.game_leaderboard(text) from public, anon;
-grant  execute on function public.game_leaderboard(text) to authenticated;
+revoke execute on function public.game_leaderboard(text, timestamptz) from public, anon;
+grant  execute on function public.game_leaderboard(text, timestamptz) to authenticated;
 
 drop policy if exists profiles_stage_select on public.stage_profiles;
 create policy profiles_stage_select on public.stage_profiles

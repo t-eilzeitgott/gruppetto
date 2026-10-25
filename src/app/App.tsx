@@ -84,7 +84,7 @@ function MemberApp({ me }: { me: ProfileT }) {
   }, [tour?.theme]);
 
   const ctx = useMemo(() => ({ me, tour, tours }), [me, tour, tours]);
-  const fullScreen = first === 'tipp' || (first === 'bonus' && !!second);
+  const fullScreen = first === 'tipp' || first === 'spiel' || (first === 'bonus' && !!second);
 
   let page;
   if (error) page = <ErrorBox error={error} />;
