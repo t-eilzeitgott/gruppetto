@@ -253,6 +253,7 @@ function ProCard() {
           <ul>
             <li><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z" /></svg><span>Legendäres Badge am Profil</span></li>
           </ul>
+          <p className="hint">Hab ein <span className="accent" role="img" aria-label="Herz">♥</span> für arme Entwickler.</p>
           {requested ? <p className="muted">Angefragt – sobald der Admin freischaltet, erscheint dein Badge.</p> : null}
           {act.error ? <ErrorBox error={act.error} /> : null}
           {requested ? (
