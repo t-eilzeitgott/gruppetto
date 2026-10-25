@@ -19,7 +19,10 @@ import { Player } from '../pages/Player';
 import { RiderPage } from '../pages/Rider';
 import { RidersPage } from '../pages/Riders';
 import { ClimbsPage } from '../pages/Climbs';
-import { GamePage } from '../pages/Game';
+import { lazy, Suspense } from 'react';
+
+// Das Spiel (mit 3D-Grafik) wird erst beim Öffnen geladen
+const GamePage = lazy(() => import('../pages/Game').then((m) => ({ default: m.GamePage })));
 import { Profile } from '../pages/Profile';
 import { Datenschutz, Impressum } from '../pages/Legal';
 import { AdminHome } from '../pages/admin/AdminHome';
@@ -121,7 +124,7 @@ function MemberApp({ me }: { me: ProfileT }) {
         page = <ClimbsPage />;
         break;
       case 'spiel':
-        page = <GamePage />;
+        page = <Suspense fallback={<Loading />}><GamePage /></Suspense>;
         break;
       case 'profil':
         page = <Profile />;

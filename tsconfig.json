@@ -12,7 +12,8 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": []
+    "types": [],
+    "paths": { "three": ["./vendor/three/types/index.d.ts"] }
   },
   "include": ["src"]
 }

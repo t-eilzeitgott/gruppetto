@@ -9,9 +9,9 @@ import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { Mission, MissionStat } from './missions';
 
 export const G = 9.81;
-const CD = 0.00135;          // Luftwiderstand in Abfahrtshaltung (1/m)
+const CD = 0.00105;          // Luftwiderstand in Abfahrtshaltung (1/m)
 const RR = 0.05;             // Rollwiderstand (m/s²)
-const VMAX = 34;             // ~122 km/h
+const VMAX = 40;             // ~144 km/h
 const SUB = 1 / 120;
 
 export type Phase = 'ready' | 'countdown' | 'playing' | 'crash' | 'over';
@@ -129,6 +129,7 @@ export class Abfahrt {
   private steer = { active: false, sx: 0, sy: 0, tx0: 0 };
   private keys = { left: false, right: false, down: false };
   tx = 0;
+  private txs = 0;
   private viewW = 390;
 
   constructor(opts: GameOptions) {
@@ -150,6 +151,7 @@ export class Abfahrt {
     };
     this.p.y = this.track.heightAt(this.p.z);
     this.tx = this.p.x;
+    this.txs = this.p.x;
     this.opps = [];
     this.parts = [];
     this.popups = [];
@@ -308,9 +310,11 @@ export class Abfahrt {
 
     // --- Querdynamik mit Fliehkraft und Grip-Grenze
     const ac = k * p.v * p.v;
-    const kp = 46;
-    const kd = 13.5;
-    let want = kp * (this.tx - p.x) - kd * p.vx;
+    // Daumen geglättet, damit kleine Zitterbewegungen nicht durchschlagen
+    this.txs += (this.tx - this.txs) * Math.min(1, dt * 10);
+    const kp = 30;
+    const kd = 11;
+    let want = kp * (this.txs - p.x) - kd * p.vx;
     let arel: number;
     if (p.air) {
       arel = -ac;
@@ -321,11 +325,11 @@ export class Abfahrt {
       const over = Math.abs(want + ac) - lim;
       p.slip += ((over > 0 ? Math.min(1, over / 4) : 0) - p.slip) * Math.min(1, dt * 8);
     }
-    if (p.wobble > 0) arel += Math.sin(this.time * 23) * p.wobble * 5;
+    if (p.wobble > 0) arel += Math.sin(this.time * 17) * p.wobble * 1.6;
     p.vx += arel * dt;
     p.x += p.vx * dt;
-    const targetLean = p.air ? p.lean * 0.98 : Math.atan2(arel + ac, G);
-    p.lean += (clamp(targetLean, -0.8, 0.8) + Math.sin(this.time * 19) * p.wobble * 0.12 - p.lean) * Math.min(1, dt * 10);
+    const targetLean = p.air ? p.lean * 0.98 : Math.atan2(arel + ac, G) * 0.85;
+    p.lean += (clamp(targetLean, -0.7, 0.7) + Math.sin(this.time * 13) * p.wobble * 0.035 - p.lean) * Math.min(1, dt * 5);
     this.heading += k * p.v * dt;
 
     // --- Höhe, Kuppen und Sprünge
@@ -354,7 +358,7 @@ export class Abfahrt {
     // --- Pedal und Kosmetik
     if (p.v < 13.5 || p.tuck < 0.5) p.pedal += (p.v / 2.1 + 2) * dt;
     else p.pedal += (0 - Math.sin(p.pedal) * 2) * dt;  // Kurbel waagrecht in der Abfahrt
-    p.wobble = Math.max(0, p.wobble - dt * 1.1);
+    p.wobble = Math.max(0, p.wobble - dt * 2);
     p.slick = Math.max(0, p.slick - dt);
     this.shake = Math.max(0, this.shake - dt * 3);
     if (ax > ROAD_HALF && !p.air && p.v > 6 && chance(this.rng, dt * 30)) this.dust(p.z, p.x, ax > EDGE ? side.ground : 'verge');

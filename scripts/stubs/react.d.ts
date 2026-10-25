@@ -28,6 +28,8 @@ declare module 'react' {
   export function createContext<T>(value: T): Context<T>;
   export function useSyncExternalStore<T>(subscribe: (cb: () => void) => () => void, get: () => T, getServer?: () => T): T;
   export const Fragment: (props: { children?: ReactNode }) => ReactElement | null;
+  export function lazy(load: () => Promise<{ default: (...args: never[]) => ReactElement | null }>): () => ReactElement | null;
+  export const Suspense: (props: { children?: ReactNode; fallback?: ReactNode }) => ReactElement | null;
   export const StrictMode: (props: { children?: ReactNode }) => ReactElement;
 }
 

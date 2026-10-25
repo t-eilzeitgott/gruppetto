@@ -25,7 +25,10 @@ const result = await esbuild.build({
   target: ['es2020', 'safari15', 'chrome100', 'firefox100'],
   outdir: `${outdir}/assets`,
   entryNames: 'app-[hash]',
+  chunkNames: 'chunk-[hash]',
+  splitting: true,
   jsx: 'automatic',
+  alias: { three: './vendor/three/three.module.js' },
   legalComments: 'none',
   metafile: true,
   logLevel: 'info',
@@ -38,8 +41,8 @@ const result = await esbuild.build({
 });
 
 const outputs = Object.keys(result.metafile.outputs);
-const js = outputs.find((f) => f.endsWith('.js'));
-const css = outputs.find((f) => f.endsWith('.css'));
+const js = outputs.find((f) => f.endsWith('.js') && result.metafile.outputs[f].entryPoint);
+const css = outputs.find((f) => f.endsWith('.css') && f.includes('app-'));
 const rel = (p) => p.replace(`${outdir}/`, '');
 
 let html = await readFile('index.html', 'utf8');

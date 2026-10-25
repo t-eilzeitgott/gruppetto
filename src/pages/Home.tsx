@@ -12,7 +12,7 @@ import { useApp } from '../app/context';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
-import { GameIcon } from './Game';
+import { GameIcon } from '../ui/GameIcon';
 import { Track } from '../game/abfahrt/track';
 import { berlinDayKey } from '../game/abfahrt/rng';
 import type { Profile } from '../lib/types';

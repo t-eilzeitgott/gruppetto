@@ -7,12 +7,13 @@ import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
 import { Abfahrt, SCORE_LABEL, type Friend, type GameEvent, type RunResult, type ScoreCat } from '../game/abfahrt/engine';
-import { Renderer } from '../game/abfahrt/render';
+import { Renderer3D } from '../game/abfahrt/render3d';
 import { Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, Segmented, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
+import { GameIcon } from '../ui/GameIcon';
 
 const LS_BEST = 'gruppetto.abfahrt.best';
 const LS_TUTORIAL = 'gruppetto.abfahrt.runs';
@@ -53,7 +54,9 @@ export function GamePage() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<Abfahrt | null>(null);
-  const rendererRef = useRef<Renderer | null>(null);
+  const rendererRef = useRef<Renderer3D | null>(null);
+  const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const [glError, setGlError] = useState(false);
   const [ui, setUi] = useState<Ui>('ready');
   const [count, setCount] = useState(3);
   const [result, setResult] = useState<RunResult | null>(null);
@@ -151,8 +154,15 @@ export function GamePage() {
   // Spielschleife
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return undefined;
-    const renderer = new Renderer(canvas);
+    const overlay = overlayRef.current;
+    if (!canvas || !overlay) return undefined;
+    let renderer: Renderer3D;
+    try {
+      renderer = new Renderer3D(canvas, overlay);
+    } catch {
+      setGlError(true);
+      return undefined;
+    }
     renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
     rendererRef.current = renderer;
     renderer.warm();
@@ -173,7 +183,7 @@ export function GamePage() {
       frames += 1;
       if (acc > 2.5) {
         const fps = frames / acc;
-        if (fps < 42 && renderer.quality > 0.6) { renderer.quality = Math.max(0.6, renderer.quality - 0.2); renderer.resize(); }
+        if (fps < 45 && renderer.quality > 0.55) { renderer.quality = Math.max(0.55, renderer.quality - 0.15); renderer.resize(); }
         acc = 0;
         frames = 0;
       }
@@ -186,10 +196,15 @@ export function GamePage() {
     const obs = new MutationObserver(onTheme);
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-tour'] });
     window.addEventListener('resize', onResize);
+    // Größe zuverlässig verfolgen (iOS meldet nicht jede Änderung als resize)
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    ro?.observe(canvas);
     document.addEventListener('visibilitychange', onVis);
     (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer };
     return () => {
       cancelAnimationFrame(raf);
+      ro?.disconnect();
+      renderer.dispose();
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVis);
       obs.disconnect();
@@ -344,6 +359,16 @@ export function GamePage() {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       />
+      <canvas ref={overlayRef} className="abf__overlay" aria-hidden="true" />
+      {glError ? (
+        <div className="abf-layer">
+          <div className="abf-card abf-card--small">
+            <h2 className="abf-title">3D nicht verfügbar</h2>
+            <p className="abf-muted">Dein Browser kann gerade keine 3D-Grafik (WebGL) anzeigen. Probier es in Safari oder Chrome noch einmal.</p>
+            <button type="button" className="btn btn--secondary btn--full" onClick={() => navigate('/')}><span>Zurück</span></button>
+          </div>
+        </div>
+      ) : null}
 
       {/* HUD */}
       {ui === 'playing' || ui === 'paused' || ui === 'countdown' ? (
@@ -689,27 +714,6 @@ function useCountUp(target: number) {
 }
 
 // ------------------------------------------------------------------ Symbole
-
-/** App-Symbol des Spiels: Serpentine in den Farben der App */
-export function GameIcon({ size = 44 }: { size?: number }) {
-  return (
-    <svg className="game-icon" width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
-      <defs>
-        <linearGradient id="gi-sky" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="var(--gi-top, #ff7ab6)" />
-          <stop offset="1" stopColor="var(--gi-bottom, #7b2cbf)" />
-        </linearGradient>
-      </defs>
-      <rect width="48" height="48" rx="12" fill="url(#gi-sky)" />
-      <path d="M0 30 L9 17 L15 24 L24 9 L33 21 L39 15 L48 26 V48 H0Z" fill="rgba(255,255,255,0.18)" />
-      <path d="M24 9 L28.5 15.2 L25 13.6 L22 15.6 Z" fill="rgba(255,255,255,0.85)" />
-      <path d="M31 14 C 40 16, 38 22, 26 23 C 12 24, 10 30, 22 32 C 34 34, 36 40, 20 47" fill="none" stroke="rgba(0,0,0,0.25)" strokeWidth="6.5" strokeLinecap="round" />
-      <path d="M31 14 C 40 16, 38 22, 26 23 C 12 24, 10 30, 22 32 C 34 34, 36 40, 20 47" fill="none" stroke="#ffffff" strokeWidth="4.5" strokeLinecap="round" />
-      <path d="M31 14 C 40 16, 38 22, 26 23 C 12 24, 10 30, 22 32 C 34 34, 36 40, 20 47" fill="none" stroke="var(--gi-bottom, #7b2cbf)" strokeWidth="0.9" strokeDasharray="2 2.4" strokeLinecap="round" />
-      <circle cx="16.5" cy="27.2" r="2.6" fill="#ffd23f" stroke="#fff" strokeWidth="1" />
-    </svg>
-  );
-}
 
 function PauseIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1.2" fill="currentColor" /><rect x="14" y="5" width="4" height="14" rx="1.2" fill="currentColor" /></svg>;

@@ -85,6 +85,10 @@ export interface Banner {
 
 export interface Seg {
   i: number;
+  /** Weltlage am Segmentanfang: Position (x, z) und Fahrtrichtung th (rad, 0 = −z) */
+  wx: number;
+  wz: number;
+  th: number;
   y: number;
   grade: number;
   curve: number;
@@ -149,8 +153,13 @@ export class Track {
   private passOrder: [string, number][];
   private descentNo = 0;
   private y = 0;
+  private wx = 0;
+  private wz = 0;
+  private th = 0;
   private hairpinNo = 0;
   private mountain = 1;
+  private goal = 0;       // Sollrichtung des aktuellen Kehren-Schenkels
+  private hairDir = 1;
 
   constructor(dayKey: string, names: string[] = []) {
     this.dayKey = dayKey;
@@ -182,6 +191,20 @@ export class Track {
   }
 
   sectionOf(seg: Seg): Section { return this.sections[seg.sec]; }
+
+  /** Weltposition eines Punktes: Strecke z, seitlich x (rechts +), Höhe h über der Straße */
+  world(z: number, x: number, h: number, out: { x: number; y: number; z: number; th: number }) {
+    const i = Math.max(0, Math.floor(z / SEG));
+    const s = this.seg(i);
+    const t = z - i * SEG;
+    const th = s.th + s.curve * t;
+    const thm = s.th + s.curve * t * 0.5;
+    out.x = s.wx + Math.sin(thm) * t + Math.cos(th) * x;
+    out.z = s.wz - Math.cos(thm) * t + Math.sin(th) * x;
+    out.y = s.y + s.grade * t + h;
+    out.th = th;
+    return out;
+  }
 
   /** alte Segmente verwerfen, damit der Speicher nicht wächst */
   trim(before: number) {
@@ -269,6 +292,26 @@ export class Track {
     let surfaceRun = 0;
     let hairpinOutside = 0;
 
+    // Bergseite: vor einer Rechtskehre links, danach rechts (Serpentinen am selben Hang)
+    const mtn = new Array<number>(n).fill(this.mountain);
+    {
+      let last = 0;
+      let cur = this.mountain;
+      for (let k = 0; k < n; k++) {
+        if (marks[k] === 1 && (k === 0 || marks[k - 1] !== 1)) {
+          const d = curve[k + 3] > 0 ? 1 : -1;
+          for (let q = last; q < k; q++) mtn[q] = -d;
+          let b = k;
+          while (b < n && marks[b] === 1) { mtn[b] = d; b++; }
+          last = b;
+          cur = d;
+          k = b - 1;
+        }
+      }
+      for (let q = last; q < n; q++) mtn[q] = cur;
+      this.mountain = cur;
+    }
+
     for (let k = 0; k < n; k++) {
       const i = start + k;
       const inTunnel = tunnels.some(([a, b]) => k >= a && k < b);
@@ -278,13 +321,13 @@ export class Track {
         hairpinOutside = curve[k] > 0 ? -1 : 1;
         this.hairpinNo += 1;
       }
-      if (marks[k] !== 1 && k > 0 && marks[k - 1] === 1) {
-        this.mountain = -this.mountain;  // nach der Kehre liegt der Berg auf der anderen Seite
-        hairpinOutside = 0;
-      }
+      if (marks[k] !== 1 && k > 0 && marks[k - 1] === 1) hairpinOutside = 0;
 
-      if (sideRun <= 0 || (hairpinOutside !== 0 && marks[k] === 1 && k > 0 && marks[k - 1] !== 1)) {
+      if (sideRun <= 0 || (k > 0 && mtn[k] !== mtn[k - 1])) {
+        const keep = this.mountain;
+        this.mountain = mtn[k];
         [L, R] = this.sides(p.biome, D);
+        this.mountain = keep;
         sideRun = Math.round(between(r, 24, 70));
       }
       sideRun -= 1;
@@ -312,7 +355,7 @@ export class Track {
         rr = cut;
       }
       const seg: Seg = {
-        i, y: this.y, grade: grade[k], curve: curve[k], sec: secIndex,
+        i, wx: this.wx, wz: this.wz, th: this.th, y: this.y, grade: grade[k], curve: curve[k], sec: secIndex,
         surface: inTunnel ? 'asphalt' : surface,
         L: l, R: rr,
         bL: buildings.L.find((b) => i >= b.start && i < b.start + b.len) ?? null,
@@ -323,6 +366,10 @@ export class Track {
         lamp: false, crowd: false, crest: marks[k] === 2,
       };
       this.y += grade[k] * SEG;
+      const thMid = this.th + curve[k] * SEG * 0.5;
+      this.wx += Math.sin(thMid) * SEG;
+      this.wz -= Math.cos(thMid) * SEG;
+      this.th += curve[k] * SEG;
       this.segs.push(seg);
     }
 
@@ -345,7 +392,14 @@ export class Track {
     const straight = (len: number): Piece => ({ curve: new Array(len).fill(0) });
     const scale = 0.85 + 0.35 * D;
     let dir = chance(r, 0.5) ? 1 : -1;
-    let hairDir = chance(r, 0.5) ? 1 : -1;
+    // Richtung so wählen, dass die Straße zur Sollrichtung zurückfindet (keine Schleifen, saubere Serpentinen)
+    let head = this.th;
+    const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+    const back = () => {
+      const d = wrap(head - this.goal);
+      if (Math.abs(d) < 0.12) return chance(r, 0.5) ? 1 : -1;
+      return d > 0 ? -1 : 1;
+    };
     const W: Record<BiomeId, [string, number][]> = {
       pass: [['straight', 0.22], ['curve', 0.2], ['tight', 0.14], ['hairpin', 0.34], ['crest', 0.1]],
       alpine: [['straight', 0.2], ['curve', 0.28], ['tight', 0.14], ['hairpin', 0.22], ['crest', 0.16]],
@@ -366,17 +420,17 @@ export class Track {
       let pc: Piece;
       switch (kind) {
         case 'curve': {
-          dir = chance(r, 0.65) ? -dir : dir;
+          dir = back();
           pc = { curve: ramp(dir * between(r, 0.006, 0.013) * scale, 10, Math.round(between(r, 14, 34)), 10) };
           break;
         }
         case 'sweep': {
-          dir = -dir;
+          dir = back();
           pc = { curve: ramp(dir * between(r, 0.003, 0.0065) * scale, 20, Math.round(between(r, 40, 80)), 20) };
           break;
         }
         case 'tight': {
-          dir = chance(r, 0.6) ? -dir : dir;
+          dir = back();
           pc = { curve: ramp(dir * between(r, 0.016, 0.023) * scale, 6, Math.round(between(r, 10, 18)), 6) };
           break;
         }
@@ -387,10 +441,15 @@ export class Track {
           break;
         }
         case 'hairpin': {
-          hairDir = -hairDir;
+          this.hairDir = -this.hairDir;
           const approach = straight(Math.round(between(r, 38, 50)));
           out.push(approach); len += approach.curve.length;
-          pc = { curve: ramp(hairDir * between(r, 0.04, 0.046), 5, Math.round(between(r, 28, 34)), 5), hairpin: true };
+          const k = between(r, 0.04, 0.046);
+          // genau eine halbe Drehung, korrigiert um die aktuelle Abweichung
+          const turn = Math.PI - this.hairDir * wrap(head - this.goal) * 0.8;
+          const hold = Math.max(10, Math.round(turn / (k * SEG) - 5));
+          pc = { curve: ramp(this.hairDir * k, 5, hold, 5), hairpin: true };
+          this.goal = wrap(this.goal + this.hairDir * Math.PI);
           break;
         }
         case 'crest': {
@@ -410,6 +469,7 @@ export class Track {
       }
       out.push(pc);
       len += pc.curve.length;
+      for (const c of pc.curve) head += c * SEG;
       if (!pc.hairpin && kind !== 'straight' && chance(r, 0.5)) {
         const s = straight(Math.round(between(r, 8, 22)));
         out.push(s); len += s.curve.length;
