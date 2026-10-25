@@ -24,7 +24,7 @@ Das Grand-Tour-Tippspiel für eure Runde: Giro, Tour und Vuelta – ein Tipp pro
 2. **Supabase:** Projekt in *Central EU (Frankfurt)* anlegen, im *SQL Editor* [`supabase/schema.sql`](supabase/schema.sql) ausführen, Einladungscode setzen:
    `update public.app_settings set value = 'TOUR27' where key = 'invite_code';`
 3. **Mailversand:** eigenes Gmail-Konto mit Zwei-Schritt-Bestätigung und App-Passwort; in Supabase *Authentication → Emails → SMTP Settings* eintragen (`smtp.gmail.com`, Port 465).
-4. **Login per Code:** In *Authentication → Emails → Templates* bei *Confirm signup* und *Magic Link* `{{ .Token }}` in die Mail schreiben; Site URL auf die App-Adresse setzen; Rate Limit für E-Mails auf 100/h.
+4. **Login per Code:** In *Authentication → Emails → Templates* bei *Confirm signup* und *Magic Link* `{{ .Token }}` in die Mail schreiben – Betreff `{{ .Token }} ist dein gruppetto-Code`, Text z. B. `<p>Dein Code für gruppetto lautet: <strong>{{ .Token }}</strong></p>` (so erkennt iOS den Code und schlägt ihn in der Tastatur vor); Site URL auf die App-Adresse setzen; Rate Limit für E-Mails auf 100/h.
 5. **Verbinden:** In GitHub unter *Settings → Secrets and variables → Actions → Variables* `VITE_SUPABASE_URL` und `VITE_SUPABASE_PUBLISHABLE_KEY` (Publishable key, `sb_publishable_…`) anlegen, dann *Actions → Deploy → Run workflow*.
 6. **Admin:** einmal in der App anmelden, dann im SQL Editor
    `update public.profiles set is_admin = true where id = (select id from auth.users where email = 'deine@mail.de');`
