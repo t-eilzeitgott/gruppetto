@@ -17,6 +17,8 @@ import { Bonus, BonusPicker } from '../pages/Bonus';
 import { Leaderboard } from '../pages/Leaderboard';
 import { Player } from '../pages/Player';
 import { RiderPage } from '../pages/Rider';
+import { RidersPage } from '../pages/Riders';
+import { ClimbsPage } from '../pages/Climbs';
 import { Profile } from '../pages/Profile';
 import { Datenschutz, Impressum } from '../pages/Legal';
 import { AdminHome } from '../pages/admin/AdminHome';
@@ -112,7 +114,10 @@ function MemberApp({ me }: { me: ProfileT }) {
         page = <Player id={second ?? ''} />;
         break;
       case 'fahrer':
-        page = <RiderPage id={Number(second)} />;
+        page = second ? <RiderPage id={Number(second)} /> : <RidersPage />;
+        break;
+      case 'anstiege':
+        page = <ClimbsPage />;
         break;
       case 'profil':
         page = <Profile />;

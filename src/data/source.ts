@@ -62,6 +62,9 @@ export interface DataSource {
   loadTours(): Promise<Tour[]>;
   loadTourData(tour: Tour): Promise<TourData>;
   stageTippers(stageId: number): Promise<string[]>;
+  /** Lieblingsfahrer (IDs der Fahrer-Stammdaten) */
+  listFavorites(): Promise<number[]>;
+  setFavorite(cyclistId: number, on: boolean): Promise<void>;
 
   // Spieler
   joinGroup(code: string, name: string): Promise<void>;

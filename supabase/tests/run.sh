@@ -30,4 +30,5 @@ psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Nach Etappe 7: ' || (select coun
 psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "update public.stages set starts_at = now() - interval '7 hours' where tour_id = 'giro-2026'"
 psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Nachgespielt: ' || public.replay_giro2026() || ' Etappen'"
 psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Ende: ' || (select count(*) from public.stage_results sr join public.stages s on s.id = sr.stage_id where s.tour_id = 'giro-2026') || ' Ergebnisse, ' || (select count(*) from public.riders where tour_id = 'giro-2026' and status = 'out') || ' ausgestiegen, Bonus-Einträge ' || (select count(*) from public.bonus_results where tour_id = 'giro-2026') || ', final ' || (select bonus_final from public.tours where id = 'giro-2026')"
+psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Giro-Wertungsstände: ' || count(*) from public.stage_standings"
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_giro2026.sql   # wiederholbar?

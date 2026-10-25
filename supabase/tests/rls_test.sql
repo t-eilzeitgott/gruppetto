@@ -219,6 +219,19 @@ select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a
 select pg_temp.expect_eq((select count(*) from public.admin_list_users() where pro_requested_at is not null), 1, 'Admin sieht Pro-Anfrage');
 commit;
 
+-- ---------- Lieblingsfahrer + Stammdaten ----------
+select pg_temp.expect_eq((select count(*) from public.riders where cyclist_id is null), 0, 'Alle Fahrer mit Stammdaten verknüpft');
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+insert into public.favorite_cyclists (cyclist_id) select id from public.cyclists where name = 'Jonathan Milan';
+select pg_temp.expect_eq((select count(*) from public.favorite_cyclists), 1, 'Eigener Favorit sichtbar');
+select pg_temp.expect_eq((select count(*) from public.cyclists), (select count(*) from public.cyclists), 'Stammdaten lesbar');
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+select pg_temp.expect_eq((select count(*) from public.favorite_cyclists), 0, 'Fremde Favoriten unsichtbar');
+select pg_temp.expect_error($q$ insert into public.favorite_cyclists (user_id, cyclist_id) select '00000000-0000-0000-0000-00000000000b', id from public.cyclists limit 1 $q$, 'row-level security');
+commit;
+
 -- ---------- Anonym ----------
 begin;
 set local role anon;

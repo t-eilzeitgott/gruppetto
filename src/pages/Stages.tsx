@@ -23,6 +23,7 @@ export function Stages() {
       <PageTitle title="Etappen" subtitle={fmtRange(tour.start_date, tour.end_date)} />
       <div className="stack">
         <TourPicker tour={tour} tours={tours} />
+        {data ? <ExploreLinks data={data} /> : null}
         {error ? <ErrorBox error={error} onRetry={reload} /> : loading || !data ? <Loading /> : <StageList data={data} me={me} now={now} />}
       </div>
     </>
@@ -118,5 +119,35 @@ function StageRow({ stage, data, me, now, points }: { stage: Stage; data: TourDa
         </span>
       </Link>
     </li>
+  );
+}
+
+function ExploreLinks({ data }: { data: TourData }) {
+  const teams = new Set(data.riders.map((r) => r.team)).size;
+  const climbs = data.stages.reduce((n, s) => n + (s.climbs?.length ?? 0), 0);
+  if (!data.riders.length && !climbs) return null;
+  return (
+    <div className="explore-links">
+      {data.riders.length ? (
+        <Link to="/fahrer" className="card card--row explore-link">
+          <Icon name="users" />
+          <span className="card__main">
+            <strong>Fahrer & Teams</strong>
+            <span className="muted">{data.riders.length} Fahrer · {teams} Teams · Favoriten</span>
+          </span>
+          <Icon name="chevron" className="muted" />
+        </Link>
+      ) : null}
+      {climbs ? (
+        <Link to="/anstiege" className="card card--row explore-link">
+          <Icon name="mountain" />
+          <span className="card__main">
+            <strong>Anstiege</strong>
+            <span className="muted">{climbs} Bergwertungen mit Steckbrief</span>
+          </span>
+          <Icon name="chevron" className="muted" />
+        </Link>
+      ) : null}
+    </div>
   );
 }

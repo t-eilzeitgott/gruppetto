@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useTourContext } from '../app/context';
-import { useNow } from '../app/hooks';
+import { useFavorites, useNow } from '../app/hooks';
+import { FavStar, RiderSheet } from '../ui/RiderSheet';
+import type { ReactNode } from 'react';
 import { source } from '../app/config';
 import { invalidate } from '../app/query';
 import { navigate } from '../app/router';
@@ -12,7 +14,6 @@ import { Button, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar
 import { Icon } from '../ui/Icon';
 import { StageProfileChart, hasProfile } from '../ui/StageProfile';
 import { flag } from '../lib/countries';
-import { Link } from '../ui/kit';
 import { lastName } from '../ui/bits';
 
 export function TipPicker({ id }: { id: number }) {
@@ -24,6 +25,8 @@ export function TipPicker({ id }: { id: number }) {
   const [picked, setPicked] = useState<number | null>(null);
   const [query, setQuery] = useState('');
   const save = useAction();
+  const fav = useFavorites();
+  const [openSheet, setOpenSheet] = useState<number | null>(null);
 
   const selected = picked ?? current?.rider_id ?? null;
 
@@ -56,6 +59,7 @@ export function TipPicker({ id }: { id: number }) {
   }
 
   const usage = tipUsage(data.tips, me.id, stage.id);
+  const favRiders = query.trim() ? [] : riders.filter((r) => fav.has(r));
   // Nur Fahrer zeigen, bei denen es knapp wird (höchstens noch 1 Tipp übrig)
   const used = data.riders
     .filter((r) => (usage.get(r.id) ?? 0) > 0 && (jokerRemaining(data.tour, r, data.tips, me.id, stage.id) ?? 99) <= 1)
@@ -136,18 +140,30 @@ export function TipPicker({ id }: { id: number }) {
         ) : riders.length === 0 ? (
           <p className="muted center">Kein Fahrer gefunden.</p>
         ) : (
-          <ul className="list rider-list" aria-label="Fahrer auswählen">
-            {riders.map((r) => (
-              <RiderOption
-                key={r.id}
-                rider={r}
-                selected={r.id === selected}
-                remaining={jokerRemaining(data.tour, r, data.tips, me.id, stage.id)}
-                limit={tipLimit(data.tour, r)}
-                onPick={() => setPicked(r.id)}
-              />
-            ))}
-          </ul>
+          <>
+            {[{ title: 'Deine Favoriten', list: favRiders }, { title: favRiders.length ? 'Alle Fahrer' : null, list: riders }]
+              .filter((g) => g.list.length)
+              .map((g) => (
+                <section key={g.title ?? 'all'} aria-label={g.title ?? 'Fahrer auswählen'}>
+                  {g.title ? <h2 className="section-title">{g.title === 'Deine Favoriten' ? '★ ' : ''}{g.title}</h2> : null}
+                  <ul className="list rider-list">
+                    {g.list.map((r) => (
+                      <RiderOption
+                        key={r.id}
+                        rider={r}
+                        selected={r.id === selected}
+                        remaining={jokerRemaining(data.tour, r, data.tips, me.id, stage.id)}
+                        limit={tipLimit(data.tour, r)}
+                        onPick={() => setPicked(r.id)}
+                        expanded={openSheet === r.id}
+                        onToggleSheet={() => setOpenSheet(openSheet === r.id ? null : r.id)}
+                        sheet={openSheet === r.id ? <RiderSheet rider={r} data={data} now={now} meId={me.id} /> : null}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              ))}
+          </>
         )}
       </div>
 
@@ -163,12 +179,15 @@ export function TipPicker({ id }: { id: number }) {
   );
 }
 
-function RiderOption({ rider, selected, remaining, limit, onPick }: {
+function RiderOption({ rider, selected, remaining, limit, onPick, expanded, onToggleSheet, sheet }: {
   rider: Rider;
   selected: boolean;
   remaining: number | null;
   limit: number | null;
   onPick: () => void;
+  expanded: boolean;
+  onToggleSheet: () => void;
+  sheet: ReactNode;
 }) {
   const out = rider.status === 'out';
   const exhausted = remaining === 0;
@@ -178,7 +197,8 @@ function RiderOption({ rider, selected, remaining, limit, onPick }: {
   else if (exhausted) tag = 'Limit erreicht';
   else if (remaining !== null && limit !== null && remaining < limit) tag = `noch ${remaining}× tippbar`;
   return (
-    <li className="rider-row">
+    <li>
+    <div className="rider-row">
       <button
         type="button"
         className={cx('rider-option', selected && 'is-selected')}
@@ -197,9 +217,15 @@ function RiderOption({ rider, selected, remaining, limit, onPick }: {
           {tag ? <span className={cx('chip', !disabled && 'chip--accent')}>{tag}</span> : null}
         </span>
       </button>
-      <Link to={`/fahrer/${rider.id}`} className="rider-info" ariaLabel={`Profil von ${rider.name}`}>
-        <Icon name="info" size={20} />
-      </Link>
+      <div className="rider-row__side">
+        <FavStar rider={rider} />
+        <button type="button" className={cx('rider-info', expanded && 'is-open')} aria-expanded={expanded}
+          aria-label={`Steckbrief von ${rider.name}`} onClick={onToggleSheet}>
+          <Icon name="info" size={20} />
+        </button>
+      </div>
+    </div>
+    {sheet}
     </li>
   );
 }

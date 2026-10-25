@@ -895,6 +895,111 @@ tr.is-me > * { background: var(--accent-soft); }
 .profile-mini[open] > summary::after { content: '▴'; }
 .profile-mini > .profile-chart-wrap { width: auto; margin: 0 12px 12px; }
 .standing-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 6px 0; }
-.standing-row > span { min-width: 0; }
-.standing-row > strong { flex: none; }
+.standing-row > span { flex: 1 1 auto; min-width: 0; }
+.standing-row > strong { flex: 0 0 auto; text-align: right; }
 .hint a, .profile-card a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+
+/* ---------- Fahrer-Steckbrief, Favoriten, Verzeichnis ---------- */
+.chip--warn { background: rgba(217, 65, 43, 0.14); color: var(--neg); }
+.fav-star {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; min-height: 44px; border: 0; background: transparent; border-radius: var(--radius);
+  color: var(--muted); cursor: pointer;
+}
+.fav-star:hover { background: var(--surface); }
+.fav-star.is-on { color: #e5a50a; }
+.rider-row__side { display: flex; align-items: center; flex: none; }
+.rider-row > .rider-option { flex: 1 1 auto; min-width: 0; }
+.rider-info { border: 0; background: transparent; cursor: pointer; min-height: 44px; }
+.rider-info.is-open { color: var(--accent); background: var(--accent-soft); }
+
+.rider-sheet {
+  margin: 2px 0 12px; padding: 14px; border-radius: var(--radius);
+  background: var(--surface); display: flex; flex-direction: column; gap: 10px;
+}
+.rider-sheet__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rider-sheet__facts, .sheet-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px 12px; margin: 0; }
+.sheet-facts--wide { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+.rider-sheet__facts > div, .sheet-facts > div { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rider-sheet__facts dt, .sheet-facts dt { font-size: 12px; color: var(--muted); }
+.rider-sheet__facts dd, .sheet-facts dd { margin: 0; font-size: 14.5px; font-weight: 600; line-height: 1.3; }
+.rider-sheet__form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.rider-sheet__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.form-pill {
+  display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+  background: var(--surface2); font-size: 12.5px; font-weight: 600; white-space: nowrap;
+}
+.form-pill.is-win { background: var(--accent-soft); color: var(--accent); }
+.sheet-sub { margin-top: 6px; }
+
+.gc-spark { display: block; width: 100%; height: auto; max-height: 90px; }
+.gc-spark__lead { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.gc-spark__line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.gc-spark__dot { fill: var(--accent); }
+.gc-spark__dot.is-lead { fill: #e5a50a; }
+
+.filter-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-row .toggle { flex: 0 0 auto; padding-left: 12px; padding-right: 12px; }
+
+.team-card { gap: 4px; }
+.team-head { display: flex; flex-direction: column; gap: 2px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.rider-dir > li { border-bottom: 1px solid var(--line); }
+.rider-dir > li:last-child { border-bottom: 0; }
+.rider-dir__row { display: flex; align-items: center; gap: 2px; }
+.rider-dir__row.is-out .rider-dir__name { color: var(--muted); }
+.rider-dir__main {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px;
+  min-height: 56px; padding: 6px 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit;
+}
+.rider-dir__bib { width: 30px; flex: none; text-align: right; color: var(--muted); font-size: 13px; }
+.rider-dir__text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rider-dir__name { font-size: 15.5px; font-weight: 600; line-height: 1.25; }
+.rider-dir__sub { font-size: 13px; color: var(--muted); line-height: 1.3; }
+.rider-dir__chev, .profile-points__chev { flex: none; color: var(--muted); transform: rotate(90deg); transition: transform .15s ease; }
+.rider-dir__chev.is-open, .profile-points__chev.is-open { transform: rotate(-90deg); }
+.person-row.is-out .person-row__name { color: var(--muted); }
+
+.explore-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.explore-link { min-height: 64px; }
+
+.rider-hero__fav { display: flex; align-items: center; gap: 2px; }
+
+/* Wertungen aufklappbar */
+.profile-points li { display: block; padding: 0; }
+.profile-points__btn {
+  width: 100%; display: grid; grid-template-columns: 44px 28px minmax(0, 1fr) 18px; align-items: center; gap: 10px;
+  padding: 9px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.profile-points__btn.is-static { cursor: default; grid-template-columns: 44px 28px minmax(0, 1fr); }
+.climb-dir { padding-top: 6px; padding-bottom: 6px; }
+.climb-dir__stage { margin: -4px 0 10px; }
+
+.climb-sheet {
+  margin: 0 0 10px; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--surface2); display: flex; flex-direction: column; gap: 10px;
+}
+.card .climb-sheet { background: var(--bg); }
+.climb-sheet__points { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 13px; }
+.grade-bars { display: flex; flex-direction: column; gap: 6px; }
+.grade-bar { display: grid; grid-template-columns: 34px minmax(0, 1fr) 54px; align-items: center; gap: 8px; }
+.grade-bar__label { font-size: 12.5px; color: var(--muted); }
+.grade-bar__track { height: 8px; border-radius: 999px; background: var(--surface3, var(--line)); overflow: hidden; }
+.grade-bar__fill { display: block; height: 100%; border-radius: 999px; }
+.grade-bar__fill.g-1 { background: #4f9bd9; }
+.grade-bar__fill.g-2 { background: #e5c31a; }
+.grade-bar__fill.g-3 { background: #ec8a00; }
+.grade-bar__fill.g-4 { background: #d9412b; }
+.grade-bar__value { font-size: 13.5px; text-align: right; white-space: nowrap; }
+.climb-slope { display: block; width: 100%; max-width: 320px; height: auto; }
+.climb-slope__area { fill: var(--accent-soft); }
+.climb-slope__line { stroke: var(--accent); stroke-width: 2; }
+.climb-slope__txt { font-size: 11px; font-weight: 600; fill: var(--muted); font-family: var(--font); }
+.profile-chart__hgrid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+
+.course-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.course-table th, .course-table td { padding: 8px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.course-table .num { text-align: right; }
+.course-table tbody tr:last-child th, .course-table tbody tr:last-child td { border-bottom: 0; }
+.course-table tr.is-win td, .course-table tr.is-win th { color: var(--accent); font-weight: 700; }
+
+.terrain-pills { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; }

@@ -9,7 +9,7 @@ import {
 } from './source';
 import {
   DEMO_BONUS_RESULTS, DEMO_BONUS_TIPS, DEMO_ME, DEMO_NOW, DEMO_PROFILES, DEMO_RESULTS, DEMO_RIDERS, DEMO_STAGES,
-  DEMO_TIPS, DEMO_TOURS,
+  DEMO_STANDINGS, DEMO_TIPS, DEMO_TOURS,
 } from './demoData';
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -113,7 +113,21 @@ export class DemoSource implements DataSource {
       bonusTips: this.bonusTips.filter((b) => b.tour_id === tour.id && (b.user_id === DEMO_ME || !bonusOpen)),
       bonusResults: this.bonusResults.filter((b) => b.tour_id === tour.id),
       scale: DEFAULT_SCALE,
+      standings: DEMO_STANDINGS.filter((x) => published.has(x.stage_id)),
     });
+  }
+
+  private favorites = new Set<number>([1, 44]);
+
+  async listFavorites(): Promise<number[]> {
+    await wait(60);
+    return [...this.favorites];
+  }
+
+  async setFavorite(cyclistId: number, on: boolean): Promise<void> {
+    await wait(60);
+    if (on) this.favorites.add(cyclistId);
+    else this.favorites.delete(cyclistId);
   }
 
   async stageTippers(stageId: number): Promise<string[]> {

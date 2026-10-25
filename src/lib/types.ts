@@ -35,6 +35,7 @@ export interface Tour {
   pcs_slug: string | null;
   /** Wie oft man denselben Fahrer pro Rundfahrt höchstens tippen darf (null = unbegrenzt) */
   tip_limit?: number | null;
+  info?: TourInfo;
 }
 
 export interface Rider {
@@ -52,6 +53,32 @@ export interface Rider {
   age?: number | null;
   /** startberechtigt in der Nachwuchswertung */
   young?: boolean;
+  /** Verknüpfung zu den Fahrer-Stammdaten (für Favoriten über Rundfahrten hinweg) */
+  cyclist_id?: number | null;
+}
+
+export interface StageStanding {
+  stage_id: number;
+  category: 'gc' | 'points' | 'mountains' | 'youth';
+  position: number;
+  rider_id: number;
+}
+
+export interface StageInfo {
+  original_date?: string;
+  start_real?: string;
+  finish_real?: string;
+  neutral_km?: number;
+  three_sec?: boolean;
+}
+
+export interface TourInfo {
+  kom?: Record<string, number[]>;
+  sprint_points?: number[];
+  finish_bonus?: number[];
+  redbull_bonus?: number[];
+  redbull_points?: number[];
+  stage_points?: Record<string, number[]>;
 }
 
 /** Bergwertung: cat '1'–'4', 'HC' oder 'CC' (Cima Coppi) */
@@ -61,6 +88,10 @@ export interface Climb {
   km: number;
   len?: number;
   grad?: number;
+  /** Maximalsteigung in % */
+  max?: number;
+  /** Gipfelhöhe in m */
+  alt?: number;
 }
 
 export interface Sprint {
@@ -81,6 +112,7 @@ export interface Stage {
   climbs?: Climb[];
   sprints?: Sprint[];
   elevation_m?: number | null;
+  info?: StageInfo;
 }
 
 export interface StageTip {
@@ -127,4 +159,6 @@ export interface TourData {
   bonusTips: BonusTip[];
   bonusResults: BonusResult[];
   scale: PointScale[];
+  /** Wertungsstände nach den Etappen (z. B. Gesamtwertung Top 10) */
+  standings?: StageStanding[];
 }

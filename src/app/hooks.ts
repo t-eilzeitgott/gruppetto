@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { source } from './config';
-import { useQuery } from './query';
+import { invalidate, useQuery } from './query';
 import type { Profile, Tour, TourData } from '../lib/types';
 import { defaultTour } from '../lib/time';
 
@@ -71,4 +71,41 @@ export function useSelectedTour(): { tour: Tour | null; tours: Tour[]; loading: 
   const visible = (data ?? []).filter((t) => t.is_visible);
   const tour = visible.find((t) => t.id === stored) ?? defaultTour(visible, source.now());
   return { tour, tours: visible, loading, error };
+}
+
+// ---------- Lieblingsfahrer ----------
+const favPending = new Map<number, boolean>();
+let favVersion = 0;
+const favListeners = new Set<() => void>();
+const favNotify = () => { favVersion += 1; favListeners.forEach((l) => l()); };
+
+/** Schlüssel eines Fahrers für Favoriten (Stammdaten-ID, sonst Fahrer-ID) */
+export function favKey(rider: { id: number; cyclist_id?: number | null }): number {
+  return rider.cyclist_id ?? rider.id;
+}
+
+export function useFavorites(): { has: (rider: { id: number; cyclist_id?: number | null }) => boolean; toggle: (rider: { id: number; cyclist_id?: number | null }) => void; count: number } {
+  const q = useQuery<number[]>('favorites', () => source.listFavorites());
+  useSyncExternalStore((cb) => { favListeners.add(cb); return () => { favListeners.delete(cb); }; }, () => favVersion);
+  const base = new Set(q.data ?? []);
+  for (const [k, on] of favPending) {
+    if (on) base.add(k); else base.delete(k);
+  }
+  return {
+    has: (rider) => base.has(favKey(rider)),
+    count: base.size,
+    toggle: (rider) => {
+      const key = favKey(rider);
+      const on = !base.has(key);
+      favPending.set(key, on);
+      favNotify();
+      source.setFavorite(key, on)
+        .then(() => invalidate('favorites'))
+        .catch(() => undefined)
+        .finally(() => {
+          // kurz warten, bis die neue Liste geladen ist, dann den Zwischenstand verwerfen
+          window.setTimeout(() => { favPending.delete(key); favNotify(); }, 800);
+        });
+    },
+  };
 }

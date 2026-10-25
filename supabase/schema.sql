@@ -100,6 +100,17 @@ create index if not exists stages_tour_idx on public.stages (tour_id);
 alter table public.stages add column if not exists climbs      jsonb not null default '[]'::jsonb;
 alter table public.stages add column if not exists sprints     jsonb not null default '[]'::jsonb;
 alter table public.stages add column if not exists elevation_m int;
+-- Zusatzinfos je Etappe (Originaldatum, Fahrplan, Neutralisation …) und je Rundfahrt (Reglement)
+alter table public.stages add column if not exists info jsonb not null default '{}'::jsonb;
+alter table public.tours  add column if not exists info jsonb not null default '{}'::jsonb;
+
+-- Lieblingsfahrer je Mitglied (über Rundfahrten hinweg, daher an den Stammdaten)
+create table if not exists public.favorite_cyclists (
+  user_id    uuid   not null default auth.uid() references public.profiles (id) on delete cascade,
+  cyclist_id bigint not null references public.cyclists (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, cyclist_id)
+);
 
 create table if not exists public.stage_tips (
   stage_id   bigint not null references public.stages (id) on delete cascade,
@@ -116,6 +127,15 @@ create table if not exists public.stage_results (
   rider_id bigint not null references public.riders (id) on delete cascade,
   primary key (stage_id, position),
   constraint stage_results_unique_rider unique (stage_id, rider_id)
+);
+
+-- Wertungsstand nach einer Etappe (z. B. Gesamtwertung Top 10) – sichtbar mit dem Ergebnis
+create table if not exists public.stage_standings (
+  stage_id bigint not null references public.stages (id) on delete cascade,
+  category text   not null check (category in ('gc', 'points', 'mountains', 'youth')),
+  position int    not null check (position between 1 and 50),
+  rider_id bigint not null references public.riders (id) on delete cascade,
+  primary key (stage_id, category, position)
 );
 
 create table if not exists public.stage_point_scale (
@@ -483,6 +503,8 @@ alter table public.profiles          enable row level security;
 alter table public.tours             enable row level security;
 alter table public.riders            enable row level security;
 alter table public.cyclists          enable row level security;
+alter table public.favorite_cyclists enable row level security;
+alter table public.stage_standings   enable row level security;
 alter table public.stages            enable row level security;
 alter table public.stage_tips        enable row level security;
 alter table public.stage_results     enable row level security;
@@ -518,6 +540,19 @@ create policy riders_select on public.riders
 drop policy if exists riders_admin on public.riders;
 create policy riders_admin on public.riders
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists standings_select on public.stage_standings;
+create policy standings_select on public.stage_standings
+  for select to authenticated using (
+    public.is_admin() or (public.is_member() and exists (
+      select 1 from public.stages s where s.id = stage_id and s.results_published)));
+drop policy if exists standings_admin on public.stage_standings;
+create policy standings_admin on public.stage_standings
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists favorites_own on public.favorite_cyclists;
+create policy favorites_own on public.favorite_cyclists
+  for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member());
 
 drop policy if exists cyclists_select on public.cyclists;
 create policy cyclists_select on public.cyclists

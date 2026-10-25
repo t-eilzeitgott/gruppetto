@@ -47,6 +47,12 @@ const PAGES = [
   ['board', '?demo#/rangliste'],
   ['board-season', '?demo#/rangliste', async (p) => { await p.click('.segmented >> text=Saison'); }],
   ['rider', '?demo#/fahrer/1'],
+  ['riders-dir', '?demo#/fahrer'],
+  ['riders-dir-open', '?demo#/fahrer', async (p) => { await p.click('.rider-dir__main >> nth=0'); }],
+  ['climbs-dir', '?demo#/anstiege'],
+  ['climbs-dir-open', '?demo#/anstiege', async (p) => { await p.click('.profile-points__btn >> nth=3'); }],
+  ['tip-sheet', '?demo#/tipp/1009', async (p) => { await p.click('.rider-info >> nth=0'); }],
+  ['stage-climb-open', '?demo#/etappe/1009', async (p) => { await p.click('.profile-points__btn >> nth=1'); }],
   ['rider-out', '?demo#/fahrer/64'],
   ['stage-profile', '?demo#/etappe/1004'],
   ['tip-profile', '?demo#/tipp/1009', async (p) => { await p.click('.profile-mini > summary'); }],
@@ -113,7 +119,7 @@ for (const theme of THEMES) {
         if (document.documentElement.scrollWidth > vw + 1) {
           issues.push(`Seite scrollt horizontal (${document.documentElement.scrollWidth}px > ${vw}px)`);
         }
-        const skip = 'svg, path, input, select, textarea, option, .sr-only, .table-scroll *, script, style';
+        const skip = 'svg, svg *, path, input, select, textarea, option, .sr-only, .table-scroll *, script, style';
         for (const el of document.querySelectorAll('body *')) {
           if (el.matches(skip)) continue;
           const st = getComputedStyle(el);

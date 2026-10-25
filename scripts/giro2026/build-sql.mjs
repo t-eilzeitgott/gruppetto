@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STAGES, RESULTS, GC, FINAL, EXCLUDED_FROM_REST } from './race.mjs';
+import { STAGES, RESULTS, GC, FINAL, EXCLUDED_FROM_REST, REGULATIONS } from './race.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..');
@@ -47,7 +47,11 @@ for (const s of STAGES) {
     if (out !== undefined && out < s.n) problems.push(`Etappe ${s.n}: ${n} ist laut Startliste schon nach Etappe ${out} raus`);
   }
   for (const n of gc) need(n, `Gesamtwertung ${s.n}`);
-  for (const c of s.climbs) if (c.km > s.km + 1) problems.push(`Etappe ${s.n}: ${c.name} bei km ${c.km} > ${s.km} km`);
+  for (const c of s.climbs) {
+    if (c.km > s.km + 1) problems.push(`Etappe ${s.n}: ${c.name} bei km ${c.km} > ${s.km} km`);
+    if (c.len && c.km - c.len < -0.5) problems.push(`Etappe ${s.n}: ${c.name} beginnt vor dem Start`);
+    if (c.max && c.grad && c.max < c.grad) problems.push(`Etappe ${s.n}: ${c.name} Maximalsteigung < Ø`);
+  }
 }
 for (const [cat, list] of Object.entries(FINAL)) {
   for (const n of list) (cat === 'team' ? (teams.includes(n) || problems.push(`Endwertung Team: ${n}`)) : need(n, `Endwertung ${cat}`));
@@ -107,21 +111,26 @@ end $$;
 delete from public.tours where id in ('testrunde', ${q(TOUR)});
 
 -- Rundfahrt: ab morgen, 21 Tage
-insert into public.tours (id, name, short_name, theme, year, start_date, end_date, is_visible, pcs_slug, tip_limit)
+insert into public.tours (id, name, short_name, theme, year, start_date, end_date, is_visible, pcs_slug, tip_limit, info)
 values (${q(TOUR)}, 'Giro d''Italia 2026 · Testrunde', 'Giro 26', 'giro',
         extract(year from now())::int,
         (now() at time zone 'Europe/Berlin')::date + 1,
         (now() at time zone 'Europe/Berlin')::date + 21,
-        true, 'giro-d-italia/2026', 3);
+        true, 'giro-d-italia/2026', 3, ${q(JSON.stringify(REGULATIONS))}::jsonb);
 `);
 
 w('-- Etappen');
-w('insert into public.stages (tour_id, number, starts_at, kind, departure, arrival, distance_km, elevation_m, climbs, sprints) values');
+w('insert into public.stages (tour_id, number, starts_at, kind, departure, arrival, distance_km, elevation_m, climbs, sprints, info) values');
 w(STAGES.map((s) => {
-  const climbs = JSON.stringify(s.climbs.map((c) => ({ name: c.name, cat: c.cat, km: c.km, ...(c.len ? { len: c.len } : {}), ...(c.grad ? { grad: c.grad } : {}) })));
+  const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] !== undefined && o[k] !== null).map((k) => [k, o[k]]));
+  const climbs = JSON.stringify(s.climbs.map((c) => pick(c, ['name', 'cat', 'km', 'len', 'grad', 'max', 'alt'])));
+  const info = JSON.stringify(pick({
+    original_date: s.date, start_real: s.info?.start, finish_real: s.info?.finish,
+    neutral_km: s.neutral, three_sec: s.threeSec,
+  }, ['original_date', 'start_real', 'finish_real', 'neutral_km', 'three_sec']));
   const sprints = JSON.stringify((s.sprints ?? []).map((x) => ({ km: x.km, ...(x.name ? { name: x.name } : {}) })));
   const start = `((((now() at time zone 'Europe/Berlin')::date + ${s.n})::timestamp + time '12:00') at time zone 'Europe/Berlin')`;
-  return `  (${q(TOUR)}, ${s.n}, ${start}, ${q(s.kind)}, ${q(s.from)}, ${q(s.to)}, ${s.km}, ${s.elevation ?? 'null'}, ${q(climbs)}::jsonb, ${q(sprints)}::jsonb)`;
+  return `  (${q(TOUR)}, ${s.n}, ${start}, ${q(s.kind)}, ${q(s.from)}, ${q(s.to)}, ${s.km}, ${s.elevation ?? 'null'}, ${q(climbs)}::jsonb, ${q(sprints)}::jsonb, ${q(info)}::jsonb)`;
 }).join(',\n') + ';');
 w();
 
@@ -208,6 +217,11 @@ begin
     select v_stage.id, x.position, r.id
       from replay_result x join riders r on r.tour_id = v_tour and r.name = x.rider
      where x.tour_id = v_tour and x.number = v_stage.number and x.kind = 'stage';
+    delete from stage_standings where stage_id = v_stage.id;
+    insert into stage_standings (stage_id, category, position, rider_id)
+    select v_stage.id, 'gc', x.position, r.id
+      from replay_result x join riders r on r.tour_id = v_tour and r.name = x.rider
+     where x.tour_id = v_tour and x.number = v_stage.number and x.kind = 'gc';
     update stages set results_published = true where id = v_stage.id;
 
     -- Ausstiege wie im echten Rennen

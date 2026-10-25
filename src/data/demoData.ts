@@ -1,5 +1,5 @@
 import type {
-  BonusResult, BonusTip, Climb, Profile, Rider, Sprint, Stage, StageKind, StageResult, StageTip, Tour,
+  BonusResult, BonusTip, Climb, Profile, Rider, Sprint, Stage, StageKind, StageResult, StageStanding, StageTip, Tour,
 } from '../lib/types';
 
 // Nation und Alter der Demo-Fahrer (Beispielwerte)
@@ -23,16 +23,21 @@ const PROFILES: Record<number, { climbs: Climb[]; sprints: Sprint[]; elevation_m
   2: { climbs: [{ name: 'Colle della Serra', cat: '4', km: 61.4 }], sprints: [{ km: 102.3 }, { km: 151 }], elevation_m: 1250 },
   4: { climbs: [{ name: 'Colle di Zambla', cat: '2', km: 74.2, len: 13.4, grad: 5.6 }, { name: 'Passo di Dossena', cat: '3', km: 96.8 }, { name: 'Passo San Marco', cat: '1', km: 186, len: 25.1, grad: 6.3 }], sprints: [{ km: 128.5 }], elevation_m: 4100 },
   7: { climbs: [{ name: 'Pietracolora', cat: '3', km: 128.7 }, { name: 'Corno alle Scale', cat: '1', km: 174, len: 10.8, grad: 6.1 }], sprints: [{ km: 92 }], elevation_m: 3350 },
-  9: { climbs: [{ name: 'San Leo', cat: '3', km: 58.3, len: 4.9, grad: 7.2 }, { name: 'Monte Carpegna', cat: '1', km: 141.5, len: 6, grad: 9.6 }, { name: 'Monte Carpegna', cat: '1', km: 172, len: 6, grad: 9.6 }], sprints: [{ km: 104.7 }], elevation_m: 3900 },
-  20: { climbs: [{ name: 'Passo dell\'Umbrail', cat: '1', km: 121 }, { name: 'Passo dello Stelvio', cat: 'CC', km: 168, len: 21.7, grad: 7.1 }], sprints: [{ km: 66 }], elevation_m: 4600 },
+  9: { climbs: [{ name: 'San Leo', cat: '3', km: 58.3, len: 4.9, grad: 7.2, max: 12 }, { name: 'Monte Carpegna', cat: '1', km: 141.5, len: 6, grad: 9.6, max: 14, alt: 1340 }, { name: 'Monte Carpegna', cat: '1', km: 172, len: 6, grad: 9.6, max: 14, alt: 1340 }], sprints: [{ km: 104.7 }], elevation_m: 3900 },
+  20: { climbs: [{ name: 'Passo dell\'Umbrail', cat: '1', km: 121 }, { name: 'Passo dello Stelvio', cat: 'CC', km: 168, len: 21.7, grad: 7.1, max: 14, alt: 2758 }], sprints: [{ km: 66 }], elevation_m: 4600 },
 };
 
 /** Beispieldaten: Giro d'Italia 2027, Sonntag 16. Mai vormittags (Etappe 8 gefahren). */
 export const DEMO_NOW = new Date(2027, 4, 16, 9, 46).getTime();
 export const DEMO_ME = 'u-christoph';
 
+const GIRO_RULES = {
+  kom: { CC: [50, 30, 20, 14, 10, 6, 4, 2, 1], '1': [40, 18, 12, 9, 6, 4, 2, 1], '2': [18, 8, 6, 4, 2, 1], '3': [9, 4, 2, 1], '4': [3, 2, 1] },
+  sprint_points: [12, 8, 5, 3, 1], finish_bonus: [10, 6, 4], redbull_bonus: [6, 4, 2],
+};
+
 export const DEMO_TOURS: Tour[] = [
-  { id: 'giro-2027', name: "Giro d'Italia 2027", short_name: 'Giro', theme: 'giro', year: 2027, start_date: '2027-05-08', end_date: '2027-05-30', is_visible: true, bonus_final: false, pcs_slug: 'giro-d-italia/2027', tip_limit: 3 },
+  { id: 'giro-2027', name: "Giro d'Italia 2027", short_name: 'Giro', theme: 'giro', year: 2027, start_date: '2027-05-08', end_date: '2027-05-30', is_visible: true, bonus_final: false, pcs_slug: 'giro-d-italia/2027', tip_limit: 3, info: GIRO_RULES },
   { id: 'tour-2027', name: 'Tour de France 2027', short_name: 'Tour', theme: 'tour', year: 2027, start_date: '2027-07-02', end_date: '2027-07-25', is_visible: true, bonus_final: false, pcs_slug: 'tour-de-france/2027', tip_limit: 3 },
   { id: 'vuelta-2027', name: 'La Vuelta 2027', short_name: 'Vuelta', theme: 'vuelta', year: 2027, start_date: '2027-09-04', end_date: '2027-09-26', is_visible: true, bonus_final: false, pcs_slug: 'vuelta-a-espana/2027', tip_limit: 3 },
 ];
@@ -60,6 +65,7 @@ export const DEMO_RIDERS: Rider[] = TEAMS.flatMap(([team, riders]) =>
     name,
     team,
     tip_limit: null,
+    cyclist_id: bib,
     nationality: NAT[name]?.[0] ?? null,
     age: NAT[name]?.[1] ?? null,
     young: (NAT[name]?.[1] ?? 99) <= 25,
@@ -126,6 +132,20 @@ const RESULTS: string[][] = [
 
 export const DEMO_RESULTS: StageResult[] = RESULTS.flatMap((names, i) =>
   names.map((n, p) => ({ stage_id: 1000 + i + 1, position: p + 1, rider_id: riderId(n) })));
+
+/** Beispiel-Gesamtwertung nach jeder gefahrenen Etappe (aus den Platzierungen gewichtet) */
+export const DEMO_STANDINGS: StageStanding[] = (() => {
+  const score = new Map<number, number>();
+  const weight: Record<StageKind, number> = { flat: 0.2, hilly: 1, mountain: 3, itt: 2.5, ttt: 1 };
+  return RESULTS.flatMap((names, i) => {
+    names.forEach((n, p) => {
+      const id = riderId(n);
+      score.set(id, (score.get(id) ?? 0) + (11 - p) * weight[PLAN[i][3]]);
+    });
+    return [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([rider_id], p) => ({ stage_id: 1000 + i + 1, category: 'gc' as const, position: p + 1, rider_id }));
+  });
+})();
 
 const PEOPLE: [string, string, string][] = [
   ['u-christoph', 'Christoph', '#2E7D4F'],

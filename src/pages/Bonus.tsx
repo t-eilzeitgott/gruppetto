@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
+import { FavStar, RiderSheet } from '../ui/RiderSheet';
 import { flag } from '../lib/countries';
 import { useTourContext } from '../app/context';
-import { useNow } from '../app/hooks';
+import { useFavorites, useNow } from '../app/hooks';
 import { source } from '../app/config';
 import { invalidate } from '../app/query';
 import { navigate } from '../app/router';
@@ -9,7 +10,7 @@ import { BONUS_POINTS, bonusScoresFor, bonusStandings } from '../lib/scoring';
 import { CATEGORY_INFO, categoryTitle } from '../lib/categories';
 import { normalize } from '../lib/pcsParse';
 import { bonusDeadline, fmtDayTime } from '../lib/time';
-import { BONUS_CATEGORIES, type BonusCategory, type Profile, type TourData } from '../lib/types';
+import { BONUS_CATEGORIES, type BonusCategory, type Profile, type Rider, type TourData } from '../lib/types';
 import {
   Button, Countdown, Empty, ErrorBox, JerseyTile, Link, Loading, Notice, PageTitle, Segmented, TopBar, cx, toast,
   useAction, useTitle,
@@ -167,6 +168,8 @@ export function BonusPicker({ category }: { category: BonusCategory }) {
   const now = useNow();
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<string | null>(null);
+  const [openSheet, setOpenSheet] = useState<number | null>(null);
+  const fav = useFavorites();
   const save = useAction();
   const remove = useAction();
   const info = CATEGORY_INFO[category];
@@ -189,11 +192,12 @@ export function BonusPicker({ category }: { category: BonusCategory }) {
   // Nachwuchswertung: nur startberechtigte Fahrer, sofern die Startliste das kennt
   const hasYouthFlags = data.riders.some((r) => r.young);
 
-  const options: { key: string; title: string; sub: string; disabled?: string }[] = isTeam
+  const options: { key: string; title: string; sub: string; disabled?: string; rider?: Rider }[] = isTeam
     ? [...new Set(data.riders.map((r) => r.team))].sort((a, b) => a.localeCompare(b, 'de'))
       .map((team) => ({ key: `t:${team}`, title: team, sub: `${data.riders.filter((r) => r.team === team).length} Fahrer` }))
     : data.riders.filter((r) => !(category === 'youth' && hasYouthFlags && !r.young)).map((r) => ({
       key: `r:${r.id}`,
+      rider: r,
       title: r.name,
       sub: `${r.nationality ? `${flag(r.nationality)} ` : ''}${r.team}${r.age ? ` · ${r.age}\u00a0J.` : ''}`,
       disabled: category === 'rest' && r.excluded_from_rest ? 'ausgeklammert' : undefined,
@@ -242,17 +246,29 @@ export function BonusPicker({ category }: { category: BonusCategory }) {
         </label>
         {options.length === 0 ? <Empty title="Startliste fehlt">Der Admin muss die Startliste noch eintragen.</Empty> : (
           <ul className="list rider-list">
-            {filtered.map((o) => (
+            {[...filtered].sort((a, b) => (a.rider && fav.has(a.rider) ? 0 : 1) - (b.rider && fav.has(b.rider) ? 0 : 1)).map((o) => (
               <li key={o.key}>
-                <button type="button" className={cx('rider-option', o.key === selected && 'is-selected')} aria-pressed={o.key === selected}
-                  disabled={!!o.disabled} onClick={() => setPicked(o.key)}>
-                  <span className="radio" aria-hidden="true"><span /></span>
-                  <span className="rider-option__main">
-                    <span className="rider-option__name">{o.title}</span>
-                    <span className="rider-option__team">{o.sub}</span>
-                  </span>
-                  {o.disabled ? <span className="chip">{o.disabled}</span> : null}
-                </button>
+                <div className="rider-row">
+                  <button type="button" className={cx('rider-option', o.key === selected && 'is-selected')} aria-pressed={o.key === selected}
+                    disabled={!!o.disabled} onClick={() => setPicked(o.key)}>
+                    <span className="radio" aria-hidden="true"><span /></span>
+                    <span className="rider-option__main">
+                      <span className="rider-option__name">{o.title}</span>
+                      <span className="rider-option__team">{o.sub}</span>
+                      {o.disabled ? <span className="chip">{o.disabled}</span> : null}
+                    </span>
+                  </button>
+                  {o.rider ? (
+                    <div className="rider-row__side">
+                      <FavStar rider={o.rider} />
+                      <button type="button" className={cx('rider-info', openSheet === o.rider.id && 'is-open')} aria-expanded={openSheet === o.rider.id}
+                        aria-label={`Steckbrief von ${o.title}`} onClick={() => setOpenSheet(openSheet === o.rider!.id ? null : o.rider!.id)}>
+                        <Icon name="info" size={20} />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                {o.rider && openSheet === o.rider.id ? <RiderSheet rider={o.rider} data={data} now={now} meId={me.id} /> : null}
               </li>
             ))}
           </ul>

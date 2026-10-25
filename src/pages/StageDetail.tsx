@@ -2,12 +2,12 @@ import { useMemo } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { scoreStage, underdog, DEFAULT_SCALE } from '../lib/scoring';
-import { KIND_LABEL, fmtDay, stageState, fmtClock, fmtKm } from '../lib/time';
+import { KIND_LABEL, fmtDay, stageState, fmtClock, fmtKm, sortStages } from '../lib/time';
 import type { Profile, Stage, TourData } from '../lib/types';
 import { Avatar, ProBadge, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar, cx, useTitle, Link } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { Tippers, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
-import { StageProfileCard } from '../ui/StageProfile';
+import { StageFactsCard, StageProfileCard } from '../ui/StageProfile';
 import { flag } from '../lib/countries';
 
 export function StageDetail({ id }: { id: number }) {
@@ -47,6 +47,7 @@ export function StageDetail({ id }: { id: number }) {
         {state === 'running' ? <RunningStage stage={stage} data={data} me={me} members={members} /> : null}
         {state === 'done' ? <DoneStage stage={stage} data={data} me={me} members={members} /> : null}
         <StageProfileCard stage={stage} tour={data.tour} />
+        <StageFactsCard stage={stage} tour={data.tour} />
       </div>
     </>
   );
@@ -218,6 +219,46 @@ function DoneStage({ stage, data, me, members }: { stage: Stage; data: TourData;
         </ol>
         <p className="hint">Rechts: Punkte für einen Tipp auf diesen Platz.</p>
       </section>
+
+      <GcAfter stage={stage} data={data} />
     </>
+  );
+}
+
+/** Gesamtwertung (Top 10) nach dieser Etappe, falls eingetragen */
+function GcAfter({ stage, data }: { stage: Stage; data: TourData }) {
+  const list = (data.standings ?? []).filter((x) => x.stage_id === stage.id && x.category === 'gc').sort((a, b) => a.position - b.position);
+  if (!list.length) return null;
+  const prev = sortStages(data.stages).filter((s) => s.number < stage.number && s.results_published).pop();
+  const prevPos = new Map((data.standings ?? []).filter((x) => prev && x.stage_id === prev.id && x.category === 'gc').map((x) => [x.rider_id, x.position]));
+  const jersey = data.tour.theme === 'giro' ? 'Maglia rosa' : data.tour.theme === 'tour' ? 'Maillot jaune' : data.tour.theme === 'vuelta' ? 'Maillot rojo' : 'Führender';
+  return (
+    <section aria-labelledby={`gc-${stage.id}`}>
+      <h2 id={`gc-${stage.id}`} className="section-title">Gesamtwertung nach Etappe&nbsp;{stage.number}</h2>
+      <ol className="card result-list">
+        {list.map((x) => {
+          const rider = data.riders.find((r) => r.id === x.rider_id);
+          const before = prevPos.get(x.rider_id);
+          const delta = prev ? (before === undefined ? 'neu' : before - x.position) : null;
+          return (
+            <li key={x.position} className="result-row">
+              <span className="result-row__pos">{x.position}</span>
+              <span className="result-row__main">
+                {rider ? (
+                  <Link to={`/fahrer/${rider.id}`} className="result-row__name rider-link">
+                    {rider.nationality ? <span className="rider-option__flag" aria-hidden="true">{flag(rider.nationality)}</span> : null}{rider.name}
+                  </Link>
+                ) : <span className="result-row__name">–</span>}
+                <span className="result-row__team">{x.position === 1 ? `${jersey} · ` : ''}{rider?.team}</span>
+              </span>
+              {delta === null ? null : delta === 'neu'
+                ? <span className="delta muted">neu</span>
+                : delta === 0 ? <span className="delta muted">–</span>
+                  : <span className={cx('delta', delta > 0 ? 'pos' : 'neg')}>{delta > 0 ? '↑' : '↓'} {Math.abs(delta)}</span>}
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }

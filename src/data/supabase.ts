@@ -1,5 +1,5 @@
 import type {
-  AdminUser, BonusCategory, BonusResult, BonusTip, PointScale, Profile, Rider, Stage, StageResult, StageTip,
+  AdminUser, BonusCategory, BonusResult, BonusTip, PointScale, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
   Tour, TourData,
 } from '../lib/types';
 import {
@@ -215,11 +215,14 @@ export class SupabaseSource implements DataSource {
     ]);
     let tips: StageTip[] = [];
     let results: StageResult[] = [];
+    let standings: StageStanding[] = [];
     if (stages.length) {
       const ids = stages.map((s) => s.id).join(',');
-      [tips, results] = await Promise.all([
+      [tips, results, standings] = await Promise.all([
         this.rest<StageTip[]>(`stage_tips?stage_id=in.(${ids})&select=stage_id,user_id,rider_id,updated_at`),
         this.rest<StageResult[]>(`stage_results?stage_id=in.(${ids})&select=*&order=position.asc`),
+        // ältere Datenbank ohne Tabelle: einfach ohne Wertungsstände weiter
+        this.rest<StageStanding[]>(`stage_standings?stage_id=in.(${ids})&select=*&order=position.asc`).catch(() => []),
       ]);
     }
     return {
@@ -231,7 +234,29 @@ export class SupabaseSource implements DataSource {
       bonusTips,
       bonusResults,
       scale,
+      standings,
     };
+  }
+
+  async listFavorites(): Promise<number[]> {
+    try {
+      const rows = await this.rest<{ cyclist_id: number }[]>('favorite_cyclists?select=cyclist_id');
+      return rows.map((r) => r.cyclist_id);
+    } catch {
+      return [];
+    }
+  }
+
+  async setFavorite(cyclistId: number, on: boolean): Promise<void> {
+    if (on) {
+      await this.rest('favorite_cyclists?on_conflict=user_id,cyclist_id', {
+        method: 'POST',
+        body: { cyclist_id: cyclistId },
+        prefer: 'resolution=ignore-duplicates,return=minimal',
+      });
+    } else {
+      await this.rest(`favorite_cyclists?cyclist_id=eq.${cyclistId}`, { method: 'DELETE' });
+    }
   }
 
   stageTippers(stageId: number): Promise<string[]> {
