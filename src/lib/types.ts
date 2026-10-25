@@ -33,6 +33,8 @@ export interface Tour {
   is_visible: boolean;
   bonus_final: boolean;
   pcs_slug: string | null;
+  /** Wie oft man denselben Fahrer pro Rundfahrt höchstens tippen darf (null = unbegrenzt) */
+  tip_limit?: number | null;
 }
 
 export interface Rider {

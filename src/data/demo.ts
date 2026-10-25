@@ -1,7 +1,7 @@
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData,
 } from '../lib/types';
-import { DEFAULT_SCALE } from '../lib/scoring';
+import { DEFAULT_SCALE, tipLimit } from '../lib/scoring';
 import { bonusDeadline } from '../lib/time';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
@@ -166,10 +166,12 @@ export class DemoSource implements DataSource {
     const rider = this.riders.find((r) => r.id === riderId)!;
     if (rider.tour_id !== stage.tour_id) throw new ApiError('rider_not_in_tour');
     if (rider.status !== 'active') throw new ApiError('rider_not_active');
-    if (rider.tip_limit !== null) {
+    const tour = this.tours.find((t) => t.id === stage.tour_id)!;
+    const limit = tipLimit(tour, rider);
+    if (limit !== null) {
       const tourStages = new Set(this.stages.filter((s) => s.tour_id === stage.tour_id).map((s) => s.id));
       const used = this.tips.filter((t) => t.user_id === DEMO_ME && t.rider_id === riderId && t.stage_id !== stageId && tourStages.has(t.stage_id)).length;
-      if (used >= rider.tip_limit) throw new ApiError('joker_limit_reached');
+      if (used >= limit) throw new ApiError('joker_limit_reached');
     }
     this.tips = this.tips.filter((t) => !(t.stage_id === stageId && t.user_id === DEMO_ME));
     this.tips.push({ stage_id: stageId, user_id: DEMO_ME, rider_id: riderId, updated_at: new Date(this.now()).toISOString() });

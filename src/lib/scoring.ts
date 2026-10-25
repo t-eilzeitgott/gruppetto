@@ -1,9 +1,9 @@
 import type {
-  BonusCategory, Profile, Rider, Stage, StageResult, StageTip, TourData, PointScale,
+  BonusCategory, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData, PointScale,
 } from './types';
 
-/** Extrapunkte, wenn man als Einziger den Etappensieger getippt hat. */
-export const UNDERDOG_BONUS = 3;
+/** Standard: jeden Fahrer höchstens so oft pro Rundfahrt tippen. */
+export const DEFAULT_TIP_LIMIT = 3;
 
 /** Punkte für Platz 1/2/3 einer Bonuswertung. */
 export const BONUS_POINTS: Record<number, number> = { 1: 15, 2: 10, 3: 5 };
@@ -29,11 +29,34 @@ function scaleMap(scale: PointScale[]): Map<number, number> {
   return new Map(source.map((s) => [s.position, s.points]));
 }
 
+export interface Underdog {
+  /** Extrapunkte für den einzigen Tipp auf den Sieger (0 = kein Bonus) */
+  bonus: number;
+  /** meistgetippter Fahrer unter den übrigen Tipps */
+  favoriteId: number | null;
+}
+
 /**
- * Punkte aller Tipps einer Etappe. Gibt nur für veröffentlichte Etappen Werte zurück.
- * Außenseiter-Bonus: Wer als Einziger den Etappensieger getippt hat, bekommt +3
- * (mindestens zwei Tipps auf der Etappe).
+ * Außenseiter-Bonus: Wer als Einziger den Etappensieger getippt hat, bekommt so viele
+ * Extrapunkte, wie Tipps auf den meistgetippten anderen Fahrer (den Favoriten) gingen.
+ * Beispiel: 4× Milan, 1× Merlier, Merlier gewinnt → +4.
  */
+export function underdog(stageTips: StageTip[], winner: number | null): Underdog {
+  if (winner === null) return { bonus: 0, favoriteId: null };
+  if (stageTips.filter((t) => t.rider_id === winner).length !== 1) return { bonus: 0, favoriteId: null };
+  const counts = new Map<number, number>();
+  for (const t of stageTips) {
+    if (t.rider_id !== winner) counts.set(t.rider_id, (counts.get(t.rider_id) ?? 0) + 1);
+  }
+  let favoriteId: number | null = null;
+  let max = 0;
+  for (const [rid, n] of counts) {
+    if (n > max) { max = n; favoriteId = rid; }
+  }
+  return { bonus: max, favoriteId };
+}
+
+/** Punkte aller Tipps einer Etappe. Gibt nur für veröffentlichte Etappen Werte zurück. */
 export function scoreStage(
   stage: Stage,
   tips: StageTip[],
@@ -46,12 +69,12 @@ export function scoreStage(
   const posByRider = new Map(stageResults.map((r) => [r.rider_id, r.position]));
   const points = scaleMap(scale);
   const winner = stageResults.find((r) => r.position === 1)?.rider_id ?? null;
-  const winnerTips = winner === null ? 0 : stageTips.filter((t) => t.rider_id === winner).length;
+  const extra = underdog(stageTips, winner).bonus;
 
   return stageTips.map((t) => {
     const position = posByRider.get(t.rider_id) ?? null;
     const base = position === null ? 0 : points.get(position) ?? 0;
-    const bonus = position === 1 && winnerTips === 1 && stageTips.length >= 2 ? UNDERDOG_BONUS : 0;
+    const bonus = position === 1 ? extra : 0;
     return { userId: t.user_id, riderId: t.rider_id, position, base, bonus, total: base + bonus };
   });
 }
@@ -221,21 +244,32 @@ export function seasonLeaderboard(boards: { tourId: string; rows: LeaderRow[] }[
   return rows.sort((a, b) => a.rank - b.rank || byName(a, b));
 }
 
-/** Wie oft hat ein Spieler Fahrer mit Joker-Limit schon getippt? */
-export function jokerUsage(tips: StageTip[], riders: Rider[], userId: string): Map<number, number> {
-  const limited = new Set(riders.filter((r) => r.tip_limit !== null).map((r) => r.id));
+/** Gültiges Limit für einen Fahrer: eigenes Limit, sonst das der Rundfahrt (null = unbegrenzt). */
+export function tipLimit(tour: Tour, rider: Rider): number | null {
+  if (rider.tip_limit !== null) return rider.tip_limit;
+  return tour.tip_limit === undefined ? DEFAULT_TIP_LIMIT : tour.tip_limit;
+}
+
+/** Standard-Limit der Rundfahrt (null = unbegrenzt). */
+export function tourTipLimit(tour: Tour): number | null {
+  return tour.tip_limit === undefined ? DEFAULT_TIP_LIMIT : tour.tip_limit;
+}
+
+/** Wie oft hat ein Spieler jeden Fahrer schon getippt? (optional ohne eine Etappe) */
+export function tipUsage(tips: StageTip[], userId: string, exceptStageId?: number): Map<number, number> {
   const used = new Map<number, number>();
   for (const t of tips) {
-    if (t.user_id === userId && limited.has(t.rider_id)) {
+    if (t.user_id === userId && t.stage_id !== exceptStageId) {
       used.set(t.rider_id, (used.get(t.rider_id) ?? 0) + 1);
     }
   }
   return used;
 }
 
-/** Joker übrig, wenn man für `stageId` Fahrer `riderId` tippen würde (eigener Tipp zählt nicht doppelt). */
-export function jokerRemaining(rider: Rider, tips: StageTip[], userId: string, stageId: number): number | null {
-  if (rider.tip_limit === null) return null;
+/** Tipps übrig, wenn man für `stageId` diesen Fahrer tippen würde (eigener Tipp zählt nicht doppelt). */
+export function jokerRemaining(tour: Tour, rider: Rider, tips: StageTip[], userId: string, stageId: number): number | null {
+  const limit = tipLimit(tour, rider);
+  if (limit === null) return null;
   const used = tips.filter((t) => t.user_id === userId && t.rider_id === rider.id && t.stage_id !== stageId).length;
-  return Math.max(0, rider.tip_limit - used);
+  return Math.max(0, limit - used);
 }

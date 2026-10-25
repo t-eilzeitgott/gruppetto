@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
-import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage } from '../lib/scoring';
+import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
 import { bonusDeadline, fmtDay, fmtDayTime, fmtRange, lastPublishedStage, nextOpenStage, runningStages, tourPhase, dayDiff, fmtClock, fmtKm } from '../lib/time';
 import { BONUS_CATEGORIES, type Stage, type TourData } from '../lib/types';
 import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, Loading, useTitle } from '../ui/kit';
@@ -198,19 +198,31 @@ function LastResultCard({ stage, data, me }: { stage: Stage; data: TourData; me:
 }
 
 function Tiles({ data, me, next }: { data: TourData; me: Profile; next: Stage | null }) {
-  const jokers = data.riders.filter((r) => r.tip_limit !== null);
+  const limit = tourTipLimit(data.tour);
+  const usage = tipUsage(data.tips, me.id, next?.id);
+  const near = data.riders
+    .map((r) => ({ r, left: jokerRemaining(data.tour, r, data.tips, me.id, next?.id ?? -1), used: usage.get(r.id) ?? 0 }))
+    .filter((x) => x.used > 0 && x.left !== null && x.left <= 1)
+    .sort((a, b) => (a.left ?? 0) - (b.left ?? 0) || b.used - a.used)
+    .slice(0, 3);
   const bonus = bonusScoresFor(data, me.id).reduce((s, b) => s + b.points, 0);
   return (
     <div className="tiles">
-      {jokers.length ? (
+      {near.length ? (
         <div className="tile-card">
-          <span className="muted">Joker übrig</span>
-          {jokers.map((r) => (
+          <span className="muted">Noch tippbar</span>
+          {near.map(({ r, left }) => (
             <span key={r.id} className="tile-card__line">
               <span>{lastName(r.name)}</span>
-              <strong>{jokerRemaining(r, data.tips, me.id, next?.id ?? -1)}</strong>
+              <strong>{left}×</strong>
             </span>
           ))}
+        </div>
+      ) : limit !== null ? (
+        <div className="tile-card">
+          <span className="muted">Pro Fahrer</span>
+          <span className="tile-card__big">{limit}×</span>
+          <span className="muted">pro Rundfahrt</span>
         </div>
       ) : null}
       <Link to="/bonus" className="tile-card">

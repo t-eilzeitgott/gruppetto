@@ -25,10 +25,10 @@ from generate_series(1, 5) as n
 on conflict (tour_id, number) do nothing;
 
 insert into public.riders (tour_id, bib, name, team, tip_limit, excluded_from_rest) values
-  ('testrunde',   1, 'Tadej Pogačar',        'UAE Team Emirates XRG',      3,    true),
+  ('testrunde',   1, 'Tadej Pogačar',        'UAE Team Emirates XRG',      null, true),
   ('testrunde',   2, 'Isaac del Toro',       'UAE Team Emirates XRG',      null, false),
   ('testrunde',   3, 'Adam Yates',           'UAE Team Emirates XRG',      null, false),
-  ('testrunde',  11, 'Jonas Vingegaard',     'Visma | Lease a Bike',       3,    true),
+  ('testrunde',  11, 'Jonas Vingegaard',     'Visma | Lease a Bike',       null, true),
   ('testrunde',  12, 'Wout van Aert',        'Visma | Lease a Bike',       null, false),
   ('testrunde',  13, 'Matteo Jorgenson',     'Visma | Lease a Bike',       null, false),
   ('testrunde',  21, 'Remco Evenepoel',      'Red Bull – BORA – hansgrohe', null, false),

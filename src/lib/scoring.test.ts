@@ -38,6 +38,27 @@ test('Außenseiter-Bonus nur, wenn man als Einziger den Sieger getippt hat', () 
   assert.equal(scores.find((x) => x.userId === 'ben')!.total, 15);
 });
 
+test('Außenseiter-Bonus = Tipps auf den Favoriten (4× Milan, allein Merlier → 24)', () => {
+  const s = stage(1, 1);
+  const results = res(1, [300, 100]);
+  const tips = [tip(1, 'a', 100), tip(1, 'b', 100), tip(1, 'c', 100), tip(1, 'd', 100), tip(1, 'e', 200), tip(1, 'jerome', 300)];
+  const scores = scoreStage(s, tips, results, DEFAULT_SCALE);
+  assert.equal(scores.find((x) => x.userId === 'jerome')!.total, 24);
+  assert.equal(scores.find((x) => x.userId === 'a')!.total, 15);
+});
+
+test('Außenseiter-Bonus: 3× Pogačar, allein Almeida gewinnt → 23', () => {
+  const tips = [tip(1, 'a', 1), tip(1, 'b', 1), tip(1, 'c', 1), tip(1, 'd', 2), tip(1, 'jerome', 50)];
+  const scores = scoreStage(stage(1, 1), tips, res(1, [50]), DEFAULT_SCALE);
+  assert.equal(scores.find((x) => x.userId === 'jerome')!.total, 23);
+});
+
+test('Außenseiter-Bonus: alle tippen verschieden → +1', () => {
+  const tips = [tip(1, 'a', 1), tip(1, 'b', 2), tip(1, 'jerome', 50)];
+  const scores = scoreStage(stage(1, 1), tips, res(1, [50]), DEFAULT_SCALE);
+  assert.equal(scores.find((x) => x.userId === 'jerome')!.total, 21);
+});
+
 test('Zwei Leute auf dem Sieger: kein Bonus (Beispiel Groves 2×, Milan 3×)', () => {
   const s = stage(1, 8);
   const results = res(1, [100, 200]);
@@ -66,10 +87,10 @@ test('Wettkampf-Ranking teilt Plätze (1, 1, 3)', () => {
 const baseData = (): TourData => ({
   tour: {
     id: 't', name: 'Test', short_name: 'T', theme: 'giro', year: 2027, start_date: '2027-05-08',
-    end_date: '2027-05-30', is_visible: true, bonus_final: false, pcs_slug: null,
+    end_date: '2027-05-30', is_visible: true, bonus_final: false, pcs_slug: null, tip_limit: 3,
   },
   stages: [stage(1, 1), stage(2, 2), stage(3, 3)],
-  riders: [rider(100, 'Milan'), rider(200, 'Groves', 'Alpecin'), rider(300, 'Pogi', 'UAE', 3)],
+  riders: [rider(100, 'Milan'), rider(200, 'Groves', 'Alpecin'), rider(300, 'Pogi', 'UAE')],
   tips: [],
   results: [...res(1, [100, 200]), ...res(2, [100, 300]), ...res(3, [300, 200])],
   bonusTips: [],
@@ -113,21 +134,24 @@ test('Rangliste mit Vortagesrang', () => {
     tip(3, 'anna', 100), tip(3, 'ben', 300),
   ];
   const rows = leaderboard(data, [member('anna', 'Anna'), member('ben', 'Ben')]);
-  // Anna: 20+15+0 = 35; Ben: 15+20+20 = 55 (alle Sieger allein getippt → je +3 bei 2 Tipps)
+  // Sieger jeweils allein getippt, Favorit hat 1 Tipp → je +1
   const anna = rows.find((r) => r.userId === 'anna')!;
   const ben = rows.find((r) => r.userId === 'ben')!;
-  assert.equal(anna.total, 23 + 15 + 0);
-  assert.equal(ben.total, 15 + 23 + 23);
+  assert.equal(anna.total, 21 + 15 + 0);
+  assert.equal(ben.total, 15 + 21 + 21);
   assert.equal(ben.rank, 1);
   assert.equal(ben.prevRank, 1);
   assert.equal(ben.winnersHit, 2);
   assert.equal(ben.underdogHits, 2);
 });
 
-test('Joker-Rest ignoriert den Tipp der gleichen Etappe', () => {
-  const pogi = rider(300, 'Pogi', 'UAE', 3);
-  const tips = [tip(1, 'anna', 300), tip(2, 'anna', 300)];
-  assert.equal(jokerRemaining(pogi, tips, 'anna', 3), 1);
-  assert.equal(jokerRemaining(pogi, tips, 'anna', 2), 2);
-  assert.equal(jokerRemaining(rider(100, 'Milan'), tips, 'anna', 3), null);
+test('Tipp-Limit gilt für jeden Fahrer und ignoriert den Tipp der gleichen Etappe', () => {
+  const tour = baseData().tour;
+  const milan = rider(100, 'Milan');
+  const tips = [tip(1, 'anna', 100), tip(2, 'anna', 100)];
+  assert.equal(jokerRemaining(tour, milan, tips, 'anna', 3), 1);
+  assert.equal(jokerRemaining(tour, milan, tips, 'anna', 2), 2);
+  assert.equal(jokerRemaining({ ...tour, tip_limit: 5 }, milan, tips, 'anna', 3), 3);
+  assert.equal(jokerRemaining({ ...tour, tip_limit: null }, milan, tips, 'anna', 3), null);
+  assert.equal(jokerRemaining({ ...tour, tip_limit: null }, rider(300, 'Pogi', 'UAE', 1), tips, 'anna', 3), 1);
 });

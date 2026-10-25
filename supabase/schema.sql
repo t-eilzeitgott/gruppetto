@@ -50,13 +50,16 @@ create table if not exists public.tours (
   constraint tours_dates check (end_date >= start_date)
 );
 
+-- Wie oft man denselben Fahrer pro Rundfahrt tippen darf (null = unbegrenzt)
+alter table public.tours add column if not exists tip_limit int default 3 check (tip_limit is null or tip_limit >= 1);
+
 create table if not exists public.riders (
   id                 bigint generated always as identity primary key,
   tour_id            text not null references public.tours (id) on delete cascade,
   bib                int,
   name               text not null,
   team               text not null,
-  tip_limit          int check (tip_limit is null or tip_limit >= 0),  -- Joker-Limit, z. B. 3
+  tip_limit          int check (tip_limit is null or tip_limit >= 0),  -- eigenes Limit, sonst das der Rundfahrt
   excluded_from_rest boolean not null default false,                  -- für "Best of the Rest"
   status             text not null default 'active' check (status in ('active', 'out')),
   constraint riders_unique_name unique (tour_id, name),
@@ -215,8 +218,8 @@ declare
   v_used        int;
 begin
   select s.tour_id into v_tour from public.stages s where s.id = new.stage_id;
-  select r.tour_id, r.tip_limit, r.status into v_rider_tour, v_limit, v_status
-    from public.riders r where r.id = new.rider_id;
+  select r.tour_id, coalesce(r.tip_limit, t.tip_limit), r.status into v_rider_tour, v_limit, v_status
+    from public.riders r join public.tours t on t.id = r.tour_id where r.id = new.rider_id;
 
   if v_rider_tour is distinct from v_tour then
     raise exception 'rider_not_in_tour' using errcode = 'P0001';

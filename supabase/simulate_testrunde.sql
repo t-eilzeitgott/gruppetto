@@ -5,6 +5,7 @@
 -- Danach trägt die Datenbank selbst ein:
 --   • je Etappe eine Top 10, 4 Stunden nach dem Start (also ca. 16:00 Uhr),
 --     ausgewürfelt nach Fahrertyp (Sprinter im Flachen, Kletterer am Berg …)
+--   • ab und zu einen Ausstieg (Fahrer danach nicht mehr tippbar),
 --   • nach jeder Etappe einen Zwischenstand der Bonuswertungen,
 --     nach der letzten Etappe den Endstand (zählt dann in der Rangliste).
 --
@@ -58,6 +59,15 @@ begin
     ) pick;
     update stages set results_published = true where id = v_stage.id;
     v_count := v_count + 1;
+
+    -- Ab und zu steigt ein Fahrer aus (Sturz, Krankheit) und ist danach nicht mehr tippbar
+    if random() < 0.4 then
+      update riders set status = 'out'
+       where id = (select r.id from riders r
+                    where r.tour_id = 'testrunde' and r.status = 'active' and not r.excluded_from_rest
+                      and r.id not in (select rider_id from stage_results where stage_id = v_stage.id and position <= 3)
+                    order by random() limit 1);
+    end if;
   end loop;
 
   if v_count = 0 then

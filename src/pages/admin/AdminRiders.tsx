@@ -52,7 +52,7 @@ function RidersEditor({ tour }: { tour: Tour }) {
                           <span className="rider-option__bib">{r.bib ?? '–'}</span>
                           <span className="admin-rider__name">{r.name}</span>
                           <span className="admin-rider__tags">
-                            {r.tip_limit !== null ? <span className="chip chip--accent">Joker {r.tip_limit}×</span> : null}
+                            {r.tip_limit !== null && r.tip_limit !== (tour.tip_limit === undefined ? 3 : tour.tip_limit) ? <span className="chip chip--accent">eigenes Limit {r.tip_limit}×</span> : null}
                             {r.excluded_from_rest ? <span className="chip">nicht Best of Rest</span> : null}
                             {r.status === 'out' ? <span className="chip">ausgestiegen</span> : null}
                           </span>
@@ -169,8 +169,8 @@ function RiderEditor({ tour, rider, onDone }: { tour: Tour; rider: Rider; onDone
           <input id={`r-bib-${rider.id}`} type="number" inputMode="numeric" value={bib} onChange={(e) => setBib((e.target as HTMLInputElement).value)} />
         </div>
         <div className="field">
-          <label htmlFor={`r-limit-${rider.id}`}>Joker-Limit</label>
-          <input id={`r-limit-${rider.id}`} type="number" inputMode="numeric" min={0} placeholder="kein Limit" value={limit}
+          <label htmlFor={`r-limit-${rider.id}`}>Eigenes Limit</label>
+          <input id={`r-limit-${rider.id}`} type="number" inputMode="numeric" min={0} placeholder="wie Rundfahrt" value={limit}
             onChange={(e) => setLimit((e.target as HTMLInputElement).value)} />
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
-import { scoreStage, UNDERDOG_BONUS, DEFAULT_SCALE } from '../lib/scoring';
+import { scoreStage, underdog, DEFAULT_SCALE } from '../lib/scoring';
 import { KIND_LABEL, fmtDay, stageState, fmtClock, fmtKm } from '../lib/time';
 import type { Profile, Stage, TourData } from '../lib/types';
 import { Avatar, ProBadge, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar, cx, useTitle, Link } from '../ui/kit';
@@ -127,6 +127,7 @@ function DoneStage({ stage, data, me, members }: { stage: Stage; data: TourData;
   const winnerRider = data.riders.find((r) => r.id === winner?.rider_id);
   const mine = scores.find((s) => s.userId === me.id);
   const underdogs = scores.filter((s) => s.bonus > 0);
+  const fav = underdogs.length ? underdog(data.tips.filter((t) => t.stage_id === stage.id), winner?.rider_id ?? null) : null;
   const pointsByPos = new Map((data.scale.length ? data.scale : DEFAULT_SCALE).map((s) => [s.position, s.points]));
   const rows = scores
     .map((s) => ({ score: s, member: members.find((m) => m.id === s.userId) }))
@@ -157,9 +158,12 @@ function DoneStage({ stage, data, me, members }: { stage: Stage; data: TourData;
 
       {underdogs.length ? (
         <Notice icon="zap" tone="accent">
-          <strong>Außenseiter-Bonus +{UNDERDOG_BONUS}</strong>
+          <strong>Außenseiter-Bonus +{underdogs[0].bonus}</strong>
           <span>
-            Nur {underdogs.map((u) => members.find((m) => m.id === u.userId)?.display_name).join(', ')} hat {lastName(riderName(data, underdogs[0].riderId))} getippt – dafür gibt es {UNDERDOG_BONUS} Extrapunkte.
+            Nur {underdogs.map((u) => members.find((m) => m.id === u.userId)?.display_name).join(', ')} hat {lastName(riderName(data, underdogs[0].riderId))} getippt.
+            {fav?.favoriteId !== null && fav?.favoriteId !== undefined
+              ? ` Auf den Favoriten ${lastName(riderName(data, fav.favoriteId))} gingen ${underdogs[0].bonus} ${underdogs[0].bonus === 1 ? 'Tipp' : 'Tipps'} – so viele Extrapunkte gibt es.`
+              : ''}
           </span>
         </Notice>
       ) : null}

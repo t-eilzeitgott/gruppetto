@@ -4,7 +4,7 @@ import { useTourData } from '../app/hooks';
 import { source, BUILD_ID } from '../app/config';
 import { invalidate, resetCache } from '../app/query';
 import { setThemePref, useThemePref, type ThemePref } from '../app/theme';
-import { DEFAULT_SCALE, UNDERDOG_BONUS, BONUS_POINTS } from '../lib/scoring';
+import { DEFAULT_SCALE, DEFAULT_TIP_LIMIT, BONUS_POINTS, tourTipLimit } from '../lib/scoring';
 import type { TourData } from '../lib/types';
 import { Avatar, ProBadge, Button, ErrorBox, Link, PageTitle, Segmented, cx, toast, useAction, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
@@ -180,7 +180,8 @@ function InstallHint() {
 
 export function Rules({ data }: { data?: TourData }) {
   const scale = data?.scale.length ? data.scale : DEFAULT_SCALE;
-  const jokers = data?.riders.filter((r) => r.tip_limit !== null) ?? [];
+  const limit = data ? tourTipLimit(data.tour) : DEFAULT_TIP_LIMIT;
+  const special = data && limit !== null ? data.riders.filter((r) => r.tip_limit !== null && r.tip_limit !== limit) : [];
   const excluded = data?.riders.filter((r) => r.excluded_from_rest) ?? [];
   const names = (list: { name: string }[]) => list.map((r) => lastName(r.name)).join(' und ');
   return (
@@ -199,15 +200,20 @@ export function Rules({ data }: { data?: TourData }) {
         </ol>
       </div>
       <div className="rule">
-        <h3>Außenseiter-Bonus +{UNDERDOG_BONUS}</h3>
-        <p className="muted">Wenn du als Einziger den Etappensieger getippt hast. Tippen zwei oder mehr auf den Sieger, gibt es keinen Bonus.</p>
+        <h3>Außenseiter-Bonus</h3>
+        <p className="muted">
+          Hast du als Einziger den Etappensieger getippt, gibt es so viele Extrapunkte, wie Tipps auf den Favoriten gingen,
+          also auf den meistgetippten Fahrer. Beispiel: 4× Milan, nur du tippst Merlier, Merlier gewinnt: 20&nbsp;+&nbsp;4 = 24.
+          Tippen zwei oder mehr auf den Sieger, gibt es keinen Bonus.
+        </p>
       </div>
       <div className="rule">
-        <h3>Joker-Limit</h3>
+        <h3>Höchstens {limit ?? '∞'}× pro Fahrer</h3>
         <p className="muted">
-          {jokers.length
-            ? `${names(jokers)} darfst du je höchstens ${jokers[0].tip_limit}× pro Rundfahrt tippen.`
-            : 'Für einzelne Top-Favoriten kann der Admin festlegen, wie oft man sie pro Rundfahrt tippen darf.'}
+          {limit !== null
+            ? `Jeden Fahrer darfst du höchstens ${limit}× pro Rundfahrt tippen.`
+            : 'Jeden Fahrer darfst du beliebig oft tippen.'}
+          {special.map((r) => ` ${lastName(r.name)}: ${r.tip_limit}×.`).join('')}
         </p>
       </div>
       <div className="rule">

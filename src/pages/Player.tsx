@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
-import { bonusScoresFor, jokerUsage, leaderboard } from '../lib/scoring';
+import { bonusScoresFor, tipLimit, tipUsage, leaderboard } from '../lib/scoring';
 import { categoryTitle } from '../lib/categories';
 import { bonusDeadline, nextOpenStage, sortStages, fmtClock } from '../lib/time';
 import { BONUS_CATEGORIES } from '../lib/types';
@@ -25,8 +25,11 @@ export function Player({ id }: { id: string }) {
   const published = data.stages.filter((s) => s.results_published);
   const tipped = published.filter((s) => row?.perStage.has(s.id)).length;
   const avg = tipped ? (row!.stagePoints / tipped) : 0;
-  const jokers = data.riders.filter((r) => r.tip_limit !== null);
-  const usage = jokerUsage(data.tips, data.riders, id);
+  const usage = tipUsage(data.tips, id);
+  const favorites = data.riders
+    .filter((r) => (usage.get(r.id) ?? 0) > 0)
+    .sort((a, b) => (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0) || a.name.localeCompare(b.name, 'de'))
+    .slice(0, 3);
   const next = nextOpenStage(data.stages, now);
   const stages = sortStages(data.stages).reverse()
     .filter((s) => new Date(s.starts_at).getTime() <= now || (isMe && data.tips.some((t) => t.stage_id === s.id && t.user_id === id)));
@@ -50,9 +53,12 @@ export function Player({ id }: { id: string }) {
           <div className="stat"><strong>{avg.toLocaleString('de-DE', { maximumFractionDigits: 1 })}</strong><span>Ø pro Etappe</span></div>
           <div className="stat"><strong>{row?.underdogHits ?? 0}×</strong><span>Außenseiter-Bonus</span></div>
         </div>
-        {jokers.length ? (
+        {favorites.length ? (
           <p className="muted small center">
-            Joker genutzt: {jokers.map((r) => `${lastName(r.name)} ${usage.get(r.id) ?? 0}/${r.tip_limit}`).join(' · ')}
+            Am häufigsten getippt: {favorites.map((r) => {
+              const limit = tipLimit(data.tour, r);
+              return `${lastName(r.name)}\u00a0${usage.get(r.id) ?? 0}${limit !== null ? `/${limit}` : '×'}`;
+            }).join(' · ')}
           </p>
         ) : null}
 

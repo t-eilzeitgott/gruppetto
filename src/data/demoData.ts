@@ -7,9 +7,9 @@ export const DEMO_NOW = new Date(2027, 4, 16, 9, 46).getTime();
 export const DEMO_ME = 'u-christoph';
 
 export const DEMO_TOURS: Tour[] = [
-  { id: 'giro-2027', name: "Giro d'Italia 2027", short_name: 'Giro', theme: 'giro', year: 2027, start_date: '2027-05-08', end_date: '2027-05-30', is_visible: true, bonus_final: false, pcs_slug: 'giro-d-italia/2027' },
-  { id: 'tour-2027', name: 'Tour de France 2027', short_name: 'Tour', theme: 'tour', year: 2027, start_date: '2027-07-02', end_date: '2027-07-25', is_visible: true, bonus_final: false, pcs_slug: 'tour-de-france/2027' },
-  { id: 'vuelta-2027', name: 'La Vuelta 2027', short_name: 'Vuelta', theme: 'vuelta', year: 2027, start_date: '2027-09-04', end_date: '2027-09-26', is_visible: true, bonus_final: false, pcs_slug: 'vuelta-a-espana/2027' },
+  { id: 'giro-2027', name: "Giro d'Italia 2027", short_name: 'Giro', theme: 'giro', year: 2027, start_date: '2027-05-08', end_date: '2027-05-30', is_visible: true, bonus_final: false, pcs_slug: 'giro-d-italia/2027', tip_limit: 3 },
+  { id: 'tour-2027', name: 'Tour de France 2027', short_name: 'Tour', theme: 'tour', year: 2027, start_date: '2027-07-02', end_date: '2027-07-25', is_visible: true, bonus_final: false, pcs_slug: 'tour-de-france/2027', tip_limit: 3 },
+  { id: 'vuelta-2027', name: 'La Vuelta 2027', short_name: 'Vuelta', theme: 'vuelta', year: 2027, start_date: '2027-09-04', end_date: '2027-09-26', is_visible: true, bonus_final: false, pcs_slug: 'vuelta-a-espana/2027', tip_limit: 3 },
 ];
 
 const TEAMS: [string, [number, string][]][] = [
@@ -34,7 +34,7 @@ export const DEMO_RIDERS: Rider[] = TEAMS.flatMap(([team, riders]) =>
     bib,
     name,
     team,
-    tip_limit: bib === 1 || bib === 11 ? 3 : null,
+    tip_limit: null,
     excluded_from_rest: bib === 1 || bib === 11,
     status: bib === 64 ? 'out' as const : 'active' as const,
   })));
@@ -181,8 +181,7 @@ function buildTips(): StageTip[] {
         for (let tries = 0; tries < 20; tries += 1) {
           name = pool[Math.floor(rand() * pool.length)];
           rid = riderId(name);
-          const limit = DEMO_RIDERS.find((r) => r.id === rid)!.tip_limit;
-          if (limit === null || (used.get(rid) ?? 0) < limit) break;
+          if ((used.get(rid) ?? 0) < 3) break;
         }
       }
       used.set(rid, (used.get(rid) ?? 0) + 1);

@@ -4,7 +4,7 @@ import { useNow } from '../app/hooks';
 import { source } from '../app/config';
 import { invalidate } from '../app/query';
 import { navigate } from '../app/router';
-import { jokerRemaining } from '../lib/scoring';
+import { jokerRemaining, tipLimit, tipUsage, tourTipLimit } from '../lib/scoring';
 import { normalize } from '../lib/pcsParse';
 import { KIND_SHORT, fmtDay, stageState, fmtClock } from '../lib/time';
 import type { Rider } from '../lib/types';
@@ -52,10 +52,16 @@ export function TipPicker({ id }: { id: number }) {
     );
   }
 
-  const limited = data.riders.filter((r) => r.tip_limit !== null);
+  const usage = tipUsage(data.tips, me.id, stage.id);
+  // Nur Fahrer zeigen, bei denen es knapp wird (höchstens noch 1 Tipp übrig)
+  const used = data.riders
+    .filter((r) => (usage.get(r.id) ?? 0) > 0 && (jokerRemaining(data.tour, r, data.tips, me.id, stage.id) ?? 99) <= 1)
+    .sort((a, b) => (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0) || a.name.localeCompare(b.name, 'de'))
+    .slice(0, 6);
+  const defaultLimit = tourTipLimit(data.tour);
   const pickedRider = data.riders.find((r) => r.id === selected) ?? null;
   const unchanged = selected !== null && selected === current?.rider_id;
-  const remainingAfter = pickedRider ? jokerRemaining(pickedRider, data.tips, me.id, stage.id) : null;
+  const remainingAfter = pickedRider ? jokerRemaining(data.tour, pickedRider, data.tips, me.id, stage.id) : null;
 
   const onSave = () => {
     if (selected === null) return;
@@ -70,7 +76,10 @@ export function TipPicker({ id }: { id: number }) {
 
   let note = `Bis ${fmtClock(stage.starts_at)} jederzeit änderbar`;
   if (pickedRider && remainingAfter !== null && !unchanged) {
-    note = `Nutzt einen ${lastName(pickedRider.name)}-Joker · danach noch ${Math.max(0, remainingAfter - 1)} übrig`;
+    const left = Math.max(0, remainingAfter - 1);
+    note = left === 0
+      ? `Dein letzter Tipp auf ${lastName(pickedRider.name)} in dieser Rundfahrt`
+      : `Danach kannst du ${lastName(pickedRider.name)} noch ${left}× tippen`;
   }
 
   return (
@@ -82,10 +91,13 @@ export function TipPicker({ id }: { id: number }) {
           <span>Die anderen sehen deinen Tipp erst ab dem Start · <Countdown to={stage.starts_at} now={now} /></span>
         </Notice>
 
-        {limited.length ? (
-          <div className="joker-row" aria-label="Joker-Limit">
-            {limited.map((r) => {
-              const left = jokerRemaining(r, data.tips, me.id, stage.id) ?? 0;
+        {defaultLimit !== null ? (
+          <p className="muted small">Jeden Fahrer darfst du höchstens {defaultLimit}× pro Rundfahrt tippen.</p>
+        ) : null}
+        {used.length ? (
+          <div className="joker-row" aria-label="Schon getippte Fahrer">
+            {used.map((r) => {
+              const left = jokerRemaining(data.tour, r, data.tips, me.id, stage.id) ?? 0;
               return (
                 <span key={r.id} className={cx('joker', left === 0 && 'joker--empty')}>
                   <span className="joker__name">{lastName(r.name)}</span>
@@ -120,7 +132,8 @@ export function TipPicker({ id }: { id: number }) {
                 key={r.id}
                 rider={r}
                 selected={r.id === selected}
-                remaining={jokerRemaining(r, data.tips, me.id, stage.id)}
+                remaining={jokerRemaining(data.tour, r, data.tips, me.id, stage.id)}
+                limit={tipLimit(data.tour, r)}
                 onPick={() => setPicked(r.id)}
               />
             ))}
@@ -140,10 +153,11 @@ export function TipPicker({ id }: { id: number }) {
   );
 }
 
-function RiderOption({ rider, selected, remaining, onPick }: {
+function RiderOption({ rider, selected, remaining, limit, onPick }: {
   rider: Rider;
   selected: boolean;
   remaining: number | null;
+  limit: number | null;
   onPick: () => void;
 }) {
   const out = rider.status === 'out';
@@ -152,7 +166,7 @@ function RiderOption({ rider, selected, remaining, onPick }: {
   let tag: string | null = null;
   if (out) tag = 'ausgestiegen';
   else if (exhausted) tag = 'Limit erreicht';
-  else if (remaining !== null) tag = `Joker · noch ${remaining}`;
+  else if (remaining !== null && limit !== null && remaining < limit) tag = `noch ${remaining}× tippbar`;
   return (
     <li>
       <button

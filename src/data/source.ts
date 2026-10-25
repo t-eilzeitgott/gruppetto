@@ -18,6 +18,7 @@ export interface TourInput {
   is_visible: boolean;
   bonus_final: boolean;
   pcs_slug: string | null;
+  tip_limit?: number | null;
 }
 
 export interface StageInput {

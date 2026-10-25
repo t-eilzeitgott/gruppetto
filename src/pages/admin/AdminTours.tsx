@@ -17,7 +17,7 @@ const THEMES: { value: TourTheme; label: string }[] = [
 
 const empty = (): TourInput => ({
   id: '', name: '', short_name: '', theme: 'neutral', year: new Date().getFullYear() + 1,
-  start_date: '', end_date: '', is_visible: true, bonus_final: false, pcs_slug: null,
+  start_date: '', end_date: '', is_visible: true, bonus_final: false, pcs_slug: null, tip_limit: 3,
 });
 
 function slugify(s: string): string {
@@ -66,6 +66,10 @@ export function AdminTours() {
 
 function TourForm({ initial, onDone }: { initial: Tour | null; onDone: () => void }) {
   const [t, setT] = useState<TourInput>(initial ? { ...initial } : empty());
+  const [limit, setLimit] = useState(() => {
+    const v = initial ? (initial.tip_limit === undefined ? 3 : initial.tip_limit) : 3;
+    return v === null ? '' : String(v);
+  });
   const save = useAction();
   const del = useAction();
   const set = <K extends keyof TourInput>(key: K, value: TourInput[K]) => setT((prev) => ({ ...prev, [key]: value }));
@@ -75,7 +79,7 @@ function TourForm({ initial, onDone }: { initial: Tour | null; onDone: () => voi
   const submit = (e: FormEvent) => {
     e.preventDefault();
     save.run(async () => {
-      await source.saveTour({ ...t, id, pcs_slug: t.pcs_slug?.trim() || null });
+      await source.saveTour({ ...t, id, pcs_slug: t.pcs_slug?.trim() || null, tip_limit: limit.trim() === '' ? null : Math.max(1, Number(limit)) });
       invalidate('tours');
       invalidate('tour:');
       setAdminTour(id);
@@ -121,6 +125,12 @@ function TourForm({ initial, onDone }: { initial: Tour | null; onDone: () => voi
         <select id="tour-theme" value={t.theme} onChange={(e) => set('theme', (e.target as HTMLSelectElement).value as TourTheme)}>
           {THEMES.map((th) => <option key={th.value} value={th.value}>{th.label}</option>)}
         </select>
+      </div>
+      <div className="field">
+        <label htmlFor="tour-limit">Max. Tipps pro Fahrer</label>
+        <input id="tour-limit" type="number" inputMode="numeric" min={1} placeholder="unbegrenzt" value={limit}
+          onChange={(e) => setLimit((e.target as HTMLInputElement).value)} />
+        <span className="field__hint">Wie oft man denselben Fahrer pro Rundfahrt tippen darf. Leer = unbegrenzt.</span>
       </div>
       <div className="field">
         <label htmlFor="tour-pcs">ProCyclingStats-Kürzel</label>

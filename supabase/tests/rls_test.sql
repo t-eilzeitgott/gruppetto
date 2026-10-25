@@ -78,6 +78,7 @@ insert into public.riders (tour_id, bib, name, team, tip_limit, status) values
   ('open-test', 3, 'Raus Fahrer', 'Lidl-Trek', null, 'out'),
   ('past-test', 1, 'Kaden Groves', 'Alpecin', null, 'active'),
   ('past-test', 2, 'Mads Pedersen', 'Lidl-Trek', null, 'active');
+update public.tours set tip_limit = 1 where id = 'open-test';  -- Standard-Limit der Rundfahrt
 select pg_temp.expect_eq((select count(*) from public.app_settings), 1, 'Admin liest Einstellungen');
 select pg_temp.expect_eq((select count(*) from public.admin_list_users()), 3, 'Admin listet Konten');
 select pg_temp.expect_error($q$ select public.admin_set_flags('00000000-0000-0000-0000-00000000000a', true, false, false) $q$, 'cannot_remove_own_admin');
@@ -100,6 +101,11 @@ insert into public.stage_tips (stage_id, rider_id)
 select pg_temp.expect_error($q$
   update public.stage_tips set rider_id = (select id from public.riders where name = 'Tadej Pogačar')
    where stage_id = (select id from public.stages where tour_id = 'open-test' and number = 2) $q$, 'joker_limit_reached');
+-- Limit der Rundfahrt gilt auch ohne eigenes Fahrer-Limit
+select pg_temp.expect_error($q$
+  insert into public.stage_tips (stage_id, rider_id)
+  select s.id, r.id from public.stages s, public.riders r
+   where s.tour_id = 'open-test' and s.number = 3 and r.name = 'Jonathan Milan' $q$, 'joker_limit_reached');
 select pg_temp.expect_error($q$
   insert into public.stage_tips (stage_id, rider_id)
   select s.id, r.id from public.stages s, public.riders r

@@ -19,11 +19,12 @@ function Sections({ tour }: { tour: Tour }) {
   const now = useNow(60000);
   const d = q.data;
   const pending = d ? runningStages(d.stages, now) : [];
-  const jokers = d?.riders.filter((r) => r.tip_limit !== null).length ?? 0;
+  const limit = tour.tip_limit === undefined ? 3 : tour.tip_limit;
+  const out = d?.riders.filter((r) => r.status === 'out').length ?? 0;
   const items: { to: string; icon: IconName; title: string; sub: string; alert?: boolean }[] = [
     { to: '/admin/rundfahrten', icon: 'calendar', title: 'Rundfahrten', sub: 'Anlegen, Zeitraum, sichtbar, Endstand' },
     { to: '/admin/etappen', icon: 'flag', title: 'Etappen', sub: d ? `${d.stages.length} angelegt · Tippschluss = Startzeit` : 'Lädt …' },
-    { to: '/admin/startliste', icon: 'users', title: 'Startliste', sub: d ? `${d.riders.length} Fahrer · ${jokers} mit Joker-Limit` : 'Lädt …' },
+    { to: '/admin/startliste', icon: 'users', title: 'Startliste', sub: d ? `${d.riders.length} Fahrer${out ? ` · ${out} ausgestiegen` : ''} · ${limit === null ? 'beliebig oft tippbar' : `max. ${limit}× pro Fahrer`}` : 'Lädt …' },
     {
       to: '/admin/ergebnis',
       icon: 'trophy',
