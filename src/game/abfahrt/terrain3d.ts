@@ -414,7 +414,7 @@ export class Terrain {
     o.near = false;
     if (S.n === 0) { o.h = 0; o.water = 0; o.lakeY = -1e4; o.floor = -300; o.b = 0; o.dRoad = 1e9; o.ridge = 400; return o; }
     // Gipfel und Grate über dem Talboden: hoch genug, dass über jedem Pass noch Berge aufragen
-    const ridgeH = 380 + 520 * ridged(x / 1300, z / 1300) + 140 * fbm(x / 2600, z / 2600, 2) + 80 * (ridged(x / 430 + 3.1, z / 430 - 1.7) - 0.45);
+    const ridgeH = 300 + 400 * ridged(x / 1300, z / 1300) + 120 * fbm(x / 2600, z / 2600, 2) + 60 * (ridged(x / 430 + 3.1, z / 430 - 1.7) - 0.45);
     let sw = 0;
     let sh = 0;
     let swat = 0;
@@ -444,8 +444,8 @@ export class Terrain {
       let p = profile(kind, tilt, wall, e, S.b[q], fl - y, fl + ridgeH - y, lk - y, S.lakeW[q], S.dep[q]);
       // weiter draußen gehen alle Querprofile in dieselbe freie Berglandschaft über – sonst stünde am Rand
       // des Einflussbereichs eine Wand (Talseiten steigen so zu Bergen auf der Gegenseite an)
-      const kf = kind === K_WATER ? sstep(S.lakeW[q] + 15, R_INF - 20, e) : sstep(260, R_INF - 20, e);
-      if (kf > 0) p += (fl + ridgeH * 0.9 - y - p) * kf;
+      const kf = kind === K_WATER ? sstep(S.lakeW[q] + 15, R_INF - 20, e) : sstep(200, R_INF - 20, e);
+      if (kf > 0) p += (fl + ridgeH * 0.75 - y - p) * kf;
       sw += w;
       sh += w * (y + p);
       // Seefläche: vom Ufer weg einblenden, am fernen Ende weich auslaufen lassen
@@ -464,7 +464,7 @@ export class Terrain {
         const d2 = dx * dx + dz * dz;
         if (d2 < dm) { dm = d2; q0 = q; }
       }
-      o.h = S.floor[q0] + ridgeH * 0.9;
+      o.h = S.floor[q0] + ridgeH * 0.75;
       o.water = 0;
       o.lakeY = S.lake[q0];
       o.floor = S.floor[q0];
@@ -474,7 +474,7 @@ export class Terrain {
       // Rand des Einflussbereichs weich in die freie Berglandschaft übergehen lassen
       const wFar = 1 / (R_INF2 * R_INF2) * 0.02;
       const fl = sfloor / sw;
-      o.h = (sh + wFar * (fl + ridgeH * 0.9)) / (sw + wFar);
+      o.h = (sh + wFar * (fl + ridgeH * 0.75)) / (sw + wFar);
       o.water = swat / sw;
       o.lakeY = slake / sw;
       o.floor = fl;

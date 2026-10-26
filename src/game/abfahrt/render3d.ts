@@ -300,7 +300,8 @@ export class Renderer3D {
             vec3 px = dFdx(vRockP);
             vec3 py = dFdy(vRockP);
             vec3 fn = normalize(cross(px, py));
-            float steep = 1.0 - smoothstep(0.5, 0.8, abs(fn.y));
+            // nur in der Nähe: weiter weg würden die feinen Schichten zu Streifen flimmern
+            float steep = (1.0 - smoothstep(0.5, 0.8, abs(fn.y))) * (1.0 - smoothstep(60.0, 180.0, distance(vRockP, cameraPosition)));
             vec2 tu = vec2(-fn.z, fn.x) / max(1e-4, length(fn.xz));
             vec2 ruv = vec2(dot(vRockP.xz, tu), vRockP.y) / 11.0;
             vec4 rockC = texture2D(uRock, ruv);
@@ -664,7 +665,8 @@ export class Renderer3D {
     const fogC = new THREE.Color().setRGB(haze[0] / 255, haze[1] / 255, haze[2] / 255, THREE.SRGBColorSpace);
     this.fog.color.copy(fogC);
     // klare Bergluft: Nahes knackig, Fernes sanft im Dunst
-    this.fog.density = 0.00038 + L.hazeAmt * 0.00016;
+    // Luftperspektive: Fernes verblasst deutlich – gibt den Bergen Tiefe statt einer Wand
+    this.fog.density = 0.00085 + L.hazeAmt * 0.0002;
     const tint = new THREE.Color().setRGB(L.tint[0] / 255, L.tint[1] / 255, L.tint[2] / 255, THREE.SRGBColorSpace);
     const dayK = 1 - L.lights * 0.75;
     this.hemi.color.setRGB(0.74, 0.84, 1, THREE.SRGBColorSpace).multiply(tint);
