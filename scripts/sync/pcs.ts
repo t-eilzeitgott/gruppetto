@@ -316,6 +316,11 @@ export async function fetchPcsPage(path: string, opts: FetchOptions = {}): Promi
     }
   }
   if (last instanceof PcsError) throw last;
-  throw new PcsError(`procyclingstats.com nicht erreichbar: ${last instanceof Error ? last.message : String(last)}`, null, false);
+  // fetch() meldet nur „fetch failed“ – der eigentliche Grund steckt in cause (z. B. ECONNRESET, Zeitüberschreitung)
+  const cause = last instanceof Error && last.cause instanceof Error
+    ? ` (${(last.cause as Error & { code?: string }).code ?? last.cause.message})`
+    : '';
+  const reason = last instanceof Error ? (last.name === 'TimeoutError' ? 'Zeitüberschreitung' : last.message) : String(last);
+  throw new PcsError(`procyclingstats.com nicht erreichbar: ${reason}${cause}`, null, false);
 }
 

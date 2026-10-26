@@ -62,6 +62,11 @@ function describeStage(st: PcsStage): string {
   ].join('\n');
 }
 
+/** Im GitHub-Workflow zusätzlich als Hinweis am Lauf anzeigen (sichtbar ohne Log zu öffnen) */
+function annotate(level: 'error' | 'warning' | 'notice', message: string) {
+  if (process.env.GITHUB_ACTIONS === 'true') console.log(`::${level}::${message.replace(/%/g, '%25').replace(/\r?\n/g, '%0A')}`);
+}
+
 async function summary(markdown: string) {
   const file = process.env.GITHUB_STEP_SUMMARY;
   if (file) await appendFile(file, `${markdown}\n`);
@@ -80,9 +85,14 @@ async function main() {
     console.log(text);
     await summary(`## PCS-Test: ${pcsPath ?? file}\n\n\`\`\`\n${text}\n\`\`\``);
     const minRows = Number(str('mindestens') ?? 0);
-    if (minRows && st.stage.filter((r) => r.rank !== null).length < minRows) {
-      console.error(`\nFEHLER: weniger als ${minRows} klassierte Fahrer gelesen – hat PCS den Seitenaufbau geändert?`);
+    const classified = st.stage.filter((r) => r.rank !== null);
+    if (minRows && classified.length < minRows) {
+      const msg = `Nur ${classified.length} klassierte Fahrer gelesen (erwartet mindestens ${minRows}) – hat PCS den Seitenaufbau geändert? Reiter: ${st.tabs.join(', ') || 'keine'}, Titel: ${st.title || '–'}`;
+      console.error(`\nFEHLER: ${msg}`);
+      annotate('error', msg);
       process.exitCode = 1;
+    } else {
+      annotate('notice', `PCS lesbar: ${st.title} – ${classified.slice(0, 3).map((r) => `${r.rank}. ${r.name}`).join(', ')} · Gesamt: ${st.gc[0]?.name ?? '–'} · ${classified.length} klassiert`);
     }
     return;
   }
@@ -130,6 +140,9 @@ async function main() {
   const md = formatReport(report, opts);
   console.log(md);
   await summary(md);
+  for (const t of report.tours) {
+    for (const l of t.logs) if (l.level === 'error' || l.level === 'warning') annotate(l.level, l.message);
+  }
   if (report.newErrors) {
     console.error(`\n${report.newErrors} neue(r) Fehler – siehe oben. Der Lauf wird als fehlgeschlagen markiert, damit GitHub benachrichtigt.`);
     process.exitCode = 1;
@@ -139,6 +152,7 @@ async function main() {
 main().catch(async (err) => {
   const msg = err instanceof Error ? err.message : String(err);
   console.error(`FEHLER: ${msg}`);
+  annotate('error', msg);
   await summary(`## Ergebnisse\n\n❌ ${msg}`).catch(() => undefined);
   process.exitCode = 1;
 });
