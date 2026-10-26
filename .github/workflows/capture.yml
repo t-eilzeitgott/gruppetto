@@ -19,11 +19,11 @@ jobs:
           mkdir -p pages
           while read -r name url; do
             [ -z "$name" ] && continue
-            python3 fetch_pcs.py "$url" "pages/$name.html" > "pages/$name.meta.json" || echo "{\"error\": true}" > "pages/$name.meta.json"
+            python3 fetch_pcs.py "$url" "pages/$name.img" > "pages/$name.meta.json" || echo "{\"error\": true}" > "pages/$name.meta.json"
             echo "$name $(cat pages/$name.meta.json | head -c 80)"
             sleep 2
           done < urls.txt
-          gzip -9 pages/*.html
+          true
       - name: Zurück auf den Branch
         run: |
           git config user.name "github-actions"
