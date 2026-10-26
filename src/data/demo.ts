@@ -1,6 +1,7 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData,
+  SyncLogEntry, SyncMode, SyncStatus, StageSyncInfo,
 } from '../lib/types';
 import { DEFAULT_SCALE, tipLimit } from '../lib/scoring';
 import { bonusDeadline } from '../lib/time';
@@ -33,10 +34,14 @@ export class DemoSource implements DataSource {
   private profiles: Profile[] = clone(DEMO_PROFILES);
   private inviteCode = 'GIRO27';
   private nextId = 50000;
+  /** Automatik: von Hand pausierte Etappen (wie der Trigger in der Datenbank) und eigene Protokolleinträge */
+  private syncPaused = new Map<number, string>();
+  private syncLog: SyncLogEntry[] = [];
 
   constructor(start: 'app' | 'login' | 'join' = 'app', baseTime?: number) {
     this.base = baseTime ?? DEMO_NOW;
     this.signedIn = start !== 'login';
+    for (const t of this.tours) t.sync_mode = t.sync_mode ?? 'auto';
     if (start !== 'app') {
       const me = this.profiles.find((p) => p.id === DEMO_ME)!;
       me.is_member = false;
@@ -365,13 +370,76 @@ export class DemoSource implements DataSource {
     await wait();
     this.results = this.results.filter((r) => r.stage_id !== stageId);
     riderIds.forEach((rider_id, i) => this.results.push({ stage_id: stageId, position: i + 1, rider_id }));
+    this.pauseSync(stageId, 'Ergebnis von Hand geändert');
   }
 
   async setStagePublished(stageId: number, published: boolean): Promise<void> {
     await wait();
     const stage = this.stages.find((s) => s.id === stageId)!;
     if (published && new Date(stage.starts_at).getTime() > this.now()) throw new ApiError('stage_not_started');
+    if (stage.results_published && !published) this.pauseSync(stageId, 'Veröffentlichung von Hand zurückgezogen');
     stage.results_published = published;
+  }
+
+  private pauseSync(stageId: number, reason: string) {
+    if (!this.syncPaused.has(stageId)) this.syncPaused.set(stageId, reason);
+  }
+
+  // ---------- Automatische Ergebnisse (Demo: plausibler Verlauf aus den Beispieldaten) ----------
+
+  async loadSyncStatus(tourId: string, stageIds: number[]): Promise<SyncStatus> {
+    await wait();
+    const now = this.now();
+    const tour = this.tours.find((t) => t.id === tourId);
+    const iso = (ms: number) => new Date(Math.min(ms, now)).toISOString();
+    const stages: StageSyncInfo[] = [];
+    const log: SyncLogEntry[] = [];
+    let id = 1;
+    for (const s of this.stages.filter((x) => stageIds.includes(x.id)).sort((a, b) => a.number - b.number)) {
+      const start = new Date(s.starts_at).getTime();
+      const paused = this.syncPaused.get(s.id) ?? null;
+      const url = tour?.pcs_slug ? `https://www.procyclingstats.com/race/${tour.pcs_slug}/stage-${s.number}` : null;
+      const row: StageSyncInfo = { stage_id: s.id, paused: !!paused, paused_reason: paused, checked_at: null, synced_at: null, status: null, source_url: url, last_error: null };
+      if (start <= now) {
+        const synced = start + 4.8 * 3_600_000;
+        if (s.results_published && synced <= now) {
+          row.synced_at = iso(synced);
+          row.checked_at = iso(Math.min(now - 20 * 60_000, synced + 30 * 3_600_000));
+          row.status = 'veröffentlicht';
+          const names = this.results.filter((r) => r.stage_id === s.id).sort((a, b) => a.position - b.position).slice(0, 3)
+            .map((r, i) => `${i + 1}. ${this.riders.find((x) => x.id === r.rider_id)?.name ?? '?'}`).join(', ');
+          log.push({ id: id++, at: row.synced_at, stage_id: s.id, level: 'change', message: `Etappe ${s.number}: Ergebnis veröffentlicht – ${names}` });
+        } else {
+          row.checked_at = iso(now - 4 * 60_000);
+          row.status = now < start + 4 * 3_600_000 ? 'wartet auf die Zielankunft' : 'Ergebnis gelesen, Prüfung läuft';
+        }
+      } else if (start - now <= 36 * 3_600_000) {
+        row.checked_at = iso(now - 50 * 60_000);
+        row.status = 'Etappendaten geprüft';
+      } else {
+        continue;
+      }
+      if (paused) row.status = 'pausiert';
+      stages.push(row);
+    }
+    return { stages, log: [...this.syncLog, ...log].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 40) };
+  }
+
+  async setSyncMode(tourId: string, mode: SyncMode): Promise<void> {
+    await wait();
+    const tour = this.tours.find((t) => t.id === tourId);
+    if (tour) tour.sync_mode = mode;
+  }
+
+  async setStageSyncPaused(stageId: number, paused: boolean): Promise<void> {
+    await wait();
+    const stage = this.stages.find((s) => s.id === stageId);
+    if (paused) this.syncPaused.set(stageId, 'von Hand angehalten');
+    else this.syncPaused.delete(stageId);
+    this.syncLog.unshift({
+      id: this.nextId++, at: new Date(this.now()).toISOString(), stage_id: stageId, level: 'info',
+      message: `Automatik für Etappe ${stage?.number ?? '?'} ${paused ? 'angehalten' : 'fortgesetzt'}`,
+    });
   }
 
   async setBonusResults(tourId: string, category: BonusResult['category'], entries: BonusResultInput[]): Promise<void> {

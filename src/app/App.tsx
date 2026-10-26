@@ -32,6 +32,7 @@ import { AdminRiders } from '../pages/admin/AdminRiders';
 import { AdminResults } from '../pages/admin/AdminResults';
 import { AdminBonus } from '../pages/admin/AdminBonus';
 import { AdminMembers } from '../pages/admin/AdminMembers';
+import { AdminSync } from '../pages/admin/AdminSync';
 import { BONUS_CATEGORIES, type BonusCategory, type Profile as ProfileT } from '../lib/types';
 
 export function App() {
@@ -153,6 +154,7 @@ function AdminRouter({ section }: { section?: string }) {
     case 'ergebnis': return <AdminResults />;
     case 'bonus': return <AdminBonus />;
     case 'mitglieder': return <AdminMembers />;
+    case 'automatik': return <AdminSync />;
     default: return <NotFound />;
   }
 }

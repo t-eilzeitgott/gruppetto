@@ -1,0 +1,108 @@
+name: Ergebnisse
+
+# Holt Etappenergebnisse, Wertungen, Ausstiege und Streckenänderungen von procyclingstats.com
+# und trägt sie in Supabase ein – für alle Rundfahrten, bei denen die Automatik an ist
+# (Admin → Automatische Ergebnisse). Details im README unter „Automatische Ergebnisse“.
+#
+# Braucht: Variable VITE_SUPABASE_URL (gibt es schon) und das Secret SUPABASE_SECRET_KEY.
+# Ohne Secret passiert nichts. Außerhalb der Rundfahrten endet jeder Lauf nach einer Abfrage.
+
+on:
+  schedule:
+    # Renntage: alle 10 Minuten von 13 bis 22 Uhr deutscher Sommerzeit (Winterzeit: eine Stunde früher)
+    - cron: '3,13,23,33,43,53 11-19 * * *'
+    # morgens und vor dem Tippschluss: Nachkontrolle und Änderungen an den nächsten Etappen
+    - cron: '37 5,8 * * *'
+  workflow_dispatch:
+    inputs:
+      art:
+        description: Was soll passieren?
+        type: choice
+        default: Probelauf (nichts speichern)
+        options:
+          - Probelauf (nichts speichern)
+          - Echt (speichern)
+          - Nur PCS-Test (ohne Datenbank)
+      rundfahrt:
+        description: Nur diese Rundfahrt (ID, z. B. giro-2027) – leer = alle mit eingeschalteter Automatik
+        required: false
+      etappe:
+        description: Nur diese Etappe (Nummer, nur zusammen mit Rundfahrt)
+        required: false
+      modus:
+        description: Modus für diesen Lauf (nur mit Rundfahrt) – leer = wie in der App eingestellt
+        type: choice
+        default: ''
+        options: ['', auto, draft]
+      sofort:
+        description: Nicht auf Zielankunft und Stabilitätsprüfung warten
+        type: boolean
+        default: false
+      pcs_seite:
+        description: Für den PCS-Test – Seite bei procyclingstats.com
+        default: race/giro-d-italia/2026/stage-7
+  push:
+    paths: ['scripts/sync/**', '.github/workflows/ergebnisse.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Ergebnisse abgleichen
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !startsWith(inputs.art, 'Nur PCS'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: ergebnisse-sync
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Abgleichen
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          EVENT: ${{ github.event_name }}
+          ART: ${{ inputs.art }}
+          RUNDFAHRT: ${{ inputs.rundfahrt }}
+          ETAPPE: ${{ inputs.etappe }}
+          MODUS: ${{ inputs.modus }}
+          SOFORT: ${{ inputs.sofort }}
+        run: |
+          args=(--seiten-ordner pcs-seiten)
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            case "$ART" in Echt*) ;; *) args+=(--probelauf) ;; esac
+            [ -n "$RUNDFAHRT" ] && args+=(--tour "$RUNDFAHRT")
+            [ -n "$ETAPPE" ] && args+=(--etappe "$ETAPPE")
+            [ -n "$MODUS" ] && args+=(--modus "$MODUS")
+            [ "$SOFORT" = "true" ] && args+=(--sofort)
+          fi
+          node --no-warnings scripts/sync/run.ts "${args[@]}"
+      - name: Abgerufene Seiten aufbewahren
+        if: always() && (github.event_name == 'workflow_dispatch' || failure())
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcs-seiten
+          path: pcs-seiten
+          retention-days: 7
+          if-no-files-found: ignore
+
+  pcs-test:
+    name: PCS erreichbar und lesbar?
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && startsWith(inputs.art, 'Nur PCS'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests mit gespeicherten PCS-Seiten
+        run: node --no-warnings --test scripts/sync/*.test.ts
+      - name: Echte Seite abrufen und auslesen
+        env:
+          SEITE: ${{ inputs.pcs_seite || 'race/giro-d-italia/2026/stage-7' }}
+        run: node --no-warnings scripts/sync/run.ts --pcs "$SEITE" --mindestens 10

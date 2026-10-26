@@ -7,15 +7,17 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --serve",
-    "test": "node --import tsx --test src/lib/*.test.ts src/game/abfahrt/*.test.ts",
-    "typecheck": "tsc -p tsconfig.check.json",
-    "test:db": "bash supabase/tests/run.sh"
+    "test": "node --import tsx --test src/lib/*.test.ts src/game/abfahrt/*.test.ts scripts/sync/*.test.ts",
+    "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.sync.json",
+    "test:db": "bash supabase/tests/run.sh",
+    "sync": "node --no-warnings scripts/sync/run.ts"
   },
   "dependencies": {
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@types/node": "^22.10.0",
     "esbuild": "0.28.2",
     "tsx": "4.23.12",
     "typescript": "6.0.3"

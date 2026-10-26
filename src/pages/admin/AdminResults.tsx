@@ -5,7 +5,7 @@ import { useNow, useTourData } from '../../app/hooks';
 import type { Rider, Tour, TourData } from '../../lib/types';
 import { parseResults } from '../../lib/pcsParse';
 import { fmtDay, sortStages, stageState, fmtClock } from '../../lib/time';
-import { Button, ErrorBox, Loading, Notice, toast, useAction, useTitle } from '../../ui/kit';
+import { Button, ErrorBox, Link, Loading, Notice, toast, useAction, useTitle } from '../../ui/kit';
 import { AdminPage, ExternalLink, pcsUrl } from './common';
 
 const SLOTS = 10;
@@ -42,6 +42,12 @@ function ResultsEditor({ tour }: { tour: Tour }) {
           })}
         </select>
       </div>
+      {tour.sync_mode === 'auto' || tour.sync_mode === 'draft' ? (
+        <Notice icon="refresh">
+          Die <Link to="/admin/automatik">Automatik</Link> holt das Ergebnis von procyclingstats.com{tour.sync_mode === 'draft' ? ' als Vorschlag – du veröffentlichst' : ''}.
+          Speicherst du hier von Hand oder ziehst die Veröffentlichung zurück, pausiert sie für diese Etappe.
+        </Notice>
+      ) : null}
       <ResultForm key={current.id} data={q.data} stageId={current.id} now={now} />
     </>
   );
