@@ -72,6 +72,14 @@ function whyFor(scores: Scores, id: number, t: RiderType): string {
   return `${n} × Top 10 ${KIND_WORD[t]}`;
 }
 
+/** Ersatz, solange eine Rundfahrt noch keine Startliste hat */
+const CLIMBERS = ['Tadej Pogačar', 'Jonas Vingegaard', 'Remco Evenepoel', 'João Almeida', 'Isaac del Toro', 'Primož Roglič', 'Juan Ayuso',
+  'Florian Lipowitz', 'Oscar Onley', 'Carlos Rodríguez', 'Mattias Skjelmose', 'Giulio Ciccone', 'Felix Gall', 'Matteo Jorgenson', 'Enric Mas',
+  'Richard Carapaz', 'Antonio Tiberi', 'Santiago Buitrago', 'Egan Bernal', 'Thymen Arensman', 'Kévin Vauquelin', 'Lenny Martinez', 'Ben Healy', 'Adam Yates'];
+const SPRINTERS = ['Jonathan Milan', 'Jasper Philipsen', 'Tim Merlier', 'Olav Kooij', 'Mads Pedersen', 'Biniam Girmay', 'Arnaud De Lie', 'Paul Magnier',
+  'Kaden Groves', 'Dylan Groenewegen', 'Wout van Aert', 'Mathieu van der Poel', 'Sam Bennett', 'Jordi Meeus', 'Sam Welsford', 'Tobias Lund Andresen',
+  'Laurence Pithie', 'Alberto Dainese', 'Arvid de Kleijn', 'Danny van Poppel'];
+
 /** Etappe des Tages (sonst die nächste) */
 export function stageOfDay(stages: Stage[], dayKey: string): Stage | null {
   const key = (iso: string) => berlinDayKey(new Date(iso));
@@ -124,7 +132,8 @@ export function riderOptions(data: TourData | null | undefined, me: Profile, day
  */
 export function rivalNames(data: TourData | null | undefined, chosen: number | null, kind: 'sprint' | 'climb' = 'sprint'): string[] {
   const active = (data?.riders ?? []).filter((r) => r.status !== 'out' && r.id !== chosen);
-  if (!active.length) return [];
+  // noch keine Startliste: bekannte Fahrer des Pelotons (Kletterer bzw. Sprinter zuerst)
+  if (active.length < 6) return kind === 'climb' ? [...CLIMBERS, ...SPRINTERS] : [...SPRINTERS, ...CLIMBERS];
   const scores = scoreRiders(data!);
   const score = (id: number) => {
     const s = scores.get(id);
@@ -136,4 +145,51 @@ export function rivalNames(data: TourData | null | undefined, chosen: number | n
     .sort((a, b) => b.s - a.s)
     .slice(0, 40)
     .map((x) => x.n);
+}
+
+/** Sprinterzug: drei Anfahrer und der Sprinter (zuletzt) aus einem echten Team */
+export interface Train { team: string; riders: string[] }
+
+/**
+ * Sprinterzüge fürs Sprintfinale: die Teams mit den stärksten Sprintern (nach den bisherigen
+ * Ergebnissen, sonst fest je Tag), je ein Sprinter und drei Teamkollegen als Anfahrer.
+ * Das Team des gewählten Fahrers fährt nicht als Gegnerzug.
+ */
+export function sprintTrains(data: TourData | null | undefined, chosen: number | null, dayKey: string, n = 4): Train[] {
+  const active = (data?.riders ?? []).filter((r) => r.status !== 'out');
+  if (active.length < 12) return [];
+  const scores = scoreRiders(data!);
+  const sc = (id: number, t: RiderType) => scores.get(id)?.[t] ?? 0;
+  const own = active.find((r) => r.id === chosen)?.team ?? null;
+  const teams = new Map<string, typeof active>();
+  for (const r of active) {
+    if (r.id === chosen || !r.team || r.team === own) continue;
+    const list = teams.get(r.team) ?? [];
+    list.push(r);
+    teams.set(r.team, list);
+  }
+  const ranked = [...teams.entries()]
+    .filter(([, list]) => list.length >= 4)
+    .map(([team, list]) => ({ team, list, s: Math.max(...list.map((r) => sc(r.id, 'sprinter') * 2 + sc(r.id, 'puncheur'))), h: hashStr(`${dayKey}:${team}`) }))
+    .sort((a, b) => b.s - a.s || a.h - b.h)
+    .slice(0, n);
+  return ranked.map(({ team, list }) => {
+    const sorted = [...list].sort((a, b) => (sc(b.id, 'sprinter') - sc(a.id, 'sprinter')) || hashStr(`${dayKey}:${a.id}`) - hashStr(`${dayKey}:${b.id}`));
+    const sprinter = sorted[0];
+    const leadouts = [...sorted.slice(1)].sort((a, b) => (sc(b.id, 'rouleur') + sc(b.id, 'allround')) - (sc(a.id, 'rouleur') + sc(a.id, 'allround'))).slice(0, 3);
+    return { team, riders: [...leadouts.map((r) => r.name), sprinter.name] };
+  });
+}
+
+/** Teamkollege des gewählten Fahrers als Helfer (Anfahrer im Sprint, Edelhelfer am Berg) */
+export function teamMate(data: TourData | null | undefined, chosen: number | null, kind: 'sprint' | 'climb'): { name: string; team: string } | null {
+  const active = (data?.riders ?? []).filter((r) => r.status !== 'out');
+  const me = active.find((r) => r.id === chosen);
+  if (!me || !me.team) return null;
+  const mates = active.filter((r) => r.team === me.team && r.id !== me.id);
+  if (!mates.length) return null;
+  const scores = scoreRiders(data!);
+  const t: RiderType = kind === 'climb' ? 'climber' : 'rouleur';
+  const best = [...mates].sort((a, b) => ((scores.get(b.id)?.[t] ?? 0) - (scores.get(a.id)?.[t] ?? 0)) || (a.bib ?? 999) - (b.bib ?? 999))[0];
+  return { name: best.name, team: me.team };
 }

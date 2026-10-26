@@ -6,16 +6,37 @@
  * 3D-Fahrer und eine 2D-Ebene für Punkte-Popups.
  */
 import * as THREE from 'three';
-import { EDGE, MOUNTAIN_TOP, ROAD_HALF, SEG, Track, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
+import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
 import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
-import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, facadeTex, FACADE_BANDS, gravelTex, rockTex, roundTex, vergeTex } from './tex3d';
+import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, gravelTex, rockTex, roundTex, vergeTex } from './tex3d';
+import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
 import { GB, lin, lin255, propGeometries, treeGeometriesLow, type Prop3D, type RGBf } from './models3d';
 import { RiderModel, riderKitKey } from './rider3d';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
 import { mulberry32 } from './rng';
+
+/**
+ * Bildlook: Neutral-Tonwertkurve, dazu eine leichte Filmkurve (etwas Kontrast), etwas mehr Farbe und
+ * Split-Toning – Schatten kühl, Lichter warm. Läuft in jedem Material im selben Durchgang, kostet also kaum etwas.
+ */
+const GRADE = `vec3 CustomToneMapping( vec3 color ) {
+	vec3 c = NeutralToneMapping( color );
+	vec3 p = pow( max( c, vec3( 0.0 ) ), vec3( 0.4545 ) );
+	p = mix( p, p * p * ( 3.0 - 2.0 * p ), 0.2 );
+	c = pow( p, vec3( 2.2 ) );
+	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
+	c = max( mix( vec3( l ), c, 1.1 ), vec3( 0.0 ) );
+	c *= mix( vec3( 0.965, 0.99, 1.05 ), vec3( 1.035, 1.0, 0.95 ), smoothstep( 0.015, 0.45, l ) );
+	return clamp( c, 0.0, 1.0 );
+}`;
+{
+  const chunk = THREE.ShaderChunk as unknown as Record<string, string>;
+  chunk.tonemapping_pars_fragment = chunk.tonemapping_pars_fragment.replace('vec3 CustomToneMapping( vec3 color ) { return color; }', GRADE);
+}
+const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
 
 const CH = 40;            // Segmente je Abschnitt (80 m)
 const AHEAD = 560;        // so weit voraus wird gebaut (m)
@@ -48,6 +69,8 @@ const rgbLin = (c: RGB): RGBf => lin255(c[0], c[1], c[2]);
 interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg }
 interface CrowdBatch { near: THREE.Mesh[]; far: THREE.Mesh[]; c: THREE.Vector3; r: number; lod: number }
 interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[] }
+/** Bauteile der Häuser eines Abschnitts */
+interface Town { facade: GB; tiles: GB; plain: GB; signs: GB; lanterns: number[]; bulbs: number[] }
 interface Runner { z: number; x: number; v: number; go: boolean; p: Person; act: number; yaw: number; flag: boolean }
 interface Tile { lv: number; key: string; objs: THREE.Object3D[]; geos: THREE.BufferGeometry[]; trees: { im: THREE.InstancedMesh; kind: Prop3D }[]; box: [number, number, number, number]; stale?: boolean }
 interface AtlasEntry { u0: number; v0: number; u1: number; v1: number; w: number; h: number; du: number }
@@ -109,6 +132,7 @@ export class Renderer3D {
     asphalt: THREE.MeshLambertMaterial; fresh: THREE.MeshLambertMaterial; cobble: THREE.MeshLambertMaterial; gravel: THREE.MeshLambertMaterial;
     verge: THREE.MeshLambertMaterial; marks: THREE.MeshLambertMaterial; terrain: THREE.MeshLambertMaterial; portal: THREE.MeshLambertMaterial; barrier: THREE.MeshLambertMaterial;
     water: THREE.MeshPhongMaterial; tunnel: THREE.MeshBasicMaterial; facade: THREE.MeshLambertMaterial; roof: THREE.MeshLambertMaterial;
+    tiles: THREE.MeshLambertMaterial; sign: THREE.MeshLambertMaterial; bulb: THREE.PointsMaterial; lantern: THREE.PointsMaterial;
     props: THREE.MeshLambertMaterial; ads: THREE.MeshLambertMaterial; billboard: THREE.MeshLambertMaterial; glow: THREE.PointsMaterial; lampGlow: THREE.MeshBasicMaterial;
   };
   private props!: Record<Prop3D, THREE.BufferGeometry>;
@@ -162,8 +186,8 @@ export class Renderer3D {
     // Kantenglättung immer an (MSAA): auf Handy-GPUs günstig, Kanten und Linien werden weich
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false });
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
-    // sanfte Tonwertkurve: helle Sonne ohne ausgefressene Farben
-    this.gl.toneMapping = THREE.NeutralToneMapping;
+    // sanfte Tonwertkurve (helle Sonne ohne ausgefressene Farben) plus leichter Filmlook (GRADE)
+    this.gl.toneMapping = THREE.CustomToneMapping;
     this.gl.toneMappingExposure = 1.08;
     // Keine Schattenkarte: ein zweiter Zeichendurchgang ist auf älteren Handys zu teuer.
     // Fahrer und Zuschauer haben weiche Bodenschatten.
@@ -248,10 +272,10 @@ export class Renderer3D {
 
   private initMaterials() {
     const L = (opts: THREE.MeshLambertMaterialParameters) => new THREE.MeshLambertMaterial(opts);
-    const facade = this.tex(facadeTex(false));
-    facade.wrapT = THREE.ClampToEdgeWrapping;
-    const facadeLit = this.tex(facadeTex(true));
-    facadeLit.wrapT = THREE.ClampToEdgeWrapping;
+    const fa = facadeAtlas();
+    const facade = this.tex(fa.day, false);
+    const facadeLit = this.tex(fa.night, false);
+    const signs = this.tex(signAtlas(), false);
     const detail = this.tex(detailTex());
     this.shadowTex = new THREE.CanvasTexture(roundTex('rgba(0,0,0,0.75)', 'rgba(0,0,0,0)', 64));
     const glowTex = new THREE.CanvasTexture(roundTex('rgba(255,210,140,1)', 'rgba(255,170,80,0)', 64));
@@ -268,7 +292,12 @@ export class Renderer3D {
       water: new THREE.MeshPhongMaterial({ color: 0x2f7fb5, shininess: 90, specular: 0x88aacc, transparent: true, opacity: 0.92, flatShading: true }),
       tunnel: new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }),
       facade: L({ map: facade, emissiveMap: facadeLit, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0 }),
-      roof: L({ vertexColors: true, flatShading: true }),
+      // Dächer, Giebel, Kamine, Fahnen: beidseitig (Dachüberstände sieht man von unten)
+      roof: L({ vertexColors: true, flatShading: true, side: THREE.DoubleSide }),
+      tiles: L({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, map: this.tex(roofTex()) }),
+      sign: L({ map: signs, emissiveMap: signs, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0 }),
+      bulb: new THREE.PointsMaterial({ size: 0.55, map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
+      lantern: new THREE.PointsMaterial({ size: 1.7, map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
       props: L({ vertexColors: true, flatShading: true }),
       ads: L({ vertexColors: true, side: THREE.DoubleSide }),
       billboard: L({ alphaTest: 0.5, side: THREE.DoubleSide }),
@@ -726,10 +755,29 @@ export class Renderer3D {
     this.chunks.clear();
   }
 
+  /** Radlampen erst bei Dunkelheit (und im Tunnel) – nicht schon im Abendlicht der Finals */
+  private bikeLight(): number { return Math.max(0, this.night - 0.62) * 2.6 + this.tunnelDim; }
+
+  /** nur für Tests: feste Tageszeit (0 Mittag … 0.7 Sonnenuntergang) */
+  debugTod: number | null = null;
+
+  /**
+   * Tageszeit über die Fahrt: jede Fahrt beginnt am Nachmittag und endet im Abendlicht – Sprint- und
+   * Bergfinale im Sonnenuntergang mit Laternen und hellen Fenstern, die Abfahrt wird mit der Strecke später
+   */
+  private todAt(g: RaceView): number {
+    if (this.debugTod !== null) return this.debugTod;
+    const t = this.track!;
+    const v = hash(t.seed);
+    if (t.kind === 'descent') return 0.1 + v * 0.08 + 0.56 * smooth01(g.p.z / 7500);
+    const fin = t.kind === 'sprint' ? SPRINT_FINISH : MOUNTAIN_FINISH;
+    const a = 0.16 + v * 0.12;
+    const b = 0.62 + hash(t.seed + 7) * 0.05;
+    return a + (b - a) * smooth01(g.p.z / fin);
+  }
+
   private updateLight(g: RaceView, biome: BiomeId, seg: Seg, dt: number) {
-    const z = g.p.z;
-    // immer heller Tag (auch im dunklen Design): später Vormittag, gegen Ende Richtung goldene Stunde
-    const tod = 0.06 + Math.min(0.3, z / 16000);
+    const tod = this.todAt(g);
     const L = lightAt(tod);
     this.light = L;
     this.night = L.lights;
@@ -744,18 +792,19 @@ export class Renderer3D {
     // Luftperspektive: Fernes verblasst deutlich – gibt den Bergen Tiefe statt einer Wand
     this.fog.density = 0.00085 + L.hazeAmt * 0.0002;
     const tint = new THREE.Color().setRGB(L.tint[0] / 255, L.tint[1] / 255, L.tint[2] / 255, THREE.SRGBColorSpace);
-    const dayK = 1 - L.lights * 0.75;
+    // abends etwas weniger Licht – aber die Strecke bleibt gut lesbar
+    const dayK = 1 - L.lights * 0.45;
     this.hemi.color.setRGB(0.74, 0.84, 1, THREE.SRGBColorSpace).multiply(tint);
     // Bodenlicht: helle Wiesen, Fels und Schnee werfen viel Licht zurück – auch Schattenseiten bleiben freundlich
     this.hemi.groundColor.setRGB(0.64, 0.6, 0.5, THREE.SRGBColorSpace).multiply(tint);
     this.hemi.intensity = (1.0 + 0.35 * dayK) * dim;
     const sunC = new THREE.Color().setRGB(L.sun[0] / 255, L.sun[1] / 255, L.sun[2] / 255, THREE.SRGBColorSpace);
     this.sun.color.copy(sunC);
-    this.sun.intensity = Math.max(0.2, Math.min(2.7, (L.sunY + 0.12) * 6.5)) * dayK * dim;
-    // Sonnenstand: fester Kurs in der Welt – aus Süd-Südost, also beim Start (Richtung Norden) schräg von
-    // hinten: die Berge vor einem liegen im Licht statt im Gegenlicht
+    this.sun.intensity = Math.max(0.55, Math.min(2.7, (L.sunY + 0.12) * 6.5)) * dayK * dim;
+    // Sonnenstand: am Nachmittag schräg von hinten (die Berge vor einem liegen im Licht), zum Abend hin
+    // wandert die Sonne nach Westen, steht tiefer und taucht seitlich vor einem ins Abendrot
     const el = Math.max(-0.2, L.sunY) * 1.5 + 0.18;
-    const az = Math.PI - 0.6;
+    const az = Math.PI - 0.6 + Math.min(0.75, L.t) * 2.1;
     const sd = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az)).normalize();
     const c = this.shadowCenter(g, sd);
     this.sun.position.copy(c).addScaledVector(sd, 220);
@@ -772,7 +821,11 @@ export class Renderer3D {
     (u.below.value as THREE.Color).copy(fogC);
     (u.sunDir.value as THREE.Vector3).copy(sd);
     (u.sunCol.value as THREE.Color).copy(sunC).multiplyScalar(L.sunY > -0.1 ? 1 : 0);
-    this.mats.facade.emissiveIntensity = L.lights * 1.1;
+    this.mats.facade.emissiveIntensity = L.lights * 1.25;
+    this.mats.sign.emissiveIntensity = L.lights * 0.75;
+    const dusk = Math.max(0, Math.min(1, (L.lights - 0.08) / 0.4));
+    this.mats.bulb.opacity = dusk;
+    this.mats.lantern.opacity = dusk * 0.85;
     this.mats.glow.opacity = Math.max(0, L.lights - 0.2) * 1.1 + this.tunnelDim * 0.4;
     if (!this.holeMode) this.valleyMat.color.copy(fogC);
     const water = pal.water;
@@ -1059,6 +1112,11 @@ export class Renderer3D {
     const facade = new GB();
     facade.uv = true;
     const roof = new GB();
+    const tiles = new GB();
+    tiles.uv = true;
+    const signGB = new GB();
+    signGB.uv = true;
+    const town: Town = { facade, tiles, plain: roof, signs: signGB, lanterns: [], bulbs: [] };
     const bill = new GB();
     bill.uv = true;
     const ads = new GB();
@@ -1113,8 +1171,10 @@ export class Renderer3D {
       // --- Häuser
       for (const sg of [-1, 1]) {
         const bld = sg < 0 ? s.bL : s.bR;
-        if (bld && bld.start === s.i) this.building(facade, roof, rows, r, bld, sg, P);
+        if (bld && bld.start === s.i) this.building(town, a, bld, sg);
       }
+      // Wimpel- und Lichterketten quer über die Gasse
+      if (s.bL && s.bR && s.i % 17 === 9 && !s.banner) this.garland(town, a, s.bL, s.bR);
       // --- Sprites/Requisiten
       if (s.sprites) {
         for (const sp of s.sprites) {
@@ -1156,6 +1216,8 @@ export class Renderer3D {
     add(tunnel, this.mats.tunnel);
     add(facade, this.mats.facade, 0, true);
     add(roof, this.mats.roof, 0, true);
+    add(tiles, this.mats.tiles, 0, true);
+    add(signGB, this.mats.sign, 0);
     add(ads, this.mats.ads, 0, true);
     if (!bill.empty) {
       const geo = bill.build();
@@ -1210,6 +1272,15 @@ export class Renderer3D {
       glow = new THREE.Points(gg, this.mats.glow);
       glow.renderOrder = 5;
       group.add(glow);
+    }
+    for (const [pts, mat] of [[town.lanterns, this.mats.lantern], [town.bulbs, this.mats.bulb]] as const) {
+      if (!pts.length) continue;
+      const gg = new THREE.BufferGeometry();
+      gg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      disp.push(gg);
+      const pm = new THREE.Points(gg, mat);
+      pm.renderOrder = 5;
+      group.add(pm);
     }
     return {
       idx: ci, group, glow, crowd,
@@ -1590,72 +1661,295 @@ export class Renderer3D {
     }
   }
 
-  private building(facade: GB, roof: GB, rows: Row[], r: number, b: NonNullable<Seg['bL']>, sg: number, P: (r: Row, x: number, h: number) => number[]) {
-    const a = rows[r];
-    const len = b.len * SEG;
-    const fx = Math.sin(a.th);
-    const fz = -Math.cos(a.th);
-    const base = a.y - 2;
-    const at = (lat: number, along: number, h: number) => [a.x + a.rx * lat + fx * along, base + 2 + h, a.z + a.rz * lat + fz * along];
-    const H = b.height;
-    const N = FACADE_BANDS;
-    const band = b.style === 2 ? 7 : b.style === 1 ? 6 : b.color % 7;
-    const vAt = (h: number) => 1 - (band + 1) / N + (Math.max(0, Math.min(12, (h / H) * 12)) / 12) / N * 0.999;
+  /**
+   * Haus an der Straße: Fassaden stockwerksweise aus dem Atlas (alle vier Wände), Satteldach mit
+   * Ziegeln, Traufbrettern und Kamin, Ladenschild, Wandlaterne – Kirche mit Turm, Rathaus mit Fahnen.
+   * Das Haus folgt der Sehne der Straße (in Kurven stehen beide Enden im gleichen Abstand) und steht am
+   * Hang auf der höheren Seite; der Sockel reicht tief genug hinunter.
+   */
+  private building(T: Town, a: Row, b: Building, sg: number) {
+    const t = this.track!;
+    const z0 = a.seg.i * SEG;
+    const e = t.world(z0 + b.len * SEG, 0, 0, this.w2);
+    let fx = e.x - a.x;
+    let fz = e.z - a.z;
+    const L = Math.hypot(fx, fz) || b.len * SEG;
+    fx /= L;
+    fz /= L;
+    const rx = -fz;
+    const rz = fx;
+    const base = Math.max(a.y, e.y);
+    const at = (lat: number, along: number, h: number) => [a.x + rx * lat + fx * along, base + h, a.z + rz * lat + fz * along];
+    const st = b.style;
+    const church = st === STYLE.kirche;
+    const n = b.floors;
+    const GH = FAC_M.ground;
+    const UH = FAC_M.upper;
+    const H = GH + n * UH + FAC_M.cornice;
+    const depth = b.depth;
     const l0 = sg * b.setback;
-    const l1 = sg * (b.setback + b.depth);
-    // Front zur Straße
-    const f0 = at(l0, 0, -2);
-    const f1 = at(l0, len, -2);
-    const f2 = at(l0, len, H);
-    const f3 = at(l0, 0, H);
-    const uv = (u: number, h: number) => [u / 4, vAt(h)];
-    if (sg < 0) facade.quad(f0, f1, f2, f3, [1, 1, 1], [uv(0, 0), uv(len, 0), uv(len, H), uv(0, H)]);
-    else facade.quad(f1, f0, f3, f2, [1, 1, 1], [uv(len, 0), uv(0, 0), uv(0, H), uv(len, H)]);
-    // Stirnseite (zur Kamera hin)
-    const e0 = at(l0, 0, -2);
-    const e1 = at(l1, 0, -2);
-    const e2 = at(l1, 0, H);
-    const e3 = at(l0, 0, H);
-    const dep = b.depth;
-    if (sg < 0) facade.quad(e1, e0, e3, e2, [1, 1, 1], [uv(dep, 0), uv(0, 0), uv(0, H), uv(dep, H)]);
-    else facade.quad(e0, e1, e2, e3, [1, 1, 1], [uv(0, 0), uv(dep, 0), uv(dep, H), uv(0, H)]);
-    // Dach mit First parallel zur Straße
-    const roofCol = lin(['#a8492a', '#8a3c24', '#5a4a40'][b.roof]);
-    const lm = (l0 + l1) / 2;
-    const rh = H + Math.min(3.2, b.depth * 0.38);
-    const ov = sg * 0.5;
-    const r0 = at(l0 - ov, -0.4, H - 0.15);
-    const r1 = at(l0 - ov, len + 0.4, H - 0.15);
-    const r2 = at(lm, len + 0.4, rh);
-    const r3 = at(lm, -0.4, rh);
-    const r4 = at(l1 + ov, -0.4, H - 0.15);
-    const r5 = at(l1 + ov, len + 0.4, H - 0.15);
-    if (b.style !== 2) {
-      roof.quad(r0, r1, r2, r3, roofCol);
-      roof.quad(r3, r2, r5, r4, shadeF(roofCol, 0.85));
-      const wall = shadeF(lin(['#dca86a', '#e2997c', '#ecdcbc', '#e8c86c', '#d98f8c', '#cc7a55', '#eeeae0'][b.color % 7]), 0.8);
-      roof.tri(at(l0, 0, H), at(lm, 0, rh - 0.2), at(l1, 0, H), wall);
-      // Unterseite der Traufe
-      roof.quad(at(l0, 0, H - 0.1), at(l0 - ov, 0, H - 0.15), at(l0 - ov, len, H - 0.15), at(l0, len, H - 0.1), lin('#4a3226'));
-    } else {
-      // Kirche: flaches Dach und Turm
-      roof.quad(r0, r1, r5, r4, lin('#8a7d6c'));
-      const tw = 4;
-      const tl0 = l0;
-      const tl1 = l0 + sg * tw;
-      const stone = lin('#cfc4b0');
-      const TH = 24;
-      const T = (lat: number, al: number, h: number) => at(lat, al, h);
-      const faces = [[T(tl0, 0, 0), T(tl1, 0, 0), T(tl1, 0, TH), T(tl0, 0, TH)], [T(tl0, tw, 0), T(tl0, 0, 0), T(tl0, 0, TH), T(tl0, tw, TH)], [T(tl1, 0, 0), T(tl1, tw, 0), T(tl1, tw, TH), T(tl1, 0, TH)]];
-      for (const f of faces) roof.quad(f[0], f[1], f[2], f[3], stone);
-      const tc = T((tl0 + tl1) / 2, tw / 2, TH + 5);
-      const tr = lin('#9a4a30');
-      roof.tri(T(tl0, 0, TH), T(tl1, 0, TH), tc, tr);
-      roof.tri(T(tl1, 0, TH), T(tl1, tw, TH), tc, shadeF(tr, 0.85));
-      roof.tri(T(tl0, tw, TH), T(tl0, 0, TH), tc, shadeF(tr, 0.9));
-      roof.quad(T(tl0, -0.01, 20.5), T(tl1, -0.01, 20.5), T(tl1, -0.01, 22.5), T(tl0, -0.01, 22.5), lin('#3a332c'));
+    const l1 = sg * (b.setback + depth);
+    const lo = Math.min(l0, l1);
+    const hi = Math.max(l0, l1);
+    const hs = (k: number) => hash(b.seed + k * 7919);
+    const pieces = (len: number) => Math.max(1, Math.ceil(len / 4 - 0.01));
+    const frontPieces = pieces(L);
+    const signPiece = frontPieces >= 3 ? 1 : 0;
+    const signOk = b.sign >= 0 && L - signPiece * 4 >= 3.99;
+
+    /** Wand von A nach B (von außen gesehen links → rechts) als Streifen je Geschoss */
+    const wall = (A: [number, number], B: [number, number], variant: (k: number, upper: boolean) => number, onPiece?: (k: number, s0: number, s1: number) => void) => {
+      const Lw = Math.hypot(B[0] - A[0], B[1] - A[1]);
+      const np = pieces(Lw);
+      for (let k = 0; k < np; k++) {
+        const s0 = k * 4;
+        const s1 = Math.min(Lw, s0 + 4);
+        const p0 = [A[0] + (B[0] - A[0]) * (s0 / Lw), A[1] + (B[1] - A[1]) * (s0 / Lw)];
+        const p1 = [A[0] + (B[0] - A[0]) * (s1 / Lw), A[1] + (B[1] - A[1]) * (s1 / Lw)];
+        const strip = (h0: number, h1: number, part: FacPart, v: number) => {
+          const [vb, vt] = facV(st, part);
+          const u0 = facU(v, 0);
+          const u1 = facU(v, s1 - s0);
+          T.facade.quad(at(p0[0], p0[1], h0), at(p1[0], p1[1], h0), at(p1[0], p1[1], h1), at(p0[0], p0[1], h1), [1, 1, 1], [[u0, vb], [u1, vb], [u1, vt], [u0, vt]]);
+        };
+        const vg = variant(k, false);
+        const vu = variant(k, true);
+        strip(-3.2, 0, 'base', vg);
+        strip(0, GH, 'ground', vg);
+        for (let f = 0; f < n; f++) strip(GH + f * UH, GH + (f + 1) * UH, 'upper', vu);
+        strip(H - FAC_M.cornice, H, 'cornice', vu);
+        onPiece?.(k, s0, s1);
+      }
+    };
+    // Front zur Straße: Läden (Variante B) wo ein Schild hängt, sonst gemischt
+    const frontVar = (k: number, upper: boolean) => {
+      if (upper) return hs(k + 40) < 0.5 ? 1 : 0;
+      if (church) return k === Math.floor(frontPieces / 2) ? 0 : 1;
+      if (signOk && k === signPiece) return 1;
+      return hs(k) < (b.sign >= 0 ? 0.25 : 0.18) ? 1 : 0;
+    };
+    const sideVar = (k: number, upper: boolean) => (upper ? (hs(k + 90) < 0.3 ? 1 : 0) : 0);
+    const out = -sg;   // Richtung zur Straße (quer)
+    const frontA: [number, number] = sg < 0 ? [l0, 0] : [l0, L];
+    const frontB: [number, number] = sg < 0 ? [l0, L] : [l0, 0];
+    wall(frontA, frontB, frontVar, (k, s0) => {
+      // Ladenschild über dem Schaufenster
+      if (!(signOk && k === signPiece)) return;
+      const [u0, v0, u1, v1] = signUV(this.track!.lang, b.sign);
+      const along = (s: number) => (sg < 0 ? s : L - s);
+      const la = l0 + out * 0.05;
+      const a0 = along(s0 + 0.22);
+      const a1 = along(s0 + 3.78);
+      T.signs.quad(at(la, a0, GH - 0.37), at(la, a1, GH - 0.37), at(la, a1, GH - 0.01), at(la, a0, GH - 0.01), [1, 1, 1], [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+      if (b.badge >= 0) {
+        // Steckschild quer zur Fassade (zwei Seiten, damit es von beiden Richtungen lesbar ist)
+        const [bu0, bv0, bu1, bv1] = badgeUV(b.badge);
+        const ab = along(s0 + 0.12);
+        const q0 = l0 + out * 0.2;
+        const q1 = l0 + out * 0.85;
+        const h0 = GH + 0.35;
+        const h1 = h0 + 0.65;
+        const [na, nb] = out > 0 ? [q0, q1] : [q1, q0];
+        T.signs.quad(at(na, ab - 0.01, h0), at(nb, ab - 0.01, h0), at(nb, ab - 0.01, h1), at(na, ab - 0.01, h1), [1, 1, 1], [[bu0, bv0], [bu1, bv0], [bu1, bv1], [bu0, bv1]]);
+        T.signs.quad(at(nb, ab + 0.01, h0), at(na, ab + 0.01, h0), at(na, ab + 0.01, h1), at(nb, ab + 0.01, h1), [1, 1, 1], [[bu0, bv0], [bu1, bv0], [bu1, bv1], [bu0, bv1]]);
+        const iron = lin('#2a2a2c');
+        T.plain.quad(at(l0, ab, h1 + 0.02), at(q1, ab, h1 + 0.02), at(q1, ab, h1 + 0.07), at(l0, ab, h1 + 0.07), iron);
+      }
+    });
+    wall([lo, 0], [hi, 0], sideVar);
+    wall([hi, L], [lo, L], sideVar);
+    wall(sg < 0 ? [l1, L] : [l1, 0], sg < 0 ? [l1, 0] : [l1, L], sideVar);
+
+    // ---- Wandlaterne (abends ein warmer Lichtpunkt)
+    if (!church && hs(5) < 0.8) {
+      const s = L >= 6 ? 4 : L / 2;
+      const al = sg < 0 ? s : L - s;
+      const h = GH + 0.45;
+      const iron = lin('#26262a');
+      const p0 = l0 + out * 0.02;
+      const p1 = l0 + out * 0.42;
+      T.plain.quad(at(p0, al - 0.03, h + 0.26), at(p1, al - 0.03, h + 0.26), at(p1, al + 0.03, h + 0.26), at(p0, al + 0.03, h + 0.26), iron);
+      T.plain.quad(at(p0, al, h + 0.2), at(p1, al, h + 0.26), at(p1, al, h + 0.31), at(p0, al, h + 0.26), iron);
+      const c = at(p1, al, h);
+      const box = (x0: number, x1: number, y0: number, y1: number, col: RGBf) => {
+        const q = (pa: number[], pb: number[], pc: number[], pd: number[]) => T.plain.quad(pa, pb, pc, pd, col);
+        const P0 = (dl: number, da: number, y: number) => [c[0] + rx * dl + fx * da, c[1] + y, c[2] + rz * dl + fz * da];
+        q(P0(x0, x0, y0), P0(x1, x0, y0), P0(x1, x0, y1), P0(x0, x0, y1));
+        q(P0(x1, x0, y0), P0(x1, x1, y0), P0(x1, x1, y1), P0(x1, x0, y1));
+        q(P0(x1, x1, y0), P0(x0, x1, y0), P0(x0, x1, y1), P0(x1, x1, y1));
+        q(P0(x0, x1, y0), P0(x0, x0, y0), P0(x0, x0, y1), P0(x0, x1, y1));
+      };
+      box(-0.09, 0.09, -0.02, 0.24, lin('#f2d9a0'));
+      box(-0.12, 0.12, 0.24, 0.3, iron);
+      T.lanterns.push(c[0], c[1] + 0.12, c[2]);
     }
-    void P;
+
+    // ---- Dach
+    const pitch = STYLE_PITCH[st];
+    const chalet = st === STYLE.chalet;
+    const ovE = chalet ? 1.1 : 0.42;
+    const ovG = chalet ? 0.75 : 0.28;
+    const half = depth / 2;
+    const rh = H + pitch * half;
+    const lm = (l0 + l1) / 2;
+    const ee = H - pitch * ovE;
+    const eF = l0 - sg * ovE;
+    const eB = l1 + sg * ovE;
+    const tint = 0.9 + hs(3) * 0.18;
+    const roofCol = shadeF(lin(STYLE_ROOF[st]), tint);
+    const slopeLen = Math.hypot(half + ovE, rh - ee);
+    const g0 = -ovG;
+    const g1 = L + ovG;
+    const tileQuad = (eave: number) => T.tiles.quad(at(eave, g0, ee), at(eave, g1, ee), at(lm, g1, rh), at(lm, g0, rh), roofCol,
+      [[g0 / 2, 0], [g1 / 2, 0], [g1 / 2, slopeLen / 2], [g0 / 2, slopeLen / 2]]);
+    tileQuad(eF);
+    tileQuad(eB);
+    // First, Trauf- und Ortgangbretter: das Dach bekommt eine sichtbare Stärke
+    const board = lin(chalet ? '#3e2716' : st === STYLE.backstein || st === STYLE.haussmann ? '#d9d4ca' : '#4a3628');
+    const bh = chalet ? 0.3 : 0.18;
+    for (const ev of [eF, eB]) T.plain.quad(at(ev, g0, ee - bh), at(ev, g1, ee - bh), at(ev, g1, ee), at(ev, g0, ee), board);
+    for (const al of [g0, g1]) {
+      for (const ev of [eF, eB]) T.plain.quad(at(ev, al, ee - bh), at(lm, al, rh - bh), at(lm, al, rh), at(ev, al, ee), board);
+    }
+    T.plain.quad(at(lm - 0.12, g0, rh + 0.02), at(lm - 0.12, g1, rh + 0.02), at(lm + 0.12, g1, rh + 0.02), at(lm + 0.12, g0, rh + 0.02), shadeF(roofCol, 0.75));
+    // Giebeldreiecke (Wandfarbe; Chalet in Holz)
+    const gable = chalet ? lin('#7a4e2c') : shadeF(lin(STYLE_WALL[st]), 0.94);
+    T.plain.tri(at(l0, 0, H), at(lm, 0, rh), at(l1, 0, H), gable);
+    T.plain.tri(at(l1, L, H), at(lm, L, rh), at(l0, L, H), gable);
+    // Unterseite des Dachüberstands an der Traufe (dunkler Schatten statt Durchblick)
+    const soffit = lin(chalet ? '#3a2414' : '#3e342c');
+    T.plain.quad(at(l0, g0, H - 0.02), at(eF, g0, ee - bh), at(eF, g1, ee - bh), at(l0, g1, H - 0.02), soffit);
+    T.plain.quad(at(l1, g0, H - 0.02), at(eB, g0, ee - bh), at(eB, g1, ee - bh), at(l1, g1, H - 0.02), soffit);
+    // Kamin auf der hinteren Dachhälfte
+    if (!church && hs(9) < 0.7) {
+      const ca = L * (0.25 + hs(11) * 0.5);
+      const cl = lm + sg * half * (0.3 + hs(13) * 0.25);
+      const roofH = rh - pitch * Math.abs(cl - lm);
+      const cw = 0.32;
+      const col = st === STYLE.backstein ? lin('#8a3e2e') : shadeF(lin(STYLE_WALL[st]), 0.85);
+      const top = rh + 0.9;
+      const P0 = (dl: number, da: number, h: number) => at(cl + dl, ca + da, h);
+      const sides: [number, number, number, number][] = [[-cw, -cw, cw, -cw], [cw, -cw, cw, cw], [cw, cw, -cw, cw], [-cw, cw, -cw, -cw]];
+      for (const [x0, y0, x1, y1] of sides) T.plain.quad(P0(x0, y0, roofH - 0.6), P0(x1, y1, roofH - 0.6), P0(x1, y1, top), P0(x0, y0, top), col);
+      const cap = lin('#3a3632');
+      const cc = cw + 0.07;
+      T.plain.quad(P0(-cc, -cc, top), P0(cc, -cc, top), P0(cc, cc, top), P0(-cc, cc, top), cap);
+      for (const [x0, y0, x1, y1] of sides) T.plain.quad(P0(x0 * 1.22, y0 * 1.22, top - 0.1), P0(x1 * 1.22, y1 * 1.22, top - 0.1), P0(x1 * 1.22, y1 * 1.22, top), P0(x0 * 1.22, y0 * 1.22, top), cap);
+    }
+
+    // ---- Kirchturm vorn an der Straße mit Uhr und Schallarkaden
+    if (church) {
+      const tw = 4.4;
+      const t0 = l0 + out * 0.6;
+      const t1 = t0 - out * tw;
+      const TH = 23;
+      const stone = lin('#d6ccb8');
+      const T3 = (lat: number, al: number, h: number) => at(lat, al, h);
+      const [ta, tb] = out > 0 ? [t1, t0] : [t0, t1];
+      // Wände (Außenseite jeweils nach außen)
+      T.plain.quad(T3(ta, -0.6, -2), T3(tb, -0.6, -2), T3(tb, -0.6, TH), T3(ta, -0.6, TH), stone);
+      T.plain.quad(T3(tb, -0.6 + tw, -2), T3(ta, -0.6 + tw, -2), T3(ta, -0.6 + tw, TH), T3(tb, -0.6 + tw, TH), stone);
+      T.plain.quad(T3(t0, -0.6 + tw, -2), T3(t0, -0.6, -2), T3(t0, -0.6, TH), T3(t0, -0.6 + tw, TH), shadeF(stone, 0.95));
+      T.plain.quad(T3(t1, -0.6, -2), T3(t1, -0.6 + tw, -2), T3(t1, -0.6 + tw, TH), T3(t1, -0.6, TH), shadeF(stone, 0.9));
+      // Gesimse
+      for (const h of [7.5, 15.5]) {
+        const band = lin('#bfb39c');
+        T.plain.quad(T3(t0 + out * 0.08, -0.68, h), T3(t0 + out * 0.08, -0.6 + tw + 0.08, h), T3(t0 + out * 0.08, -0.6 + tw + 0.08, h + 0.35), T3(t0 + out * 0.08, -0.68, h + 0.35), band);
+        T.plain.quad(T3(ta, -0.68, h), T3(tb, -0.68, h), T3(tb, -0.68, h + 0.35), T3(ta, -0.68, h + 0.35), band);
+      }
+      // Schallarkaden (dunkel) und Uhr zur Straße und nach vorn
+      const dark = lin('#2a2420');
+      const mid = -0.6 + tw / 2;
+      for (const [w0, w1] of [[mid - 1.3, mid - 0.25], [mid + 0.25, mid + 1.3]]) {
+        T.plain.quad(T3(t0 + out * 0.02, w1, 17.2), T3(t0 + out * 0.02, w0, 17.2), T3(t0 + out * 0.02, w0, 20.4), T3(t0 + out * 0.02, w1, 20.4), dark);
+      }
+      const cm = (ta + tb) / 2;
+      for (const [w0, w1] of [[cm - 1.3, cm - 0.25], [cm + 0.25, cm + 1.3]]) T.plain.quad(T3(w0, -0.62, 17.2), T3(w1, -0.62, 17.2), T3(w1, -0.62, 20.4), T3(w0, -0.62, 20.4), dark);
+      const clock = (cx: number, ca: number, nx: number, na: number) => {
+        // Zifferblatt als Achteck, Zeiger
+        const R = 0.95;
+        const ctr = [cx, ca, 12.6];
+        const pt = (ang: number, rad: number) => {
+          const u = Math.cos(ang) * rad;
+          const v = Math.sin(ang) * rad;
+          return T3(ctr[0] + na * u, ctr[1] - nx * u, ctr[2] + v);
+        };
+        const white = lin('#f4f0e6');
+        for (let k = 0; k < 8; k++) T.plain.tri(T3(ctr[0], ctr[1], ctr[2]), pt((k * Math.PI) / 4, R), pt(((k + 1) * Math.PI) / 4, R), white);
+        const hand = lin('#1a1a1a');
+        T.plain.quad(pt(-0.08 + Math.PI / 2, 0.06), pt(0.08 + Math.PI / 2, 0.06), pt(Math.PI / 2 + 0.02, 0.8), pt(Math.PI / 2 - 0.02, 0.8), hand);
+        T.plain.quad(pt(-0.1, 0.06), pt(0.1, 0.06), pt(0.03, 0.55), pt(-0.03, 0.55), hand);
+      };
+      clock(t0 + out * 0.03, mid, out, 0);
+      clock(cm, -0.63, 0, -1);
+      // Turmhelm
+      const tip = T3(cm, mid, TH + 7.5);
+      const helm = lin('#4f5a58');
+      const cnr = [T3(ta, -0.6, TH), T3(tb, -0.6, TH), T3(tb, -0.6 + tw, TH), T3(ta, -0.6 + tw, TH)];
+      for (let k = 0; k < 4; k++) T.plain.tri(cnr[k], cnr[(k + 1) % 4], tip, shadeF(helm, 0.85 + k * 0.05));
+      const ball = T3(cm, mid, TH + 7.9);
+      T.plain.quad([ball[0] - 0.05, ball[1] - 0.4, ball[2]], [ball[0] + 0.05, ball[1] - 0.4, ball[2]], [ball[0] + 0.05, ball[1] + 0.6, ball[2]], [ball[0] - 0.05, ball[1] + 0.6, ball[2]], lin('#c8a24a'));
+    }
+
+    // ---- Rathaus: Fahnen in den Landesfarben
+    if (st === STYLE.rathaus) {
+      const lang = this.track!.lang;
+      const cols: string[] = lang === 'fr' ? ['#1f3c9c', '#f4f4f4', '#d6202a'] : lang === 'it' ? ['#1f8a4c', '#f4f4f4', '#d6202a']
+        : lang === 'es' ? ['#c8102e', '#ffc400', '#c8102e'] : ['#1f3c9c', '#f4f4f4', '#d6202a'];
+      const vertical = lang !== 'es';
+      for (const s of [L * 0.3, L * 0.7]) {
+        const h0 = GH + UH * 0.85;
+        const root = at(l0, s, h0);
+        const tipP = at(l0 + out * 1.5, s, h0 + 0.9);
+        const iron = lin('#2a2a2c');
+        T.plain.quad(root, [root[0], root[1] + 0.05, root[2]], [tipP[0], tipP[1] + 0.05, tipP[2]], tipP, iron);
+        // Tuch hängt am Mast, leicht schräg
+        for (let k = 0; k < 3; k++) {
+          const f0 = k / 3;
+          const f1 = (k + 1) / 3;
+          const P = (fu: number, fv: number) => {
+            const lat = l0 + out * (0.35 + 1.1 * fu);
+            const hh = h0 + 0.2 + 0.6 * fu - 0.75 * fv;
+            return at(lat, s + 0.04 * fv, hh);
+          };
+          if (vertical) T.plain.quad(P(f0, 0), P(f1, 0), P(f1, 1), P(f0, 1), lin(cols[k]));
+          else T.plain.quad(P(0, f0), P(1, f0), P(1, f1), P(0, f1), lin(cols[k]));
+        }
+      }
+    }
+  }
+
+  /** Wimpelkette mit Glühbirnen quer über die Gasse (abends leuchten die Birnen) */
+  private garland(T: Town, a: Row, bl: Building, br: Building) {
+    const lang = this.track!.lang;
+    const sets: Record<string, string[]> = {
+      fr: ['#1f3c9c', '#f4f4f4', '#d6202a'], it: ['#1f8a4c', '#f4f4f4', '#d6202a'], es: ['#c8102e', '#ffc400'], en: ['#1f3c9c', '#f4f4f4', '#d6202a'],
+    };
+    const fun = ['#ffd23f', '#ff5fa2', '#2f80ed', '#27ae60', '#f4f4f4', '#ff7a30'];
+    const cols = hash(a.seg.i * 3) < 0.6 ? sets[lang] : fun;
+    const h = FAC_M.ground + 2.3 + hash(a.seg.i) * 0.8;
+    const x0 = -bl.setback + 0.1;
+    const x1 = br.setback - 0.1;
+    const N = 16;
+    const sag = 0.9;
+    const pt = (k: number) => {
+      const f = k / N;
+      const x = x0 + (x1 - x0) * f;
+      const y = a.y + h - sag * 4 * f * (1 - f);
+      return [a.x + a.rx * x, y, a.z + a.rz * x];
+    };
+    const line = lin('#2a2a2c');
+    const fx = Math.sin(a.th) * 0.02;
+    const fz = -Math.cos(a.th) * 0.02;
+    for (let k = 0; k < N; k++) {
+      const p = pt(k);
+      const q = pt(k + 1);
+      T.plain.quad(p, q, [q[0], q[1] + 0.03, q[2]], [p[0], p[1] + 0.03, p[2]], line);
+      // Wimpel: Dreieck unter der Leine
+      const m = [(p[0] + q[0]) / 2 + fx, (p[1] + q[1]) / 2 - 0.42, (p[2] + q[2]) / 2 + fz];
+      T.plain.tri([p[0] + fx, p[1], p[2] + fz], [q[0] + fx, q[1], q[2] + fz], m, lin(cols[k % cols.length]));
+      if (k > 0) T.bulbs.push(p[0], p[1] - 0.06, p[2]);
+    }
   }
 
   private prop(group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], inst: Map<Prop3D, { m: THREE.Matrix4[]; c: THREE.Color[] }>,
@@ -2030,7 +2324,7 @@ export class Renderer3D {
     if (g.phase === 'crash' || g.phase === 'over') pm.crash(g.phaseT, g.crashSpin);
     else {
       pm.resetCrash();
-      pm.pose({ lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, light: this.night + this.tunnelDim, roll: p.z / 0.34, stand: p.stand ?? 0 });
+      pm.pose({ lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, light: this.bikeLight(), roll: p.z / 0.34, stand: p.stand ?? 0 });
     }
     // Bildschirmposition für Popups
     const v = new THREE.Vector3(w.x, w.y + air + 1.9, w.z).project(this.camera);
@@ -2086,7 +2380,7 @@ export class Renderer3D {
     track.world(o.z, o.x, 0, w);
     m.group.position.set(w.x, w.y, w.z);
     m.group.rotation.y = -w.th;
-    m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.night + this.tunnelDim, roll: o.z / 0.34, stand: o.stand ?? 0 });
+    m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.bikeLight(), roll: o.z / 0.34, stand: o.stand ?? 0 });
   }
 
   private poolGet(kind: string, make: () => THREE.Object3D): THREE.Object3D {

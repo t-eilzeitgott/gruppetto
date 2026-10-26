@@ -106,7 +106,7 @@ function HomeBody({ data, members, me, now }: { data: TourData; members: Profile
 
       {phase !== 'upcoming' ? <Tiles data={data} me={me} next={next} /> : null}
 
-      <GamesCard stageKind={todayStage?.kind ?? null} town={todayStage?.arrival ?? ''} />
+      <GamesCard stageKind={todayStage?.kind ?? null} tourName={data.tour.name} stages={data.stages} />
     </>
   );
 }

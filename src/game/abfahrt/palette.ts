@@ -89,7 +89,7 @@ export const BIOME_PALETTES: Record<BiomeId, Palette> = {
   }),
 };
 
-/** Tageszeit-Stützpunkte: 0 Mittag, 0.45 goldene Stunde, 0.7 Sonnenuntergang, 1 Nacht */
+/** Tageszeit-Stützpunkte: 0 Mittag, 0.3 Nachmittag, 0.45 goldene Stunde, 0.58 Abendsonne, 0.7 Sonnenuntergang, 1 Nacht */
 export interface Light {
   t: number;
   skyTop: RGB;
@@ -105,8 +105,12 @@ export interface Light {
 
 export const LIGHTS: Light[] = [
   { t: 0, skyTop: hex('#3a8ee2'), skyHorizon: hex('#d6ebf8'), tint: hex('#ffffff'), hazeMix: hex('#d6e6f0'), hazeAmt: 0, sun: hex('#fff8e0'), sunY: 0.3, lights: 0, stars: 0 },
-  { t: 0.45, skyTop: hex('#4f86c9'), skyHorizon: hex('#f6d9a8'), tint: hex('#fff1dc'), hazeMix: hex('#f2d6ae'), hazeAmt: 0.5, sun: hex('#ffd38a'), sunY: 0.14, lights: 0, stars: 0 },
-  { t: 0.7, skyTop: hex('#3b4f8f'), skyHorizon: hex('#f59a6b'), tint: hex('#f6c9a8'), hazeMix: hex('#e9a07d'), hazeAmt: 0.75, sun: hex('#ff8a4c'), sunY: 0.03, lights: 0.55, stars: 0.1 },
+  // später Nachmittag: Licht wird wärmer, der Dunst goldener
+  { t: 0.3, skyTop: hex('#4189da'), skyHorizon: hex('#ecdfc4'), tint: hex('#fff6e8'), hazeMix: hex('#ecdcc0'), hazeAmt: 0.25, sun: hex('#ffe6b0'), sunY: 0.2, lights: 0, stars: 0 },
+  { t: 0.45, skyTop: hex('#4f86c9'), skyHorizon: hex('#f6d9a8'), tint: hex('#fff1dc'), hazeMix: hex('#f2d6ae'), hazeAmt: 0.5, sun: hex('#ffd38a'), sunY: 0.14, lights: 0.05, stars: 0 },
+  // tiefe Abendsonne: in den Gassen gehen die ersten Fenster und Laternen an
+  { t: 0.58, skyTop: hex('#4874b8'), skyHorizon: hex('#f9c38c'), tint: hex('#ffe6cc'), hazeMix: hex('#f0c49c'), hazeAmt: 0.62, sun: hex('#ffb46a'), sunY: 0.08, lights: 0.32, stars: 0 },
+  { t: 0.7, skyTop: hex('#3e5596'), skyHorizon: hex('#f7a273'), tint: hex('#f6d0b2'), hazeMix: hex('#eaa883'), hazeAmt: 0.75, sun: hex('#ff8f50'), sunY: 0.03, lights: 0.58, stars: 0.1 },
   { t: 0.85, skyTop: hex('#1b2350'), skyHorizon: hex('#8a5a7a'), tint: hex('#8f8fb8'), hazeMix: hex('#5a4f78'), hazeAmt: 0.85, sun: hex('#ff7a50'), sunY: -0.05, lights: 0.9, stars: 0.6 },
   { t: 1, skyTop: hex('#0a1030'), skyHorizon: hex('#2b3360'), tint: hex('#6a74a8'), hazeMix: hex('#2a3058'), hazeAmt: 0.9, sun: hex('#ffffff'), sunY: -0.2, lights: 1, stars: 1 },
 ];

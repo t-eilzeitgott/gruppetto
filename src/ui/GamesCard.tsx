@@ -8,10 +8,11 @@ import { useMembers } from '../app/hooks';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
-import type { StageKind } from '../lib/types';
+import type { Stage, StageKind } from '../lib/types';
 import { GAMES, isNewGame, type GameInfo } from '../game/games';
 import { Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
+import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { Avatar, Link, cx } from './kit';
 import { Icon } from './Icon';
 import { GameBadge } from './GameIcon';
@@ -22,7 +23,7 @@ function order(kind: StageKind | null): GameInfo[] {
   return [...GAMES].sort((a, b) => (rank[a.id] ?? 9) - (rank[b.id] ?? 9));
 }
 
-export function GamesCard({ stageKind = null, town = '' }: { stageKind?: StageKind | null; town?: string }) {
+export function GamesCard({ stageKind = null, tourName = null, stages = null }: { stageKind?: StageKind | null; tourName?: string | null; stages?: Stage[] | null }) {
   const games = useMemo(() => order(stageKind), [stageKind]);
   const scroller = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState(0);
@@ -41,7 +42,7 @@ export function GamesCard({ stageKind = null, town = '' }: { stageKind?: StageKi
   return (
     <section className={cx('card games-card', anyNew && 'is-new')} aria-label="Minispiele">
       <div className="games-scroller" ref={scroller} onScroll={onScroll}>
-        {games.map((g) => <GameSlide key={g.id} game={g} stageKind={stageKind} town={town} />)}
+        {games.map((g) => <GameSlide key={g.id} game={g} tourName={tourName} stages={stages} />)}
       </div>
       {games.length > 1 ? (
         <div className="games-dots" role="tablist" aria-label="Spiel wählen">
@@ -62,7 +63,7 @@ export function GamesCard({ stageKind = null, town = '' }: { stageKind?: StageKi
   );
 }
 
-function GameSlide({ game, stageKind, town }: { game: GameInfo; stageKind: StageKind | null; town: string }) {
+function GameSlide({ game, tourName, stages }: { game: GameInfo; tourName: string | null; stages: Stage[] | null }) {
   const { me } = useApp();
   const members = useMembers().data ?? [];
   const day = berlinDayKey();
@@ -71,13 +72,16 @@ function GameSlide({ game, stageKind, town }: { game: GameInfo; stageKind: Stage
   const today = useQuery<GameBest[]>(`game:${game.id}:day:${day}`, () => source.gameLeaderboard(game.id, since));
   const sprint = game.id === 'sprint';
   const berg = game.id === 'berg';
-  const sprintTown = stageKind === 'flat' || stageKind === 'hilly' ? town : '';
-  const bergTown = stageKind === 'mountain' ? town : '';
+  // echte Vorlage: Ziel der nächsten Flachetappe bzw. Schlussanstieg der nächsten Bergetappe
   const sub = useMemo(() => {
-    if (sprint) return `${new Track(day, [], 'sprint', sprintTown).title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km`;
-    if (berg) return new Track(day, [], 'mountain', bergTown).title;
+    if (sprint || berg) {
+      const ref = stageRef(sprint ? 'sprint' : 'mountain', tourName, stages, day);
+      const pre = ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : '';
+      if (sprint) return `${pre}${new Track(day, [], 'sprint', ref).title.replace('Sprintfinale in ', 'Ziel in ')}`;
+      return `${pre}${new Track(day, [], 'mountain', ref).title}`;
+    }
     return new Track(day).title;
-  }, [day, sprint, berg, sprintTown, bergTown]);
+  }, [day, sprint, berg, tourName, stages]);
   const useToday = (today.data?.length ?? 0) > 0;
   const rows = (useToday ? today.data : season.data) ?? [];
   const myIdx = rows.findIndex((b) => b.user_id === me.id);

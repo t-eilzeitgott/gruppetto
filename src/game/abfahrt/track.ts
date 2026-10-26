@@ -5,6 +5,8 @@
  * erzeugt, damit am selben Tag alle dieselbe Strecke fahren.
  */
 import { between, chance, hashStr, mulberry32, pick, shuffle, type Rng } from './rng';
+import { STYLE, type Lang } from './facade';
+import type { StageRef } from './stageRef';
 
 export const SEG = 2;            // Segmentlänge in m
 export const ROAD_HALF = 2.8;    // halbe Fahrbahnbreite in m
@@ -30,15 +32,16 @@ export interface Side {
 export interface Building {
   start: number;
   len: number;          // Segmente
-  height: number;
   depth: number;
   setback: number;      // Abstand der Fassade zur Straßenmitte (m)
-  color: number;
-  roof: number;
-  shutter: number;
-  style: 0 | 1 | 2;     // 0 italienisch, 1 Chalet, 2 Kirche
+  /** Baustil = Band im Fassadenatlas (siehe STYLE in facade.ts) */
+  style: number;
+  /** Obergeschosse über dem Erdgeschoss */
   floors: number;
   seed: number;
+  /** Ladenschild (Index im Schilderatlas, −1 = keins) und Steckschild (Apothekenkreuz, Tabak; −1 = keins) */
+  sign: number;
+  badge: number;
 }
 
 export type SpriteKind =
@@ -142,7 +145,19 @@ const OCC_MAX = 170;
 const occNeed = (dy: number) => Math.max(OCC_MIN, Math.min(OCC_MAX, 0.95 * Math.abs(dy)));
 const occKey = (cx: number, cz: number) => (cx + 32768) * 65536 + (cz + 32768);
 const LENGTH: Record<BiomeId, number> = { pass: 330, alpine: 430, forest: 420, village: 270, lake: 420, vineyard: 420 };
-const WRITINGS = ['FORZA', 'VAI VAI', 'ALLEZ', 'HOPP HOPP', 'DAJE', 'BRAVO', 'GRUPPETTO', 'VAMOS', 'ATTACCA', 'TUTTO GAS'];
+/** Straßenmalereien und Zielbeschriftung in der Sprache des Etappenorts */
+const WRITINGS_BY: Record<Lang, string[]> = {
+  it: ['FORZA', 'VAI VAI', 'ALLEZ', 'HOPP HOPP', 'DAJE', 'BRAVO', 'GRUPPETTO', 'VAMOS', 'ATTACCA', 'TUTTO GAS'],
+  fr: ['ALLEZ', 'ALLEZ ALLEZ', 'VAS-Y', 'COURAGE', 'CHAPEAU', 'GRUPPETTO', 'HOPP HOPP', 'À BLOC', 'BRAVO', 'ON Y VA'],
+  en: ['GO GO GO', 'COME ON', 'ALLEZ', 'ALLEZ ALLEZ', 'HOPP HOPP', 'GRUPPETTO', 'BRAVO', 'ATTACK', 'FULL GAS', 'YES'],
+  es: ['VAMOS', 'ÁNIMO', 'VENGA', 'DALE', 'ALLEZ', 'GRUPPETTO', 'BRAVO', 'A TOPE', 'OLÉ', 'HOPP HOPP'],
+};
+const WORDS: Record<Lang, { finish: string; last: string; gpm: string }> = {
+  it: { finish: 'Arrivo', last: 'Ultimo km', gpm: 'GPM' },
+  fr: { finish: 'Arrivée', last: 'Flamme rouge', gpm: 'Sommet' },
+  en: { finish: 'Finish', last: 'Flamme rouge', gpm: 'KOM' },
+  es: { finish: 'Meta', last: 'Último km', gpm: 'Puerto' },
+};
 
 /** Art der Strecke: endlose Passabfahrt, Sprintfinale oder Bergfinale (Schlussanstieg, Abfahrt, Ziel) */
 export type TrackKind = 'descent' | 'sprint' | 'mountain';
@@ -155,7 +170,7 @@ export const MOUNTAIN_FINISH = 2000;
 const MOUNTAIN_SECS = [200, MOUNTAIN_TOP / SEG - 200, 170, 220];
 const SPRINT_MARKS: { z: number; kind: Banner['kind']; text: string }[] = [
   { z: SPRINT_FINISH - 2000, kind: 'arch', text: '2 km' },
-  { z: SPRINT_FINISH - 1000, kind: 'flamme', text: 'Ultimo km' },
+  { z: SPRINT_FINISH - 1000, kind: 'flamme', text: '' },
   { z: SPRINT_FINISH - 500, kind: 'arch', text: '500 m' },
 ];
 
@@ -191,22 +206,40 @@ export class Track {
 
   /** Zielort fürs Sprintfinale (z. B. der echte Zielort der Etappe) */
   private town: string;
+  /** echte Vorlage (Etappe, Schlussanstieg) und Sprache für Schilder */
+  readonly ref: StageRef | null;
+  readonly lang: Lang;
+  /** Bergfinale: Steigung nach dem echten Schlussanstieg (1 = 7,8 %) */
+  private climbScale = 1;
 
-  constructor(dayKey: string, names: string[] = [], kind: TrackKind = 'descent', town = '') {
+  constructor(dayKey: string, names: string[] = [], kind: TrackKind = 'descent', town: string | StageRef | null = '') {
     this.dayKey = dayKey;
     this.kind = kind;
-    this.town = town.trim().slice(0, 24);
+    this.ref = typeof town === 'object' ? town : null;
+    this.lang = this.ref?.lang ?? 'it';
+    this.town = (typeof town === 'string' ? town : town?.town ?? '').trim().slice(0, 24);
+    if (kind === 'mountain' && this.ref?.climb?.grad) this.climbScale = Math.max(0.92, Math.min(1.1, this.ref.climb.grad / 7.8));
     this.seed = hashStr(`${kind === 'sprint' ? 'sprint' : kind === 'mountain' ? 'berg' : 'abfahrt'}:${dayKey}`);
     this.rng = mulberry32(this.seed);
     this.names = names.map((n) => n.trim().split(/\s+/)[0]?.toUpperCase()).filter((n): n is string => !!n && n.length <= 10);
     this.passOrder = shuffle(this.rng, PASSES);
+    const real = kind === 'mountain' ? this.ref?.climb : null;
+    if (real) this.passOrder.unshift([real.name.slice(0, 30), real.alt ?? Math.max(900, this.passOrder[0][1] - 600)]);
     this.planDescent();
     const first = this.plan[0];
     const end = this.plan.find((p, i) => i > 0 && (p.biome === 'village' || p.biome === 'lake' || p.biome === 'vineyard'));
     const pass = this.plan.find((p) => p.biome === 'pass');
     this.title = kind === 'sprint' ? `Sprintfinale in ${end?.name ?? 'der Stadt'}`
-      : kind === 'mountain' ? `${pass?.name ?? 'Pass'} → ${end?.name ?? 'Tal'}`
+      : kind === 'mountain' ? (Track.same(pass?.name ?? '', end?.name ?? '') ? pass!.name : `${pass?.name ?? 'Pass'} → ${end?.name ?? 'Tal'}`)
         : `${first.name} → ${end?.name ?? 'Tal'}`;
+  }
+
+  /** gleicher Ort? (Bergankunft: „Grand Colombier“ als Pass und Ziel) */
+  static same(a: string, b: string): boolean {
+    const n = (x: string) => x.toLowerCase().replace(/[^a-zà-ÿ]/g, '');
+    const x = n(a);
+    const y = n(b);
+    return !!x && !!y && (x.includes(y) || y.includes(x));
   }
 
   /** Name des Zielorts (Sprint- und Bergfinale) */
@@ -362,7 +395,7 @@ export class Track {
         // bergauf 7–10 % (oben am steilsten), über die Passhöhe, bergab, flache Zielgerade
         const z = (start + k) * SEG;
         let g: number;
-        if (z < MOUNTAIN_TOP - 70) g = 0.072 + 0.012 * Math.min(1, z / MOUNTAIN_TOP) + wave * 0.9;
+        if (z < MOUNTAIN_TOP - 70) g = (0.072 + 0.012 * Math.min(1, z / MOUNTAIN_TOP) + wave * 0.9) * this.climbScale;
         else if (z < MOUNTAIN_TOP) g = 0.075 * ((MOUNTAIN_TOP - z) / 70) + 0.012;
         else if (z < MOUNTAIN_TOP + 50) g = 0.012 - 0.082 * ((z - MOUNTAIN_TOP) / 50);
         else if (z < MOUNTAIN_FINISH - 420) g = -0.072 + wave;
@@ -384,7 +417,11 @@ export class Track {
     const tunnels: [number, number][] = [];
     if (tunnelLen) tunnels.push([n - tunnelLen, n]);
     if (shortTunnel) tunnels.push([shortTunnel.at, shortTunnel.at + shortTunnel.len]);
-    const buildings = p.biome === 'village' ? this.villageBuildings(start, n) : { L: [], R: [] };
+    // Weiler unterwegs: ein gerades Stück mit Häusern zu beiden Seiten (am Schlussanstieg, in Almtälern,
+    // im Sprintfinale auf der Anfahrt)
+    const hamlet = this.hamletRange(p.biome, n, marks, curve, secIndex);
+    const buildings = p.biome === 'village' ? this.villageBuildings(start, n, 'town')
+      : hamlet ? this.villageBuildings(start + hamlet[0], hamlet[1] - hamlet[0], 'hamlet') : { L: [], R: [] };
 
     let sideRun = 0;
     let L: Side = { ground: 'meadow', tilt: 0, barrier: 'none', wall: 0, drop: false };
@@ -435,6 +472,10 @@ export class Track {
       // Außenseite einer Kehre: immer gesichert
       let l = L;
       let rr = R;
+      if (hamlet && k >= hamlet[0] - 6 && k < hamlet[1] + 6) {
+        l = { ground: 'pavement', tilt: 0, barrier: 'none', wall: 0, drop: false };
+        rr = l;
+      }
       if (hairpinOutside !== 0) {
         const fix = (s: Side): Side => (s.drop && s.barrier === 'none' ? { ...s, barrier: 'rail' } : s);
         if (hairpinOutside < 0) l = fix(l); else rr = fix(rr);
@@ -496,8 +537,8 @@ export class Track {
     const r = this.rng;
     const inSec = (i: number) => i >= start && i < start + n;
     const marks: { z: number; kind: Banner['kind']; text: string; sub?: string }[] = [
-      { z: MOUNTAIN_TOP - 500, kind: 'arch', text: '500 m', sub: 'GPM' },
-      { z: MOUNTAIN_FINISH - 1000, kind: 'flamme', text: 'Ultimo km' },
+      { z: MOUNTAIN_TOP - 500, kind: 'arch', text: '500 m', sub: WORDS[this.lang].gpm },
+      { z: MOUNTAIN_FINISH - 1000, kind: 'flamme', text: WORDS[this.lang].last },
     ];
     for (const m of marks) {
       const i = Math.round(m.z / SEG);
@@ -506,9 +547,9 @@ export class Track {
     const iTop = MOUNTAIN_TOP / SEG;
     const iF = MOUNTAIN_FINISH / SEG;
     if (inSec(iF)) {
-      this.seg(iF).banner = { kind: 'finish', text: 'Arrivo', sub: this.sections[this.seg(iF).sec].name };
+      this.seg(iF).banner = { kind: 'finish', text: WORDS[this.lang].finish, sub: this.sections[this.seg(iF).sec].name };
       this.decal(iF, { k: 'zebra', x: 0, w: ROAD_HALF, len: 1 });
-      this.decal(iF - 9, { k: 'text', x: 0, w: ROAD_HALF * 0.95, len: 6, text: 'ARRIVO' });
+      this.decal(iF - 9, { k: 'text', x: 0, w: ROAD_HALF * 0.95, len: 6, text: WORDS[this.lang].finish.toUpperCase() });
     }
     for (let i = start; i < start + n; i++) {
       const s = this.seg(i);
@@ -528,7 +569,7 @@ export class Track {
       // Namen der Mitspieler auf der Straße zum Gipfel
       if (climb && i % 37 === 0 && !s.hairpin) {
         const useName = this.names.length > 0 && chance(r, 0.7);
-        const w = useName ? `ALLEZ ${pick(r, this.names)}` : pick(r, WRITINGS);
+        const w = useName ? `ALLEZ ${pick(r, this.names)}` : pick(r, WRITINGS_BY[this.lang]);
         this.decal(i, { k: 'text', x: 0, w: ROAD_HALF * 0.9, len: 6, text: w });
       }
     }
@@ -540,13 +581,13 @@ export class Track {
     const inSec = (i: number) => i >= start && i < start + n;
     for (const m of SPRINT_MARKS) {
       const i = Math.round(m.z / SEG);
-      if (inSec(i)) this.seg(i).banner = { kind: m.kind, text: m.text };
+      if (inSec(i)) this.seg(i).banner = { kind: m.kind, text: m.text || WORDS[this.lang].last };
     }
     const iF = SPRINT_FINISH / SEG;
     if (inSec(iF)) {
-      this.seg(iF).banner = { kind: 'finish', text: 'Arrivo', sub: this.sections[sec].name };
+      this.seg(iF).banner = { kind: 'finish', text: WORDS[this.lang].finish, sub: this.sections[sec].name };
       this.decal(iF, { k: 'zebra', x: 0, w: ROAD_HALF, len: 1 });
-      this.decal(iF - 9, { k: 'text', x: 0, w: ROAD_HALF * 0.95, len: 6, text: 'ARRIVO' });
+      this.decal(iF - 9, { k: 'text', x: 0, w: ROAD_HALF * 0.95, len: 6, text: WORDS[this.lang].finish.toUpperCase() });
     }
     // Publikum: die letzten 1,2 km immer dichter
     for (let i = Math.max(start, iF - 600); i < Math.min(start + n, iF + 60); i++) {
@@ -850,31 +891,80 @@ export class Track {
     }
   }
 
-  private villageBuildings(start: number, n: number) {
-    const r = this.rng;
-    const make = (from: number, to: number): Building[] => {
+  /**
+   * Häuserzeilen: Stil, Geschosse, Läden mit Schildern je nach Landessprache und Ortsgröße.
+   * Eigener Zufall je Abschnitt – die Strecke selbst bleibt davon unberührt.
+   */
+  private villageBuildings(start: number, n: number, mode: 'town' | 'hamlet') {
+    const r = mulberry32((this.seed ^ Math.imul(start + 17, 2654435761)) >>> 0);
+    const lang = this.lang;
+    const S = STYLE;
+    // Bergdörfer (Bergfinale, Dolomiten-Abfahrt, Weiler) mit Chalets und Bruchstein, Städte mit Bürgerhäusern
+    const alpine = mode === 'hamlet' ? (this.kind === 'sprint' ? 0.35 : 0.8) : this.kind === 'sprint' ? 0.04 : 0.45;
+    const townPool: number[] = lang === 'en' ? [S.backstein, S.backstein, S.backstein, S.backstein, S.creme, S.haussmann, S.fachwerk]
+      : lang === 'fr' ? [S.ocker, S.lachs, S.creme, S.gelb, S.haussmann, S.haussmann, S.terrakotta, S.fachwerk, S.creme]
+        : lang === 'es' ? [S.ocker, S.creme, S.creme, S.gelb, S.terrakotta, S.terrakotta, S.haussmann]
+          : [S.ocker, S.lachs, S.creme, S.gelb, S.terrakotta, S.ocker, S.gelb];
+    const alpPool: number[] = lang === 'en' ? [S.bruchstein, S.backstein] : [S.chalet, S.chalet, S.bruchstein, S.chalet, S.creme];
+    const big = this.kind === 'sprint' && mode === 'town';
+    let churchAt = mode === 'town' ? Math.floor(between(r, 0.25, 0.6) * n) : chance(r, 0.5) ? Math.floor(n * 0.5) : -1;
+    let hallAt = mode === 'town' && chance(r, big ? 1 : 0.6) ? Math.floor(between(r, 0.3, 0.8) * n) : -1;
+    const shopRate = mode === 'hamlet' ? 0.12 : big ? 0.6 : 0.42;
+    const make = (from: number, to: number, side: number): Building[] => {
       const out: Building[] = [];
       let i = from;
       while (i < to) {
-        const len = Math.round(between(r, 3, 6));
-        const church = chance(r, 0.05);
+        let style = chance(r, alpine) ? pick(r, alpPool) : pick(r, townPool);
+        let len = Math.round(between(r, 3, 6));
+        let floors = style === S.chalet || style === S.bruchstein ? Math.round(between(r, 1, 2.2))
+          : style === S.haussmann ? Math.round(between(r, 3, 4.4)) : Math.round(between(r, 2, 3.4));
+        if (big && style !== S.chalet && style !== S.haussmann) floors += chance(r, 0.25) ? 1 : 0;
+        if (mode === 'hamlet') floors = Math.min(floors, 2);
+        let sign = -1;
+        let badge = -1;
+        // Kirche und Rathaus je einmal pro Ort (eine Seite)
+        if (side < 0 && churchAt >= 0 && i - start >= churchAt) { style = S.kirche; len = Math.round(between(r, 7, 9)); floors = 2; churchAt = -1; }
+        else if (side > 0 && hallAt >= 0 && i - start >= hallAt) {
+          style = S.rathaus; len = Math.round(between(r, 6, 8)); floors = 2; hallAt = -1; sign = 7;
+        } else if (style !== S.kirche && chance(r, shopRate)) {
+          sign = chance(r, 0.12) ? 3 : pick(r, [0, 1, 2, 4, 5, 6]);
+          if (sign === 3 && lang !== 'en') badge = 0;
+          if (sign === 2) badge = lang === 'fr' ? 1 : lang === 'it' ? 2 : -1;
+          if (sign === 1 && lang === 'en' && chance(r, 0.6)) badge = 3;
+        }
         out.push({
-          start: i, len: church ? 5 : len,
-          height: church ? 14 : between(r, 6.5, 11),
-          depth: between(r, 7, 11),
-          setback: EDGE + between(r, 1.6, 2.6),
-          color: Math.floor(r() * 7), roof: Math.floor(r() * 3), shutter: Math.floor(r() * 4),
-          style: church ? 2 : chance(r, 0.3) ? 1 : 0,
-          floors: church ? 1 : Math.round(between(r, 2, 3.4)),
+          start: i, len, floors, style, sign, badge,
+          depth: between(r, 8, 12),
+          setback: EDGE + (mode === 'hamlet' ? between(r, 2, 3.6) : between(r, 1.6, 2.6)),
           seed: Math.floor(r() * 1e9),
         });
-        i += (church ? 5 : len) + (chance(r, 0.35) ? Math.round(between(r, 1, 4)) : 0);
+        i += len + (chance(r, mode === 'hamlet' ? 0.55 : 0.3) ? Math.round(between(r, 1, mode === 'hamlet' ? 6 : 4)) : 0);
       }
       return out;
     };
-    const a = start + 30;
-    const b = start + n - 30;
-    return { L: make(a, b), R: make(a + 2, b) };
+    const m = mode === 'town' ? 30 : 4;
+    const a = start + m;
+    const b = start + n - m;
+    return { L: make(a, b, -1), R: make(a + 2, b, 1) };
+  }
+
+  /** Abschnitt (k von … bis) für einen Weiler: gerade, ohne Kehren und Tunnel */
+  private hamletRange(biome: BiomeId, n: number, marks: number[], curve: number[], sec: number): [number, number] | null {
+    const r = mulberry32((this.seed ^ Math.imul(sec + 5, 40503)) >>> 0);
+    let len = 0;
+    let want = false;
+    if (this.kind === 'mountain') { want = sec === 1; len = 40; }
+    else if (this.kind === 'sprint') { want = sec === 0; len = 70; }
+    else { want = biome === 'alpine' && chance(r, 0.55); len = 50; }
+    if (!want || n < len + 60) return null;
+    const ok = (k: number) => marks[k] === 0 && Math.abs(curve[k]) < (this.kind === 'mountain' ? 0.02 : 0.012);
+    const startAt = Math.floor(between(r, 0.25, 0.5) * n);
+    for (let k0 = startAt; k0 + len < n - 20; k0 += 3) {
+      let good = true;
+      for (let k = k0 - 8; k < k0 + len + 8 && good; k++) if (k < 0 || k >= n || !ok(k)) good = false;
+      if (good) return [k0, k0 + len];
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------- Deko
@@ -954,14 +1044,14 @@ export class Track {
       }
       // Zufallszahlen immer gleich verbrauchen – sonst hinge die ganze Strecke davon ab, ob die Namen schon geladen sind
       const useName = chance(r, 0.6) && this.names.length > 0;
-      const w = useName ? `ALLEZ ${pick(r, this.names)}` : pick(r, WRITINGS);
+      const w = useName ? `ALLEZ ${pick(r, this.names)}` : pick(r, WRITINGS_BY[this.lang]);
       this.decal(at + 4, { k: 'text', x: 0, w: ROAD_HALF * 0.9, len: 6, text: w });
     }
     // Straßenmalerei auch sonst
     for (let i = start + 40; i < start + n - 20; i += Math.round(between(r, 90, 170))) {
       if (S(i).tunnel || S(i).hairpin || biome === 'village') continue;
       const useName = chance(r, 0.35) && this.names.length > 0;
-      const w = useName ? pick(r, this.names) : pick(r, WRITINGS);
+      const w = useName ? pick(r, this.names) : pick(r, WRITINGS_BY[this.lang]);
       this.decal(i, { k: 'text', x: chance(r, 0.5) ? -ROAD_HALF / 2 : ROAD_HALF / 2, w: ROAD_HALF * 0.42, len: 5, text: w });
     }
 
@@ -1027,7 +1117,8 @@ export class Track {
             if (near > 0.985) put(i, sign, 'logs', between(r, 1.5, 3), { s: 1 });
             break;
           case 'pavement':
-            if (!bld) {
+            // Bäume, Schirme und Brunnen nur dort, wo auf ein paar Meter kein Haus steht (sonst ragen sie in die Fassade)
+            if (!bld && ![-4, -2, 2, 4].some((d) => i + d >= start && i + d < start + n && (sign < 0 ? S(i + d).bL : S(i + d).bR))) {
               if (near < 0.25) put(i, sign, pick(r, ['treeRound', 'tree', 'cypress'] as SpriteKind[]), between(r, 2.5, 6), { s: between(r, 0.7, 1) });
               else if (near < 0.32) put(i, sign, 'parasol', between(r, 0.8, 2), { s: 1 });
               else if (near < 0.34) put(i, sign, 'fountain', 1.2, { s: 1 });

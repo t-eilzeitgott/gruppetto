@@ -20,6 +20,7 @@ import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, t
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { RiderType, SprintRider } from './sprint';
+import type { StageRef } from './stageRef';
 
 /** Fahrertypen im Bergfinale: Dauerleistung (W/kg), Antritt (W/kg darüber), Abfahrtskönnen, Punktebonus */
 export const BERG_STATS: Record<RiderType, { label: string; cp: number; kick: number; desc: number; bonus: number }> = {
@@ -43,8 +44,10 @@ export interface BergOptions {
   /** echte Fahrernamen für die Gegner (die besten Kletterer zuerst) */
   rivals: string[];
   kit: Kit;
-  /** echter Zielort der Etappe (sonst einer aus der Liste) */
-  town?: string;
+  /** echter Zielort der Etappe (sonst einer aus der Liste) oder die ganze Etappenvorlage */
+  town?: string | StageRef | null;
+  /** Edelhelfer aus dem eigenen Team */
+  mate?: string | null;
   onEvent?: (e: BergEvent) => void;
   onOver?: (r: BergResult) => void;
 }
@@ -85,7 +88,7 @@ export interface BergHud {
   ahead: string | null;
 }
 
-type Role = 'helper' | 'fav' | 'weak';
+type Role = 'helper' | 'fav' | 'weak' | 'mate';
 
 interface Racer extends Opp {
   name: string;
@@ -99,6 +102,8 @@ interface Racer extends Opp {
   attackAt: number;
   /** laufende Attacke: Sekunden übrig */
   attackT: number;
+  /** hat schon angegriffen */
+  attacked?: boolean;
   /** nach der Attacke hart weiterfahren, bis der Vorrat unter diese Marke fällt */
   hold: number;
   /** jagt einer Attacke hinterher (Sekunden übrig) */
@@ -118,6 +123,7 @@ interface Racer extends Opp {
   finT: number;
 }
 
+const lastName = (n: string) => n.split(' ').slice(-1)[0] ?? n;
 const G = 9.81;
 const CRR = 0.004;
 const CDA = 0.0028;      // Luftwiderstand je kg in Sitzhaltung (Leistung = CDA · v³)
@@ -177,6 +183,10 @@ export class BergRace {
   private countShown = 4;
   private warp = WARP;
   private lastAttack = -99;
+  private limitCues = 0;
+  /** Ansage des Edelhelfers kurz nach dem Start */
+  private mateIntro = 0;
+  private lastCue = -99;
   private attacks = 0;
   private emptyT = 0;
   private slideCool = 0;
@@ -216,6 +226,9 @@ export class BergRace {
     this.slides = 0;
     this.attacks = 0;
     this.lastAttack = -99;
+    this.limitCues = 0;
+    this.lastCue = -99;
+    this.mateIntro = 0;
     this.emptyT = 0;
     this.stand = 0;
     this.flags.clear();
@@ -235,13 +248,14 @@ export class BergRace {
     const roles: Role[] = ['helper', 'helper', 'helper', 'fav', 'fav', 'fav', 'fav', 'fav', 'fav', 'fav', 'fav', 'weak', 'weak'];
     // Startaufstellung: zu zweit nebeneinander, Helfer vorn; der Spieler mittendrin
     const rows: [number, number][] = [];
-    for (let i = 0; i < roles.length + 1; i++) rows.push([46 - Math.floor(i / 2) * 2.3, i % 2 ? -0.55 : 0.55]);
+    for (let i = 0; i < roles.length + 2; i++) rows.push([46 - Math.floor(i / 2) * 2.3, i % 2 ? -0.55 : 0.55]);
     const meSlot = 8;
+    const mateSlot = meSlot - 2;
     let favNo = 0;
     let id = 0;
     let slot = 0;
     for (let i = 0; i < roles.length; i++) {
-      if (slot === meSlot) slot++;
+      while (slot === meSlot || slot === mateSlot) slot++;
       const role = roles[i];
       const [z, x] = rows[slot++];
       const fav = role === 'fav';
@@ -262,6 +276,21 @@ export class BergRace {
     }
     this.p.z = rows[meSlot][0];
     this.p.x = rows[meSlot][1];
+    // Edelhelfer im eigenen Trikot direkt vor dem Spieler: macht bergauf das Tempo und wartet auf dich
+    {
+      const k = this.opts.kit;
+      const [z, x] = rows[mateSlot];
+      this.opps.push({
+        id: id++, z, x, vx: 0, v: this.v0, tx: x, f: 0.7,
+        kit: { ...k, number: String(Math.floor(between(r, 11, 199))) },
+        pedal: r() * 6, lean: 0, tuck: 0, brake: 0, passed: false, group: -1, bump: 0, attacker: false,
+        name: this.opts.mate || 'Dein Helfer', role: 'mate', cp: 6.1, kick: 2.4, desc: 0.95, w: 1,
+        attackAt: 0, attackT: 0, hold: 0, chaseT: 0,
+        peel: MOUNTAIN_TOP - between(r, 300, 380), peeled: false,
+        launch: 0, nerve: 0.94, stand: 0,
+        drift: 0, driftT: r() * 3, topT: -1, done: false, finT: -1,
+      });
+    }
     // Angriffe: vier Favoriten haben einen Plan (Meter vor dem Gipfel)
     const favs = this.opps.filter((o) => o.role === 'fav');
     const plan = [between(r, 700, 780), between(r, 560, 640), between(r, 430, 500), between(r, 300, 360), between(r, 190, 240), between(r, 90, 140)];
@@ -320,7 +349,14 @@ export class BergRace {
       if (this.phaseT >= 2.25) {
         this.phase = 'playing';
         this.phaseT = 0;
-        this.opts.onEvent?.({ type: 'banner', title: 'Schlussanstieg', sub: `${MOUNTAIN_TOP} m bis zum Gipfel` });
+        const real = this.track.ref?.climb;
+        const mate = this.opps.find((o) => o.role === 'mate');
+        this.opts.onEvent?.({
+          type: 'banner',
+          title: real ? real.name : 'Schlussanstieg',
+          sub: real?.grad ? `Die letzten ${MOUNTAIN_TOP} m · Ø ${real.grad.toLocaleString('de-DE')} %` : `${MOUNTAIN_TOP} m bis zum Gipfel`,
+        });
+        if (mate && this.opts.mate) this.mateIntro = 4;
       }
     }
     let left = dt;
@@ -594,6 +630,28 @@ export class BergRace {
     const p = this.p;
     const once = (key: string, f: () => void) => { if (!this.flags.has(key)) { this.flags.add(key); f(); } };
     const toTop = MOUNTAIN_TOP - p.z;
+    if (this.mateIntro > 0) {
+      this.mateIntro -= SUB;
+      if (this.mateIntro <= 0) {
+        const mate = this.opps.find((o) => o.role === 'mate' && !o.peeled);
+        if (mate) this.opts.onEvent?.({ type: 'banner', title: `${lastName(mate.name)} macht das Tempo`, sub: 'Bleib an seinem Hinterrad und spar Kraft' });
+      }
+    }
+    // Taktik: ein Favorit vor dir ist am Ende seiner Kraft – Moment zum Kontern
+    if (stage === 'climb' && this.limitCues < 2 && this.time - this.lastCue > 6) {
+      for (const o of this.opps) {
+        // hat angegriffen, ist jetzt deutlich leerer als du und kommt zurück (oder ist ganz leer)
+        const dz = o.z - this.p.z;
+        const spent = o.w < 0.06 || (o.attacked && o.attackT <= 0 && o.w < this.energy - 0.22 && o.v < this.p.v - 0.15);
+        if (o.role !== 'fav' || !spent || o.done) continue;
+        if (dz < 1.5 || dz > 45 || this.flags.has(`limit:${o.id}`)) continue;
+        this.flags.add(`limit:${o.id}`);
+        this.limitCues += 1;
+        this.lastCue = this.time;
+        this.opts.onEvent?.({ type: 'banner', title: `${lastName(o.name)} ist am Limit`, sub: this.energy > 0.3 ? 'Jetzt kontern – Daumen hoch!' : 'Bleib dran, er wird langsamer', tone: 'accent' });
+        break;
+      }
+    }
     if (toTop < 300 && toTop > 0) once('300', () => this.opts.onEvent?.({ type: 'banner', title: 'Noch 300 m bis zum Gipfel', sub: 'Bergwertung: Punkte für die ersten drei' }));
     if (stage === 'descent') once('down', () => this.opts.onEvent?.({ type: 'banner', title: 'Abfahrt!', sub: 'Daumen hoch = ducken · vor Kehren loslassen', tone: 'accent' }));
     const toGo = MOUNTAIN_FINISH - p.z;
@@ -627,7 +685,21 @@ export class BergRace {
         if (o.v > vd + 1) B = 2;
       } else if (stage === 'climb') {
         const own = o.cp * 1.0 + o.drift;
-        if (o.role === 'helper' && !o.peeled) {
+        if (o.role === 'mate' && !o.peeled) {
+          const gap = o.z - this.p.z;
+          if (o.z >= o.peel || empty) {
+            o.peeled = true;
+            o.tx = o.x >= 0 ? XMAX : -XMAX;
+            if (gap > -3 && gap < 15) this.opts.onEvent?.({ type: 'banner', title: `${lastName(o.name)} ist fertig`, sub: 'Danke, Helfer – ab jetzt fährst du selbst' });
+          } else {
+            // gleichmäßig hohes Tempo vor dir; reißt du ab, wartet er; fährst du vorbei, schließt er wieder auf
+            let pace = 6.1 + 0.35 * clamp(o.z / MOUNTAIN_TOP, 0, 1);
+            if (gap > 4) pace = Math.min(pace, powerTo(this.p.v + 0.15, o.v, grade, CDA));
+            else if (gap < 0.8) pace = o.cp + 1.2;
+            P = clamp(pace, 0, o.cp + 1.4);
+            if (Math.abs(this.p.x - o.x) > 0.3 && gap > 0.9) o.tx = this.p.x;
+          }
+        } else if (o.role === 'helper' && !o.peeled) {
           if (o.z >= o.peel || empty) {
             o.peeled = true;
             o.tx = o.x >= 0 ? XMAX : -XMAX;
@@ -755,13 +827,14 @@ export class BergRace {
   /** Attacke: raus aus der Reihe, Vollgas; wer dicht dahinter ist, entscheidet, ob er mitgeht */
   private attack(o: Racer) {
     o.attackAt = 0;
+    o.attacked = true;
     o.attackT = between(this.rng, 8, 12);
     o.hold = between(this.rng, 0.1, 0.2);
     this.lastAttack = this.time;
     this.attacks += 1;
     this.changeLane(o);
     for (const m of this.opps) {
-      if (m === o || m.role === 'helper' || m.peeled) continue;
+      if (m === o || m.role === 'helper' || m.role === 'mate' || m.peeled) continue;
       const near = o.z - m.z;
       if (near < -4 || near > 35) continue;
       const p = clamp(0.5 + (m.cp - 6.1) * 1.4 + (m.w - 0.5) * 0.7, 0.15, 0.95);

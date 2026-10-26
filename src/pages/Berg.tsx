@@ -6,7 +6,8 @@ import { navigate } from '../app/router';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import { BERG_STATS, BergRace, bergBars, type BergEvent, type BergHud, type BergResult } from '../game/abfahrt/berg';
-import { riderOptions, rivalNames, stageOfDay, type RiderOption } from '../game/abfahrt/sprintRiders';
+import { riderOptions, rivalNames, teamMate, type RiderOption } from '../game/abfahrt/sprintRiders';
+import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { cx, useTitle } from '../ui/kit';
@@ -71,9 +72,9 @@ export function BergPage() {
   const [pickId, setPickId] = useState<string | null>(() => lsGet(LS_RIDER));
   const keyOf = (o: RiderOption) => `${o.id ?? 'x'}:${o.type}`;
   const chosen = options.find((o) => keyOf(o) === pickId) ?? options.find((o) => o.type === 'climber') ?? options[0];
-  const stage = useMemo(() => (tourData.data ? stageOfDay(tourData.data.stages, day) : null), [tourData.data, day]);
-  const town = stage && stage.kind === 'mountain' ? stage.arrival ?? '' : '';
-  const track = useMemo(() => new Track(day, names, 'mountain', town), [day, names, town]);
+  // echte Vorlage: Schlussanstieg der heutigen oder nächsten Bergetappe (sonst Vorschau aus dem Tour-Plan)
+  const ref = useMemo(() => stageRef('mountain', tour?.name, tourData.data?.stages, day), [tour?.name, tourData.data, day]);
+  const track = useMemo(() => new Track(day, names, 'mountain', ref), [day, names, ref]);
   const mine = season.data?.find((b) => b.user_id === me.id);
   const myBest = Math.max(best, mine?.best ?? 0);
 
@@ -84,8 +85,9 @@ export function BergPage() {
       names,
       rider: chosen,
       rivals: rivalNames(tourData.data, chosen.id, 'climb'),
+      mate: teamMate(tourData.data, chosen.id, 'climb')?.name ?? null,
       kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number },
-      town,
+      town: ref,
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
@@ -182,7 +184,7 @@ export function BergPage() {
   useEffect(() => {
     if (uiRef.current === 'ready' && engineRef.current) engineRef.current = makeEngine();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [names, town, chosen.name, chosen.type]);
+  }, [names, ref, chosen.name, chosen.type]);
 
   useGameLock();
 
@@ -334,7 +336,7 @@ export function BergPage() {
                   <BergIcon size={44} />
                   <div>
                     <h1 className="abf-title">Bergfinale</h1>
-                    <p className="abf-sub">{stage && town ? `${stage.number}. Etappe · ` : ''}{track.title}</p>
+                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title}</p>
                   </div>
                 </div>
                 <BergProfile track={track} />

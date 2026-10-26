@@ -11,6 +11,7 @@ import { EDGE, ROAD_HALF, SPRINT_FINISH, Track } from './track';
 import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup } from './engine';
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
+import type { StageRef } from './stageRef';
 
 export type RiderType = 'sprinter' | 'puncheur' | 'allround' | 'rouleur' | 'climber';
 
@@ -37,8 +38,12 @@ export interface SprintOptions {
   /** echte Fahrernamen für die Gegner (aus der Startliste) */
   rivals: string[];
   kit: Kit;
-  /** echter Zielort der Etappe (sonst einer aus der Liste) */
-  town?: string;
+  /** echter Zielort der Etappe (sonst einer aus der Liste) oder die ganze Etappenvorlage */
+  town?: string | StageRef | null;
+  /** echte Sprinterzüge (drei Anfahrer, Sprinter zuletzt) */
+  trains?: { team: string; riders: string[] }[];
+  /** eigener Anfahrer aus dem Team des gewählten Fahrers */
+  mate?: string | null;
   onEvent?: (e: SprintEvent) => void;
   onOver?: (r: SprintResult) => void;
 }
@@ -67,7 +72,9 @@ export interface SprintHud {
 
 interface Racer extends Opp {
   name: string;
-  team: number;          // −1 = ohne Zug
+  /** Teamname (echte Züge) */
+  teamName: string;
+  team: number;          // −1 = ohne Zug, MATE = eigener Anfahrer
   order: number;         // Platz im Zug: 0 = erster Anfahrer … Sprinter zuletzt
   sprinter: boolean;
   e: number;
@@ -84,8 +91,11 @@ interface Racer extends Opp {
 }
 
 const LANES = [-2.1, -1.05, 0, 1.05, 2.1];
+/** Team-Nummer des eigenen Anfahrers */
+const MATE = 9;
 const XMAX = ROAD_HALF - 0.45;
 const SUB = 1 / 60;
+const lastName = (n: string) => n.split(' ').slice(-1)[0] ?? n;
 /** Tempo des Feldes nach Restdistanz (m/s) */
 export function packSpeed(d: number): number {
   if (d < 0) return 11;
@@ -172,10 +182,14 @@ export class SprintRace {
     const nameOf = () => (rivals.length ? rivals.splice(Math.floor(r() * rivals.length), 1)[0] : `Fahrer ${Math.floor(between(r, 11, 199))}`);
     const kits = [...TEAM_KITS].sort(() => r() - 0.5);
     let id = 0;
-    const make = (z: number, x: number, team: number, order: number, sprinter: boolean, kit: Omit<Kit, 'skin' | 'number'>): Racer => ({
+    const trains = this.opts.trains ?? [];
+    const taken = new Set(trains.flatMap((t) => t.riders));
+    if (this.opts.mate) taken.add(this.opts.mate);
+    for (let i = rivals.length - 1; i >= 0; i--) if (taken.has(rivals[i])) rivals.splice(i, 1);
+    const make = (z: number, x: number, team: number, order: number, sprinter: boolean, kit: Omit<Kit, 'skin' | 'number'>, name?: string): Racer => ({
       id: id++, z, x, vx: 0, v: 0, tx: x, f: 0.7, kit: { ...kit, skin: pick(r, SKINS), number: String(Math.floor(between(r, 11, 199))) },
       pedal: r() * 6, lean: 0, tuck: 0.5, brake: 0, passed: false, group: team, bump: 0, attacker: false,
-      name: nameOf(), team, order, sprinter, e: 1,
+      name: name ?? nameOf(), teamName: team >= 0 && team < 4 ? trains[team]?.team ?? '' : '', team, order, sprinter, e: 1,
       top: sprinter ? between(r, 19.1, 20.3) : between(r, 17.6, 18.6),
       acc: sprinter ? between(r, 3.0, 3.8) : 2.6,
       launch: sprinter ? between(r, 180, 320) : between(r, 120, 220),
@@ -184,9 +198,9 @@ export class SprintRace {
     // Startaufstellung auf festen Plätzen (Reihen à 2,1 m, fünf Spuren) – niemand steht in einem anderen
     const slots: [number, number][] = [];
     for (let row = 0; row < 8; row++) for (let l = 0; l < LANES.length; l++) slots.push([row, l]);
-    const taken = new Set<string>();
+    const takenSlots = new Set<string>();
     const zOf = (row: number) => 48 - row * 2.1;
-    const takeSlot = (row: number, l: number) => { taken.add(`${row}:${l}`); return [zOf(row) + (r() - 0.5) * 0.3, LANES[l] + (r() - 0.5) * 0.1] as const; };
+    const takeSlot = (row: number, l: number) => { takenSlots.add(`${row}:${l}`); return [zOf(row) + (r() - 0.5) * 0.3, LANES[l] + (r() - 0.5) * 0.1] as const; };
     // Züge: je eine Spur, vier Fahrer hintereinander (Anfahrer vorn, Sprinter zuletzt)
     const trainLanes = [0, 4, 1, 3];
     for (let t = 0; t < 4; t++) {
@@ -194,15 +208,26 @@ export class SprintRace {
       const row0 = Math.floor(r() * 4);
       for (let k = 0; k < 4; k++) {
         const [z, x] = takeSlot(row0 + k, trainLanes[t]);
-        const o = make(z, x, t, k, k === 3, kit);
+        const o = make(z, x, t, k, k === 3, kit, trains[t]?.riders[k]);
         if (k < 3) o.peel = [between(r, 820, 1000), between(r, 480, 620), between(r, 250, 340)][k];
         this.opps.push(o);
       }
     }
     // übrige Fahrer auf freie Plätze (einige mit Sprintambitionen), einer bleibt für den Spieler
-    const free = slots.filter(([row, l]) => !taken.has(`${row}:${l}`) && row < 7);
+    const free = slots.filter(([row, l]) => !takenSlots.has(`${row}:${l}`) && row < 7);
     const me = free.splice(free.findIndex(([row, l]) => row >= 3 && l === 2) >= 0 ? free.findIndex(([row, l]) => row >= 3 && l === 2) : Math.floor(free.length / 2), 1)[0];
     this.startSlot = [zOf(me[0]), LANES[me[1]]];
+    // eigener Anfahrer: im Trikot des Spielers direkt davor
+    {
+      const ahead = free.findIndex(([row, l]) => row === me[0] - 1 && l === me[1]);
+      const [row, l] = ahead >= 0 ? free.splice(ahead, 1)[0] : [me[0] - 1, me[1]];
+      const [z, x] = takeSlot(row, l);
+      const k = this.opts.kit;
+      const o = make(z, x, MATE, 0, false, { jersey: k.jersey, side: k.side, helmet: k.helmet, shorts: k.shorts, shoes: k.shoes }, this.opts.mate || 'Dein Anfahrer');
+      o.peel = between(r, 190, 240);
+      o.top = 18.4;
+      this.opps.push(o);
+    }
     for (let i = 0; i < 9 && free.length; i++) {
       const [row, l] = free.splice(Math.floor(r() * free.length), 1)[0];
       const [z, x] = takeSlot(row, l);
@@ -420,7 +445,21 @@ export class SprintRace {
     const once = (key: string, f: () => void) => { if (!this.flags.has(key)) { this.flags.add(key); f(); } };
     this.windT = this.draft < 0.2 ? this.windT + SUB : 0;
     if (this.windT > 5 && d > 500) once('wind', () => this.opts.onEvent?.({ type: 'banner', title: 'Du fährst im Wind', sub: 'Such dir ein Hinterrad – das spart Kraft' }));
-    if (d < 2000) once('2k', () => this.opts.onEvent?.({ type: 'banner', title: 'Noch 2 km', sub: 'Bleib im Windschatten' }));
+    if (d < 2000) once('2k', () => this.opts.onEvent?.({ type: 'banner', title: 'Noch 2 km', sub: this.opps.some((o) => o.team === MATE && !o.peeled) ? 'Bleib am Hinterrad deines Anfahrers' : 'Bleib im Windschatten' }));
+    // Züge: wer bringt seinen Sprinter nach vorn, wann fällt der letzte Anfahrer?
+    if (d < 1300 && d > 700 && !this.flags.has('train')) {
+      const lead = this.opps.filter((o) => !o.done).sort((a, b) => b.z - a.z)[0];
+      if (lead && lead.team >= 0 && lead.team < 4 && lead.teamName && Math.abs(lead.z - this.p.z) < 80) {
+        this.flags.add('train');
+        const spr = this.opps.find((o) => o.team === lead.team && o.sprinter);
+        this.opts.onEvent?.({ type: 'banner', title: `Zug von ${lead.teamName}`, sub: spr ? `${lastName(spr.name)} sitzt hinten im Zug` : undefined });
+      }
+    }
+    const w = this.wheelOf();
+    if (w && w.sprinter && w.team >= 0 && w.team < 4 && d < 700 && d > 320) {
+      const helpers = this.opps.filter((o) => o.team === w.team && !o.sprinter && !o.peeled);
+      if (!helpers.length) once('lastman', () => this.opts.onEvent?.({ type: 'banner', title: `${lastName(w.name)} ist ohne Anfahrer`, sub: 'Am Hinterrad bleiben – er geht gleich!' }));
+    }
     if (d < 1000) once('1k', () => this.opts.onEvent?.({ type: 'banner', title: 'Flamme Rouge', sub: 'Letzter Kilometer', tone: 'red' }));
     if (d < 300) {
       once('300', () => { this.placeAt300 = this.place(); });
@@ -446,7 +485,27 @@ export class SprintRace {
         // hinter einem Langsamen (abgefallener Anfahrer, Platter) nicht hängen bleiben
         if (!o.peeled && wheel.v < V - 0.4 && wheel.z - o.z < 5) this.changeLane(o);
       }
-      const inTrain = o.team >= 0 && !o.peeled;
+      const inTrain = o.team >= 0 && o.team !== MATE && !o.peeled;
+      if (o.team === MATE && !o.peeled && !roll && d > 0) {
+        // eigener Anfahrer: bleibt vor dir; ab 1,3 km bringt er dich nach vorn und wartet, wenn du abreißt
+        const gap = o.z - this.p.z;
+        if (d > 1300) {
+          // im Feld mitrollen wie alle anderen (vd aus dem Hinterrad oben); nur warten oder kurz aufschließen
+          if (gap > 4) vd = Math.min(vd, V - 0.6);
+          else if (gap < 0.9) vd = Math.max(vd, V + 0.4);
+          if (Math.abs(this.p.x - o.x) > 0.3 && gap > 0.6) o.tx = this.p.x;
+        } else {
+          const front = this.opps.some((m) => m !== o && m.z > o.z && m.z - o.z < 25);
+          vd = V + (front ? 1.0 : 0.45);
+          if (gap > 5) vd = Math.min(vd, this.p.v + 0.3);
+          if (wheel && wheel.z - o.z < 3) this.changeLane(o);
+        }
+        if (d < o.peel) {
+          o.peeled = true;
+          o.tx = o.x >= 0 ? XMAX : -XMAX;
+          if (gap > -2 && gap < 12) this.opts.onEvent?.({ type: 'banner', title: `${lastName(o.name)} ist raus`, sub: 'Jetzt du – antreten!', tone: 'accent' });
+        }
+      }
       if (!roll && inTrain && d < 1350 && d > 0) {
         // Zug: vorn fährt der erste noch nicht abgefallene, die anderen bleiben dicht dran
         const mates = this.opps.filter((m) => m.team === o.team && !m.peeled).sort((a, b) => a.order - b.order);
@@ -474,7 +533,7 @@ export class SprintRace {
         vd = o.top + 0.8 * dr - Math.max(0, 0.18 - o.e) * 18;
         o.e = Math.max(0, o.e - dt * 0.085);
         if (wheel && wheel.z - o.z < 3.2) this.changeLane(o);
-      } else if (!roll && !o.sprinter && d < 280 && d > 0) vd = Math.min(vd, V - 0.6);
+      } else if (!roll && !o.sprinter && o.team !== MATE && d < 280 && d > 0) vd = Math.min(vd, V - 0.6);
       if (!roll && !o.peeled && d > 0) vd = Math.max(vd, V - 3);
       if (d < -4) vd = 9;
       o.v = clamp(o.v + clamp(vd - o.v, -2.6 * dt, (o.going ? o.acc : 2.2) * dt), 0, 23);
@@ -499,6 +558,16 @@ export class SprintRace {
       o.tuck += ((o.going ? 0.15 : 0.6) - o.tuck) * Math.min(1, dt * 5);
       o.stand = (o.stand ?? 0) + ((o.going && o.e > 0.2 ? 1 : 0) - (o.stand ?? 0)) * Math.min(1, dt * 6);
     }
+  }
+
+  /** Hinterrad des Spielers (bis 6 m, gleiche Spur) */
+  private wheelOf(): Racer | null {
+    let best: Racer | null = null;
+    for (const o of this.opps) {
+      const dz = o.z - this.p.z;
+      if (dz > 0.3 && dz < 6 && Math.abs(o.x - this.p.x) < 0.6 && (!best || dz < best.z - this.p.z)) best = o;
+    }
+    return best;
   }
 
   /** fährt jemand (beliebige Spur) bis dist m vor o? */

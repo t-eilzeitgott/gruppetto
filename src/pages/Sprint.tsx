@@ -6,7 +6,8 @@ import { navigate } from '../app/router';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import { SprintRace, TYPE_STATS, typeBars, type SprintEvent, type SprintHud, type SprintResult } from '../game/abfahrt/sprint';
-import { riderOptions, rivalNames, stageOfDay, type RiderOption } from '../game/abfahrt/sprintRiders';
+import { riderOptions, rivalNames, sprintTrains, teamMate, type RiderOption } from '../game/abfahrt/sprintRiders';
+import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { SPRINT_FINISH, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { cx, useTitle } from '../ui/kit';
@@ -68,9 +69,9 @@ export function SprintPage() {
   const [pickId, setPickId] = useState<string | null>(() => lsGet(LS_RIDER));
   const keyOf = (o: RiderOption) => `${o.id ?? 'x'}:${o.type}`;
   const chosen = options.find((o) => keyOf(o) === pickId) ?? options[0];
-  const stage = useMemo(() => (tourData.data ? stageOfDay(tourData.data.stages, day) : null), [tourData.data, day]);
-  const town = stage && (stage.kind === 'flat' || stage.kind === 'hilly') ? stage.arrival ?? '' : '';
-  const track = useMemo(() => new Track(day, names, 'sprint', town), [day, names, town]);
+  // echte Vorlage: Zielort der heutigen oder nächsten Flachetappe (sonst Vorschau aus dem Tour-Plan)
+  const ref = useMemo(() => stageRef('sprint', tour?.name, tourData.data?.stages, day), [tour?.name, tourData.data, day]);
+  const track = useMemo(() => new Track(day, names, 'sprint', ref), [day, names, ref]);
   const mine = season.data?.find((b) => b.user_id === me.id);
   const myBest = Math.max(best, mine?.best ?? 0);
 
@@ -81,8 +82,10 @@ export function SprintPage() {
       names,
       rider: chosen,
       rivals: rivalNames(tourData.data, chosen.id),
+      trains: sprintTrains(tourData.data, chosen.id, day),
+      mate: teamMate(tourData.data, chosen.id, 'sprint')?.name ?? null,
       kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number },
-      town,
+      town: ref,
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
@@ -165,7 +168,7 @@ export function SprintPage() {
   useEffect(() => {
     if (uiRef.current === 'ready' && engineRef.current) engineRef.current = makeEngine();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [names, town, chosen.name, chosen.type]);
+  }, [names, ref, chosen.name, chosen.type]);
 
   useGameLock();
 
@@ -315,7 +318,7 @@ export function SprintPage() {
                   <SprintIcon size={44} />
                   <div>
                     <h1 className="abf-title">Sprintfinale</h1>
-                    <p className="abf-sub">{stage && town ? `${stage.number}. Etappe · ` : ''}{track.title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km</p>
+                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km</p>
                   </div>
                 </div>
                 <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => TYPE_STATS[t]} bars={sprintBars} />
