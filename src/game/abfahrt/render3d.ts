@@ -69,13 +69,10 @@ export class Renderer3D {
   // Himmel, Berge, Tal
   private sky: THREE.Mesh;
   private skyMat: THREE.ShaderMaterial;
-  private ring: THREE.Mesh;
-  private ringBiome: BiomeId | null = null;
-  private ringFrom: Float32Array | null = null;
-  private ringTo: Float32Array | null = null;
-  private ringColFrom: Float32Array | null = null;
-  private ringColTo: Float32Array | null = null;
-  private ringT = 1;
+  private mtn: THREE.Mesh | null = null;
+  private mtnOld: THREE.Mesh | null = null;
+  private mtnBiome: BiomeId | null = null;
+  private mtnFade = 1;
   private valley: THREE.Mesh;
   private valleyMat: THREE.MeshLambertMaterial;
   private clouds: THREE.Sprite[] = [];
@@ -83,7 +80,7 @@ export class Renderer3D {
   // Materialien
   private mats!: {
     asphalt: THREE.MeshLambertMaterial; fresh: THREE.MeshLambertMaterial; cobble: THREE.MeshLambertMaterial; gravel: THREE.MeshLambertMaterial;
-    verge: THREE.MeshLambertMaterial; marks: THREE.MeshLambertMaterial; terrain: THREE.MeshLambertMaterial; barrier: THREE.MeshLambertMaterial;
+    verge: THREE.MeshLambertMaterial; marks: THREE.MeshLambertMaterial; terrain: THREE.MeshLambertMaterial; portal: THREE.MeshLambertMaterial; barrier: THREE.MeshLambertMaterial;
     water: THREE.MeshPhongMaterial; tunnel: THREE.MeshBasicMaterial; facade: THREE.MeshLambertMaterial; roof: THREE.MeshLambertMaterial;
     props: THREE.MeshLambertMaterial; billboard: THREE.MeshLambertMaterial; glow: THREE.PointsMaterial; lampGlow: THREE.MeshBasicMaterial;
   };
@@ -106,7 +103,7 @@ export class Renderer3D {
   private partCol = new Float32Array(300 * 3);
 
   // Kamera
-  private cam = { x: 0, y: 0, z: 0, lx: 0, ly: 0, lz: 0, lat: 0, init: false, fov: 70, bump: 0 };
+  private cam = { x: 0, y: 0, z: 0, th: 0, init: false, fov: 70 };
   playerScreen = { x: 0, y: 0, s: 60 };
   private w = { x: 0, y: 0, z: 0, th: 0 };
 
@@ -144,10 +141,6 @@ export class Renderer3D {
     this.sky.renderOrder = -10;
     this.scene.add(this.sky);
 
-    // Ferne Bergkette als Ring
-    this.ring = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ vertexColors: true, fog: false, side: THREE.DoubleSide }));
-    this.ring.renderOrder = -5;
-    this.scene.add(this.ring);
 
     // Talboden
     const fields = new THREE.CanvasTexture(fieldsTex());
@@ -207,6 +200,7 @@ export class Renderer3D {
       verge: L({ map: this.tex(vergeTex()) }),
       marks: L({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
       terrain: L({ vertexColors: true, flatShading: true, map: detail }),
+      portal: L({ vertexColors: true, flatShading: true, side: THREE.DoubleSide }),
       barrier: L({ vertexColors: true, side: THREE.DoubleSide }),
       water: new THREE.MeshPhongMaterial({ color: 0x2f7fb5, shininess: 90, specular: 0x88aacc, transparent: true, opacity: 0.92, flatShading: true }),
       tunnel: new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }),
@@ -387,54 +381,68 @@ export class Renderer3D {
     const track = g.track;
     const cam = this.cam;
     const w = this.w;
-    // seitlich etwas mitgehen, aber ruhig
-    cam.lat += (p.x * 0.7 - cam.lat) * Math.min(1, dt * 3);
     const roadY = track.heightAt(p.z);
     const air = Math.max(0, p.y - roadY);
-    track.world(Math.max(0.5, p.z - CAM_BACK), cam.lat, CAM_UP + air * 0.5, w);
-    const tx = w.x;
-    const ty = w.y;
-    const tz = w.z;
-    track.world(p.z + 24, p.x * 0.3, 1.1 + air * 0.6, w);
-    if (!cam.init || g.phase === 'ready') {
-      cam.x = tx; cam.y = ty; cam.z = tz; cam.lx = w.x; cam.ly = w.y; cam.lz = w.z; cam.init = true;
+    track.world(p.z, p.x, 0, w);
+    const rx = w.x;
+    const ry = w.y + air;
+    const rz = w.z;
+    // Blickrichtung = Fahrtrichtung des Fahrers (Straße plus Querbewegung), geglättet:
+    // die Kamera steht immer direkt hinter ihm, er bleibt in der Bildmitte – auch in Kehren
+    const yaw = w.th + Math.atan2(p.vx, Math.max(5, p.v)) * 0.7;
+    const back = CAM_BACK;
+    const behindY = track.heightAt(Math.max(0, p.z - back));
+    const ty = Math.max(behindY, roadY) + CAM_UP + air * 0.35;
+    if (!cam.init || g.phase === 'ready' || g.phase === 'countdown') {
+      cam.th = yaw;
+      cam.y = ty;
+      cam.init = true;
     }
-    const k = Math.min(1, dt * 10);
-    cam.x += (tx - cam.x) * k;
+    let d = yaw - cam.th;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    cam.th += d * Math.min(1, dt * 6);
     cam.y += (ty - cam.y) * Math.min(1, dt * 7);
-    cam.z += (tz - cam.z) * k;
-    const kl = Math.min(1, dt * 8);
-    cam.lx += (w.x - cam.lx) * kl;
-    cam.ly += (w.y - cam.ly) * kl;
-    cam.lz += (w.z - cam.lz) * kl;
-    const shake = g.shake * 0.05;
-    this.camera.position.set(cam.x + (Math.random() - 0.5) * shake, cam.y + (Math.random() - 0.5) * shake, cam.z);
-    this.camera.lookAt(cam.lx, cam.ly, cam.lz);
+    const fx = Math.sin(cam.th);
+    const fz = -Math.cos(cam.th);
+    const shake = g.shake * 0.04;
+    this.camera.position.set(rx - fx * back + (Math.random() - 0.5) * shake, cam.y + (Math.random() - 0.5) * shake, rz - fz * back);
+    const look = 15;
+    const aheadY = track.heightAt(p.z + look);
+    this.camera.lookAt(rx + fx * look, roadY + (aheadY - roadY) * 0.55 + 0.9 + air * 0.4, rz + fz * look);
+    cam.x = rx; cam.z = rz;
     // Sichtfeld: hochkant mehr Höhe, bei Tempo etwas weiter (Geschwindigkeitsgefühl)
     const aspect = this.W / this.H;
-    const base = aspect < 1 ? 74 - (aspect - 0.45) * 22 : 58;
-    const want = base + Math.min(8, Math.max(0, (p.v - 14) * 0.35));
+    const base = aspect < 1 ? 72 - (aspect - 0.45) * 22 : 56;
+    const want = base + Math.min(9, Math.max(0, (p.v - 14) * 0.38));
     cam.fov += (want - cam.fov) * Math.min(1, dt * 2);
     if (Math.abs(this.camera.fov - cam.fov) > 0.01) { this.camera.fov = cam.fov; this.camera.updateProjectionMatrix(); }
+    void ry;
   }
 
   private updateEnvironment(biome: BiomeId, dt: number) {
     const cp = this.camera.position;
     this.sky.position.copy(cp);
     this.valley.position.set(cp.x, cp.y - 210, cp.z);
-    this.ring.position.set(cp.x, cp.y - 210, cp.z);
-    if (biome !== this.ringBiome) this.setRing(biome);
-    if (this.ringT < 1 && this.ringFrom && this.ringTo && this.ringColFrom && this.ringColTo) {
-      this.ringT = Math.min(1, this.ringT + dt / 3);
-      const pos = this.ring.geometry.getAttribute('position') as THREE.BufferAttribute;
-      const col = this.ring.geometry.getAttribute('color') as THREE.BufferAttribute;
-      const t = this.ringT * this.ringT * (3 - 2 * this.ringT);
-      for (let i = 0; i < this.ringTo.length; i++) {
-        (pos.array as Float32Array)[i] = this.ringFrom[i] + (this.ringTo[i] - this.ringFrom[i]) * t;
-        (col.array as Float32Array)[i] = this.ringColFrom[i] + (this.ringColTo[i] - this.ringColFrom[i]) * t;
-      }
-      pos.needsUpdate = true;
-      col.needsUpdate = true;
+    if (biome !== this.mtnBiome) {
+      if (this.mtnOld) { this.scene.remove(this.mtnOld); this.mtnOld.geometry.dispose(); (this.mtnOld.material as THREE.Material).dispose(); }
+      this.mtnOld = this.mtn;
+      this.mtn = this.buildMountains(biome);
+      this.scene.add(this.mtn);
+      this.mtnFade = this.mtnOld ? 0 : 1;
+      this.mtnBiome = biome;
+    }
+    this.mtnFade = Math.min(1, this.mtnFade + dt / 2.5);
+    for (const [m, a] of [[this.mtn, this.mtnFade], [this.mtnOld, 1 - this.mtnFade]] as [THREE.Mesh | null, number][]) {
+      if (!m) continue;
+      m.position.set(cp.x, cp.y - 240, cp.z);
+      (m.material as THREE.MeshLambertMaterial).opacity = a;
+      m.visible = a > 0.01;
+    }
+    if (this.mtnFade >= 1 && this.mtnOld) {
+      this.scene.remove(this.mtnOld);
+      this.mtnOld.geometry.dispose();
+      (this.mtnOld.material as THREE.Material).dispose();
+      this.mtnOld = null;
     }
     this.clouds.forEach((c, i) => {
       const a = hash(i + 40) * Math.PI * 2 + this.time.value * 0.003;
@@ -445,62 +453,81 @@ export class Renderer3D {
     });
   }
 
-  /** Ring aus Bergen am Horizont, Form und Farbe je Tal */
-  private setRing(biome: BiomeId) {
-    const N = 220;
-    const R = 2600;
+  /** Berge rund um den Horizont: echte Low-Poly-Gipfel mit Schnee, Fels und bewaldeten Flanken */
+  private buildMountains(biome: BiomeId): THREE.Mesh {
     const pal = BIOME_PALETTES[biome];
-    const seed = biome.length * 7 + biome.charCodeAt(0);
-    const amp = biome === 'vineyard' ? 160 : biome === 'forest' ? 420 : biome === 'lake' ? 560 : biome === 'village' ? 620 : 760;
-    const jag = biome === 'pass' ? 1 : biome === 'alpine' ? 0.7 : 0.3;
-    const hAt = (i: number) => {
-      const t = (i / N) * Math.PI * 2;
-      let v = 0;
-      const f = [2, 3, 5, 9, 17, 31];
-      const a = [0.3, 0.25, 0.22, 0.14, 0.08 * (1 + jag), 0.05 * jag];
-      for (let k = 0; k < f.length; k++) v += Math.sin(t * f[k] + seed * (k + 1) * 0.37) * a[k];
-      return Math.max(0.12, 0.55 + v) * amp;
+    let seed = 0;
+    for (const ch of biome) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+    let st = seed || 1;
+    const r = () => { st = (Math.imul(st ^ (st >>> 15), 2246822507) + 0x9e3779b9) >>> 0; return (st >>> 8) / 16777216; };
+    const cfg: Record<BiomeId, { amp: [number, number]; snow: number; green: number; jag: number }> = {
+      pass: { amp: [750, 1350], snow: 0.48, green: 0.18, jag: 1 },
+      alpine: { amp: [650, 1250], snow: 0.55, green: 0.32, jag: 0.7 },
+      forest: { amp: [350, 800], snow: 0.86, green: 0.6, jag: 0.4 },
+      village: { amp: [550, 1150], snow: 0.6, green: 0.38, jag: 0.6 },
+      lake: { amp: [450, 1050], snow: 0.66, green: 0.42, jag: 0.5 },
+      vineyard: { amp: [120, 330], snow: 2, green: 0.95, jag: 0.15 },
     };
-    const far = rgbLin(mixRGB(pal.far, pal.haze, 0.35));
-    const low = rgbLin(pal.haze);
-    const snow = rgbLin(mixRGB(pal.farSnow, pal.haze, 0.15));
-    const pos: number[] = [];
-    const col: number[] = [];
-    const snowLine = biome === 'vineyard' || biome === 'forest' ? 99999 : amp * 0.62;
-    for (let i = 0; i < N; i++) {
-      const a0 = (i / N) * Math.PI * 2;
-      const a1 = ((i + 1) / N) * Math.PI * 2;
-      const h0 = hAt(i);
-      const h1 = hAt(i + 1);
-      const p = (a: number, h: number) => [Math.cos(a) * R, h, Math.sin(a) * R];
-      const A = p(a0, -40);
-      const B = p(a1, -40);
-      const C = p(a1, h1);
-      const D = p(a0, h0);
-      const colAt = (h: number) => (h > snowLine ? snow : h < 40 ? low : mixRGB2(low, far, Math.min(1, h / (amp * 0.5))));
-      for (const v of [A, B, C, A, C, D]) {
-        pos.push(v[0], v[1], v[2]);
-        const c = colAt(v[1]);
-        col.push(c[0], c[1], c[2]);
+    const c = cfg[biome];
+    const gb = new GB();
+    const snow = lin('#f2f6fb');
+    const rock = rgbLin(mixRGB(pal.far, [150, 150, 148], 0.35));
+    const green = rgbLin(mixRGB(pal.mid, pal.haze, 0.35));
+    const haze = rgbLin(pal.haze);
+    const mix = (a: RGBf, b: RGBf, t: number): RGBf => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    const rings = [{ R: 2100, n: 22, k: 0.55, hz: 0.3 }, { R: 3400, n: 18, k: 0.95, hz: 0.55 }];
+    for (const ring of rings) {
+      for (let i = 0; i < ring.n; i++) {
+        const a = ((i + r() * 0.7) / ring.n) * Math.PI * 2;
+        const rr = ring.R * (0.85 + r() * 0.3);
+        const h = (c.amp[0] + (c.amp[1] - c.amp[0]) * r()) * ring.k;
+        const b = h * (0.6 + r() * 0.45) + 120;
+        const cx = Math.cos(a) * rr;
+        const cz = Math.sin(a) * rr;
+        const m = 9;
+        const lv = [
+          { y: -140, rad: b * 1.1, jit: 0.15 },
+          { y: h * 0.45, rad: b * (0.55 + (1 - c.jag) * 0.1), jit: 0.18 * c.jag + 0.06 },
+          { y: h * 0.8, rad: b * (0.22 + (1 - c.jag) * 0.14), jit: 0.22 * c.jag + 0.06 },
+        ];
+        const pts = lv.map((L, li) => {
+          const off = r() * Math.PI * 2;
+          return Array.from({ length: m }, (_, j) => {
+            const ang = off + (j / m) * Math.PI * 2;
+            const rad = L.rad * (1 - L.jit / 2 + r() * L.jit);
+            return [cx + Math.cos(ang) * rad + (li ? (r() - 0.5) * b * 0.1 : 0), L.y, cz + Math.sin(ang) * rad];
+          });
+        });
+        const apex = [cx + (r() - 0.5) * b * 0.15 * c.jag, h, cz + (r() - 0.5) * b * 0.15 * c.jag];
+        const colAt = (y: number): RGBf => {
+          const t = y / h;
+          let col = t > c.snow ? snow : t < c.green ? green : rock;
+          if (t > c.snow - 0.06 && t <= c.snow) col = mix(rock, snow, 0.5);
+          return mix(col, haze, Math.min(0.9, ring.hz + Math.max(0, 0.3 - t) * 0.6));
+        };
+        for (let l = 0; l < 2; l++) {
+          for (let j = 0; j < m; j++) {
+            const A = pts[l][j];
+            const B = pts[l][(j + 1) % m];
+            const C = pts[l + 1][(j + 1) % m];
+            const D = pts[l + 1][j];
+            const y = (A[1] + B[1] + C[1] + D[1]) / 4;
+            gb.tri(A, C, B, colAt(y));
+            gb.tri(A, D, C, colAt(y + 1));
+          }
+        }
+        for (let j = 0; j < m; j++) {
+          const A = pts[2][j];
+          const B = pts[2][(j + 1) % m];
+          gb.tri(A, apex, B, colAt((A[1] + B[1] + h) / 3));
+        }
       }
     }
-    const newPos = new Float32Array(pos);
-    const newCol = new Float32Array(col);
-    const geo = this.ring.geometry;
-    const old = geo.getAttribute('position') as THREE.BufferAttribute | undefined;
-    if (old && old.count * 3 === newPos.length) {
-      this.ringFrom = new Float32Array(old.array as Float32Array);
-      this.ringColFrom = new Float32Array((geo.getAttribute('color') as THREE.BufferAttribute).array as Float32Array);
-      this.ringTo = newPos;
-      this.ringColTo = newCol;
-      this.ringT = 0;
-    } else {
-      geo.setAttribute('position', new THREE.BufferAttribute(newPos.slice(), 3));
-      geo.setAttribute('color', new THREE.BufferAttribute(newCol.slice(), 3));
-      geo.computeBoundingSphere();
-      this.ring.frustumCulled = false;
-    }
-    this.ringBiome = biome;
+    const geo = gb.build();
+    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, fog: false, transparent: true, opacity: 1, side: THREE.DoubleSide }));
+    mesh.renderOrder = -5;
+    mesh.frustumCulled = false;
+    return mesh;
   }
 
   // ------------------------------------------------------------------ Abschnitte
@@ -534,6 +561,7 @@ export class Renderer3D {
     const rows: Row[] = [];
     for (let r = 0; r <= CH; r++) rows.push(this.row((i0 + r) * SEG, t.seg(i0 + r)));
     const P = (r: Row, x: number, h: number): number[] => [r.x + r.rx * x, r.y + h, r.z + r.rz * x];
+    const lim = this.limits(rows, i0);
     const group = new THREE.Group();
     const disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[] = [];
     const surf: Record<string, GB> = { asphalt: new GB(), fresh: new GB(), cobble: new GB(), gravel: new GB() };
@@ -543,6 +571,7 @@ export class Renderer3D {
     const marks = new GB();
     const terr = new GB();
     terr.uv = true;
+    const portal = new GB();
     const bar = new GB();
     const water = new GB();
     const tunnel = new GB();
@@ -588,7 +617,7 @@ export class Renderer3D {
       }
       // --- Gelände
       if (!s.tunnel) {
-        for (const sg of [-1, 1]) this.terrainSide(terr, water, a, b, sg, P);
+        for (const sg of [-1, 1]) this.terrainSide(terr, water, a, b, sg, P, sg < 0 ? lim.L[r] : lim.R[r], sg < 0 ? lim.L[r + 1] : lim.R[r + 1]);
       } else {
         this.tunnelPiece(tunnel, a, b, za, P, glows);
       }
@@ -602,11 +631,11 @@ export class Renderer3D {
         if (bld && bld.start === s.i) this.building(facade, roof, rows, r, bld, sg, P);
       }
       // --- Sprites/Requisiten
-      if (s.sprites) for (const sp of s.sprites) this.prop(group, disp, inst, bill, anim, glows, a, sp, s);
+      if (s.sprites) for (const sp of s.sprites) this.prop(group, disp, inst, bill, anim, glows, a, sp, s, sp.x < 0 ? lim.L[r] : lim.R[r]);
       // --- Banner, Portal
       if (s.banner) this.arch(group, disp, a, s.banner, s.banner.kind === 'gpm' ? this.accent : s.banner.kind === 'sprint' ? '#1f6feb' : '#ffffff');
       for (const f of g.friends) if (Math.floor(f.meters / SEG) === s.i) this.arch(group, disp, a, { kind: 'arch', text: f.userId === 'me' ? 'Deine Bestmarke' : `Bestmarke ${f.name}`, sub: fmtKm(f.meters) }, f.color);
-      if (s.portal === 1) this.portal(terr, a, P, sec(s).biome);
+      if (s.portal === 1) this.portal(portal, a, P, sec(s).biome);
     }
 
     const add = (gb: GB, m: THREE.Material, order = 0) => {
@@ -624,6 +653,7 @@ export class Renderer3D {
     add(verge, this.mats.verge);
     add(marks, this.mats.marks, 1);
     add(terr, this.mats.terrain);
+    add(portal, this.mats.portal);
     add(bar, this.mats.barrier);
     add(water, this.mats.water, 2);
     add(tunnel, this.mats.tunnel);
@@ -661,8 +691,88 @@ export class Renderer3D {
     };
   }
 
+  /**
+   * Wie weit darf das Gelände seitlich reichen? Innen in engen Kurven und dort, wo ein anderer
+   * Streckenteil (Serpentine) nahe vorbeiführt, wird es begrenzt – sonst ragt es in die Straße.
+   */
+  private limits(rows: Row[], i0: number): { L: number[]; R: number[] } {
+    const t = this.track!;
+    const L: number[] = [];
+    const R: number[] = [];
+    for (let r = 0; r < rows.length; r++) {
+      const i = i0 + r;
+      const row = rows[r];
+      let l = 60;
+      let rr = 60;
+      let kmax = 0;
+      let ksum = 0;
+      for (let d = -16; d <= 16; d += 2) {
+        const c = t.seg(Math.max(t.first, i + d)).curve;
+        ksum += c;
+        kmax = Math.max(kmax, Math.abs(c));
+      }
+      if (kmax > 0.003) {
+        const inner = Math.max(EDGE + 2, 0.7 / kmax);
+        if (ksum > 0) rr = Math.min(rr, inner); else l = Math.min(l, inner);
+      }
+      for (let j = Math.max(t.first, i - 450); j < i + 450; j += 3) {
+        if (Math.abs(j - i) < 50) continue;
+        const sj = t.seg(j);
+        const dx = sj.wx - row.x;
+        const dz = sj.wz - row.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > 100 * 100) continue;
+        const d = Math.sqrt(d2);
+        const cap = Math.max(EDGE + 2, d * 0.5 - 2);
+        if (dx * row.rx + dz * row.rz > 0) rr = Math.min(rr, cap); else l = Math.min(l, cap);
+      }
+      L.push(l);
+      R.push(rr);
+    }
+    // weich übergehen lassen
+    for (const arr of [L, R]) {
+      const c = arr.slice();
+      for (let r = 0; r < arr.length; r++) {
+        let m = c[r];
+        for (let d = -4; d <= 4; d++) { const q = c[r + d]; if (q !== undefined) m = Math.min(m, q + Math.abs(d) * 1.5); }
+        arr[r] = m;
+      }
+    }
+    return { L, R };
+  }
+
   /** Querprofil des Geländes neben dem Bankett: Abstände ab Bankettkante und Höhen */
-  private profile(side: Side, s: Seg, sg: number): { o: number[]; h: number[]; cols: RGBf[] } {
+  private profile(side: Side, s: Seg, sg: number, lim = 60): { o: number[]; h: number[]; cols: RGBf[] } {
+    const pr = this.rawProfile(side, s, sg);
+    const maxO = Math.max(1.5, lim - EDGE);
+    const last = pr.o[pr.o.length - 1];
+    if (last > maxO) {
+      const f = maxO / last;
+      const base = side.wall > 0 && side.ground !== 'water' ? side.wall : 0;
+      pr.o = pr.o.map((o) => o * f);
+      pr.h = pr.h.map((h, k) => (side.wall > 0 && k < 2 ? h : base + (h - base) * f));
+    }
+    // Höhe begrenzen, damit nichts als Riesenwand in den Himmel ragt
+    const capUp = (side.wall > 0 ? side.wall : 0) + 13;
+    pr.h = pr.h.map((h) => Math.max(-38, Math.min(capUp, h)));
+    return pr;
+  }
+
+  /** Höhe des Geländes in Abstand dx vom Bankett (für Bäume, Häuser, Felsen) */
+  private groundAt(side: Side, s: Seg, sg: number, dx: number, lim: number): number | null {
+    const pr = this.profile(side, s, sg, lim);
+    const o = pr.o;
+    if (dx > o[o.length - 1] + 0.5) return null;
+    for (let k = 0; k < o.length - 1; k++) {
+      if (dx <= o[k + 1]) {
+        const t = (dx - o[k]) / Math.max(1e-6, o[k + 1] - o[k]);
+        return pr.h[k] + (pr.h[k + 1] - pr.h[k]) * Math.max(0, Math.min(1, t));
+      }
+    }
+    return pr.h[pr.h.length - 1];
+  }
+
+  private rawProfile(side: Side, s: Seg, sg: number): { o: number[]; h: number[]; cols: RGBf[] } {
     const t = this.track!;
     const pal = BIOME_PALETTES[t.sections[s.sec].biome];
     // weiches Rauschen entlang der Strecke (keine Zacken von Segment zu Segment)
@@ -686,16 +796,18 @@ export class Renderer3D {
     }
     if (side.wall > 0) {
       const W = side.wall;
+      const snow = side.ground === 'snow';
       const top = side.ground === 'rock' ? 'meadow' : side.ground;
-      const o = [0, 0.3, 1.6, 7, 18, 42];
-      const h = [0, W, W + 0.5, W + side.tilt * 7 + n(1) * 1.5, W + side.tilt * 18 + n(2) * 4, W + side.tilt * 42 + n(3) * 8];
-      return { o, h, cols: [rock(0), shadeF(rock(1), 1.15), gcol(top, 2), gcol(top, 3), gcol(top, 4)] };
+      const o = [0, snow ? 0.6 : 0.3, 1.8, 7, 16, 30];
+      const h = [0, W, W + 0.4, W + side.tilt * 7 + n(1) * 1.2, W + side.tilt * 16 + n(2) * 2.5, W + side.tilt * 30 + n(3) * 4];
+      const face = snow ? shadeF(lin('#e9f1fa'), 0.92 + n(40) * 0.1) : rock(0);
+      return { o, h, cols: [face, snow ? lin('#f4f8fc') : shadeF(rock(1), 1.15), gcol(top, 2), gcol(top, 3), gcol(top, 4)] };
     }
     if (side.drop) {
       const k = Math.max(0.6, -side.tilt);
       return {
-        o: [0, 0.9, 3, 7, 13, 22],
-        h: [0, -0.5 * k, -3 * k, -9 * k + n(1) * 2, -19 * k + n(2) * 3, -34 * k],
+        o: [0, 0.9, 3, 7, 12, 18],
+        h: [0, -0.5 * k, -3 * k, -8 * k + n(1) * 1.5, -16 * k + n(2) * 2, -26 * k],
         cols: [gcol(side.ground, 0), gcol(side.ground, 1), shadeF(gcol(side.ground, 2), 0.92), shadeF(rock(3), 0.95), rock(4)],
       };
     }
@@ -704,18 +816,18 @@ export class Renderer3D {
       return { o: [0, 0.02, 3.5, 8, 18, 34], h: [0, 0.13, 0.13, 0.4, 1.5, 3], cols: [lin('#a8a296'), pv, gcol('meadow', 2), gcol('meadow', 3), gcol('meadow', 4)] };
     }
     const tl = side.tilt;
-    const o = [0, 1.5, 5, 12, 24, 44];
+    const o = [0, 1.5, 5, 11, 20, 34];
     const bump = (k: number, amp: number) => n(k) * amp;
-    const h = [0, tl * 1.5, tl * 5 + bump(1, 0.4), tl * 12 + bump(2, 1.2), tl * 24 + bump(3, 3), tl * 44 + bump(4, 6)];
+    const h = [0, tl * 1.5, tl * 5 + bump(1, 0.4), tl * 11 + bump(2, 1), tl * 20 + bump(3, 2), tl * 34 + bump(4, 3)];
     const g = side.ground;
     return { o, h, cols: [gcol(g, 0), gcol(g, 1), gcol(g, 2), gcol(g, 3), gcol(g, 5)] };
   }
 
-  private terrainSide(terr: GB, water: GB, a: Row, b: Row, sg: number, P: (r: Row, x: number, h: number) => number[]) {
+  private terrainSide(terr: GB, water: GB, a: Row, b: Row, sg: number, P: (r: Row, x: number, h: number) => number[], limA: number, limB: number) {
     const sa = sg < 0 ? a.seg.L : a.seg.R;
     const sb = sg < 0 ? b.seg.L : b.seg.R;
-    const pa = this.profile(sa, a.seg, sg);
-    const pb = this.profile(sb, b.seg, sg);
+    const pa = this.profile(sa, a.seg, sg, limA);
+    const pb = this.profile(sb, b.seg, sg, limB);
     for (let k = 0; k < 5; k++) {
       const xa0 = sg * (EDGE + pa.o[k]);
       const xa1 = sg * (EDGE + pa.o[k + 1]);
@@ -732,9 +844,9 @@ export class Renderer3D {
     }
     if (sa.ground === 'water' || sb.ground === 'water') {
       const A0 = P(a, sg * (EDGE + 0.3), -1.4);
-      const A1 = P(a, sg * (EDGE + 400), -1.4);
+      const A1 = P(a, sg * Math.max(EDGE + 2, limA), -1.4);
       const B0 = P(b, sg * (EDGE + 0.3), -1.4);
-      const B1 = P(b, sg * (EDGE + 400), -1.4);
+      const B1 = P(b, sg * Math.max(EDGE + 2, limB), -1.4);
       const c: RGBf = [1, 1, 1];
       if (sg > 0) water.quad(A0, A1, B1, B0, c); else water.quad(A1, A0, B0, B1, c);
     }
@@ -939,9 +1051,19 @@ export class Renderer3D {
   }
 
   private prop(group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], inst: Map<Prop3D, { m: THREE.Matrix4[]; c: THREE.Color[] }>,
-    bill: GB, anim: number[], glows: number[], a: Row, sp: Sprite, s: Seg) {
+    bill: GB, anim: number[], glows: number[], a: Row, sp: Sprite, s: Seg, lim: number) {
+    const sg = sp.x < 0 ? -1 : 1;
+    const ax = Math.abs(sp.x);
+    let h = sp.h;
+    if (ax > EDGE && !s.tunnel) {
+      if (ax > lim - 0.5) return;
+      const side = sg < 0 ? s.L : s.R;
+      const gh = this.groundAt(side, s, sg, ax - EDGE, lim);
+      if (gh === null) return;
+      h = side.ground === 'water' && ax > EDGE + 2 ? -1.4 : gh;
+    }
     const px = a.x + a.rx * sp.x;
-    const py = a.y + sp.h;
+    const py = a.y + h;
     const pz = a.z + a.rz * sp.x;
     const fx = Math.sin(a.th);
     const fz = -Math.cos(a.th);
@@ -988,16 +1110,16 @@ export class Renderer3D {
     const e = this.atlas.get(`${kind}:${sp.v % def.variants}`);
     if (!e) return;
     const w = e.w * sp.s;
-    const h = e.h * sp.s;
+    const bh = e.h * sp.s;
     // Karte quer zur Straße, Blick zum Fahrer
     const flip = sp.f;
     const l = [px - a.rx * w / 2, py, pz - a.rz * w / 2];
     const rgt = [px + a.rx * w / 2, py, pz + a.rz * w / 2];
     const u0 = flip ? e.u1 : e.u0;
     const u1 = flip ? e.u0 : e.u1;
-    bill.quad(l, rgt, [rgt[0], py + h, rgt[2]], [l[0], py + h, l[2]], [1, 1, 1], [[u0, e.v0], [u1, e.v0], [u1, e.v1], [u0, e.v1]]);
+    bill.quad(l, rgt, [rgt[0], py + bh, rgt[2]], [l[0], py + bh, l[2]], [1, 1, 1], [[u0, e.v0], [u1, e.v0], [u1, e.v1], [u0, e.v1]]);
     const du = flip ? -e.du : e.du;
-    const speed = kind === 'crowd' ? 3 + hash(s.i) * 2 : 2;
+    const speed = kind === 'crowd' ? 0.9 + hash(s.i) * 0.8 : 1.2;
     const phase = hash(s.i * 13 + Math.round(sp.x));
     for (let i = 0; i < 6; i++) anim.push(du, phase, speed);
     void fx; void fz;
@@ -1392,9 +1514,6 @@ export class Renderer3D {
   }
 }
 
-function mixRGB2(a: RGBf, b: RGBf, t: number): RGBf {
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-}
 
 function fmtKm(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(m)} m`;

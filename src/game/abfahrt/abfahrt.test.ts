@@ -94,16 +94,12 @@ test('Spiel: Autopilot fährt weit, überholt, sammelt und bekommt Kombos', () =
   const pilot = (g: Abfahrt) => {
     const p = g.p;
     let want = 0;
+    for (const o of g.opps) if (o.z > p.z && o.z - p.z < 8 && Math.abs(o.x - want) < 0.8) want = o.x > 0 ? o.x - 1.3 : o.x + 1.3;
     for (let d = 2; d < 40; d += 2) {
       const s = g.track.segAt(p.z + d);
       for (const o of s.objs ?? []) if (!o.done && o.k !== 'bidon' && o.k !== 'gold' && o.z > p.z && Math.abs(o.x - want) < 1.3) want = o.x > 0 ? o.x - 1.5 : o.x + 1.5;
     }
-    for (const o of g.opps) if (o.z > p.z && o.z - p.z < 8 && Math.abs(o.x - want) < 0.8) want = o.x > 0 ? o.x - 1.3 : o.x + 1.3;
-    let k = 0;
-    for (let d = 0; d < 45; d += 3) k = Math.max(k, Math.abs(g.track.segAt(p.z + d).curve));
-    const vSafe = k > 0.002 ? Math.sqrt((0.85 * 9.81) / k) : 99;
-    g.tx = Math.max(-2.4, Math.min(2.4, want - g.track.segAt(p.z).curve * p.v * p.v / 46));
-    p.brake = p.v > vSafe ? 1 : 0;
+    g.tx = Math.max(-2.4, Math.min(2.4, want));
   };
   const { g } = run('2027-05-09', pilot, 90);
   assert.ok(g.p.z > 1000, `weit gekommen: ${Math.round(g.p.z)} m`);

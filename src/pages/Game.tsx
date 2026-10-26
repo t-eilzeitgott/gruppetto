@@ -196,6 +196,17 @@ export function GamePage() {
     const obs = new MutationObserver(onTheme);
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-tour'] });
     window.addEventListener('resize', onResize);
+    // Homescreen-App auf iOS: 100vh ist dort zu kurz, darum die echte Bildschirmhöhe nehmen
+    const root = canvas.parentElement as HTMLElement | null;
+    const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+    const fit = () => {
+      if (!root || !standalone) return;
+      const portrait = window.innerHeight >= window.innerWidth;
+      const h = portrait ? Math.max(screen.height, screen.width) : Math.min(screen.height, screen.width);
+      root.style.height = `${Math.max(window.innerHeight, h)}px`;
+    };
+    fit();
+    window.addEventListener('orientationchange', fit);
     // Größe zuverlässig verfolgen (iOS meldet nicht jede Änderung als resize)
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
     ro?.observe(canvas);
@@ -204,6 +215,7 @@ export function GamePage() {
     return () => {
       cancelAnimationFrame(raf);
       ro?.disconnect();
+      window.removeEventListener('orientationchange', fit);
       renderer.dispose();
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVis);
@@ -353,7 +365,7 @@ export function GamePage() {
       <canvas
         ref={canvasRef}
         className="abf__canvas"
-        aria-label="Spielfeld: Daumen nach links und rechts ziehen zum Lenken, nach unten zum Bremsen"
+        aria-label="Spielfeld: Daumen nach links und rechts ziehen zum Lenken"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -449,8 +461,8 @@ export function GamePage() {
                 <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />
                 <Missions missions={missions} done={doneIds} />
                 <div className="abf-controls">
-                  <span><ThumbIcon /> Daumen ziehen: lenken</span>
-                  <span><BrakeIcon /> nach unten: bremsen</span>
+                  <span><ThumbIcon /> Daumen seitlich ziehen: lenken</span>
+                  <span><BrakeIcon /> Gebremst wird automatisch</span>
                 </div>
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
                 <MiniBoard rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} best={myBest} totalM={mine?.total_m ?? 0} />

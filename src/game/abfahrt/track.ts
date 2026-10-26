@@ -174,6 +174,8 @@ export class Track {
   }
 
   get length(): number { return this.base + this.segs.length; }
+  /** ältestes noch vorhandenes Segment */
+  get first(): number { return this.base; }
 
   /** Segment mit absolutem Index i (erzeugt bei Bedarf) */
   seg(i: number): Seg {
@@ -345,6 +347,13 @@ export class Track {
       }
       surfaceRun -= 1;
 
+      // Schneewände nach der ersten Passhöhe (wie am Gavia oder Stelvio im Mai)
+      if (p.descent === 0 && p.biome === 'pass' && this.sections.length === 1 && k >= 66 && k < 190) {
+        const wall = 2.4 + 1.1 * Math.sin(k * 0.11) + 0.5 * Math.sin(k * 0.37);
+        const snowWall = (ph: number): Side => ({ ground: 'snow', tilt: 0.28, barrier: 'none', wall: wall + ph, drop: false });
+        l = snowWall(0.3 * Math.sin(k * 0.21));
+        rr = snowWall(0.3 * Math.cos(k * 0.19));
+      }
       // Einschnitt vor einem Tunnel: das Gelände steigt zu beiden Seiten an
       const ahead = tunnels.find(([a]) => k < a && k >= a - 45);
       if (ahead) {
@@ -414,9 +423,13 @@ export class Track {
       return 'straight';
     };
     let len = 0;
-    out.push(straight(24)); len += 24;
+    // erste Passhöhe des Tages: langes Gipfelstück, dann sanfte Kurven zwischen Schneewänden
+    const opening = this.sections.length === 1;
+    const first = opening ? 70 : 24;
+    out.push(straight(first)); len += first;
     while (len < n - 40) {
-      const kind = choose();
+      let kind = choose();
+      if (opening && len < 200 && (kind === 'hairpin' || kind === 'tight' || kind === 'crest')) kind = 'curve';
       let pc: Piece;
       switch (kind) {
         case 'curve': {
@@ -446,7 +459,7 @@ export class Track {
           out.push(approach); len += approach.curve.length;
           const k = between(r, 0.04, 0.046);
           // genau eine halbe Drehung, korrigiert um die aktuelle Abweichung
-          const turn = Math.PI - this.hairDir * wrap(head - this.goal) * 0.8;
+          const turn = Math.max(Math.PI - 0.3, Math.min(Math.PI + 0.15, Math.PI - this.hairDir * wrap(head - this.goal) * 0.8));
           const hold = Math.max(10, Math.round(turn / (k * SEG) - 5));
           pc = { curve: ramp(this.hairDir * k, 5, hold, 5), hairpin: true };
           this.goal = wrap(this.goal + this.hairDir * Math.PI);
@@ -574,6 +587,17 @@ export class Track {
     (s.decals ??= []).push(d);
   }
 
+  /** Zuschauerbereich: ebenes Gelände neben der Absperrung, damit alle auf Straßenhöhe stehen */
+  private crowdZone(s: Seg) {
+    s.crowd = true;
+    const flat = (side: Side): Side => (side.ground === 'pavement' ? side : {
+      ground: side.ground === 'rock' || side.ground === 'forest' ? 'meadow' : side.ground === 'water' ? 'meadow' : side.ground,
+      tilt: 0.1, barrier: 'none', wall: 0, drop: false,
+    });
+    s.L = flat(s.L);
+    s.R = flat(s.R);
+  }
+
   /** Höhe des Geländes auf der Seite in Abstand dx vom Bankett */
   static groundH(side: Side, dx: number): number {
     if (side.wall > 0) return dx < 0.6 ? 0 : side.wall + (dx - 0.6) * side.tilt;
@@ -597,7 +621,7 @@ export class Track {
       S(start + 4).banner = { kind: 'gpm', text: name, sub: `${this.sections[sec].alt.toLocaleString('de-DE')} m` };
       put(start + 10, 1, 'passSign', 1.2, { s: 1, f: false, text: name });
       for (let i = start; i < start + 60; i++) {
-        S(i).crowd = true;
+        this.crowdZone(S(i));
         if (i % 2 === 0) { put(i, -1, 'crowd', 0.6, { s: 1 }); put(i, 1, 'crowd', 0.6, { s: 1 }); }
         if (i % 9 === 0) put(i, chance(r, 0.5) ? -1 : 1, 'flagpole', 2.4, { s: 1 });
       }
@@ -610,7 +634,7 @@ export class Track {
       const mid = start + Math.round(n * 0.55);
       S(mid).banner = { kind: 'sprint', text: 'Traguardo volante', sub: name };
       for (let i = mid - 40; i < mid + 30; i++) {
-        S(i).crowd = true;
+        this.crowdZone(S(i));
         if (i % 2 === 0) { put(i, -1, 'crowd', 0.2, { s: 1 }); put(i, 1, 'crowd', 0.2, { s: 1 }); }
       }
       this.decal(mid - 2, { k: 'zebra', x: 0, w: ROAD_HALF, len: 2 });
@@ -620,7 +644,7 @@ export class Track {
     if (biome === 'alpine' || biome === 'forest' || biome === 'vineyard') {
       const at = start + Math.round(between(r, n * 0.3, n * 0.7));
       for (let i = at; i < at + 26; i++) {
-        S(i).crowd = true;
+        this.crowdZone(S(i));
         if (i % 2 === 0) put(i, chance(r, 0.5) ? -1 : 1, 'crowd', 0.4, { s: 1 });
       }
       const w = this.names.length && chance(r, 0.6) ? `ALLEZ ${pick(r, this.names)}` : pick(r, WRITINGS);

@@ -192,20 +192,16 @@ export class Abfahrt {
   }
   pointerMove(x: number, y: number) {
     if (!this.steer.active) return;
-    const k = 10.5 / this.viewW;
+    // nur seitlich: der Fahrer folgt dem Daumen direkt (eine Daumenbreite ≈ eine Fahrspur)
+    const k = 11 / this.viewW;
     this.tx = clamp(this.steer.tx0 + (x - this.steer.sx) * k, -EDGE - 1.2, EDGE + 1.2);
-    // Daumen nach unten ziehen = bremsen; beim Zurückschieben neu ansetzen
-    const dy = y - this.steer.sy;
-    this.p.brake = clamp((dy - 18) / 70, 0, 1);
-    if (dy < -10) this.steer.sy = y + 10;
+    void y;
   }
   pointerUp() {
     this.steer.active = false;
-    this.p.brake = 0;
   }
   key(name: 'left' | 'right' | 'down', down: boolean) {
     this.keys[name] = down;
-    if (name === 'down') this.p.brake = down ? 1 : 0;
   }
 
   // ------------------------------------------------------------ Hauptschleife
@@ -298,6 +294,14 @@ export class Abfahrt {
     }
     this.draft += (draft - this.draft) * Math.min(1, dt * 6);
     const steering = Math.abs(this.tx - p.x);
+    // Bremsassistent: vor Kurven automatisch auf ein fahrbares Tempo bremsen
+    let vSafe = 99;
+    for (let d = 0; d <= 48; d += 4) {
+      const kk = Math.abs(this.track.segAt(p.z + d).curve);
+      if (kk > 0.002) vSafe = Math.min(vSafe, Math.sqrt((0.92 * mu * G) / kk) + d * 0.12);
+    }
+    const wantBrake = p.air ? 0 : clamp((p.v - vSafe) / 2.5, 0, 1);
+    p.brake += (wantBrake - p.brake) * Math.min(1, dt * 8);
     const wantTuck = p.v > 13 && p.brake < 0.05 && steering < 1.4 && !p.air ? 1 : 0;
     p.tuck += (wantTuck - p.tuck) * Math.min(1, dt * 3);
     const cd = CD * (1 + 0.32 * (1 - p.tuck)) * (1 - 0.42 * this.draft) * (1 + p.brake * 0.4);
@@ -311,9 +315,9 @@ export class Abfahrt {
     // --- Querdynamik mit Fliehkraft und Grip-Grenze
     const ac = k * p.v * p.v;
     // Daumen geglättet, damit kleine Zitterbewegungen nicht durchschlagen
-    this.txs += (this.tx - this.txs) * Math.min(1, dt * 10);
-    const kp = 30;
-    const kd = 11;
+    this.txs += (this.tx - this.txs) * Math.min(1, dt * 22);
+    const kp = 75;
+    const kd = 17;
     let want = kp * (this.txs - p.x) - kd * p.vx;
     let arel: number;
     if (p.air) {
@@ -589,9 +593,9 @@ export class Abfahrt {
     const k = Math.abs(seg.curve);
     if (!c.active && k > 0.009) {
       Object.assign(c, { active: true, sign: Math.sign(seg.curve), hairpin: seg.hairpin > 0, minV: p.v, clean: true, maxK: k });
-      if (seg.hairpin > 0 && this.opts.tutorial && !this.tipsShown.has('brake') && p.v > 15) {
+      if (seg.hairpin > 0 && this.opts.tutorial && !this.tipsShown.has('brake') && p.v > 12) {
         this.tipsShown.add('brake');
-        this.opts.onEvent?.({ type: 'tip', text: 'Kehre! Daumen nach unten ziehen zum Bremsen' });
+        this.opts.onEvent?.({ type: 'tip', text: 'Kehre! Gebremst wird automatisch – innen bleiben' });
       }
     }
     if (c.active) {
