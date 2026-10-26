@@ -2,8 +2,8 @@
 
 Das Grand-Tour-Tippspiel für eure Runde: Giro, Tour und Vuelta – ein Tipp pro Etappe, Bonustipps vor dem Start, Live-Rangliste. Mobile first als Web-App (PWA) auf GitHub Pages, mit Supabase als Datenbank und Login.
 
-**App:** https://t-eilzeitgott.github.io/gruppetto/
-**Demo mit Beispieldaten:** https://t-eilzeitgott.github.io/gruppetto/?demo
+**App:** https://gruppetto.talfahrt.dev/
+**Demo mit Beispieldaten:** https://gruppetto.talfahrt.dev/?demo
 
 ## Regeln
 
