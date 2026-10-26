@@ -124,6 +124,7 @@ const CDA = 0.0028;      // Luftwiderstand je kg in Sitzhaltung (Leistung = CDA 
 const WJ = 160;          // Kraftvorrat in J/kg
 const SUB = 1 / 60;
 const WARP = 1.5;        // Zeitraffer bergauf
+const PUSH_COST = 1.9;   // Spieler: Kraftverbrauch über der Dauerleistung bergauf
 const GRIP_G = 0.8;      // Haftgrenze in Kurven (in g)
 const ASSIST_G = 0.72;   // bis hierhin bremst die Hilfe vor Kurven
 const XMAX = ROAD_HALF - 0.45;
@@ -453,8 +454,10 @@ export class BergRace {
       // geduckt schneller, aber ohne Bremshilfe; sonst bremst die Hilfe vor Kurven aufs fahrbare Tempo
       // Bremshilfe mit etwas Reserve zur Haftgrenze (0,8 g)
       const vSafe = this.safeSpeed(p.z, ASSIST_G * G * s.desc);
-      posture = go ? 0.62 : 0.88;
-      if (p.v < 11) P = go ? s.cp + s.kick * 0.5 : s.cp * 0.75;
+      // geduckt: viel weniger Luftwiderstand und aus den Kurven heraus voll antreten – schnell auf Tempo
+      posture = go ? 0.5 : 0.88;
+      if (go) P = p.v < 19 ? s.cp + s.kick * 0.9 : 0;
+      else if (p.v < 11) P = s.cp * 0.75;
       if (ease) B = 6.5;
       else if (!go) B = clamp((p.v - vSafe * 0.97) * 2.5, 0, 6.5);
       if (B > 0.5) posture = 1.1;
@@ -484,8 +487,10 @@ export class BergRace {
     p.y = this.track.heightAt(p.z);
     // Kraft: über der Dauerleistung leert sich der Vorrat, darunter füllt er sich wieder
     if (racing) {
-      if (P > s.cp) this.energy -= ((P - s.cp) / WJ) * dt;
-      else this.energy += ((s.cp - P) / WJ) * 0.55 * dt;
+      // bergauf kostet alles über der Dauerleistung den Spieler deutlich mehr (Kraft einteilen!), Erholung ist langsam
+      const push = stage === 'climb' ? PUSH_COST : 1;
+      if (P > s.cp) this.energy -= ((P - s.cp) * push / WJ) * dt;
+      else this.energy += ((s.cp - P) / WJ) * (stage === 'climb' ? 0.35 : 0.55) * dt;
       this.energy = clamp(this.energy, 0, 1);
       this.emptyT = this.energy <= 0.001 ? this.emptyT + dt : 0;
       if (this.emptyT > 0.2 && !this.flags.has('empty')) {
