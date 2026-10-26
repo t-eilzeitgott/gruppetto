@@ -1384,6 +1384,22 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .games-dots__dot { width: 28px; height: 24px; border: 0; padding: 0; background: none; display: grid; place-items: center; }
 .games-dots__dot::before { content: ""; width: 7px; height: 7px; border-radius: 4px; background: var(--line); transition: width 0.2s, background 0.2s; }
 .games-dots__dot.is-on::before { width: 18px; background: var(--accent); }
+/* Hinweis „rechts gibt es mehr“: Lichtkante rechts und nächster Punkt pulsieren im Takt des Leuchtens,
+   bis man einmal gewischt hat zusätzlich ein kurzes Anstupsen der Karte */
+.games-card { position: relative; }
+.games-card.has-more::after {
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 14px; pointer-events: none;
+  background: linear-gradient(to left, color-mix(in srgb, var(--accent) 22%, transparent), transparent);
+  animation: games-more 2.6s ease-in-out infinite;
+}
+@keyframes games-more { 0%, 100% { opacity: 0.15; } 50% { opacity: 1; } }
+.games-card.has-more .games-dots__dot.is-next::before { animation: games-dot 2.6s ease-in-out infinite; }
+@keyframes games-dot { 0%, 100% { width: 7px; } 50% { width: 11px; background: color-mix(in srgb, var(--accent) 55%, var(--line)); } }
+.games-card.nudge.has-more .games-slide { animation: games-nudge 1.6s ease-in-out 0.9s 2; }
+@keyframes games-nudge { 0%, 100% { transform: none; } 45% { transform: translateX(-24px); } 70% { transform: translateX(2px); } }
+@media (prefers-reduced-motion: reduce) {
+  .games-card.has-more::after, .games-card.has-more .games-dots__dot.is-next::before, .games-card.nudge.has-more .games-slide { animation: none; }
+}
 .game-card__head { display: flex; align-items: center; gap: 14px; }
 .game-card__main { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
 .game-card__title { font-size: 19px; letter-spacing: -0.02em; }

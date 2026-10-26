@@ -17,6 +17,8 @@ import { Avatar, Link, cx } from './kit';
 import { Icon } from './Icon';
 import { GameBadge } from './GameIcon';
 
+const SWIPED = 'gruppetto.games.swiped';
+
 /** Reihenfolge: das Finale zur nächsten Etappe zuerst (flach/wellig → Sprint, sonst Berg), dann das andere, dann die Abfahrt */
 function order(kind: StageKind | null): GameInfo[] {
   const rank: Record<string, number> = kind === 'flat' || kind === 'hilly' ? { sprint: 0, berg: 1, abfahrt: 2 } : { berg: 0, sprint: 1, abfahrt: 2 };
@@ -27,12 +29,19 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
   const games = useMemo(() => order(stageKind), [stageKind]);
   const scroller = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState(0);
+  // Hinweis „rechts gibt es mehr“, bis man einmal gewischt hat
+  const [swiped, setSwiped] = useState(() => { try { return localStorage.getItem(SWIPED) === '1'; } catch { return false; } });
   const anyNew = useMemo(() => games.some(isNewGame), [games]);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
     const w = (el.firstElementChild as HTMLElement | null)?.offsetWidth ?? el.clientWidth;
-    setActive(Math.max(0, Math.min(games.length - 1, Math.round(el.scrollLeft / Math.max(1, w)))));
+    const i = Math.max(0, Math.min(games.length - 1, Math.round(el.scrollLeft / Math.max(1, w))));
+    setActive(i);
+    if (i > 0 && !swiped) {
+      setSwiped(true);
+      try { localStorage.setItem(SWIPED, '1'); } catch { /* egal */ }
+    }
   };
   const go = (i: number) => {
     const el = scroller.current;
@@ -40,7 +49,7 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
     if (el && slide) el.scrollTo({ left: slide.offsetLeft - (el.firstElementChild as HTMLElement).offsetLeft, behavior: 'smooth' });
   };
   return (
-    <section className={cx('card games-card', anyNew && 'is-new')} aria-label="Minispiele">
+    <section className={cx('card games-card', anyNew && 'is-new', games.length > 1 && active < games.length - 1 && 'has-more', !swiped && games.length > 1 && 'nudge')} aria-label="Minispiele">
       <div className="games-scroller" ref={scroller} onScroll={onScroll}>
         {games.map((g) => <GameSlide key={g.id} game={g} tourName={tourName} stages={stages} />)}
       </div>
@@ -53,7 +62,7 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
               role="tab"
               aria-selected={i === active}
               aria-label={g.name}
-              className={cx('games-dots__dot', i === active && 'is-on')}
+              className={cx('games-dots__dot', i === active && 'is-on', i === active + 1 && 'is-next')}
               onClick={() => go(i)}
             />
           ))}
