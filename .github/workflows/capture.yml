@@ -2,7 +2,6 @@ name: Seiten sichern (temporär)
 on:
   push:
     branches: [pcs-capture]
-    paths: ['urls.txt', '.github/workflows/capture.yml']
 permissions:
   contents: write
 jobs:
