@@ -11,7 +11,7 @@ import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette
 import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
 import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, facadeTex, FACADE_BANDS, gravelTex, rockTex, roundTex, vergeTex } from './tex3d';
 import { GB, lin, lin255, propGeometries, treeGeometriesLow, type Prop3D, type RGBf } from './models3d';
-import { RiderModel } from './rider3d';
+import { RiderModel, riderKitKey } from './rider3d';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
@@ -1014,8 +1014,9 @@ export class Renderer3D {
     for (const [k, c] of this.chunks) {
       if (k < from || k > to + 1) { this.scene.remove(c.group); c.dispose(); this.chunks.delete(k); }
     }
-    // beim Start alles auf einmal, danach höchstens zwei pro Bild (nächste zuerst)
-    let budget = this.chunks.size === 0 ? 99 : 2;
+    // beim Start alles auf einmal, danach höchstens einer pro Bild (nächste zuerst) – verteilt die Arbeit,
+    // damit kein Bild ruckelt
+    let budget = this.chunks.size === 0 ? 99 : 1;
     for (let k = from; k <= to && budget > 0; k++) {
       if (this.chunks.has(k)) continue;
       const c = this.buildChunk(g, k);
@@ -2011,7 +2012,7 @@ export class Renderer3D {
     const p = g.p;
     const track = g.track;
     const w = this.w;
-    const kitKey = p.kit.jersey + p.kit.helmet;
+    const kitKey = riderKitKey(p.kit);
     if (!this.player || this.playerKit !== kitKey) {
       if (this.player) this.scene.remove(this.player.group);
       this.player = new RiderModel(p.kit, this.shadowTex);
@@ -2044,12 +2045,14 @@ export class Renderer3D {
     for (const o of list) {
       seen.add(o.id);
       let m = this.riders.get(o.id);
+      if (m && m.kitKey !== riderKitKey(o.kit)) { this.scene.remove(m.group); m = undefined; }
       if (!m) {
         m = new RiderModel(o.kit, this.shadowTex);
         if (sprint) m.prepareFade();
         this.riders.set(o.id, m);
         this.scene.add(m.group);
       }
+      m.group.visible = true;
       this.placeOpp(m, o, track);
       if (sprint) {
         const dz = o.z - p.z;
@@ -2057,8 +2060,24 @@ export class Renderer3D {
         m.fade(block ? 0.28 : 1, this.lastDt);
       }
     }
+    // Rennfinals: alle Fahrer vorab anlegen (ausgeblendet), damit beim Auftauchen nichts gebaut werden muss
+    if (sprint) {
+      for (const o of g.opps) {
+        if (this.riders.has(o.id)) continue;
+        const m = new RiderModel(o.kit, this.shadowTex);
+        m.prepareFade();
+        m.group.visible = false;
+        this.riders.set(o.id, m);
+        this.scene.add(m.group);
+      }
+    }
+    const alive = new Set(g.opps.map((o) => o.id));
     for (const [id, m] of this.riders) {
-      if (!seen.has(id)) { this.scene.remove(m.group); this.riders.delete(id); }
+      if (seen.has(id)) continue;
+      // außer Sicht: nur ausblenden – kommt der Fahrer zurück, ist er sofort wieder da (kein Neuaufbau, kein Ruckler);
+      // wer nicht mehr im Rennen ist, fliegt raus
+      if (alive.has(id)) m.group.visible = false;
+      else { this.scene.remove(m.group); this.riders.delete(id); }
     }
   }
 

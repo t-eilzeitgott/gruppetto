@@ -189,11 +189,15 @@ export class BergRace {
     this.reset();
   }
 
+  /** Tempo der Gruppe am Fuß des Anstiegs (die Helfer fahren 6 W/kg) – so rollt alles gleichmäßig los */
+  private v0 = 6.2;
+
   reset() {
     this.track = new Track(this.opts.dayKey, this.opts.names, 'mountain', this.opts.town);
     this.rng = mulberry32(this.track.seed ^ 0xb3);
+    this.v0 = speedAt(6.0, this.track.segAt(40).grade, CDA);
     this.p = {
-      z: 0, x: 0.55, vx: 0, v: 6.2, y: 0, vy: 0, air: false, airT: 0,
+      z: 0, x: 0.55, vx: 0, v: this.v0, y: 0, vy: 0, air: false, airT: 0,
       lean: 0, pedal: 0, tuck: 0, brake: 0, wobble: 0, slip: 0, grip: 1, slick: 0,
       kit: this.opts.kit,
     };
@@ -245,7 +249,7 @@ export class BergRace {
       // stärkere Kletterer stehen weiter oben in der Namensliste
       const cp = role === 'helper' ? between(r, 5.95, 6.05) : role === 'weak' ? between(r, 5.7, 5.85) : 6.4 - (favNo - 1) * 0.05 + between(r, -0.05, 0.05);
       this.opps.push({
-        id: id++, z: z + (r() - 0.5) * 0.3, x, vx: 0, v: 6.2, tx: x, f: 0.7,
+        id: id++, z: z + (r() - 0.5) * 0.3, x, vx: 0, v: this.v0, tx: x, f: 0.7,
         kit: { ...kit, skin: pick(r, SKINS), number: String(Math.floor(between(r, 11, 199))) },
         pedal: r() * 6, lean: 0, tuck: 0, brake: 0, passed: false, group: role === 'helper' ? 0 : -1, bump: 0, attacker: false,
         name, role, cp, kick: role === 'helper' ? 2.4 : between(r, 2.8, 3.8), desc: between(r, 0.92, 0.99), w: 1,
@@ -442,7 +446,7 @@ export class BergRace {
     let standTarget = 0;
     if (!racing) {
       // Countdown (rollend am Berg) und Auslauf nach dem Ziel
-      const vd = this.finT >= 0 ? 8 : 6.2;
+      const vd = this.finT >= 0 ? 8 : this.v0;
       P = clamp(powerTo(vd, p.v, grade, CDA), 0, 9);
       if (p.v > vd + 1) B = 2;
     } else if (stage === 'descent') {
@@ -463,8 +467,7 @@ export class BergRace {
         const vd = clamp(wheel.v + (wheel.z - p.z - 1.8) * 0.8, wheel.v - 1.2, wheel.v + 1.2);
         P = Math.min(powerTo(vd, p.v, grade, CDA * (1 - 0.35 * this.draft)), s.cp + 0.7);
         // hinter einem, der nicht mehr mitkommt (abgefallener Helfer, Abgehängter): von selbst vorbei
-        const own = speedAt(s.cp * 0.98, grade, CDA);
-        if (!this.steer.active && wheel.v < own - 0.4 && wheel.z - p.z < 6) this.passWheel();
+        if (!this.steer.active && wheel.z - p.z < 6 && this.losing(wheel, speedAt(s.cp * 0.98, grade, CDA))) this.passWheel();
       } else P = final ? s.cp * 0.92 : s.cp * 0.98;
       if (empty) P = Math.min(P, s.cp * 0.92);
       P = Math.max(0, P);
@@ -614,7 +617,7 @@ export class BergRace {
       let posture = 1;
       let standTarget = 0;
       if (roll || o.done) {
-        const vd = o.done ? 8 : 6.2;
+        const vd = o.done ? 8 : this.v0;
         P = clamp(powerTo(vd, o.v, grade, CDA), 0, 9);
         if (o.v > vd + 1) B = 2;
       } else if (stage === 'climb') {
@@ -650,9 +653,9 @@ export class BergRace {
             if (o.chaseT > 0) o.chaseT -= dt;
             if (wheel && wheel.z - o.z < 9) {
               P = this.follow(o, wheel, grade, dr, cap);
-              // hinter einem, der nicht mehr mitkommt: vorbei
-              const vOwn = speedAt(own, grade, CDA);
-              if (wheel.v < vOwn - 0.35 && wheel.z - o.z < 5) { this.changeLane(o); P = Math.max(P, own); }
+              // hinter einem, der nicht mehr mitkommt (abgefallen, leer, Lücke nach vorn): vorbei –
+              // sonst bleibt man brav in der Reihe (kein Gewusel)
+              if (wheel.z - o.z < 5 && this.losing(wheel, speedAt(own, grade, CDA))) { this.changeLane(o); P = Math.max(P, own); }
             } else {
               // allein: eigenes Tempo – oder, wenn eine Attacke läuft, hinterher
               const target = this.ahead(o, 70);
@@ -721,6 +724,15 @@ export class BergRace {
       o.tuck += ((stage === 'descent' ? (posture < 0.7 ? 1 : 0.45) : stand(o.stand)) - o.tuck) * Math.min(1, dt * 5);
       o.brake += (clamp(B / 6.5, 0, 1) - o.brake) * Math.min(1, dt * 8);
     }
+  }
+
+  /** reißt dieser Fahrer gerade ab? (abgefallener Helfer, Kraft leer, Lücke nach vorn und zu langsam) */
+  private losing(w: { z: number; x: number; v: number }, vOwn: number): boolean {
+    if (w === this.p) return this.p.v < vOwn - 0.6;
+    const r = w as Racer;
+    if (r.peeled || r.w < 0.04) return true;
+    const front = this.wheelAhead(r.z, r.x, 30, r);
+    return (!front || front.z - r.z > 3.5) && r.v < vOwn - 0.35;
   }
 
   /** Leistung, um am Hinterrad zu bleiben – höchstens cap */

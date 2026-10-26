@@ -14,7 +14,7 @@ import { Icon } from '../ui/Icon';
 import { SprintIcon } from '../ui/GameIcon';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
 import {
-  FinaleBoard, FinaleMini, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
+  FinaleBoard, FinaleMini, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 
@@ -319,11 +319,7 @@ export function SprintPage() {
                   </div>
                 </div>
                 <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => TYPE_STATS[t]} bars={sprintBars} />
-                <ul className="spr-howto" aria-label="Steuerung">
-                  <li><span className="spr-howto__k">↔</span>Hinterrad wechseln: im Windschatten sparst du Kraft</li>
-                  <li><span className="spr-howto__k">↑</span>Antreten – am besten 200–300 m vor dem Ziel</li>
-                  <li><span className="spr-howto__k">↓</span>Tempo raus und erholen</li>
-                </ul>
+                <HowTo items={[['↔', 'Hinterrad wechseln'], ['↑', 'Antreten'], ['↓', 'Tempo raus']]} />
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
                 <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch keine Sprints – hol dir den ersten Tagessieg!" />
               </>

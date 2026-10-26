@@ -82,13 +82,25 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
     let prev = performance.now();
     let acc = 0;
     let frames = 0;
+    let idleT = 0;
     const loop = (now: number) => {
       const dt = Math.min(0.05, (now - prev) / 1000);
       prev = now;
       const eng = engineRef.current!;
       if (uiRef.current !== 'paused') eng.update(dt);
-      if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
+      // Start- und Ergebniskarte: Szene dahinter nur 10-mal pro Sekunde zeichnen (spart Akku und Wärme)
+      const idle = uiRef.current === 'ready' || uiRef.current === 'over';
+      idleT = idle ? idleT + dt : 0;
+      if (idle && idleT < 0.1 && frames > 2) {
+        cb.current.onFrame(eng, dt);
+        frames += 1;
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+      if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : idle ? Math.min(0.1, idleT) : dt);
+      idleT = 0;
       cb.current.onFrame(eng, dt);
+      if (idle) { frames += 1; raf = requestAnimationFrame(loop); return; }
       acc += dt;
       frames += 1;
       if (acc > 2.5) {
@@ -208,20 +220,7 @@ export function placeIn(list: GameBest[], meId: string, score: number): number {
 
 export interface TypeInfo { label: string; bonus: number }
 
-function Bars({ rows }: { rows: [string, number][] }) {
-  return (
-    <span className="spr-bars" aria-hidden="true">
-      {rows.map(([label, v]) => (
-        <span key={label} className="spr-bars__row">
-          <span>{label}</span>
-          <i><b style={{ width: `${Math.round(12 + Math.max(0, Math.min(1, v)) * 88)}%` }} /></i>
-        </span>
-      ))}
-    </span>
-  );
-}
-
-/** Fahrer wählen: eigener Tipp, je Typ der passendste Fahrer, mit Stärken als Balken */
+/** Fahrer wählen: eigener Tipp, je Typ der passendste Fahrer – kompakt, damit Start ohne Scrollen geht */
 export function RiderPicker({ options, chosen, onChoose, info, bars }: {
   options: RiderOption[];
   chosen: RiderOption;
@@ -229,37 +228,56 @@ export function RiderPicker({ options, chosen, onChoose, info, bars }: {
   info: (t: RiderType) => TypeInfo;
   bars: (t: RiderType) => [string, number][];
 }) {
+  const legend = bars(options[0]?.type ?? 'sprinter').map(([l]) => l);
   return (
     <section className="spr-pick" aria-label="Fahrer auswählen">
-      <h2 className="abf-eyebrow">Dein Fahrer</h2>
+      <div className="spr-pick__head">
+        <h2 className="abf-eyebrow">Dein Fahrer</h2>
+        <span className="spr-legend" aria-hidden="true">
+          {legend.map((l, i) => <span key={l}><i className={`is-${i}`} />{l}</span>)}
+        </span>
+      </div>
       <div className="spr-pick__list" role="radiogroup" aria-label="Fahrer">
         {options.map((o) => {
           const on = o === chosen;
           const s = info(o.type);
+          const rows = bars(o.type);
           return (
             <button
               key={`${o.id ?? 'x'}:${o.type}`}
               type="button"
               role="radio"
               aria-checked={on}
+              aria-label={`${o.id === null ? s.label : o.name}, ${s.label}: ${rows.map(([l, v]) => `${l} ${Math.round(v * 10)} von 10`).join(', ')}`}
+              title={o.why || undefined}
               className={cx('spr-rider', on && 'is-on')}
               onClick={() => onChoose(o)}
             >
               <span className="spr-rider__main">
                 <span className="spr-rider__name">{o.id === null ? s.label : o.name}</span>
                 <span className="spr-rider__sub">
-                  <span className="spr-chip">{s.label}</span>
-                  {o.tip ? <span className="spr-chip spr-chip--tip">Dein Tipp</span> : null}
-                  {s.bonus > 1 ? <span className="spr-rider__bonus">Punkte ×{s.bonus.toFixed(2).replace(/0$/, '').replace('.', ',')}</span> : null}
+                  <span>{s.label}</span>
+                  {o.tip ? <span className="spr-rider__tip">Dein Tipp</span> : null}
+                  {s.bonus > 1 ? <span>Punkte ×{s.bonus.toFixed(2).replace(/0$/, '').replace('.', ',')}</span> : null}
                 </span>
-                {o.why ? <span className="spr-rider__why">{o.why}</span> : null}
               </span>
-              <Bars rows={bars(o.type)} />
+              <span className="spr-mini" aria-hidden="true">
+                {rows.map(([l, v], i) => <i key={l} className={`is-${i}`}><b style={{ width: `${Math.round(12 + Math.max(0, Math.min(1, v)) * 88)}%` }} /></i>)}
+              </span>
             </button>
           );
         })}
       </div>
     </section>
+  );
+}
+
+/** Steuerung in einer Zeile */
+export function HowTo({ items }: { items: [string, string][] }) {
+  return (
+    <ul className="spr-keys" aria-label="Steuerung">
+      {items.map(([k, t]) => <li key={k}><b aria-hidden="true">{k}</b>{t}</li>)}
+    </ul>
   );
 }
 

@@ -367,6 +367,69 @@ function ik(a: THREE.Vector3, c: THREE.Vector3, l1: number, l2: number, pole: TH
   end.copy(a).addScaledVector(tmpD, d);
 }
 
+/** Schlüssel eines Trikots (alles, was das Aussehen bestimmt) */
+export function riderKitKey(kit: Kit): string {
+  return `${kit.jersey}|${kit.side}|${kit.helmet}|${kit.shorts}|${kit.skin}|${kit.shoes}|${kit.number}`;
+}
+
+let mats: { flat: THREE.MeshLambertMaterial; smooth: THREE.MeshLambertMaterial } | null = null;
+function baseMats() {
+  return (mats ??= {
+    flat: new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }),
+    smooth: new THREE.MeshLambertMaterial({ vertexColors: true }),
+  });
+}
+
+let lamp: { geo: THREE.BufferGeometry; mat: THREE.MeshLambertMaterial } | null = null;
+function lampParts() {
+  return (lamp ??= {
+    geo: new THREE.BoxGeometry(0.05, 0.04, 0.02),
+    mat: new THREE.MeshLambertMaterial({ color: '#ff2a2a', emissive: new THREE.Color('#ff2a2a'), emissiveIntensity: 0.8 }),
+  });
+}
+
+let shadowGeo: THREE.PlaneGeometry | null = null;
+const SHADOW_GEO = () => (shadowGeo ??= new THREE.PlaneGeometry(1.1, 2.2));
+
+interface RiderGeos {
+  frame: THREE.BufferGeometry; wheel: THREE.BufferGeometry; crank: THREE.BufferGeometry;
+  thigh: THREE.BufferGeometry; shin: THREE.BufferGeometry; upper: THREE.BufferGeometry; fore: THREE.BufferGeometry;
+  shoe: THREE.BufferGeometry; head: THREE.BufferGeometry; torso: THREE.BufferGeometry;
+}
+const geoCache = new Map<string, unknown>();
+function cached<T>(key: string, make: () => T): T {
+  let v = geoCache.get(key) as T | undefined;
+  if (v === undefined) { v = make(); geoCache.set(key, v); }
+  return v;
+}
+
+/** alle Geometrien eines Fahrers (geteilt je Farbkombination) */
+function riderGeos(kit: Kit): RiderGeos {
+  const bike = cached(`bike|${kit.jersey}|${kit.side}`, () => bikeGeos(kit));
+  const limbs = cached(`limbs|${kit.skin}|${kit.shorts}|${kit.jersey}|${kit.side}`, () => {
+    const skin = lin(kit.skin);
+    const shorts = lin(kit.shorts);
+    const jersey = lin(kit.jersey);
+    const side = lin(kit.side);
+    const sock = lin('#f4f4f2');
+    const glove = lin('#1f2023');
+    // Oberschenkel: Hose bis kurz übers Knie; Wade mit Muskel, Socke; Arme mit Ärmel und Handschuh
+    return {
+      thigh: limb(THIGH, [[0, 0.083, shorts], [0.2, 0.082, shorts], [0.55, 0.068, shorts], [0.74, 0.058, shorts], [0.745, 0.057, skin], [0.9, 0.05, skin], [1, 0.048, skin]]),
+      shin: limb(SHIN, [[0, 0.047, skin], [0.14, 0.05, skin], [0.3, 0.056, skin], [0.5, 0.046, skin], [0.68, 0.035, skin], [0.685, 0.036, sock], [0.92, 0.031, sock], [1, 0.033, sock]]),
+      upper: limb(UPPER, [[0, 0.056, jersey], [0.3, 0.05, jersey], [0.46, 0.046, jersey], [0.465, 0.046, side], [0.52, 0.045, side], [0.525, 0.044, skin], [0.8, 0.04, skin], [1, 0.037, skin]]),
+      fore: limb(FORE, [[0, 0.037, skin], [0.22, 0.041, skin], [0.6, 0.033, skin], [0.8, 0.028, skin], [0.805, 0.029, glove], [0.9, 0.037, glove], [1, 0.035, glove]]),
+    };
+  });
+  return {
+    ...bike,
+    ...limbs,
+    shoe: cached(`shoe|${kit.shoes}`, () => shoeGeo(kit)),
+    head: cached(`head|${kit.skin}|${kit.helmet}|${kit.side}`, () => headGeo(kit)),
+    torso: cached('torso', () => torsoGeo()),
+  };
+}
+
 export class RiderModel {
   readonly group = new THREE.Group();
   private body = new THREE.Group();
@@ -387,36 +450,24 @@ export class RiderModel {
   constructor(kit: Kit, shadowTex: THREE.Texture) {
     this.group.rotation.order = 'YXZ';
     this.group.add(this.body);
-    const flat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-    const smooth = new THREE.MeshLambertMaterial({ vertexColors: true });
-    const bike = bikeGeos(kit);
-    this.body.add(new THREE.Mesh(bike.frame, flat));
-    this.wheelF = new THREE.Mesh(bike.wheel, smooth);
+    // Geometrien und Grundmaterialien werden je Trikot nur einmal gebaut und von allen Fahrern geteilt –
+    // ein neuer Fahrer im Bild kostet so kaum Rechenzeit (sonst ruckelt es, wenn Fahrer auftauchen)
+    const { flat, smooth } = baseMats();
+    const g = riderGeos(kit);
+    this.body.add(new THREE.Mesh(g.frame, flat));
+    this.wheelF = new THREE.Mesh(g.wheel, smooth);
     this.wheelF.position.set(0, 0.335, -0.52);
-    this.wheelR = new THREE.Mesh(bike.wheel, smooth);
+    this.wheelR = new THREE.Mesh(g.wheel, smooth);
     this.wheelR.position.set(0, 0.335, 0.49);
-    this.crank = new THREE.Mesh(bike.crank, flat);
+    this.crank = new THREE.Mesh(g.crank, flat);
     this.crank.position.copy(BB);
     this.body.add(this.wheelF, this.wheelR, this.crank);
-
-    const skin = lin(kit.skin);
-    const shorts = lin(kit.shorts);
-    const jersey = lin(kit.jersey);
-    const side = lin(kit.side);
-    const sock = lin('#f4f4f2');
-    const glove = lin('#1f2023');
-    // Oberschenkel: Hose bis kurz übers Knie; Wade mit Muskel, Socke; Arme mit Ärmel und Handschuh
-    const thigh = limb(THIGH, [[0, 0.083, shorts], [0.2, 0.082, shorts], [0.55, 0.068, shorts], [0.74, 0.058, shorts], [0.745, 0.057, skin], [0.9, 0.05, skin], [1, 0.048, skin]]);
-    const shin = limb(SHIN, [[0, 0.047, skin], [0.14, 0.05, skin], [0.3, 0.056, skin], [0.5, 0.046, skin], [0.68, 0.035, skin], [0.685, 0.036, sock], [0.92, 0.031, sock], [1, 0.033, sock]]);
-    const upper = limb(UPPER, [[0, 0.056, jersey], [0.3, 0.05, jersey], [0.46, 0.046, jersey], [0.465, 0.046, side], [0.52, 0.045, side], [0.525, 0.044, skin], [0.8, 0.04, skin], [1, 0.037, skin]]);
-    const shoeG = shoeGeo(kit);
-    const fore = limb(FORE, [[0, 0.037, skin], [0.22, 0.041, skin], [0.6, 0.033, skin], [0.8, 0.028, skin], [0.805, 0.029, glove], [0.9, 0.037, glove], [1, 0.035, glove]]);
     for (let s = 0; s < 2; s++) {
-      const t = new THREE.Mesh(thigh, smooth);
-      const c = new THREE.Mesh(shin, smooth);
-      const u = new THREE.Mesh(upper, smooth);
-      const f = new THREE.Mesh(fore, smooth);
-      const sh = new THREE.Mesh(shoeG, smooth);
+      const t = new THREE.Mesh(g.thigh, smooth);
+      const c = new THREE.Mesh(g.shin, smooth);
+      const u = new THREE.Mesh(g.upper, smooth);
+      const f = new THREE.Mesh(g.fore, smooth);
+      const sh = new THREE.Mesh(g.shoe, smooth);
       this.thighs.push(t);
       this.shins.push(c);
       this.uppers.push(u);
@@ -424,19 +475,20 @@ export class RiderModel {
       this.shoes.push(sh);
       this.body.add(t, c, u, f, sh);
     }
-    this.torso = new THREE.Mesh(torsoGeo(), torsoMat(kit));
-    this.head = new THREE.Mesh(headGeo(kit), smooth);
+    this.torso = new THREE.Mesh(g.torso, torsoMat(kit));
+    this.head = new THREE.Mesh(g.head, smooth);
     this.body.add(this.torso, this.head);
 
-    this.lamp = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.02), new THREE.MeshLambertMaterial({ color: '#ff2a2a', emissive: new THREE.Color('#ff2a2a'), emissiveIntensity: 0.8 }));
+    const lamp = lampParts();
+    this.lamp = new THREE.Mesh(lamp.geo, lamp.mat);
     this.lamp.position.set(0, 0.86, 0.24);
     this.body.add(this.lamp);
-    this.shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.2), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.55 }));
+    this.shadow = new THREE.Mesh(SHADOW_GEO(), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.55 }));
     this.shadow.rotation.x = -Math.PI / 2;
     this.shadow.position.y = 0.03;
     this.shadow.renderOrder = 1;
     this.group.add(this.shadow);
-    this.kitKey = kit.jersey + kit.helmet;
+    this.kitKey = riderKitKey(kit);
   }
 
   private fadeMats: THREE.Material[] | null = null;

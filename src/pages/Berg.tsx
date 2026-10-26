@@ -15,7 +15,7 @@ import { BergIcon } from '../ui/GameIcon';
 import { lastName } from '../ui/bits';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
 import {
-  FinaleBoard, FinaleMini, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
+  FinaleBoard, FinaleMini, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 
@@ -339,11 +339,7 @@ export function BergPage() {
                 </div>
                 <BergProfile track={track} />
                 <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => BERG_STATS[t]} bars={bars} />
-                <ul className="spr-howto" aria-label="Steuerung">
-                  <li><span className="spr-howto__k">↔</span>Hinterrad wechseln, an Abgehängten vorbei</li>
-                  <li><span className="spr-howto__k">↑</span>Bergauf angreifen oder mitgehen (kostet Kraft) · bergab ducken</li>
-                  <li><span className="spr-howto__k">↓</span>Tempo raus und erholen · bergab bremsen</li>
-                </ul>
+                <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Angreifen · bergab ducken'], ['↓', 'Erholen · bremsen']]} />
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
                 <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch niemand am Berg – hol dir den ersten Tagessieg!" />
               </>
@@ -379,14 +375,14 @@ export function BergPage() {
 /** Höhenprofil: Schlussanstieg bis zur Bergwertung, Abfahrt ins Ziel */
 function BergProfile({ track }: { track: Track }) {
   const W = 300;
-  const H = 74;
+  const H = 46;
   const pts = useMemo(() => {
     const n = 60;
     const ys: number[] = [];
     for (let i = 0; i <= n; i++) ys.push(track.heightAt((i / n) * MOUNTAIN_FINISH));
     const top = Math.max(...ys);
     const low = Math.min(...ys);
-    return ys.map((y, i) => [(i / n) * W, 10 + ((top - y) / Math.max(1, top - low)) * (H - 22)] as [number, number]);
+    return ys.map((y, i) => [(i / n) * W, 4 + ((top - y) / Math.max(1, top - low)) * (H - 10)] as [number, number]);
   }, [track]);
   const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
   const summit = track.summit;
