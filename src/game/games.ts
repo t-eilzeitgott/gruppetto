@@ -6,7 +6,7 @@ export interface GameInfo {
   name: string;
   path: string;
   blurb: string;
-  /** „Neu“-Hinweis, bis man es einmal gespielt hat (Schlüssel im Browser-Speicher mit der Zahl der Läufe) */
+  /** als neu hervorheben (Leuchten der Karte und „Neu“ am Titel) */
   newUntilPlayed?: string;
 }
 
@@ -20,8 +20,7 @@ export function gameInfo(id: GameId): GameInfo {
   return GAMES.find((g) => g.id === id) ?? GAMES[0];
 }
 
-/** Spiel noch nie gespielt und als neu markiert? */
+/** als neu hervorgehoben (Leuchten und „Neu“) – bleibt dauerhaft an */
 export function isNewGame(g: GameInfo): boolean {
-  if (!g.newUntilPlayed) return false;
-  try { return !(Number(localStorage.getItem(g.newUntilPlayed)) > 0); } catch { return true; }
+  return !!g.newUntilPlayed;
 }

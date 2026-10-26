@@ -16,14 +16,14 @@ import { Avatar, Link, cx } from './kit';
 import { Icon } from './Icon';
 import { GameBadge } from './GameIcon';
 
-/** Reihenfolge: das Finale zur heutigen Etappe zuerst (Bergetappe → Bergfinale, sonst Sprint), dann die Abfahrt */
-function order(kind: StageKind | null): GameInfo[] {
-  const rank: Record<string, number> = kind === 'mountain' ? { berg: 0, abfahrt: 1, sprint: 2 } : { sprint: 0, abfahrt: 1, berg: 2 };
-  return [...GAMES].sort((a, b) => (rank[a.id] ?? 9) - (rank[b.id] ?? 9));
+/** feste Reihenfolge: Bergfinale, Sprintfinale, dann die Abfahrt */
+const RANK: Record<string, number> = { berg: 0, sprint: 1, abfahrt: 2 };
+function order(): GameInfo[] {
+  return [...GAMES].sort((a, b) => (RANK[a.id] ?? 9) - (RANK[b.id] ?? 9));
 }
 
 export function GamesCard({ stageKind = null, town = '' }: { stageKind?: StageKind | null; town?: string }) {
-  const games = useMemo(() => order(stageKind), [stageKind]);
+  const games = useMemo(() => order(), []);
   const scroller = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState(0);
   const anyNew = useMemo(() => games.some(isNewGame), [games]);
