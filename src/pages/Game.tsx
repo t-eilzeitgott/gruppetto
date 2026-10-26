@@ -171,6 +171,22 @@ export function GamePage() {
     const canvas = canvasRef.current;
     const overlay = overlayRef.current;
     if (!canvas || !overlay) return undefined;
+    // Testmodus ohne 3D (?nogl): nur Spiellogik und Oberfläche – für schnelle automatische Layout-Checks
+    if (/[?&]nogl\b/.test(window.location.search)) {
+      engineRef.current = makeEngine(false);
+      let raf = 0;
+      let prev = performance.now();
+      const tick = (now: number) => {
+        const dt = Math.min(0.05, (now - prev) / 1000);
+        prev = now;
+        if (uiRef.current !== 'paused') engineRef.current!.update(dt);
+        writeHud(engineRef.current!, dt);
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer: null };
+      return () => cancelAnimationFrame(raf);
+    }
     let renderer: Renderer3D;
     try {
       renderer = new Renderer3D(canvas, overlay);
@@ -180,6 +196,9 @@ export function GamePage() {
     }
     renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
     rendererRef.current = renderer;
+    // Testmodus (?lowgfx): winzige Auflösung, selten zeichnen – für schnelle automatische Layout-Checks
+    const low = /[?&]lowgfx\b/.test(window.location.search);
+    if (low) { renderer.quality = 0.25; renderer.resize(); }
     renderer.warm();
     engineRef.current = makeEngine(false);
     let raf = 0;
@@ -191,14 +210,14 @@ export function GamePage() {
       prev = now;
       const eng = engineRef.current!;
       if (uiRef.current !== 'paused') eng.update(dt);
-      renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
+      if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
       writeHud(eng, dt);
       // Bildrate beobachten und notfalls die Qualität senken
       acc += dt;
       frames += 1;
       if (acc > 2.5) {
         const fps = frames / acc;
-        if (fps < 45 && renderer.quality > 0.55) { renderer.quality = Math.max(0.55, renderer.quality - 0.15); renderer.resize(); }
+        if (!low && fps < 45 && renderer.quality > 0.55) { renderer.quality = Math.max(0.55, renderer.quality - 0.15); renderer.resize(); }
         acc = 0;
         frames = 0;
       }

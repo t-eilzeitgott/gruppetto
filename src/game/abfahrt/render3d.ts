@@ -1761,41 +1761,82 @@ export class Renderer3D {
         c.stroke();
       }
     }
-    // Popups über dem Fahrer, sauber gestapelt
+    // Hinweise links und rechts über dem Fahrer: nur Schrift, kleine Feder-Animation
     const ps = this.playerScreen;
-    const tones: Record<string, string> = { accent: this.accent, gold: '#ffd23f', white: '#ffffff', muted: '#d1d1d6', red: '#ff7a6b', blue: '#8ccaff' };
+    const tones: Record<string, string> = { accent: this.accent, gold: '#ffd23f', white: '#ffffff', muted: '#e4e4ea', red: '#ff8a7a', blue: '#9fd4ff' };
     c.textAlign = 'center';
     c.textBaseline = 'middle';
-    const font = '-apple-system, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif';
-    const baseY = Math.min(this.H * 0.62, ps.y - 14);
-    let acc = 0;
-    for (let i = g.popups.length - 1; i >= 0; i--) {
-      const pp = g.popups[i];
+    const font = 'ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", "Nunito", -apple-system, "Segoe UI", Roboto, sans-serif';
+    const easeBack = (x: number) => { const k = 1.9; return 1 + (k + 1) * Math.pow(x - 1, 3) + k * Math.pow(x - 1, 2); };
+    const top = this.H * 0.36;
+    const cx = Math.max(this.W * 0.3, Math.min(this.W * 0.7, ps.x));
+    for (const pp of g.popups) {
       const t = pp.age / pp.life;
-      const rise = (1 - Math.pow(1 - Math.min(1, t * 1.6), 3)) * 26;
-      const pop = t < 0.1 ? 1.25 - (t / 0.1) * 0.25 : 1;
-      const alpha = t > 0.75 ? (1 - t) / 0.25 : Math.min(1, t * 12);
-      const size = (pp.big ? 22 : 16) * pop;
-      const boxH = size * 1.5 + (pp.sub ? 15 : 0);
-      const y = baseY - acc - rise;
-      acc += boxH + 6;
-      if (y < this.H * 0.24) break;
-      const x = Math.max(90, Math.min(this.W - 90, ps.x));
-      c.font = `800 ${size}px ${font}`;
-      const wdt = Math.min(this.W - 24, c.measureText(pp.text).width + 24);
-      c.globalAlpha = alpha * 0.62;
-      c.fillStyle = '#0a0c12';
-      c.beginPath();
-      c.roundRect(x - wdt / 2, y - boxH / 2, wdt, boxH, Math.min(boxH / 2, 18));
-      c.fill();
+      const s = t < 0.22 ? Math.max(0.01, easeBack(t / 0.22)) : 1;
+      const alpha = t < 0.06 ? t / 0.06 : t > 0.72 ? Math.max(0, (1 - t) / 0.28) : 1;
+      const rise = (1 - Math.pow(1 - t, 3)) * 30;
+      const drift = (1 - Math.pow(1 - t, 2)) * 10;
+      const label = pp.text;
+      const big = pp.big;
+      const ptsSize = big ? 32 : pp.pts && !label ? 21 : 26;
+      const labSize = big ? 17 : 14;
+      const onlyText = !pp.pts;
+      c.font = `800 ${onlyText ? (big ? 26 : 20) : ptsSize}px ${font}`;
+      const w1 = c.measureText(onlyText ? label : pp.pts!).width;
+      c.font = `700 ${labSize}px ${font}`;
+      const w2 = label && !onlyText ? c.measureText(label).width : 0;
+      const half = Math.max(w1, w2) / 2 + 6;
+      const off = this.W * (0.2 + pp.dx * 0.07) + half * 0.35;
+      const x = Math.max(12 + half, Math.min(this.W - 12 - half, cx + pp.side * off + pp.side * drift));
+      const y = top + pp.slot * (big ? 76 : 64) + pp.dy * 10 - rise;
+      c.save();
       c.globalAlpha = alpha;
-      c.fillStyle = tones[pp.tone] ?? '#fff';
-      c.fillText(pp.text, x, y - (pp.sub ? 7 : 0), this.W - 40);
+      c.translate(x, y);
+      c.rotate(pp.side * (0.07 * (1 - Math.min(1, t * 2.5)) + 0.015));
+      c.scale(s, s);
+      c.shadowColor = 'rgba(10, 12, 20, 0.55)';
+      c.shadowBlur = 10;
+      c.shadowOffsetY = 2;
+      const col = tones[pp.tone] ?? '#fff';
+      if (onlyText) {
+        c.font = `800 ${big ? 26 : 20}px ${font}`;
+        c.fillStyle = col;
+        c.fillText(label, 0, 0);
+      } else {
+        if (label) {
+          c.font = `700 ${labSize}px ${font}`;
+          c.fillStyle = 'rgba(255,255,255,0.92)';
+          c.fillText(label, 0, -ptsSize * 0.62);
+        }
+        c.font = `800 ${ptsSize}px ${font}`;
+        c.fillStyle = col;
+        c.fillText(pp.pts!, 0, label ? 4 : 0);
+      }
       if (pp.sub) {
         c.font = `600 12px ${font}`;
         c.fillStyle = 'rgba(255,255,255,0.85)';
-        c.fillText(pp.sub, x, y + size * 0.55, this.W - 40);
+        c.fillText(pp.sub, 0, (onlyText ? 16 : ptsSize * 0.75 + 4));
       }
+      // kleine Funkelsterne bei Gold und Akzent
+      if ((pp.tone === 'gold' || pp.tone === 'accent') && t < 0.55) {
+        c.shadowBlur = 0;
+        const k = t / 0.55;
+        c.globalAlpha = alpha * (1 - k);
+        c.fillStyle = col;
+        for (let i = 0; i < 4; i++) {
+          const a = i * 1.7 + pp.dx * 6;
+          const r = half * 0.7 + 8 + k * 16;
+          const sx = Math.cos(a) * r;
+          const sy = Math.sin(a) * r * 0.55 - 4;
+          const sz = 3.2 * (1 - k * 0.6);
+          c.beginPath();
+          c.moveTo(sx, sy - sz * 1.6); c.lineTo(sx + sz * 0.4, sy - sz * 0.4); c.lineTo(sx + sz * 1.6, sy); c.lineTo(sx + sz * 0.4, sy + sz * 0.4);
+          c.lineTo(sx, sy + sz * 1.6); c.lineTo(sx - sz * 0.4, sy + sz * 0.4); c.lineTo(sx - sz * 1.6, sy); c.lineTo(sx - sz * 0.4, sy - sz * 0.4);
+          c.closePath();
+          c.fill();
+        }
+      }
+      c.restore();
     }
     c.globalAlpha = 1;
   }

@@ -50,7 +50,7 @@ npm run test:db    # Schema + RLS gegen ein lokales PostgreSQL (PGHOST/PGPORT/PG
 ```
 
 Demo-Parameter: `?demo` (eingeloggt), `?demo=login`, `?demo=join`, `&demotime=2027-05-16T15:00` (Demo-Uhr).
-UI-Check mit Playwright (lokal, falls installiert): `node scripts/build.mjs && node scripts/ui-check.mjs [--shots]` – prüft alle Seiten auf 320–1440 px in Hell und Dunkel auf abgeschnittenen Text, horizontales Scrollen und verdeckte Inhalte.
+UI-Check mit Playwright (lokal, falls installiert): `node scripts/build.mjs && node scripts/ui-check.mjs` – prüft alle Seiten auf 320–1440 px in Hell und Dunkel auf abgeschnittenen Text, horizontales Scrollen und verdeckte Inhalte (parallel, etwa 5 Minuten). Schneller: `--quick` (3 Größen, nur dunkel, etwa 1 Minute), `--only=game` (Seitennamen enthalten), `--vp=390`, `--theme=dark`; `--shots` speichert Screenshots. Das Minispiel läuft dabei ohne 3D (`?nogl`, mit `--shots` in winziger Auflösung `?lowgfx`), Countdown und Sturz rechnet der Check direkt durch.
 
 ### Aufbau
 

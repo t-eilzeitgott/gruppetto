@@ -44,6 +44,8 @@ export interface Particle {
 export interface Popup {
   text: string; sub?: string; tone: 'accent' | 'gold' | 'white' | 'muted' | 'red' | 'blue';
   age: number; life: number; dx: number; dy: number; big: boolean;
+  /** Punkte getrennt vom Text („+20“), Seite links/rechts vom Fahrer, Platz in der Spalte */
+  pts?: string; side: -1 | 1; slot: number;
 }
 
 export interface Friend { userId: string; name: string; color: string; meters: number; passed?: boolean }
@@ -828,15 +830,22 @@ export class Abfahrt {
     const pts = Math.round(base * m);
     this.score[cat] += pts;
     if (cat !== 'missions' && cat !== 'friends' && cat !== 'bonus') this.bumpChain();
-    const text = quiet ? `+${pts}` : `${label}  +${pts}`;
-    this.pop(text, tone, sub, big, quiet);
+    this.pop(quiet ? '' : label, tone, sub, big, quiet, `+${pts}`);
   }
 
-  pop(text: string, tone: Popup['tone'], sub?: string, big = false, small = false) {
-    // nicht zu viele gleichzeitig
-    if (this.popups.length > 6) this.popups.shift();
-    const lane = this.popups.length % 3;
-    this.popups.push({ text, sub, tone, age: 0, life: big ? 2.2 : small ? 0.8 : 1.4, dx: (lane - 1) * 0.18, dy: 0, big });
+  private popSide: -1 | 1 = 1;
+
+  /** Hinweis links oder rechts neben dem Fahrer; abwechselnd, ohne sich zu überdecken */
+  pop(text: string, tone: Popup['tone'], sub?: string, big = false, small = false, pts?: string) {
+    if (this.popups.length > 5) this.popups.shift();
+    const n = (sd: number) => this.popups.filter((p) => p.side === sd).length;
+    let side: -1 | 1;
+    if (n(-1) === n(1)) { this.popSide = this.popSide === 1 ? -1 : 1; side = this.popSide; } else side = n(-1) < n(1) ? -1 : 1;
+    const used = new Set(this.popups.filter((p) => p.side === side).map((p) => p.slot));
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    const j = (k: number) => { const x = Math.sin((this.time + k) * 91.7 + this.popups.length * 12.9) * 43758.5; return x - Math.floor(x); };
+    this.popups.push({ text, sub, tone, pts, side, slot, age: 0, life: big ? 2.2 : small ? 1 : 1.5, dx: j(1), dy: j(2), big });
   }
 
   private dust(z: number, x: number, ground: string) {

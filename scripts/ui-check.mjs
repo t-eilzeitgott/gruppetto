@@ -2,17 +2,25 @@
 //  - horizontales Überlaufen der Seite
 //  - Elemente, deren Inhalt breiter ist als die Box (abgeschnittener/überstehender Text)
 //  - Inhalte, die am Seitenende von Tab-Leiste oder Aktionsleiste verdeckt werden
-// Nutzung: node scripts/build.mjs && node scripts/ui-check.mjs [--shots]
+// Nutzung: node scripts/build.mjs && node scripts/ui-check.mjs [--quick] [--shots] [--only=name] [--vp=390,430] [--theme=dark] [--jobs=2]
+// Läuft parallel (eine Seite je Bildschirmgröße und Thema gleichzeitig, Standard: Anzahl CPU-Kerne).
+// Das Spiel läuft ohne 3D (?nogl, mit --shots in winziger Auflösung ?lowgfx); den Spielablauf steuert der Check direkt.
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
+import { availableParallelism } from 'node:os';
 
 const SHOTS = process.argv.includes('--shots');
 const ONLY = process.argv.find((a) => a.startsWith('--only='))?.slice(7);
-const VP = process.argv.find((a) => a.startsWith('--vp='))?.slice(5)?.split(',');
-const THEMES = process.argv.find((a) => a.startsWith('--theme='))?.slice(8)?.split(',') ?? ['dark', 'light'];
-const PORT = 4173;
+// --quick: kleinstes Handy, typisches Handy, Desktop – nur dunkel (etwa eine Minute)
+const QUICK = process.argv.includes('--quick');
+const VP = process.argv.find((a) => a.startsWith('--vp='))?.slice(5)?.split(',') ?? (QUICK ? ['320', '390', '1024'] : undefined);
+const THEMES = process.argv.find((a) => a.startsWith('--theme='))?.slice(8)?.split(',') ?? (QUICK ? ['dark'] : ['dark', 'light']);
+const JOBS = Number(process.argv.find((a) => a.startsWith('--jobs='))?.slice(7)) || Math.max(1, availableParallelism());
+// Spiel ohne 3D prüfen (schnell); für Screenshots mit 3D in winziger Auflösung
+const GFX = SHOTS ? 'lowgfx' : 'nogl';
+const PORT = 4173 + Math.floor(Math.random() * 500);
 
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const server = createServer(async (req, res) => {
@@ -56,16 +64,17 @@ const PAGES = [
   ['rider-out', '?demo#/fahrer/64'],
   ['stage-profile', '?demo#/etappe/1004'],
   ['tip-profile', '?demo#/tipp/1009', async (p) => { await p.click('.profile-mini > summary'); }],
-  ['game', '?demo#/spiel'],
-  ['game-board', '?demo#/spiel', async (p) => { await p.click('.abf-link'); }],
-  ['game-hud', '?demo#/spiel', async (p) => { await p.click('text=Losfahren'); await p.waitForTimeout(3200); }],
-  ['game-over', '?demo#/spiel', async (p) => {
+  ['game', `?demo&${GFX}#/spiel`],
+  ['game-board', `?demo&${GFX}#/spiel`, async (p) => { await p.click('.abf-link'); }],
+  ['game-hud', `?demo&${GFX}#/spiel`, async (p) => { await p.click('text=Losfahren'); await runGame(p, 4); }],
+  ['game-over', `?demo&${GFX}#/spiel`, async (p) => {
     await p.click('text=Losfahren');
-    await p.waitForFunction(() => window.__abfahrt.engine().phase === 'playing', null, { timeout: 300000 });
+    // Countdown und Sturz direkt durchrechnen statt in Echtzeit abzuwarten
+    await runGame(p, 4);
     await p.evaluate(() => window.__abfahrt.engine().crash('Muuuh – Kuh erwischt'));
-    // Sturz läuft in Zeitlupe; im langsamen Testbrowser kann das dauern
-    await p.waitForSelector('.abf-summary', { timeout: 300000 });
-    await p.waitForTimeout(1800);
+    await runGame(p, 3);
+    await p.waitForSelector('.abf-summary', { timeout: 20000 });
+    await p.waitForTimeout(1700); // Punkte zählen hoch
   }],
   ['player', '?demo#/spieler/u-felix'],
   ['player-me', '?demo#/spieler/u-christoph'],
@@ -84,6 +93,12 @@ const PAGES = [
   ['notfound', '?demo#/gibtsnicht'],
 ];
 
+/** Spiel um t Sekunden weiterrechnen (unabhängig von der Bildrate des Testbrowsers) */
+async function runGame(p, t) {
+  await p.evaluate((t) => { const g = window.__abfahrt.engine(); for (let i = 0; i < t * 60; i++) g.update(1 / 60); }, t);
+  await p.waitForTimeout(250);
+}
+
 const VIEWPORTS = [
   ['320', { width: 320, height: 640 }, true],
   ['375', { width: 375, height: 667 }, true],
@@ -94,95 +109,114 @@ const VIEWPORTS = [
   ['1440', { width: 1440, height: 900 }, false],
 ];
 
+/** Prüfung im Browser: Überlauf, abgeschnittener Text, Ellipsen, Elemente außerhalb, Verdecktes am Seitenende */
+const CHECK = () => {
+  const issues = [];
+  const vw = window.innerWidth;
+  if (document.documentElement.scrollWidth > vw + 1) {
+    issues.push(`Seite scrollt horizontal (${document.documentElement.scrollWidth}px > ${vw}px)`);
+  }
+  const skip = 'svg, svg *, path, input, select, textarea, option, .sr-only, .table-scroll *, script, style';
+  for (const el of document.querySelectorAll('body *')) {
+    if (el.matches(skip)) continue;
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden' || el.clientWidth === 0) continue;
+    const txt = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    const tag = `<${el.tagName.toLowerCase()} class="${el.className}">`;
+    const scrolls = st.overflowX === 'auto' || st.overflowX === 'scroll';
+    const clips = st.overflowX === 'hidden' || st.overflowX === 'clip';
+    if (clips && el.scrollWidth > el.clientWidth + 1 && !el.matches('.progress')) {
+      issues.push(`Abgeschnitten: ${tag} ${el.scrollWidth}>${el.clientWidth} „${txt}“`);
+    }
+    const ownText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+    if (ownText && !scrolls && el.scrollWidth > el.clientWidth + 1) {
+      issues.push(`Text breiter als Box: ${tag} ${el.scrollWidth}>${el.clientWidth} „${txt}“`);
+    }
+    if (ownText && st.textOverflow === 'ellipsis') issues.push(`Ellipse: ${tag} „${txt}“`);
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && (r.right > vw + 1 || r.left < -1) && !el.closest('.table-scroll')) {
+      issues.push(`Ragt aus dem Bildschirm: ${tag} ${Math.round(r.left)}–${Math.round(r.right)} „${txt.slice(0, 40)}“`);
+    }
+  }
+  // Am Seitenende darf nichts unter fixen Leisten liegen
+  window.scrollTo(0, document.documentElement.scrollHeight);
+  const bars = [...document.querySelectorAll('.tabbar, .cta-bar')].filter((b) => getComputedStyle(b).display !== 'none');
+  if (bars.length) {
+    const top = Math.min(...bars.map((b) => b.getBoundingClientRect().top));
+    const content = [...document.querySelectorAll('main *')].filter((e) => {
+      const s = getComputedStyle(e);
+      return s.display !== 'none' && e.getBoundingClientRect().height > 0 && !e.closest('.cta-bar');
+    });
+    const lowest = Math.max(...content.map((e) => e.getBoundingClientRect().bottom));
+    if (lowest > top + 1) issues.push(`Inhalt am Ende verdeckt: ${Math.round(lowest)} > Leiste ${Math.round(top)}`);
+  }
+  window.scrollTo(0, 0);
+  return issues;
+};
+
 const browser = await chromium.launch();
 if (SHOTS) await mkdir('screenshots', { recursive: true });
 let problems = 0;
+const started = Date.now();
 
-for (const theme of THEMES) {
-  for (const [vpName, viewport, mobile] of VIEWPORTS) {
-    if (VP && !VP.includes(vpName)) continue;
+async function checkPage(context, theme, vpName, [name, url, action, storage]) {
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  // Startzustand vor dem Laden setzen: eine Ladung statt laden, leeren, neu laden
+  await page.addInitScript((s) => {
+    if (sessionStorage.getItem('__ui')) return;
+    sessionStorage.setItem('__ui', '1');
+    localStorage.clear();
+    if (s?.tour) localStorage.setItem('gruppetto.tour', s.tour);
+    if (s?.adminTour) localStorage.setItem('gruppetto.adminTour', s.adminTour);
+  }, storage ?? null);
+  await page.goto(`http://localhost:${PORT}/${url}`);
+  await page.waitForFunction(() => document.querySelector('#root')?.children.length && !document.querySelector('.loading'), null, { timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  if (action) {
+    await action(page);
+    await page.waitForTimeout(250);
+  }
+  const result = await page.evaluate(CHECK);
+  const all = [...result, ...errors.map((e) => `JS-Fehler: ${e}`)];
+  let out = '';
+  if (all.length) {
+    problems += all.length;
+    out += `\n✗ ${theme} ${vpName} ${name}\n`;
+    for (const i of [...new Set(all)].slice(0, 12)) out += `   ${i}\n`;
+  }
+  if (SHOTS) {
+    // Für Ganzseiten-Screenshots die fixen Leisten ans Seitenende setzen
+    await page.addStyleTag({ content: '.tabbar,.cta-bar{position:static!important}.shell{display:flex;flex-direction:column}' });
+    await page.screenshot({ path: `screenshots/${vpName}-${theme}-${name}.png`, fullPage: true });
+  }
+  await page.close();
+  return out;
+}
+
+const combos = [];
+for (const theme of THEMES) for (const [vpName, viewport, mobile] of VIEWPORTS) if (!VP || VP.includes(vpName)) combos.push({ theme, vpName, viewport, mobile });
+const pages = PAGES.filter(([name]) => !ONLY || name.includes(ONLY));
+const queue = combos.map((c) => ({ ...c }));
+
+async function worker() {
+  for (let c = queue.shift(); c; c = queue.shift()) {
     const context = await browser.newContext({
-      viewport, colorScheme: theme, locale: 'de-DE', timezoneId: 'Europe/Berlin',
-      isMobile: mobile, hasTouch: mobile, deviceScaleFactor: SHOTS ? 2 : 1,
+      viewport: c.viewport, colorScheme: c.theme, locale: 'de-DE', timezoneId: 'Europe/Berlin',
+      isMobile: c.mobile, hasTouch: c.mobile, deviceScaleFactor: SHOTS ? 2 : 1,
     });
-    for (const [name, url, action, storage] of PAGES) {
-      if (ONLY && !name.includes(ONLY)) continue;
-      const page = await context.newPage();
-      const errors = [];
-      page.on('pageerror', (e) => errors.push(String(e)));
-      page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-      await page.goto(`http://localhost:${PORT}/${url}`);
-      await page.evaluate((s) => {
-        localStorage.clear();
-        if (s?.tour) localStorage.setItem('gruppetto.tour', s.tour);
-        if (s?.adminTour) localStorage.setItem('gruppetto.adminTour', s.adminTour);
-      }, storage ?? null);
-      await page.reload();
-      await page.waitForTimeout(700);
-      await page.waitForFunction(() => !document.querySelector('.loading'), null, { timeout: 5000 }).catch(() => {});
-      if (action) {
-        await action(page);
-        await page.waitForTimeout(500);
-      }
-      const result = await page.evaluate(() => {
-        const issues = [];
-        const vw = window.innerWidth;
-        if (document.documentElement.scrollWidth > vw + 1) {
-          issues.push(`Seite scrollt horizontal (${document.documentElement.scrollWidth}px > ${vw}px)`);
-        }
-        const skip = 'svg, svg *, path, input, select, textarea, option, .sr-only, .table-scroll *, script, style';
-        for (const el of document.querySelectorAll('body *')) {
-          if (el.matches(skip)) continue;
-          const st = getComputedStyle(el);
-          if (st.display === 'none' || st.visibility === 'hidden' || el.clientWidth === 0) continue;
-          const txt = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60);
-          const tag = `<${el.tagName.toLowerCase()} class="${el.className}">`;
-          const scrolls = st.overflowX === 'auto' || st.overflowX === 'scroll';
-          const clips = st.overflowX === 'hidden' || st.overflowX === 'clip';
-          if (clips && el.scrollWidth > el.clientWidth + 1 && !el.matches('.progress')) {
-            issues.push(`Abgeschnitten: ${tag} ${el.scrollWidth}>${el.clientWidth} „${txt}“`);
-          }
-          const ownText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
-          if (ownText && !scrolls && el.scrollWidth > el.clientWidth + 1) {
-            issues.push(`Text breiter als Box: ${tag} ${el.scrollWidth}>${el.clientWidth} „${txt}“`);
-          }
-          if (ownText && st.textOverflow === 'ellipsis') issues.push(`Ellipse: ${tag} „${txt}“`);
-          const r = el.getBoundingClientRect();
-          if (r.width > 0 && (r.right > vw + 1 || r.left < -1) && !el.closest('.table-scroll')) {
-            issues.push(`Ragt aus dem Bildschirm: ${tag} ${Math.round(r.left)}–${Math.round(r.right)} „${txt.slice(0, 40)}“`);
-          }
-        }
-        // Am Seitenende darf nichts unter fixen Leisten liegen
-        window.scrollTo(0, document.documentElement.scrollHeight);
-        const bars = [...document.querySelectorAll('.tabbar, .cta-bar')].filter((b) => getComputedStyle(b).display !== 'none');
-        if (bars.length) {
-          const top = Math.min(...bars.map((b) => b.getBoundingClientRect().top));
-          const content = [...document.querySelectorAll('main *')].filter((e) => {
-            const s = getComputedStyle(e);
-            return s.display !== 'none' && e.getBoundingClientRect().height > 0 && !e.closest('.cta-bar');
-          });
-          const lowest = Math.max(...content.map((e) => e.getBoundingClientRect().bottom));
-          if (lowest > top + 1) issues.push(`Inhalt am Ende verdeckt: ${Math.round(lowest)} > Leiste ${Math.round(top)}`);
-        }
-        window.scrollTo(0, 0);
-        return issues;
-      });
-      const all = [...result, ...errors.map((e) => `JS-Fehler: ${e}`)];
-      if (all.length) {
-        problems += all.length;
-        console.log(`\n✗ ${theme} ${vpName} ${name}`);
-        for (const i of [...new Set(all)].slice(0, 12)) console.log(`   ${i}`);
-      }
-      if (SHOTS) {
-        // Für Ganzseiten-Screenshots die fixen Leisten ans Seitenende setzen
-        await page.addStyleTag({ content: '.tabbar,.cta-bar{position:static!important}.shell{display:flex;flex-direction:column}' });
-        await page.screenshot({ path: `screenshots/${vpName}-${theme}-${name}.png`, fullPage: true });
-      }
-      await page.close();
+    let out = '';
+    for (const p of pages) {
+      try { out += await checkPage(context, c.theme, c.vpName, p); } catch (e) { problems++; out += `\n✗ ${c.theme} ${c.vpName} ${p[0]}\n   Check fehlgeschlagen: ${String(e).split('\n')[0]}\n`; }
     }
+    if (out) process.stdout.write(out);
     await context.close();
   }
 }
+await Promise.all(Array.from({ length: Math.min(JOBS, combos.length) }, worker));
+console.log(`\n${combos.length * pages.length} Prüfungen in ${Math.round((Date.now() - started) / 1000)} s`);
 
 await browser.close();
 server.close();
