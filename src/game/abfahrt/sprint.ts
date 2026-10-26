@@ -8,7 +8,7 @@
  * überholt; wer eingeklemmt ist, kommt nicht vorbei.
  */
 import { EDGE, ROAD_HALF, SPRINT_FINISH, Track } from './track';
-import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup, standings, type Standing } from './engine';
+import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup, standings, type Standing, type RiderTag } from './engine';
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { StageRef } from './stageRef';
@@ -97,7 +97,14 @@ const LANES = [-2.1, -1.05, 0, 1.05, 2.1];
 const MATE = 9;
 const XMAX = ROAD_HALF - 0.45;
 const SUB = 1 / 60;
-const lastName = (n: string) => n.split(' ').slice(-1)[0] ?? n;
+/** Nachname mit Namenszusatz („van der Poel“) */
+const lastName = (n: string) => {
+  if (/^Fahrer \d+$/.test(n)) return n;
+  const parts = n.trim().split(/\s+/);
+  let i = parts.length - 1;
+  while (i > 1 && /^(van|von|de|der|den|del|da|di|le|la|du|dos|ten|ter)$/i.test(parts[i - 1])) i--;
+  return parts.slice(Math.max(0, i)).join(' ') || n;
+};
 /** Tempo des Feldes nach Restdistanz (m/s) */
 export function packSpeed(d: number): number {
   if (d < 0) return 11;
@@ -120,6 +127,7 @@ export class SprintRace {
   friends: Friend[] = [];
   shake = 0;
   crashSpin = 0;
+  tags: RiderTag[] = [];
   tx = 0;
   draft = 0;
   energy = 1;
@@ -297,6 +305,9 @@ export class SprintRace {
       }
       left -= h;
     }
+    // Namensschild: an wessen Hinterrad du gerade fährst
+    const w = this.phase === 'playing' && this.finT < 0 ? this.wheelOf() : null;
+    this.tags = w ? [{ id: w.id, text: lastName(w.name), mate: w.team === MATE }] : [];
     for (const q of this.parts) {
       q.life -= dt; q.z += q.vz * dt; q.x += q.vx * dt; q.h += q.vh * dt;
       q.vh -= 2.5 * dt; q.vx *= 0.98; q.rot += dt * 8;

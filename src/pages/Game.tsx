@@ -14,7 +14,7 @@ import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, Segmented, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { GameIcon } from '../ui/GameIcon';
-import { TvAd, TvBoard, TvSponsor, tvName, writeTv, type TvItem } from './hud';
+import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
 
 const LS_BEST = 'gruppetto.abfahrt.best';
 const LS_TUTORIAL = 'gruppetto.abfahrt.runs';
@@ -365,22 +365,17 @@ export function GamePage() {
       if (el) el.textContent = val;
     };
     set('score', nf(h.score));
-    set('kmh', String(h.kmh));
     set('mult', `×${h.mult}`);
-    writeTv(hud.current, last.current, tvItems(h.meters));
     const multEl = hud.current.multWrap;
     if (multEl) {
       multEl.style.opacity = h.mult > 1 ? '1' : '0';
       multEl.style.setProperty('--left', String(h.multLeft));
     }
-    const draftEl = hud.current.draft;
-    if (draftEl) {
-      draftEl.classList.toggle('is-on', h.draft > 0.15);
-      draftEl.classList.toggle('is-draft', h.draft > 0.15);
-      draftEl.style.setProperty('--d', h.draft.toFixed(2));
-    }
-    const dot = hud.current.dot;
-    if (dot) dot.style.left = `${Math.min(100, (h.meters / profileMax) * 100).toFixed(2)}%`;
+    writeBar(hud.current, last.current, barState(h.meters));
+    writeRing(hud.current, last.current, {
+      kmh: h.kmh, fill: Math.min(1, h.kmh / 100), tone: 'speed',
+      mode: h.wantTuck ? 'go' : h.wantBrake > 0.3 ? 'ease' : 'sit', draft: h.draft,
+    });
   };
 
   const profileMax = useMemo(() => Math.max(2000, ...friends.map((f) => f.meters * 1.12)), [friends]);
@@ -388,18 +383,21 @@ export function GamePage() {
   const hudRef = useRef(writeHud);
   hudRef.current = writeHud;
 
-  /** TV-Tafel: Spitze der Bestenliste, wer direkt vor dir liegt, du (live nach gefahrener Strecke) */
-  const tvItems = (meters: number): TvItem[] => {
-    const all = [
-      ...friends.filter((f) => f.userId !== 'me').map((f) => ({ name: f.name, m: f.meters, me: false })),
-      { name: 'Du', m: meters, me: true },
-    ].sort((a, b) => b.m - a.m);
-    const mi = all.findIndex((x) => x.me);
-    const idx = mi > 0 ? [...new Set([0, mi - 1, mi])] : [0, 1].filter((i) => i < all.length);
-    const items: TvItem[] = idx.map((i, k) => ({ head: `${i + 1} ${tvName(all[i].name)}`, value: km(all[i].m), icon: k === 0 ? 'flag' : 'gap', me: all[i].me }));
+  /** Rennleiste: Platz unter den Bestmarken der Runde (live), Abstand zum Nächsten, gefahrene Strecke */
+  const barState = (meters: number): BarState => {
+    const field = friends.filter((f) => f.userId !== 'me');
+    const first = (n: string) => n.trim().split(/\s+/)[0] ?? n;
+    const ahead = field.filter((f) => f.meters > meters).sort((a, b) => a.meters - b.meters)[0];
     const own = friends.find((f) => f.userId === 'me');
-    if (all.length === 1 && own) items.push({ head: 'Bestmarke', value: km(own.meters), icon: 'gap' });
-    return items;
+    let gap = '';
+    let label = '';
+    if (ahead) { gap = `+${km(ahead.meters - meters)}`; label = `bis ${first(ahead.name)}`; }
+    else if (field.length) { gap = `+${km(meters - Math.max(...field.map((f) => f.meters)))}`; label = 'Vorsprung'; }
+    else if (own && own.meters > meters) { gap = `+${km(own.meters - meters)}`; label = 'bis Bestmarke'; }
+    return {
+      place: field.length ? `${1 + field.filter((f) => f.meters > meters).length}.` : '',
+      gap, label, dist: km(meters), icon: 'road', lead: field.length > 0 && !ahead, progress: meters / profileMax,
+    };
   };
 
   const start = () => {
@@ -471,36 +469,17 @@ export function GamePage() {
             <button type="button" className="abf-round" onClick={togglePause} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
               {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
             </button>
-            <div className="abf-hud__score">
+            <div className="hud-score">
               <strong ref={bind('score')}>0</strong>
               <span className="abf-mult" ref={bind('multWrap')}>
                 <span ref={bind('mult')}>×1</span>
                 <i aria-hidden="true" />
               </span>
             </div>
+            <PowerRing bind={bind} />
           </div>
-          <TvBoard bind={bind} />
-          <TvSponsor />
-          <div className="abf-strip" aria-hidden="true">
-            <div className="abf-strip__line" />
-            {friends.map((f) => (
-              <span key={f.userId} className={cx('abf-strip__mark', f.userId === 'me' && 'is-me')} style={{ left: `${Math.min(100, (f.meters / profileMax) * 100)}%`, background: f.color }} />
-            ))}
-            <span className="abf-strip__dot" ref={bind('dot')} />
-          </div>
-          <div className="hud-row">
-            <div className="hud-pill hud-speed"><strong ref={bind('kmh')}>0</strong><span>km/h</span></div>
-            <div className="hud-pill hud-wheel" ref={bind('draft')}>
-              <span className="hud-wheel__k">Windschatten</span>
-              <i aria-hidden="true" />
-            </div>
-          </div>
-          {banner && (ui === 'playing' || ui === 'countdown') ? (
-            <div key={banner.key} className={cx('hud-banner', banner.tone && `hud-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
-              <strong>{banner.title}</strong>
-              {banner.sub ? <span>{banner.sub}</span> : null}
-            </div>
-          ) : null}
+          <RaceBar bind={bind} wide marks={friends.map((f) => ({ at: f.meters / profileMax, kind: 'friend' as const, color: f.color }))} />
+          {banner && (ui === 'playing' || ui === 'countdown') ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
             <span className="abf-thumb__up"><TuckIcon /></span>
             <span className="abf-thumb__dot" />

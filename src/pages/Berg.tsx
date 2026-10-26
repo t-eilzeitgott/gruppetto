@@ -10,11 +10,10 @@ import { riderOptions, rivalNames, teamMate, type RiderOption } from '../game/ab
 import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
-import { SwapIcon, TvAd, TvBoard, TvSponsor, boardItems, writeTv } from './hud';
+import { HudBanner, PowerRing, RaceBar, SwapIcon, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { BergIcon } from '../ui/GameIcon';
-import { lastName } from '../ui/bits';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
 import {
   FinaleBoard, FinaleMini, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
@@ -136,40 +135,22 @@ export function BergPage() {
       const el = hud.current[key];
       if (el) el.textContent = val;
     };
-    set('kmh', String(h.kmh));
-    // vor dem Gipfel zeigt der erste Kasten die Meter bis zur Bergwertung (gepunktetes Symbol), danach bis ins Ziel
-    writeTv(hud.current, last.current, boardItems(h.board, h.toTop > 0 ? dist(h.toTop) : h.toGo > 0 ? dist(h.toGo) : 'Ziel', h.toTop > 0 ? 'gpm' : 'flag'));
+    // vor dem Gipfel: Meter bis zur Bergwertung (gepunktetes Symbol), danach bis ins Ziel
+    const toText = h.toTop > 0 ? dist(h.toTop) : h.toGo > 0 ? dist(h.toGo) : 'Ziel';
+    writeBar(hud.current, last.current, raceBar(h.board, toText, h.toTop > 0 ? 'gpm' : 'flag', 1 - h.toGo / MOUNTAIN_FINISH));
+    const g = Math.round(h.grade);
+    writeRing(hud.current, last.current, {
+      kmh: h.kmh, fill: h.energy, tone: 'energy', mode: h.mode, draft: h.draft,
+      badge: h.toGo > 0 ? `${g > 0 ? '▲' : g < 0 ? '▼' : ''} ${Math.abs(g)} %` : '',
+    });
     const mate = hud.current.mate;
     if (mate) {
       mate.classList.toggle('is-off', !h.mate || uiRef.current !== 'playing');
       if (h.mate) {
         mate.classList.toggle('is-me', !h.mate.front);
-        set('mateName', h.mate.front ? `${lastName(h.mate.name)} führt` : 'Du führst');
-        set('mateState', h.mate.front ? 'Tippen: selbst Tempo machen' : 'Tippen: Helfer nach vorn');
+        set('mateState', h.mate.front ? 'Helfer vorn' : 'Du vorn');
       }
     }
-    const en = hud.current.energy;
-    if (en) {
-      en.style.setProperty('--e', h.energy.toFixed(3));
-      en.classList.toggle('is-go', h.mode === 'go');
-      en.classList.toggle('is-low', h.energy < 0.18);
-    }
-    const label = h.stage === 'descent'
-      ? (h.mode === 'go' ? 'Ducken' : h.mode === 'ease' ? 'Bremsen' : 'Kraft')
-      : h.mode === 'go' ? (h.stage === 'final' ? 'Sprint' : 'Attacke') : h.mode === 'ease' ? 'Erholen' : 'Kraft';
-    set('energyLabel', label);
-    const g = Math.round(h.grade);
-    set('grade', `${g > 0 ? '▲' : g < 0 ? '▼' : ''} ${Math.abs(g)} %`);
-    const wheel = hud.current.wheel;
-    if (wheel) {
-      const on = !!h.ahead && h.toGo > 0;
-      if (on) set('wheelName', h.ahead!);
-      wheel.classList.toggle('is-on', on);
-      wheel.classList.toggle('is-draft', h.draft > 0.15);
-      wheel.style.setProperty('--d', h.draft.toFixed(2));
-    }
-    const dot = hud.current.dot;
-    if (dot) dot.style.left = `${Math.min(100, (1 - h.toGo / MOUNTAIN_FINISH) * 100).toFixed(2)}%`;
   };
 
   useRaceLoop({
@@ -226,7 +207,6 @@ export function BergPage() {
   const onPointerUp = () => engineRef.current?.pointerUp();
 
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
-  const pct = (z: number) => `${((z / MOUNTAIN_FINISH) * 100).toFixed(1)}%`;
   const boardView = (
     <FinaleBoard title="Bestenliste Bergfinale" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Bergfinale', 'Bergfinals']} />
   );
@@ -259,35 +239,10 @@ export function BergPage() {
             <button type="button" className="abf-round" onClick={togglePause} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
               {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
             </button>
-            <TvBoard bind={bind} />
+            <RaceBar bind={bind} marks={[{ at: MOUNTAIN_TOP / MOUNTAIN_FINISH, kind: 'gpm' }, { at: (MOUNTAIN_FINISH - 1000) / MOUNTAIN_FINISH, kind: 'flamme' }]} />
+            <PowerRing bind={bind} badge />
           </div>
-          <TvSponsor seed={3} />
-          <div className="abf-strip spr-strip" aria-hidden="true">
-            <div className="abf-strip__line" />
-            <span className="brg-strip__gpm" style={{ left: pct(MOUNTAIN_TOP) }} />
-            <span className="spr-strip__flamme" style={{ left: pct(MOUNTAIN_FINISH - 1000) }} />
-            <span className="spr-strip__finish" />
-            <span className="abf-strip__dot" ref={bind('dot')} />
-          </div>
-          <div className="hud-row">
-            <div className="hud-pill hud-speed"><strong ref={bind('kmh')}>0</strong><span>km/h</span></div>
-            <div className="hud-pill hud-energy" ref={bind('energy')}>
-              <span ref={bind('energyLabel')}>Kraft</span>
-              <i aria-hidden="true" />
-              <b className="brg-grade" ref={bind('grade')} />
-            </div>
-          </div>
-          <div className="hud-pill hud-wheel" ref={bind('wheel')}>
-            <span className="hud-wheel__k">Hinterrad</span>
-            <span className="hud-wheel__name" ref={bind('wheelName')} />
-            <i aria-hidden="true" />
-          </div>
-          {banner && (ui === 'playing' || ui === 'countdown') ? (
-            <div key={banner.key} className={cx('hud-banner', banner.tone && `hud-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
-              <strong>{banner.title}</strong>
-              {banner.sub ? <span>{banner.sub}</span> : null}
-            </div>
-          ) : null}
+          {banner && (ui === 'playing' || ui === 'countdown') ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
             <span className="abf-thumb__up"><TuckIcon /></span>
             <span className="abf-thumb__dot" />
@@ -295,7 +250,7 @@ export function BergPage() {
           </div>
           <button type="button" className="hud-mate is-off" ref={bind('mate')} onClick={() => engineRef.current?.swapMate()} aria-label="Führung mit dem Helfer tauschen">
             <span className="hud-mate__ico"><SwapIcon /></span>
-            <span className="hud-mate__txt"><b ref={bind('mateName')} /><small ref={bind('mateState')} /></span>
+            <small ref={bind('mateState')}>Helfer vorn</small>
           </button>
           <TvAd hidden={!!coach || ui !== 'playing'} seed={5} />
         </div>

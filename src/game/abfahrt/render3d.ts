@@ -2302,10 +2302,15 @@ export class Renderer3D {
     if (n) this.runBuf.needsUpdate = true;
   }
 
+  /** Namensschilder im Bild: Position, Deckkraft (weich ein- und ausgeblendet) */
+  private tagView = new Map<number, { x: number; y: number; text: string; mate: boolean; a: number; on: boolean }>();
+  private tagV = new THREE.Vector3();
+
   private updateRiders(g: RaceView) {
     const p = g.p;
     const track = g.track;
     const w = this.w;
+    for (const t of this.tagView.values()) t.on = false;
     const kitKey = riderKitKey(p.kit);
     if (!this.player || this.playerKit !== kitKey) {
       if (this.player) this.scene.remove(this.player.group);
@@ -2348,6 +2353,20 @@ export class Renderer3D {
       }
       m.group.visible = true;
       this.placeOpp(m, o, track);
+      const tag = g.tags?.find((t) => t.id === o.id);
+      if (tag) {
+        // über dem Kopf des Fahrers (this.w hält nach placeOpp seine Weltposition)
+        const v = this.tagV.set(this.w.x, this.w.y + 2.05, this.w.z).project(this.camera);
+        if (v.z < 1) {
+          const tv = this.tagView.get(o.id) ?? { x: 0, y: 0, text: '', mate: false, a: 0, on: false };
+          tv.x = (v.x * 0.5 + 0.5) * this.W;
+          tv.y = (-v.y * 0.5 + 0.5) * this.H;
+          tv.text = tag.text;
+          tv.mate = !!tag.mate;
+          tv.on = true;
+          this.tagView.set(o.id, tv);
+        }
+      }
       if (sprint) {
         const dz = o.z - p.z;
         const block = dz < 0.8 && dz > -SPRINT_BACK - 1 && Math.abs(o.x - p.x) < 1.05 + Math.max(0, -dz) * 0.06;
@@ -2586,6 +2605,12 @@ export class Renderer3D {
         c.stroke();
       }
     }
+    // Namensschild über dem Hinterrad, an dem du fährst
+    for (const [id, t] of this.tagView) {
+      t.a += ((t.on ? 1 : 0) - t.a) * Math.min(1, this.lastDt * 9);
+      if (!t.on && t.a < 0.02) { this.tagView.delete(id); continue; }
+      this.drawTag(c, t);
+    }
     // Hinweise links und rechts über dem Fahrer: nur Schrift, kleine Feder-Animation
     const ps = this.playerScreen;
     const tones: Record<string, string> = { accent: this.accent, gold: '#ffd23f', white: '#ffffff', muted: '#e4e4ea', red: '#ff8a7a', blue: '#9fd4ff' };
@@ -2664,6 +2689,50 @@ export class Renderer3D {
       c.restore();
     }
     c.globalAlpha = 1;
+  }
+
+  private drawTag(c: CanvasRenderingContext2D, t: { x: number; y: number; text: string; mate: boolean; a: number }) {
+    const font = '-apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+    c.save();
+    c.globalAlpha = t.a * 0.95;
+    c.font = `700 12px ${font}`;
+    const label = t.text;
+    const tw = c.measureText(label).width;
+    const dot = t.mate ? 12 : 0;
+    const w = tw + 18 + dot;
+    const h = 22;
+    const x = Math.max(8, Math.min(this.W - 8 - w, t.x - w / 2));
+    const y = t.y - h - 8 - (1 - t.a) * 6;
+    c.fillStyle = 'rgba(12, 14, 20, 0.74)';
+    c.beginPath();
+    // abgerundete Pille (ohne roundRect, das ältere Safaris nicht kennen)
+    const r = h / 2;
+    c.moveTo(x + r, y);
+    c.lineTo(x + w - r, y);
+    c.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+    c.lineTo(x + r, y + h);
+    c.arc(x + r, y + r, r, Math.PI / 2, (Math.PI * 3) / 2);
+    c.closePath();
+    c.fill();
+    // kleiner Zeiger nach unten zum Fahrer
+    const px = Math.max(x + 10, Math.min(x + w - 10, t.x));
+    c.beginPath();
+    c.moveTo(px - 5, y + h - 0.5);
+    c.lineTo(px + 5, y + h - 0.5);
+    c.lineTo(px, y + h + 5);
+    c.closePath();
+    c.fill();
+    if (t.mate) {
+      c.fillStyle = this.accent;
+      c.beginPath();
+      c.arc(x + 12, y + h / 2, 3.5, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.fillStyle = '#fff';
+    c.textAlign = 'left';
+    c.textBaseline = 'middle';
+    c.fillText(label, x + 9 + dot, y + h / 2 + 0.5);
+    c.restore();
   }
 
   dispose() {

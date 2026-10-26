@@ -75,7 +75,12 @@ export function standings(opps: Entrant[], me: { z: number; v: number }, meFinT:
 }
 
 /** Was die 3D-Darstellung von einem Rennen braucht (Abfahrt und Sprintfinale) */
+/** Namensschild über einem Fahrer im Bild (wie die Fahrerkennung in der Übertragung) */
+export interface RiderTag { id: number; text: string; mate?: boolean }
+
 export interface RaceView {
+  /** Namensschilder (z. B. das Hinterrad, an dem du gerade fährst) */
+  tags?: RiderTag[];
   track: Track;
   phase: Phase;
   phaseT: number;

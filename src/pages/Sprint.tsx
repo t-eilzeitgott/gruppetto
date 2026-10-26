@@ -10,7 +10,7 @@ import { riderOptions, rivalNames, sprintTrains, teamMate, type RiderOption } fr
 import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { SPRINT_FINISH, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
-import { TvAd, TvBoard, TvSponsor, boardItems, writeTv } from './hud';
+import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { SprintIcon } from '../ui/GameIcon';
@@ -127,31 +127,8 @@ export function SprintPage() {
     const h = eng.hud();
     runCoach(h, dt);
     placeThumb(hud.current.thumb, h.touch, uiRef.current === 'playing', h.mode === 'go', h.mode === 'ease');
-    const set = (key: string, val: string) => {
-      if (last.current[key] === val) return;
-      last.current[key] = val;
-      const el = hud.current[key];
-      if (el) el.textContent = val;
-    };
-    set('kmh', String(h.kmh));
-    writeTv(hud.current, last.current, boardItems(h.board, h.toGo > 0 ? dist(h.toGo) : 'Ziel'));
-    const en = hud.current.energy;
-    if (en) {
-      en.style.setProperty('--e', h.energy.toFixed(3));
-      en.classList.toggle('is-go', h.mode === 'go');
-      en.classList.toggle('is-low', h.energy < 0.18);
-    }
-    set('energyLabel', h.mode === 'go' ? 'Antritt' : h.mode === 'ease' ? 'Erholen' : 'Kraft');
-    const wheel = hud.current.wheel;
-    if (wheel) {
-      const on = !!h.ahead && h.toGo > 0;
-      if (on) set('wheelName', h.ahead!);
-      wheel.classList.toggle('is-on', on);
-      wheel.classList.toggle('is-draft', h.draft > 0.15);
-      wheel.style.setProperty('--d', h.draft.toFixed(2));
-    }
-    const dot = hud.current.dot;
-    if (dot) dot.style.left = `${Math.min(100, (1 - h.toGo / SPRINT_FINISH) * 100).toFixed(2)}%`;
+    writeBar(hud.current, last.current, raceBar(h.board, h.toGo > 0 ? dist(h.toGo) : 'Ziel', 'flag', 1 - h.toGo / SPRINT_FINISH));
+    writeRing(hud.current, last.current, { kmh: h.kmh, fill: h.energy, tone: 'energy', mode: h.mode, draft: h.draft });
   };
 
   useRaceLoop({
@@ -241,33 +218,10 @@ export function SprintPage() {
             <button type="button" className="abf-round" onClick={togglePause} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
               {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
             </button>
-            <TvBoard bind={bind} />
+            <RaceBar bind={bind} marks={[{ at: flammePct / 100, kind: 'flamme' }]} />
+            <PowerRing bind={bind} />
           </div>
-          <TvSponsor seed={1} />
-          <div className="abf-strip spr-strip" aria-hidden="true">
-            <div className="abf-strip__line" />
-            <span className="spr-strip__flamme" style={{ left: `${flammePct}%` }} />
-            <span className="spr-strip__finish" />
-            <span className="abf-strip__dot" ref={bind('dot')} />
-          </div>
-          <div className="hud-row">
-            <div className="hud-pill hud-speed"><strong ref={bind('kmh')}>0</strong><span>km/h</span></div>
-            <div className="hud-pill hud-energy" ref={bind('energy')}>
-              <span ref={bind('energyLabel')}>Kraft</span>
-              <i aria-hidden="true" />
-            </div>
-          </div>
-          <div className="hud-pill hud-wheel" ref={bind('wheel')}>
-            <span className="hud-wheel__k">Hinterrad</span>
-            <span className="hud-wheel__name" ref={bind('wheelName')} />
-            <i aria-hidden="true" />
-          </div>
-          {banner && (ui === 'playing' || ui === 'countdown') ? (
-            <div key={banner.key} className={cx('hud-banner', banner.tone && `hud-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
-              <strong>{banner.title}</strong>
-              {banner.sub ? <span>{banner.sub}</span> : null}
-            </div>
-          ) : null}
+          {banner && (ui === 'playing' || ui === 'countdown') ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
             <span className="abf-thumb__up"><TuckIcon /></span>
             <span className="abf-thumb__dot" />
