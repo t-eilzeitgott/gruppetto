@@ -9,7 +9,7 @@ import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import type { StageKind } from '../lib/types';
-import { GAMES, type GameInfo } from '../game/games';
+import { GAMES, isNewGame, type GameInfo } from '../game/games';
 import { Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { Avatar, Link, cx } from './kit';
@@ -26,6 +26,7 @@ export function GamesCard({ stageKind = null, town = '' }: { stageKind?: StageKi
   const games = useMemo(() => order(stageKind), [stageKind]);
   const scroller = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState(0);
+  const anyNew = useMemo(() => games.some(isNewGame), [games]);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -38,7 +39,7 @@ export function GamesCard({ stageKind = null, town = '' }: { stageKind?: StageKi
     if (el && slide) el.scrollTo({ left: slide.offsetLeft - (el.firstElementChild as HTMLElement).offsetLeft, behavior: 'smooth' });
   };
   return (
-    <section className="card games-card" aria-label="Minispiele">
+    <section className={cx('card games-card', anyNew && 'is-new')} aria-label="Minispiele">
       <div className="games-scroller" ref={scroller} onScroll={onScroll}>
         {games.map((g) => <GameSlide key={g.id} game={g} stageKind={stageKind} town={town} />)}
       </div>
@@ -84,7 +85,10 @@ function GameSlide({ game, stageKind, town }: { game: GameInfo; stageKind: Stage
       <span className="game-card__head">
         <GameBadge game={game.id} size={48} />
         <span className="game-card__main">
-          <strong className="game-card__title">{game.name}</strong>
+          <span className="game-card__titlerow">
+            <strong className="game-card__title">{game.name}</strong>
+            {isNewGame(game) ? <span className="game-new">Neu</span> : null}
+          </span>
           <span className="muted game-card__route">{sub}</span>
         </span>
         <Icon name="chevron" className="muted" />

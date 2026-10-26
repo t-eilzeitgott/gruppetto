@@ -1330,6 +1330,18 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 /* Startseite: Spielkarte */
 .game-card { display: flex; flex-direction: column; gap: 12px; text-decoration: none; color: inherit; }
 .games-card { padding: 0; gap: 0; overflow: hidden; }
+/* neues Spiel: Karte leuchtet dezent im Takt, „Neu“-Plakette am Titel */
+.games-card.is-new { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); animation: games-glow 2.6s ease-in-out infinite; }
+@keyframes games-glow {
+  0%, 100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent), 0 0 22px 2px var(--accent-soft); }
+}
+@media (prefers-reduced-motion: reduce) { .games-card.is-new { animation: none; box-shadow: 0 0 18px var(--accent-soft); } }
+.game-card__titlerow { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.game-new {
+  padding: 2px 8px 3px; border-radius: 999px; background: var(--accent); color: var(--on-accent);
+  font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1.3; white-space: nowrap;
+}
 .games-scroller {
   position: relative; display: flex; gap: 0; padding: 0; overflow-x: auto;
   overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
