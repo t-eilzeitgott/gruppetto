@@ -536,21 +536,16 @@ export function GamePage() {
             ) : (
               <>
                 <div className="abf-head">
-                  <GameIcon size={48} />
+                  <GameIcon size={44} />
                   <div>
                     <h1 className="abf-title">Abfahrt</h1>
-                    <p className="abf-sub">Tagesstrecke · {track.title}</p>
+                    <p className="abf-sub">{track.title}</p>
                   </div>
                 </div>
                 <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />
-                <Missions missions={missions} done={doneIds} />
-                <ul className="abf-controls" aria-label="Steuerung">
-                  <li><ThumbIcon /><span>Lenken</span></li>
-                  <li><TuckIcon /><span>Ducken</span></li>
-                  <li><BrakeIcon /><span>Bremsen</span></li>
-                </ul>
+                <Missions missions={missions} done={doneIds} compact />
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
-                <MiniBoard rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} best={myBest} totalM={mine?.total_m ?? 0} />
+                <MiniBoard rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} totalM={mine?.total_m ?? 0} />
               </>
             )}
           </div>
@@ -587,10 +582,10 @@ export function GamePage() {
 
 // ------------------------------------------------------------------ Bausteine
 
-function Missions({ missions, done }: { missions: Mission[]; done: string[] }) {
+function Missions({ missions, done, compact }: { missions: Mission[]; done: string[]; compact?: boolean }) {
   return (
-    <section className="abf-missions" aria-label="Aufgaben heute">
-      <h2 className="abf-eyebrow">Aufgaben heute</h2>
+    <section className={cx('abf-missions', compact && 'abf-missions--compact')} aria-label="Aufgaben heute">
+      {compact ? null : <h2 className="abf-eyebrow">Aufgaben heute</h2>}
       <ul>
         {missions.map((m) => {
           const ok = done.includes(m.id);
@@ -649,20 +644,16 @@ function DescentProfile({ track, friends, members, max }: { track: Track; friend
           );
         })}
       </div>
-      <figcaption className="abf-profile__cap">
-        <span>Start</span>
-        <span>{friends.length ? 'Bestmarken der Runde' : 'Noch keine Bestmarken'}</span>
-        <span>{km(max)}</span>
-      </figcaption>
     </figure>
   );
 }
 
-function MiniBoard({ rows, label, members, meId, onOpen, best, totalM }: {
-  rows: GameBest[]; label: string; members: Profile[]; meId: string; onOpen: () => void; best: number; totalM: number;
+function MiniBoard({ rows, label, members, meId, onOpen, totalM }: {
+  rows: GameBest[]; label: string; members: Profile[]; meId: string; onOpen: () => void; totalM: number;
 }) {
-  const top = rows.slice(0, 3);
   const myIdx = rows.findIndex((r) => r.user_id === meId);
+  const shown = rows.slice(0, 3).map((r, i) => ({ r, i }));
+  if (myIdx >= 3) shown.push({ r: rows[myIdx], i: myIdx });
   const rank = rankFor(totalM / 1000);
   return (
     <section className="abf-mini" aria-label="Bestenliste">
@@ -670,25 +661,21 @@ function MiniBoard({ rows, label, members, meId, onOpen, best, totalM }: {
         <h2 className="abf-eyebrow">Bestenliste · {label}</h2>
         <button type="button" className="abf-link" onClick={onOpen}>Alle<Icon name="chevron" size={14} /></button>
       </div>
-      {top.length ? (
-        <ol className="abf-podium">
-          {top.map((r, i) => {
+      {shown.length ? (
+        <ol className="abf-top">
+          {shown.map(({ r, i }) => {
             const m = members.find((x) => x.id === r.user_id);
             return (
-              <li key={r.user_id} className={cx(`is-${i + 1}`, r.user_id === meId && 'is-me')}>
-                <Avatar name={m?.display_name} color={m?.avatar_color ?? '#888'} size={i === 0 ? 34 : 28} ring={i === 0 ? 'accent' : undefined} />
-                <span className="abf-podium__name">{m?.display_name ?? '–'}</span>
+              <li key={r.user_id} className={cx(r.user_id === meId && 'is-me')}>
+                <span className="abf-top__rank">{i + 1}</span>
+                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={24} />
+                <span className="abf-top__name">{r.user_id === meId ? 'Du' : m?.display_name ?? 'Jemand'}</span>
                 <strong>{nf(r.best)}</strong>
-                <span className="abf-podium__step">{i + 1}</span>
               </li>
             );
           })}
         </ol>
       ) : <p className="abf-muted">Noch keine Läufe – fahr die erste Bestmarke!</p>}
-      <div className="abf-me">
-        <span>{myIdx >= 0 ? `Du: Platz\u00a0${myIdx + 1}` : label === 'Heute' ? 'Heute noch kein Lauf' : 'Noch kein Lauf'}</span>
-        <span>Bestleistung {nf(best)}</span>
-      </div>
       <RankBar totalM={totalM} name={rank.name} />
     </section>
   );
@@ -830,9 +817,6 @@ function PauseIcon() {
 }
 function PlayIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" fill="currentColor" /></svg>;
-}
-function ThumbIcon() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h16M7 9l-3 3 3 3M17 9l3 3-3 3" /></svg>;
 }
 function TuckIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V5M8 9l4-4 4 4" /></svg>;

@@ -66,25 +66,94 @@ const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) 
 
 const TRUNK = lin('#5a3d27');
 
-function pine(tiers: number, h: number, w: number, greens: string[], snow: boolean): THREE.BufferGeometry {
+/** gezackter Kegel: Randpunkte unregelmäßig, leicht hängende Spitzen – wirkt wie Nadelzweige */
+function jagCone(r: number, h: number, seg: number, seed: number, droop = 0.18): THREE.BufferGeometry {
+  const g = new THREE.ConeGeometry(r, h, seg, 1, false);
+  const pos = g.getAttribute('position');
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    if (v.y < 0 && Math.hypot(v.x, v.z) > 0.01) {
+      const a = Math.atan2(v.z, v.x);
+      const k = 0.78 + 0.34 * Math.abs(Math.sin(a * 2.5 + seed * 1.7)) + 0.12 * Math.sin(a * 7 + seed);
+      v.x *= k;
+      v.z *= k;
+      v.y -= droop * h * (0.6 + 0.4 * Math.sin(a * 3 + seed));
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
+  }
+  return g;
+}
+
+function pine(tiers: number, h: number, w: number, dark: string, light: string, snow: boolean): THREE.BufferGeometry {
   const b = new GB();
-  b.add(new THREE.CylinderGeometry(0.12, 0.2, 2.2, 6), M(0, 1.1), TRUNK);
+  b.add(new THREE.CylinderGeometry(0.1, 0.22, 2.4, 6), M(0, 1.2), TRUNK);
+  const c0 = lin(dark);
+  const c1 = lin(light);
   for (let t = 0; t < tiers; t++) {
-    const k = t / tiers;
-    const r = w * (1 - k * 0.78);
-    const th = (h - 1.4) / tiers * 1.9;
-    const y = 1.4 + k * (h - 1.4 - th * 0.55) + th / 2;
-    b.add(new THREE.ConeGeometry(r, th, 7), M(0, y, 0, 1, 1, 1, t * 0.7), lin(greens[t % greens.length]));
-    if (snow) b.add(new THREE.ConeGeometry(r * 0.62, th * 0.5, 7), M(0, y + th * 0.27, 0, 1, 1, 1, t * 0.7), lin('#f4f7fb'));
+    const k = t / (tiers - 1);
+    const r = w * (1 - k * 0.8) * (0.92 + 0.12 * Math.sin(t * 2.1));
+    const th = ((h - 1.6) / tiers) * 1.75;
+    const y = 1.6 + k * (h - 1.6 - th * 0.6) + th / 2;
+    const col: RGBf = [c0[0] + (c1[0] - c0[0]) * k, c0[1] + (c1[1] - c0[1]) * k, c0[2] + (c1[2] - c0[2]) * k];
+    b.add(jagCone(r, th, 8, t * 3.1), M(0, y, 0, 1, 1, 1, t * 0.9), col);
+    if (snow && t % 2 === 0) b.add(jagCone(r * 0.6, th * 0.42, 8, t * 3.1 + 1), M(0, y + th * 0.3, 0, 1, 1, 1, t * 0.9), lin('#f2f6fb'));
   }
   return b.build();
 }
 
+/** Laubbaum: mehrere unregelmäßige Blätterkugeln, innen dunkler */
 function blobTree(crowns: [number, number, number, number][], trunkH: number, greens: string[]): THREE.BufferGeometry {
   const b = new GB();
-  b.add(new THREE.CylinderGeometry(0.14, 0.24, trunkH, 6), M(0, trunkH / 2), TRUNK);
-  crowns.forEach(([x, y, z, r], i) => b.add(new THREE.IcosahedronGeometry(r, 1), M(x, y, z, 1, 0.85, 1, i), lin(greens[i % greens.length])));
+  b.add(new THREE.CylinderGeometry(0.13, 0.26, trunkH, 6), M(0, trunkH / 2), TRUNK);
+  b.add(new THREE.CylinderGeometry(0.06, 0.1, 1.6, 5), M(0.5, trunkH + 0.2, 0, 1, 1, 1, 0, 0, -0.7), TRUNK);
+  crowns.forEach(([x, y, z, r], i) => {
+    const g = new THREE.IcosahedronGeometry(r, 1);
+    const pos = g.getAttribute('position');
+    const v = new THREE.Vector3();
+    for (let q = 0; q < pos.count; q++) {
+      v.fromBufferAttribute(pos, q);
+      const k = 0.86 + 0.2 * Math.abs(Math.sin(v.x * 3.1 + v.y * 2.3 + i) * Math.cos(v.z * 2.7 - i));
+      pos.setXYZ(q, v.x * k, v.y * k * 0.88, v.z * k);
+    }
+    b.add(g, M(x, y, z, 1, 1, 1, i * 1.3), lin(greens[i % greens.length]));
+  });
   return b.build();
+}
+
+/** einfache Fassungen der Bäume für weiter entfernte Landschaftskacheln (gleiche Umrisse, weniger Dreiecke) */
+export function treeGeometriesLow(): Partial<Record<Prop3D, THREE.BufferGeometry>> {
+  const lowPine = (h: number, w: number, dark: string, light: string, snow: boolean) => {
+    const b = new GB();
+    b.add(new THREE.CylinderGeometry(0.12, 0.22, 2.4, 4), M(0, 1.2), TRUNK);
+    const c0 = lin(dark);
+    const c1 = lin(light);
+    for (let t = 0; t < 3; t++) {
+      const k = t / 2;
+      const th = ((h - 1.6) / 3) * 1.6;
+      const y = 1.6 + k * (h - 1.6 - th * 0.6) + th / 2;
+      const col: RGBf = [c0[0] + (c1[0] - c0[0]) * k, c0[1] + (c1[1] - c0[1]) * k, c0[2] + (c1[2] - c0[2]) * k];
+      b.add(jagCone(w * (1 - k * 0.75), th, 6, t * 3.1), M(0, y, 0, 1, 1, 1, t * 0.9), col);
+      if (snow && t === 0) b.add(jagCone(w * 0.6, th * 0.42, 6, 1), M(0, y + th * 0.3), lin('#f2f6fb'));
+    }
+    return b.build();
+  };
+  const lowBlob = (crowns: [number, number, number, number][], trunkH: number, greens: string[]) => {
+    const b = new GB();
+    b.add(new THREE.CylinderGeometry(0.13, 0.26, trunkH, 4), M(0, trunkH / 2), TRUNK);
+    crowns.forEach(([x, y, z, r], i) => b.add(new THREE.IcosahedronGeometry(r, 0), M(x, y, z, 1, 0.88, 1, i * 1.3), lin(greens[i % greens.length])));
+    return b.build();
+  };
+  const cypress = new GB();
+  cypress.add(new THREE.IcosahedronGeometry(1, 0), M(0, 4.6, 0, 0.72, 4.3, 0.72), lin('#2b4d27'));
+  return {
+    pine: lowPine(11, 2.6, '#1b4026', '#3a6f3a', false),
+    pineSnow: lowPine(11, 2.6, '#1f4430', '#3d6b45', true),
+    larch: lowPine(10.5, 2.1, '#557f2c', '#8fb54c', false),
+    tree: lowBlob([[0, 5.3, 0, 2.5], [1.2, 4.5, 0.5, 1.8], [-1.1, 4.7, -0.5, 1.9]], 3.6, ['#4c8532', '#5f9a3d', '#3f752b']),
+    treeRound: lowBlob([[0, 3.8, 0, 1.8]], 2.6, ['#5a983a']),
+    cypress: cypress.build(),
+  };
 }
 
 export type Prop3D = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'bush' | 'rock' | 'boulder'
@@ -132,11 +201,11 @@ export function propGeometries(): Record<Prop3D, THREE.BufferGeometry> {
   bush.add(new THREE.IcosahedronGeometry(0.75, 0), M(0, 0.45, 0, 1.2, 0.75, 1), lin('#456f2e'));
   bush.add(new THREE.IcosahedronGeometry(0.55, 0), M(0.5, 0.55, 0.2, 1, 0.8, 1), lin('#5b8a3c'));
   return {
-    pine: pine(4, 10.5, 2.5, ['#1f4a2a', '#2a5a30', '#24502c', '#2f6234'], false),
-    pineSnow: pine(4, 10.5, 2.5, ['#244a32', '#2d5a3a'], true),
-    larch: pine(5, 10, 2.0, ['#5d8a30', '#6f9a3a', '#7aa544'], false),
-    tree: blobTree([[0, 5.2, 0, 2.1], [1.2, 4.4, 0.5, 1.5], [-1.1, 4.6, -0.4, 1.6]], 3.6, ['#4f8a34', '#5e9a3c', '#447a2e']),
-    treeRound: blobTree([[0, 3.6, 0, 1.5]], 2.6, ['#5c9a3c']),
+    pine: pine(6, 11, 2.6, '#1b4026', '#3a6f3a', false),
+    pineSnow: pine(6, 11, 2.6, '#1f4430', '#3d6b45', true),
+    larch: pine(6, 10.5, 2.1, '#557f2c', '#8fb54c', false),
+    tree: blobTree([[0, 5.3, 0, 2.2], [1.3, 4.5, 0.6, 1.6], [-1.2, 4.7, -0.5, 1.7], [0.2, 6.4, -0.3, 1.4]], 3.6, ['#4c8532', '#5f9a3d', '#3f752b', '#6aa646']),
+    treeRound: blobTree([[0, 3.7, 0, 1.6], [0.6, 4.4, 0.3, 1.0]], 2.6, ['#5a983a', '#6aa846']),
     cypress: cypress.build(),
     olive: olive.build(),
     bush: bush.build(),
@@ -414,12 +483,14 @@ export class RiderModel {
     this.lamp = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.02), mat('#ff2a2a', true));
     this.lamp.position.set(0, 0.86, 0.24);
     this.body.add(this.lamp);
-    this.shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.2), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.55 }));
+    this.shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.2), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.3 }));
     this.shadow.rotation.x = -Math.PI / 2;
     this.shadow.position.y = 0.03;
     this.shadow.renderOrder = 1;
     this.group.add(this.shadow);
     this.kitKey = kit.jersey + kit.helmet;
+    // alle Teile von Fahrer und Rad werfen Sonnenschatten (außer dem weichen Bodenschatten)
+    this.body.traverse((o) => { if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true; });
   }
 
   private hip = new THREE.Vector3();

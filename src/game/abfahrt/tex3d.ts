@@ -141,6 +141,87 @@ export function detailTex(): HTMLCanvasElement {
   return cv;
 }
 
+/**
+ * Felswände: waagrechte Gesteinsschichten mit Fugen, senkrechte Risse und Flecken – hell,
+ * wird mit der Eckpunktfarbe multipliziert (auch Schneewände bekommen so ihre Lagen). Nahtlos.
+ */
+export function rockTex(): HTMLCanvasElement {
+  const S = 512;
+  const cv = canvas(S, S);
+  const c = cv.getContext('2d')!;
+  const r = mulberry32(48);
+  c.fillStyle = '#e2e0da';
+  c.fillRect(0, 0, S, S);
+  const TAU = Math.PI * 2;
+  // Schichten: Bänder mit welliger Ober- und Unterkante (ganze Wellen über die Breite → nahtlos)
+  let y = 0;
+  while (y < S) {
+    const h = Math.min(S - y, 7 + r() * 30);
+    const tone = r();
+    const fill = tone < 0.34 ? `rgba(78,68,56,${(0.05 + r() * 0.13).toFixed(2)})`
+      : tone < 0.72 ? `rgba(255,252,246,${(0.08 + r() * 0.18).toFixed(2)})`
+        : `rgba(132,110,86,${(0.05 + r() * 0.1).toFixed(2)})`;
+    const amp = 1.5 + r() * 5;
+    const ph = r() * TAU;
+    const k = 1 + Math.floor(r() * 3);
+    const edge = (x: number, off: number) => off + amp * Math.sin(ph + (x / S) * TAU * k) + 1.2 * Math.sin(ph * 3 + (x / S) * TAU * (k + 3));
+    const joint = `rgba(38,32,26,${(0.08 + r() * 0.2).toFixed(2)})`;
+    const lw = 0.8 + r() * 1.6;
+    for (const dy of [-S, 0, S]) {
+      c.fillStyle = fill;
+      c.beginPath();
+      c.moveTo(0, edge(0, y + dy));
+      for (let x = 8; x <= S; x += 8) c.lineTo(x, edge(x, y + dy));
+      for (let x = S; x >= 0; x -= 8) c.lineTo(x, edge(x, y + h + dy));
+      c.closePath();
+      c.fill();
+      c.strokeStyle = joint;
+      c.lineWidth = lw;
+      c.beginPath();
+      for (let x = 0; x <= S; x += 8) { const yy = edge(x, y + h + dy); if (x === 0) c.moveTo(x, yy); else c.lineTo(x, yy); }
+      c.stroke();
+    }
+    y += h;
+  }
+  // senkrechte Risse
+  for (let i = 0; i < 80; i++) {
+    const x0 = r() * S;
+    const y0 = r() * S;
+    const n = 3 + Math.floor(r() * 6);
+    const steps: [number, number][] = [];
+    let x = 0;
+    let yy = 0;
+    for (let j = 0; j < n; j++) { x += (r() - 0.5) * 7; yy += 5 + r() * 12; steps.push([x, yy]); }
+    const a = (0.14 + r() * 0.24).toFixed(2);
+    const w = 0.7 + r() * 1.4;
+    wrapDraw(S, x0, y0, (px, py) => {
+      c.strokeStyle = `rgba(30,26,22,${a})`;
+      c.lineWidth = w;
+      c.beginPath();
+      c.moveTo(px, py);
+      for (const [dx, dy] of steps) c.lineTo(px + dx, py + dy);
+      c.stroke();
+      c.strokeStyle = 'rgba(255,255,255,0.18)';
+      c.lineWidth = 0.8;
+      c.beginPath();
+      c.moveTo(px + 1.4, py);
+      for (const [dx, dy] of steps) c.lineTo(px + dx + 1.4, py + dy);
+      c.stroke();
+    });
+  }
+  // Flecken (Flechten, Feuchtigkeit)
+  for (let i = 0; i < 140; i++) {
+    const x0 = r() * S;
+    const y0 = r() * S;
+    const rad = 3 + r() * 16;
+    const dark = r() < 0.6;
+    const col = dark ? `rgba(60,58,44,${(0.05 + r() * 0.08).toFixed(2)})` : `rgba(255,255,240,${(0.06 + r() * 0.1).toFixed(2)})`;
+    wrapDraw(S, x0, y0, (px, py) => { c.fillStyle = col; c.beginPath(); c.ellipse(px, py, rad * 1.6, rad * 0.7, 0, 0, TAU); c.fill(); });
+  }
+  grain(c, S, r, 22);
+  return cv;
+}
+
 /** Talboden: Felder, Wälder und Wege von oben */
 export function fieldsTex(): HTMLCanvasElement {
   const S = 1024;

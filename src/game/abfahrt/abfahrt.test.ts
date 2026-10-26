@@ -42,6 +42,23 @@ test('Strecke: geht bergab, Krümmung begrenzt, alle Täler kommen vor', () => {
   assert.match(t.title, / → /);
 });
 
+test('Strecke führt nie über oder unter sich selbst hindurch', () => {
+  for (let d = 0; d < 16; d++) {
+    const day = new Date(Date.UTC(2027, 4, 1 + d * 3)).toISOString().slice(0, 10);
+    const t = new Track(day);
+    const P: [number, number, number][] = [];
+    for (let i = 0; i < 3000; i += 2) { const s = t.seg(i); P.push([s.wx, s.wz, s.y]); }
+    for (let a = 0; a < P.length; a++) {
+      for (let b = a + 75; b < P.length; b++) {
+        const dd = Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]);
+        if (dd > 200) continue;
+        assert.ok(dd > 18, `${day}: Straßenstücke bei ${a * 2 * SEG} m und ${b * 2 * SEG} m nur ${dd.toFixed(1)} m auseinander`);
+        assert.ok(Math.abs(P[a][2] - P[b][2]) < 2 * dd, `${day}: zu steil übereinander (${a * 2 * SEG} m / ${b * 2 * SEG} m)`);
+      }
+    }
+  }
+});
+
 test('Kehren sind auf der Außenseite immer gesichert', () => {
   const t = new Track('2027-05-14');
   for (let i = 1; i < 6000; i++) {
@@ -91,15 +108,26 @@ test('Spiel: ohne Lenken landet man irgendwann im Aus, Punkte und Strecke stimme
 });
 
 test('Spiel: Autopilot fährt weit, überholt, sammelt und bekommt Kombos', () => {
+  // wählt die Spur mit dem meisten Platz: Hindernisse meiden (auch auf dem Weg dorthin), Flaschen mitnehmen
   const pilot = (g: Abfahrt) => {
     const p = g.p;
-    let want = 0;
-    for (const o of g.opps) if (o.z > p.z && o.z - p.z < 8 && Math.abs(o.x - want) < 0.8) want = o.x > 0 ? o.x - 1.3 : o.x + 1.3;
-    for (let d = 2; d < 40; d += 2) {
-      const s = g.track.segAt(p.z + d);
-      for (const o of s.objs ?? []) if (!o.done && o.k !== 'bidon' && o.k !== 'gold' && o.z > p.z && Math.abs(o.x - want) < 1.3) want = o.x > 0 ? o.x - 1.5 : o.x + 1.5;
+    let best = 0;
+    let bestScore = -Infinity;
+    for (const lx of [-2.2, -1.1, 0, 1.1, 2.2]) {
+      let score = -Math.abs(lx - p.x) * 0.15;
+      for (const o of g.opps) if (o.z > p.z - 1 && o.z - p.z < 10) score -= Math.max(0, 1.3 - Math.abs(o.x - lx)) * 4;
+      for (let d = 0; d < 40; d += 2) {
+        for (const o of g.track.segAt(p.z + d).objs ?? []) {
+          if (o.done || o.z <= p.z) continue;
+          const good = o.k === 'bidon' || o.k === 'gold';
+          const dz = o.z - p.z;
+          score += (good ? 1 : -6) * Math.max(0, (good ? 1.0 : 1.7) - Math.abs(o.x - lx)) * (1 - dz / 45);
+          if (!good && dz < 20 && o.x > Math.min(p.x, lx) - 0.9 && o.x < Math.max(p.x, lx) + 0.9) score -= 8 * (1 - dz / 20);
+        }
+      }
+      if (score > bestScore) { bestScore = score; best = lx; }
     }
-    g.tx = Math.max(-2.4, Math.min(2.4, want));
+    g.tx = best;
     g.key('up', true);
   };
   const { g } = run('2027-05-09', pilot, 90);

@@ -222,7 +222,7 @@ function BonusRow({ count, deadline, now }: { count: number; deadline: Date | st
   const done = count >= total;
   const t = Math.min(1, count / total);
   return (
-    <Link to="/bonus" className={cx('card card--row bonus-row', !done && 'card--accent')} ariaLabel={`Bonustipps: ${count} von ${total}`}>
+    <Link to="/bonus" className={cx('card card--row home-bonus', !done && 'card--accent')} ariaLabel={`Bonustipps: ${count} von ${total}`}>
       <span className="ring" style={{ ['--t' as string]: t.toFixed(3) }} aria-hidden="true">
         <Icon name={done ? 'check' : 'star'} size={18} />
       </span>

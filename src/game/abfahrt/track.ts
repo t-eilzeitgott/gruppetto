@@ -132,6 +132,15 @@ const LAKES = ['Lago di Garda', "Lago d'Iseo", 'Lago di Como', 'Lago Maggiore', 
 const HILLS = ['Valdobbiadene', 'Franciacorta', 'Langhe', 'Chianti', 'Valpolicella', 'Montalcino', 'Roero', 'Monferrato', 'Colli Euganei', 'Collio'];
 
 const BASE_GRADE: Record<BiomeId, number> = { pass: -0.085, alpine: -0.08, forest: -0.075, village: -0.04, lake: -0.03, vineyard: -0.045 };
+
+// Abstand zu älteren Straßenstücken (Draufsicht): die Strecke darf nie über oder unter sich selbst
+// hindurchführen, und je höher zwei Stücke übereinander lägen, desto weiter müssen sie auseinander
+const OCC_CS = 64;      // Rasterweite (m)
+const OCC_GAP = 80;     // so viele Segmente zurück zählt ein Stück als „älter“ (160 m)
+const OCC_MIN = 34;
+const OCC_MAX = 170;
+const occNeed = (dy: number) => Math.max(OCC_MIN, Math.min(OCC_MAX, 0.95 * Math.abs(dy)));
+const occKey = (cx: number, cz: number) => (cx + 32768) * 65536 + (cz + 32768);
 const LENGTH: Record<BiomeId, number> = { pass: 330, alpine: 430, forest: 420, village: 270, lake: 420, vineyard: 420 };
 const WRITINGS = ['FORZA', 'VAI VAI', 'ALLEZ', 'HOPP HOPP', 'DAJE', 'BRAVO', 'GRUPPETTO', 'VAMOS', 'ATTACCA', 'TUTTO GAS'];
 
@@ -159,7 +168,10 @@ export class Track {
   private hairpinNo = 0;
   private mountain = 1;
   private goal = 0;       // Sollrichtung des aktuellen Kehren-Schenkels
-  private hairDir = 1;
+  /** Gesamtrichtung: Kehren versetzen die Straße dorthin, offene Abschnitte fahren dorthin – nie zurück */
+  private readonly prog = -Math.PI / 2;
+  /** bisher verlegte Straße (alle 4 m: x, z, y, Segment) in einem groben Raster */
+  private occ = new Map<number, number[]>();
 
   constructor(dayKey: string, names: string[] = []) {
     this.dayKey = dayKey;
@@ -256,7 +268,7 @@ export class Track {
     const curve = new Array<number>(n).fill(0);
     const grade = new Array<number>(n).fill(0);
     const marks = new Array<number>(n).fill(0); // 1 Kehre, 2 Kuppe
-    const pieces = this.pieces(p.biome, n, D);
+    const pieces = this.pieces(p.biome, n, D, start);
     let at = 0;
     for (const pc of pieces) {
       for (let k = 0; k < pc.curve.length && at + k < n; k++) {
@@ -347,12 +359,13 @@ export class Track {
       }
       surfaceRun -= 1;
 
-      // Schneewände nach der ersten Passhöhe (wie am Gavia oder Stelvio im Mai)
+      // Nach der ersten Passhöhe: bergseitig Schneewände (wie am Gavia im Mai), talseitig eine
+      // Steinmauer mit freiem Blick hinunter ins Tal und auf die Berge gegenüber
       if (p.descent === 0 && p.biome === 'pass' && this.sections.length === 1 && k >= 66 && k < 190) {
-        const wall = 2.4 + 1.1 * Math.sin(k * 0.11) + 0.5 * Math.sin(k * 0.37);
-        const snowWall = (ph: number): Side => ({ ground: 'snow', tilt: 0.28, barrier: 'none', wall: wall + ph, drop: false });
-        l = snowWall(0.3 * Math.sin(k * 0.21));
-        rr = snowWall(0.3 * Math.cos(k * 0.19));
+        const wall = 2.0 + 0.9 * Math.sin(k * 0.11) + 0.4 * Math.sin(k * 0.37);
+        const snowWall: Side = { ground: 'snow', tilt: 0.3, barrier: 'none', wall: wall + 0.3 * Math.sin(k * 0.21), drop: false };
+        const balcony: Side = { ground: 'snow', tilt: -0.9, barrier: 'stone', wall: 0, drop: true };
+        if (mtn[k] > 0) { l = balcony; rr = snowWall; } else { l = snowWall; rr = balcony; }
       }
       // Einschnitt vor einem Tunnel: das Gelände steigt zu beiden Seiten an
       const ahead = tunnels.find(([a]) => k < a && k >= a - 45);
@@ -388,7 +401,34 @@ export class Track {
 
   // ---------------------------------------------------------------- Linienführung
 
-  private pieces(biome: BiomeId, n: number, D: number): Piece[] {
+  private occAdd(x: number, z: number, y: number, i: number) {
+    const key = occKey(Math.floor(x / OCC_CS), Math.floor(z / OCC_CS));
+    let l = this.occ.get(key);
+    if (!l) { l = []; this.occ.set(key, l); }
+    l.push(x, z, y, i);
+  }
+
+  /** Spielraum eines neuen Straßenpunkts zu älteren Stücken (negativ: zu nah oder zu steil darüber/darunter) */
+  private occClear(x: number, z: number, y: number, i: number): number {
+    let best = Infinity;
+    const cx = Math.floor(x / OCC_CS);
+    const cz = Math.floor(z / OCC_CS);
+    const R = Math.ceil(OCC_MAX / OCC_CS);
+    for (let a = -R; a <= R; a++) {
+      for (let b = -R; b <= R; b++) {
+        const l = this.occ.get(occKey(cx + a, cz + b));
+        if (!l) continue;
+        for (let q = 0; q < l.length; q += 4) {
+          if (i - l[q + 3] < OCC_GAP) continue;
+          const d = Math.hypot(x - l[q], z - l[q + 1]) - occNeed(y - l[q + 2]);
+          if (d < best) best = d;
+        }
+      }
+    }
+    return best;
+  }
+
+  private pieces(biome: BiomeId, n: number, D: number, start: number): Piece[] {
     const r = this.rng;
     const out: Piece[] = [];
     const ramp = (k: number, enter: number, hold: number, exit: number) => {
@@ -401,14 +441,8 @@ export class Track {
     const straight = (len: number): Piece => ({ curve: new Array(len).fill(0) });
     const scale = 0.85 + 0.35 * D;
     let dir = chance(r, 0.5) ? 1 : -1;
-    // Richtung so wählen, dass die Straße zur Sollrichtung zurückfindet (keine Schleifen, saubere Serpentinen)
     let head = this.th;
     const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
-    const back = () => {
-      const d = wrap(head - this.goal);
-      if (Math.abs(d) < 0.12) return chance(r, 0.5) ? 1 : -1;
-      return d > 0 ? -1 : 1;
-    };
     const W: Record<BiomeId, [string, number][]> = {
       pass: [['straight', 0.22], ['curve', 0.2], ['tight', 0.14], ['hairpin', 0.34], ['crest', 0.1]],
       alpine: [['straight', 0.2], ['curve', 0.28], ['tight', 0.14], ['hairpin', 0.22], ['crest', 0.16]],
@@ -422,47 +456,127 @@ export class Track {
       for (const [k, w] of W[biome]) { x -= w; if (x <= 0) return k; }
       return 'straight';
     };
+    // Serpentinen pendeln um die Schenkelrichtung, offene Abschnitte halten die Gesamtrichtung –
+    // Kurven führen jeweils dorthin zurück (keine Schleifen, saubere Serpentinen)
+    const serp = W[biome].some(([k]) => k === 'hairpin');
+    const back = () => {
+      const d = wrap(head - (serp ? this.goal : this.prog));
+      if (Math.abs(d) < 0.12) return chance(r, 0.5) ? 1 : -1;
+      return d > 0 ? -1 : 1;
+    };
+
+    // Probefahrt: Lage der neuen Stücke vorausrechnen und den Abstand zu älteren Stücken prüfen
+    const g0 = BASE_GRADE[biome] * (1 + 0.32 * D);
+    const sim = { x: this.wx, z: this.wz, th: this.th, y: this.y, i: start };
     let len = 0;
+    const drive = (pcs: Piece[], commit: boolean): number => {
+      let { x, z, th, y, i } = sim;
+      let worst = Infinity;
+      for (const pc of pcs) {
+        for (let k = 0; k < pc.curve.length; k++) {
+          if ((i & 1) === 0) {
+            if (!commit) worst = Math.min(worst, this.occClear(x, z, y, i));
+            else if (i < start + n) this.occAdd(x, z, y, i);
+          }
+          const c = pc.curve[k];
+          const thMid = th + c * SEG * 0.5;
+          x += Math.sin(thMid) * SEG;
+          z -= Math.cos(thMid) * SEG;
+          th += c * SEG;
+          y += (pc.grade ? pc.grade[k] : pc.hairpin ? g0 * 0.55 : g0) * SEG;
+          i++;
+        }
+      }
+      if (commit) { sim.x = x; sim.z = z; sim.th = th; sim.y = y; sim.i = i; }
+      return worst;
+    };
+    const take = (pcs: Piece[]) => {
+      drive(pcs, true);
+      for (const pc of pcs) {
+        out.push(pc);
+        len += pc.curve.length;
+        for (const c of pc.curve) head += c * SEG;
+      }
+    };
+    const mirror = (pcs: Piece[]): Piece[] => pcs.map((pc) => ({ ...pc, curve: pc.curve.map((c) => -c) }));
+    /** Ausweichstücke, falls ein geplantes Stück einer älteren Stelle zu nahe käme (mindestens min Segmente lang) */
+    const escapes = (min = 0): Piece[][] => {
+      const pad = (pc: Piece): Piece[] => (pc.curve.length < min ? [pc, straight(min - pc.curve.length)] : [pc]);
+      return [ramp(0.011 * scale, 10, 24, 10), ramp(-0.011 * scale, 10, 24, 10), ramp(0.02, 6, 14, 6), ramp(-0.02, 6, 14, 6), new Array(16).fill(0)]
+        .map((curve) => pad({ curve }));
+    };
+    /** erstes Stück mit genug Abstand – sonst das mit dem meisten */
+    const pickClear = (cands: Piece[][]): Piece[] => {
+      let best = cands[0];
+      let bestV = -Infinity;
+      for (const c of cands) {
+        const v = drive(c, false);
+        if (v >= 0) return c;
+        if (v > bestV) { bestV = v; best = c; }
+      }
+      return best;
+    };
+
+    // Serpentinen: Schenkel in der Richtung (Sollrichtung oder Gegenrichtung), die der Straße näher liegt
+    if (serp && Math.abs(wrap(head - this.goal)) > Math.PI / 2) this.goal = wrap(this.goal + Math.PI);
+    // Schenkel bleiben nah an der Sollrichtung – sonst laufen sie nach der Kehre in den vorigen hinein
+    const LEG = 0.4;
+    const capLeg = (pcs: Piece[]): Piece[] => {
+      if (!serp) return pcs;
+      const pc = pcs[0];
+      const sum = pc.curve.reduce((a, c) => a + c, 0) * SEG;
+      const d = wrap(head - this.goal);
+      if (Math.abs(d + sum) <= LEG) return pcs;
+      if (Math.abs(d - sum) <= LEG) return [{ ...pc, curve: pc.curve.map((c) => -c) }];
+      const peak = pc.curve.reduce((a, c) => Math.max(a, Math.abs(c)), 0);
+      let f = sum !== 0 ? (-d + Math.sign(sum) * LEG * 0.5) / sum : 0;
+      if (peak * Math.abs(f) > 0.024) f = (Math.sign(f) * 0.024) / peak;
+      return [{ ...pc, curve: pc.curve.map((c) => c * f) }];
+    };
+
     // erste Passhöhe des Tages: langes Gipfelstück, dann sanfte Kurven zwischen Schneewänden
     const opening = this.sections.length === 1;
     const first = opening ? 70 : 24;
-    out.push(straight(first)); len += first;
+    take(pickClear([[straight(first)], ...escapes(first)]));
     while (len < n - 40) {
       let kind = choose();
       if (opening && len < 200 && (kind === 'hairpin' || kind === 'tight' || kind === 'crest')) kind = 'curve';
-      let pc: Piece;
+      // Kehre nur aus einem Schenkel heraus, der ungefähr in Sollrichtung liegt
+      if (kind === 'hairpin' && Math.abs(wrap(head - this.goal)) > 0.55) kind = 'curve';
+      let pcs: Piece[];
+      let hair: { goal: number } | null = null;
       switch (kind) {
         case 'curve': {
           dir = back();
-          pc = { curve: ramp(dir * between(r, 0.006, 0.013) * scale, 10, Math.round(between(r, 14, 34)), 10) };
+          pcs = capLeg([{ curve: ramp(dir * between(r, 0.006, 0.013) * scale, 10, Math.round(between(r, 14, 34)), 10) }]);
           break;
         }
         case 'sweep': {
           dir = back();
-          pc = { curve: ramp(dir * between(r, 0.003, 0.0065) * scale, 20, Math.round(between(r, 40, 80)), 20) };
+          pcs = [{ curve: ramp(dir * between(r, 0.003, 0.0065) * scale, 20, Math.round(between(r, 40, 80)), 20) }];
           break;
         }
         case 'tight': {
           dir = back();
-          pc = { curve: ramp(dir * between(r, 0.016, 0.023) * scale, 6, Math.round(between(r, 10, 18)), 6) };
+          pcs = capLeg([{ curve: ramp(dir * between(r, 0.016, 0.023) * scale, 6, Math.round(between(r, 10, 18)), 6) }]);
           break;
         }
         case 'sbend': {
           dir = -dir;
           const k = between(r, 0.009, 0.016) * scale;
-          pc = { curve: [...ramp(dir * k, 8, Math.round(between(r, 8, 16)), 8), ...ramp(-dir * k, 8, Math.round(between(r, 8, 16)), 8)] };
+          pcs = [{ curve: [...ramp(dir * k, 8, Math.round(between(r, 8, 16)), 8), ...ramp(-dir * k, 8, Math.round(between(r, 8, 16)), 8)] }];
           break;
         }
         case 'hairpin': {
-          this.hairDir = -this.hairDir;
+          // immer zur Gesamtrichtung hin wenden: die Serpentinen wandern so stetig weiter
+          const hd = Math.sign(wrap(this.prog - this.goal)) || 1;
           const approach = straight(Math.round(between(r, 38, 50)));
-          out.push(approach); len += approach.curve.length;
           const k = between(r, 0.04, 0.046);
           // genau eine halbe Drehung, korrigiert um die aktuelle Abweichung
-          const turn = Math.max(Math.PI - 0.3, Math.min(Math.PI + 0.15, Math.PI - this.hairDir * wrap(head - this.goal) * 0.8));
+          const turn = Math.max(Math.PI - 0.3, Math.min(Math.PI + 0.15, Math.PI - hd * wrap(head - this.goal) * 0.8));
           const hold = Math.max(10, Math.round(turn / (k * SEG) - 5));
-          pc = { curve: ramp(this.hairDir * k, 5, hold, 5), hairpin: true };
-          this.goal = wrap(this.goal + this.hairDir * Math.PI);
+          pcs = [approach, { curve: ramp(hd * k, 5, hold, 5), hairpin: true }];
+          hair = { goal: wrap(this.goal + hd * Math.PI) };
           break;
         }
         case 'crest': {
@@ -474,21 +588,25 @@ export class Track {
           const steep = -between(r, 0.15, 0.2) * (0.9 + 0.3 * D);
           for (let j = 0; j < drop; j++) g.push(steep);
           for (let j = 0; j < after; j++) g.push(steep * (1 - (j + 1) / (after + 1)) - 0.03 * ((j + 1) / (after + 1)));
-          pc = { curve: new Array(g.length).fill(0), grade: g, crest: true };
+          pcs = [{ curve: new Array(g.length).fill(0), grade: g, crest: true }];
           break;
         }
         default:
-          pc = straight(Math.round(between(r, 18, 55)));
+          pcs = [straight(Math.round(between(r, 18, 55)))];
       }
-      out.push(pc);
-      len += pc.curve.length;
-      for (const c of pc.curve) head += c * SEG;
-      if (!pc.hairpin && kind !== 'straight' && chance(r, 0.5)) {
-        const s = straight(Math.round(between(r, 8, 22)));
-        out.push(s); len += s.curve.length;
+      if (!hair && kind !== 'straight' && chance(r, 0.5)) pcs.push(straight(Math.round(between(r, 8, 22))));
+      let chosen = pcs;
+      if (drive(pcs, false) < 0) {
+        // zu nah an einem älteren Stück: gespiegelt, gekürzt oder ein Ausweichstück
+        const alts: Piece[][] = hair ? [] : [mirror(pcs)];
+        if (!hair && pcs.length > 1) alts.push([pcs[0]], mirror([pcs[0]]));
+        chosen = pickClear([pcs, ...alts, ...escapes()]);
       }
+      take(chosen);
+      if (hair && chosen === pcs) this.goal = hair.goal;
     }
-    out.push(straight(Math.max(0, n - len)));
+    const rest = Math.max(0, n - len);
+    if (rest > 0) take(pickClear([[straight(rest)], ...escapes(rest)]));
     return out;
   }
 

@@ -214,7 +214,7 @@ const float TAU = 6.28318;
 void armPose(float act, float t, float e, out vec4 A, out vec4 B, out vec4 legs, out vec3 body) {
   vec4 idleA = vec4(0.08 + 0.03 * sin(t * 0.9), 0.1 + 0.06 * sin(t * 0.7 + 1.0), 0.3, 0.05);
   vec4 idleB = vec4(0.08 + 0.03 * sin(t * 0.8 + 2.0), 0.1 + 0.06 * sin(t * 0.6), 0.3, 0.05);
-  float c = 0.5 + 0.5 * sin(t * TAU * (2.2 + 0.9 * e));
+  float c = 0.5 + 0.5 * sin(t * TAU * (1.55 + 0.45 * e));
   vec4 clap = vec4(0.0, 0.95 + 0.85 * e, 1.35 - 0.6 * e, 0.14 + 0.3 * c);
   legs = vec4(0.0);
   body = vec3(0.0); // Hüpfen, Vorlage, Kopfnicken
@@ -225,11 +225,11 @@ void armPose(float act, float t, float e, out vec4 A, out vec4 B, out vec4 legs,
   } else if (act < 1.5) {     // klatschen
     A = clap; B = clap;
   } else if (act < 2.5) {     // winken
-    float w = sin(t * TAU * (1.3 + 0.9 * e));
+    float w = sin(t * TAU * (0.85 + 0.45 * e));
     B = vec4(2.35 + 0.42 * w, 0.2, 0.35 + 0.25 * w, 0.0);
     A = mix(idleA, clap, ex * 0.5);
   } else if (act < 3.5) {     // jubeln, mit Hüpfen
-    float f = 1.5 + 0.9 * e;
+    float f = 1.0 + 0.45 * e;
     float pump = 0.5 + 0.5 * sin(t * TAU * f);
     float up = 0.8 + 1.95 * smoothstep(0.0, 0.6, e);
     A = vec4(up + 0.12 * pump, 0.25, 0.12 + 0.45 * pump * (0.3 + 0.7 * e), 0.0);
@@ -239,30 +239,32 @@ void armPose(float act, float t, float e, out vec4 A, out vec4 B, out vec4 legs,
     B = vec4(0.0, 1.42 + 0.03 * sin(t * 1.3), 0.42, 0.28);
     A = vec4(0.0, 1.2, 1.05, 0.45);
   } else if (act < 5.5) {     // Fahne schwenken
-    B = vec4(2.62 + (0.22 + 0.16 * e) * sin(t * TAU * 0.75), 0.1, 0.12, 0.0);
-    float pump = 0.5 + 0.5 * sin(t * TAU * 2.0);
+    B = vec4(2.62 + (0.2 + 0.12 * e) * sin(t * TAU * 0.5), 0.1, 0.12, 0.0);
+    float pump = 0.5 + 0.5 * sin(t * TAU * 1.3);
     A = mix(idleA, vec4(2.4, 0.2, 0.35 + 0.8 * pump, 0.0), ex);
   } else if (act < 6.5) {     // anfeuern: zeigen und rufen
-    vec4 pt = vec4(0.1, 1.7 + 0.18 * sin(t * TAU * 1.4), 0.12, 0.1);
+    vec4 pt = vec4(0.1, 1.7 + 0.16 * sin(t * TAU * 1.0), 0.12, 0.1);
     B = mix(idleB, pt, 0.35 + 0.65 * ex);
     A = mix(idleA, vec4(0.0, 1.45, 2.35, 1.1), 0.35 + 0.65 * ex);
-    body.z = 0.12 * ex * sin(t * TAU * 1.4);
+    body.z = 0.1 * ex * sin(t * TAU * 1.0);
   } else if (act < 7.5) {     // hält ein Kind auf den Schultern
     A = vec4(0.0, 0.55, 1.75, 0.2); B = A;
-  } else if (act < 9.5) {     // läuft neben dem Fahrer her (8), mit Fahne (9)
-    float r = t * TAU * 2.6;
-    float s = sin(r);
+  } else if (act < 9.5 || act > 12.5) {     // läuft (8/9) oder joggt (13/14) neben dem Fahrer her
+    float jog = act > 12.5 ? 1.0 : 0.0;
+    float r = t * TAU * (jog > 0.5 ? 1.55 : 2.35);
+    float s = sin(r) * (jog > 0.5 ? 0.75 : 1.0);
     A = vec4(0.12, 0.75 * s, 1.5, 0.15);
-    B = act < 8.5 ? vec4(0.12, -0.75 * s, 1.5, 0.15) : vec4(2.6 + 0.12 * s, 0.1, 0.12, 0.0);
+    float fl = abs(act - 9.0) < 0.1 || abs(act - 14.0) < 0.1 ? 1.0 : 0.0;
+    B = fl < 0.5 ? vec4(0.12, -0.75 * s, 1.5, 0.15) : vec4(2.6 + 0.12 * s, 0.1, 0.12, 0.0);
     legs = vec4(-0.7 * s, 0.25 + 1.0 * max(0.0, cos(r)), 0.7 * s, 0.25 + 1.0 * max(0.0, -cos(r)));
     body.x = abs(s) * 0.06;
     body.y = 0.2;
   } else if (act < 10.5) {    // Kind sitzt auf den Schultern
-    float pump = 0.5 + 0.5 * sin(t * TAU * 2.0);
+    float pump = 0.5 + 0.5 * sin(t * TAU * 1.4);
     A = vec4(0.6 + 2.0 * ex, 0.3, 0.4 + 0.7 * pump, 0.0);
     B = vec4(0.6 + 2.0 * ex, 0.3, 0.4 + 0.7 * (1.0 - pump), 0.0);
     legs = vec4(1.35, 1.45, 1.35, 1.45);
-  } else if (act > 11.5) {    // hält ein Pappschild hoch, wippt leicht
+  } else if (act > 11.5 && act < 12.5) {    // hält ein Pappschild hoch
     A = vec4(0.12, 2.5, 0.42, 0.42); B = A;
   } else {                    // lehnt an der Absperrung
     vec4 lean = vec4(0.0, 0.62, 0.55, 0.12);
@@ -293,7 +295,7 @@ const VERT_BEGIN = /* glsl */ `
   else if (part > 8.5 && part < 9.5) hide = bit(feat, 4.0) < 0.5;
   else if (part > 9.5 && part < 10.5) hide = bit(feat, 8.0) < 0.5;
   else if (part > 10.5 && part < 11.5) hide = abs(act - 4.0) > 0.1;
-  else if (part > 11.5 && part < 13.5) hide = abs(act - 5.0) > 0.1 && abs(act - 9.0) > 0.1;
+  else if (part > 11.5 && part < 13.5) hide = abs(act - 5.0) > 0.1 && abs(act - 9.0) > 0.1 && abs(act - 14.0) > 0.1;
 
   // Fahne flattert
   if (part > 12.5 && part < 13.5) {
@@ -404,7 +406,7 @@ export function crowdMaterial(u: CrowdUniforms): THREE.MeshLambertMaterial {
 // ------------------------------------------------------------------ Instanzen
 
 /** Was ein einzelner Zuschauer tut */
-export const Act = { idle: 0, clap: 1, wave: 2, cheer: 3, film: 4, flag: 5, shout: 6, hold: 7, run: 8, runFlag: 9, sit: 10, lean: 11, sign: 12 } as const;
+export const Act = { idle: 0, clap: 1, wave: 2, cheer: 3, film: 4, flag: 5, shout: 6, hold: 7, run: 8, runFlag: 9, sit: 10, lean: 11, sign: 12, jog: 13, jogFlag: 14 } as const;
 
 export interface Person {
   x: number; y: number; z: number; yaw: number;
@@ -434,7 +436,7 @@ export function needs(p: Person, k: Kind): boolean {
     case 'longHair': return p.longHair;
     case 'glasses': return p.glasses;
     case 'phone': return p.act === Act.film;
-    case 'flag': return p.act === Act.flag || p.act === Act.runFlag;
+    case 'flag': return p.act === Act.flag || p.act === Act.runFlag || p.act === Act.jogFlag;
   }
 }
 
