@@ -1063,6 +1063,105 @@ tr.is-me > * { background: var(--accent-soft); }
 .mini-profile__area { fill: var(--accent-soft); }
 .mini-profile__line { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linejoin: round; }
 
+/* ---------- Radgarage ---------- */
+.garage {
+  position: fixed; inset: 0; z-index: 60; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  background: radial-gradient(120% 70% at 50% 16%, #2a2d36 0%, #14161c 55%, #0b0c10 100%) fixed;
+  color: #fff; padding-bottom: calc(var(--safe-b) + 20px);
+  --g-line: rgba(255, 255, 255, 0.1);
+  --g-muted: rgba(235, 240, 255, 0.64);
+  --g-accent: color-mix(in srgb, var(--accent) 72%, #ffffff);
+}
+.garage__top {
+  position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 12px;
+  padding: calc(var(--safe-t) + 10px) calc(14px + var(--safe-r)) 12px calc(14px + var(--safe-l));
+  background: linear-gradient(180deg, rgba(11, 12, 16, 0.94), rgba(11, 12, 16, 0.72) 70%, rgba(11, 12, 16, 0));
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+.garage__head { min-width: 0; }
+.garage__head h1 { font-size: 22px; letter-spacing: -0.02em; line-height: 1.15; }
+.garage__head p { font-size: 13px; color: var(--g-muted); margin-top: 1px; }
+.garage__body { display: flex; flex-direction: column; gap: 14px; max-width: 1120px; margin: 0 auto; }
+.garage__side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.garage__stage {
+  position: relative; height: clamp(230px, 42dvh, 440px); margin: 0 calc(10px + var(--safe-r)) 0 calc(10px + var(--safe-l));
+  border-radius: 26px; overflow: hidden;
+  background:
+    radial-gradient(85% 70% at 50% 34%, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 72%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 55%, rgba(0, 0, 0, 0.28));
+  box-shadow: inset 0 0 0 1px var(--g-line);
+}
+.garage__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; cursor: grab; }
+.garage__canvas:active { cursor: grabbing; }
+.garage__plate { position: absolute; left: 16px; right: 16px; bottom: 14px; pointer-events: none; }
+.garage__era { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--g-accent); }
+.garage__name { font-size: 26px; line-height: 1.08; letter-spacing: -0.03em; margin-top: 2px; text-shadow: 0 2px 16px rgba(0, 0, 0, 0.5); overflow-wrap: anywhere; }
+.garage__lock {
+  position: absolute; top: 12px; left: 12px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px 5px 8px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 700; background: rgba(10, 12, 18, 0.74); box-shadow: inset 0 0 0 1px var(--g-line);
+}
+.garage__lock.is-mine { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+.garage__hint { position: absolute; top: 15px; right: 14px; font-size: 12px; color: var(--g-muted); transition: opacity 0.6s; pointer-events: none; }
+.garage__hint.is-off { opacity: 0; }
+.garage__nogl { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; color: var(--g-muted); font-size: 14px; text-align: center; }
+
+.garage__list {
+  display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+  padding: 2px calc(10px + var(--safe-r)) 6px calc(10px + var(--safe-l)); scroll-padding-left: calc(10px + var(--safe-l));
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 34px), transparent); mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 34px), transparent);
+}
+.garage__list::-webkit-scrollbar { display: none; }
+.garage__item {
+  position: relative; flex: none; width: 136px; display: flex; flex-direction: column; gap: 7px; padding: 8px 8px 10px; border: 0; border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05); box-shadow: inset 0 0 0 1px var(--g-line); color: #fff; text-align: left; scroll-snap-align: start;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+.garage__item:active { transform: scale(0.97); }
+.garage__item.is-active { background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 2px var(--accent); }
+.garage__item.is-locked .garage__thumb img { filter: grayscale(0.55) brightness(0.74); }
+.garage__thumb { display: block; aspect-ratio: 360 / 220; border-radius: 10px; overflow: hidden; background: radial-gradient(80% 70% at 50% 42%, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0)); }
+.garage__thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.garage__skel {
+  display: block; width: 100%; height: 100%; background: linear-gradient(90deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03));
+  background-size: 200% 100%; animation: garage-skel 1.2s linear infinite;
+}
+@keyframes garage-skel { from { background-position: 200% 0; } to { background-position: 0 0; } }
+.garage__item-name { font-size: 13px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.garage__tag { position: absolute; top: 12px; right: 12px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 12, 18, 0.82); color: #fff; }
+.garage__tag.is-mine { background: var(--accent); color: var(--on-accent); }
+.garage__new {
+  position: absolute; top: 12px; left: 12px; padding: 2px 7px; border-radius: 999px; background: var(--accent); color: var(--on-accent);
+  font-size: 11px; font-weight: 800; animation: garage-new 1.8s ease-in-out infinite;
+}
+@keyframes garage-new { 50% { transform: scale(1.08); } }
+
+.garage__info {
+  display: flex; flex-direction: column; gap: 14px; margin: 0 calc(12px + var(--safe-r)) 0 calc(12px + var(--safe-l)); padding: 16px;
+  border-radius: 20px; background: rgba(255, 255, 255, 0.05); box-shadow: inset 0 0 0 1px var(--g-line);
+}
+.garage__blurb { font-size: 15px; line-height: 1.5; color: rgba(255, 255, 255, 0.88); }
+.garage__specs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.garage__specs > div { min-width: 0; padding: 10px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.05); }
+.garage__specs dt { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--g-muted); }
+.garage__specs dd { margin: 3px 0 0; font-size: 14.5px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.garage__go { min-height: 52px; font-size: 16px; }
+.garage .btn--secondary { background: rgba(255, 255, 255, 0.08); color: #fff; border-color: transparent; }
+.garage .btn--secondary:disabled { opacity: 1; color: var(--g-accent); }
+.garage__unlock { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.05); }
+.garage__task { display: flex; align-items: flex-start; gap: 8px; font-size: 14.5px; font-weight: 600; line-height: 1.35; }
+.garage__task svg { flex: none; margin-top: 2px; color: var(--g-accent); }
+.garage__bar { height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.garage__bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.6s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.garage__count { font-size: 13px; color: var(--g-muted); font-variant-numeric: tabular-nums; }
+.garage__note { font-size: 12.5px; line-height: 1.45; color: var(--g-muted); }
+@media (min-width: 900px) {
+  .garage__body { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); align-items: start; gap: 18px; padding: 0 20px; }
+  .garage__stage { position: sticky; top: 78px; height: min(72vh, 640px); margin: 0; }
+  .garage__list { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); overflow: visible; padding: 0; -webkit-mask-image: none; mask-image: none; }
+  .garage__item { width: auto; }
+  .garage__info { margin: 0; }
+}
+
 /* ---------- Minispiel „Abfahrt“ ---------- */
 html.game-lock, html.game-lock body { overflow: hidden; overscroll-behavior: none; height: 100%; background: #0b0d12; }
 html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
@@ -1421,6 +1520,24 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   background: var(--surface); color: var(--muted); font-size: 13.5px; font-weight: 600;
 }
 .abf-badge.is-gold { background: #ffd23f; color: #1a1400; }
+.abf-badges { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 100%; }
+.bike-pill {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 5px 12px; border-radius: 999px; text-decoration: none;
+  background: var(--accent); color: var(--on-accent); font-size: 13.5px; font-weight: 700; animation: bike-pill 2.4s ease-in-out infinite;
+}
+@keyframes bike-pill { 0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); } 50% { box-shadow: 0 0 0 6px var(--accent-soft); } }
+.bike-chip {
+  display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 12px 6px 8px; border-radius: 14px; text-decoration: none;
+  background: var(--surface); color: var(--text);
+}
+.bike-chip__icon { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.bike-chip__text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.bike-chip__label { font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.bike-chip__text strong { font-size: 14.5px; overflow-wrap: anywhere; }
+.bike-chip__go { flex: none; display: inline-flex; align-items: center; gap: 1px; color: var(--accent); font-size: 13.5px; font-weight: 600; }
+.bike-chip.is-fresh .bike-chip__icon { animation: garage-row 2.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .bike-pill, .bike-chip.is-fresh .bike-chip__icon { animation: none; } }
+
 .abf-score { color: var(--muted); font-size: 14px; }
 .abf-score strong { display: block; font-size: 56px; line-height: 1; letter-spacing: -0.04em; color: var(--accent); font-variant-numeric: tabular-nums; }
 .abf-stats { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px; font-size: 14.5px; font-weight: 500; }
@@ -1543,6 +1660,14 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 }
 @media (prefers-reduced-motion: reduce) { .games-card.is-new { animation: none; box-shadow: 0 0 18px var(--accent-soft); } }
 .game-card__titlerow { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.games-garage { display: flex; align-items: center; gap: 11px; min-height: 56px; padding: 10px 14px 12px 14px; border-top: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.games-garage__icon { flex: none; width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.games-garage__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.games-garage__text strong { font-size: 15px; line-height: 1.25; }
+.games-garage__text .muted { font-size: 12.5px; line-height: 1.3; }
+.games-garage.is-fresh .games-garage__icon { animation: garage-row 2.6s ease-in-out infinite; }
+@keyframes garage-row { 0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); } 50% { box-shadow: 0 0 0 6px var(--accent-soft); } }
+@media (prefers-reduced-motion: reduce) { .games-garage.is-fresh .games-garage__icon { animation: none; } }
 .game-new {
   padding: 2px 8px 3px; border-radius: 999px; background: var(--accent); color: var(--on-accent);
   font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1.3; white-space: nowrap;

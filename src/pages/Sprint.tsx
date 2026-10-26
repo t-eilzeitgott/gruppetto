@@ -12,6 +12,8 @@ import { SPRINT_FINISH, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
+import { useBikes, type Bikes } from '../ui/useBikes';
+import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { SprintIcon } from '../ui/GameIcon';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
@@ -44,6 +46,7 @@ export function SprintPage() {
   const day = berlinDayKey();
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>('game:sprint:season', () => source.gameLeaderboard('sprint'));
+  const bikes = useBikes();
   const today = useQuery<GameBest[]>(`game:sprint:day:${day}`, () => source.gameLeaderboard('sprint', since));
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -85,7 +88,7 @@ export function SprintPage() {
       rivals: rivalNames(tourData.data, chosen.id),
       trains: sprintTrains(tourData.data, chosen.id, day),
       mate: teamMate(tourData.data, chosen.id, 'sprint')?.name ?? null,
-      kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number },
+      kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number, bike: bikes.current },
       town: ref,
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
@@ -143,7 +146,7 @@ export function SprintPage() {
   useEffect(() => {
     if (uiRef.current === 'ready' && engineRef.current) engineRef.current = makeEngine();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [names, ref, chosen.name, chosen.type]);
+  }, [names, ref, chosen.name, chosen.type, bikes.current]);
 
   useGameLock();
 
@@ -271,6 +274,7 @@ export function SprintPage() {
                 <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => TYPE_STATS[t]} bars={sprintBars} />
                 <HowTo items={[['↔', 'Hinterrad wechseln'], ['↑', 'Antreten'], ['↓', 'Tempo raus']]} />
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
+                <BikeChip bikes={bikes} />
                 <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch keine Sprints – hol dir den ersten Tagessieg!" />
               </>
             )}
@@ -284,6 +288,7 @@ export function SprintPage() {
           <div className="abf-card abf-scroll">
             {showBoard ? boardView : (
               <SprintSummary
+                bikes={bikes}
                 result={result}
                 rider={chosen}
                 record={result.score >= myBest && result.score > 0}
@@ -302,8 +307,8 @@ export function SprintPage() {
   );
 }
 
-function SprintSummary({ result, rider, record, today, season, meId, onAgain, onRider, onBoard }: {
-  result: SprintResult; rider: RiderOption; record: boolean; today: GameBest[]; season: GameBest[]; meId: string;
+function SprintSummary({ bikes, result, rider, record, today, season, meId, onAgain, onRider, onBoard }: {
+  bikes: Bikes; result: SprintResult; rider: RiderOption; record: boolean; today: GameBest[]; season: GameBest[]; meId: string;
   onAgain: () => void; onRider: () => void; onBoard: () => void;
 }) {
   const shown = useCountUp(result.score);
@@ -317,10 +322,13 @@ function SprintSummary({ result, rider, record, today, season, meId, onAgain, on
   return (
     <section className="abf-summary" aria-label="Ergebnis">
       <div className="abf-sum-top">
-        <span className={cx('abf-badge', (win || record) && 'is-gold')}>
-          <Icon name={win ? 'trophy' : record ? 'star' : 'flag'} size={14} />
-          {win ? 'Etappensieg!' : record ? 'Bestleistung' : `${result.place}. von ${result.riders}`}
-        </span>
+        <div className="abf-badges">
+          <span className={cx('abf-badge', (win || record) && 'is-gold')}>
+            <Icon name={win ? 'trophy' : record ? 'star' : 'flag'} size={14} />
+            {win ? 'Etappensieg!' : record ? 'Bestleistung' : `${result.place}. von ${result.riders}`}
+          </span>
+          <NewBikePill bikes={bikes} />
+        </div>
         <p className="abf-score"><strong>{nf(shown)}</strong><span className="sr-only"> Punkte</span></p>
         <div className="abf-stats">
           <span><Icon name="podium" size={15} />{result.place}.&nbsp;Platz</span>

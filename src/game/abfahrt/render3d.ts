@@ -17,25 +17,9 @@ import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
 import { mulberry32 } from './rng';
+import './grade';
+import { setGlossEnv } from './gloss';
 
-/**
- * Bildlook: Neutral-Tonwertkurve, dazu eine leichte Filmkurve (etwas Kontrast), etwas mehr Farbe und
- * Split-Toning – Schatten kühl, Lichter warm. Läuft in jedem Material im selben Durchgang, kostet also kaum etwas.
- */
-const GRADE = `vec3 CustomToneMapping( vec3 color ) {
-	vec3 c = NeutralToneMapping( color );
-	vec3 p = pow( max( c, vec3( 0.0 ) ), vec3( 0.4545 ) );
-	p = mix( p, p * p * ( 3.0 - 2.0 * p ), 0.2 );
-	c = pow( p, vec3( 2.2 ) );
-	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
-	c = max( mix( vec3( l ), c, 1.1 ), vec3( 0.0 ) );
-	c *= mix( vec3( 0.965, 0.99, 1.05 ), vec3( 1.035, 1.0, 0.95 ), smoothstep( 0.015, 0.45, l ) );
-	return clamp( c, 0.0, 1.0 );
-}`;
-{
-  const chunk = THREE.ShaderChunk as unknown as Record<string, string>;
-  chunk.tonemapping_pars_fragment = chunk.tonemapping_pars_fragment.replace('vec3 CustomToneMapping( vec3 color ) { return color; }', GRADE);
-}
 const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
 
 const CH = 40;            // Segmente je Abschnitt (80 m)
@@ -813,6 +797,8 @@ export class Renderer3D {
     this.fill.position.copy(this.camera.position).add(new THREE.Vector3(-sd.x, 0.45, -sd.z).normalize().multiplyScalar(200));
     this.fill.target.position.copy(this.camera.position);
     this.fill.intensity = 0.62 * dayK * dim;
+    // Spiegelungen auf Lack, Chrom und Helmen werden mit dem Licht dunkler
+    setGlossEnv(Math.max(0.2, 1 - L.lights * 0.8) * dim);
     const u = this.skyMat.uniforms;
     const top = mixRGB(L.skyTop, pal.skyTop, 0.35 * (1 - L.t));
     const hz = mixRGB(L.skyHorizon, pal.skyHorizon, 0.35 * (1 - L.t));
@@ -2314,7 +2300,7 @@ export class Renderer3D {
     const kitKey = riderKitKey(p.kit);
     if (!this.player || this.playerKit !== kitKey) {
       if (this.player) this.scene.remove(this.player.group);
-      this.player = new RiderModel(p.kit, this.shadowTex);
+      this.player = new RiderModel(p.kit, this.shadowTex, 1);
       this.playerKit = kitKey;
       this.scene.add(this.player.group);
     }

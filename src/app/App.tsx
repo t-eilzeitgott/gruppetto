@@ -25,6 +25,7 @@ import { lazy, Suspense } from 'react';
 const GamePage = lazy(() => import('../pages/Game').then((m) => ({ default: m.GamePage })));
 const SprintPage = lazy(() => import('../pages/Sprint').then((m) => ({ default: m.SprintPage })));
 const BergPage = lazy(() => import('../pages/Berg').then((m) => ({ default: m.BergPage })));
+const GaragePage = lazy(() => import('../pages/Garage').then((m) => ({ default: m.GaragePage })));
 import { Profile } from '../pages/Profile';
 import { Datenschutz, Impressum } from '../pages/Legal';
 import { AdminHome } from '../pages/admin/AdminHome';
@@ -127,7 +128,7 @@ function MemberApp({ me }: { me: ProfileT }) {
         page = <ClimbsPage />;
         break;
       case 'spiel':
-        page = <Suspense fallback={<Loading />}>{second === 'sprint' ? <SprintPage /> : second === 'berg' ? <BergPage /> : <GamePage />}</Suspense>;
+        page = <Suspense fallback={<Loading />}>{second === 'sprint' ? <SprintPage /> : second === 'berg' ? <BergPage /> : second === 'garage' ? <GaragePage /> : <GamePage />}</Suspense>;
         break;
       case 'profil':
         page = <Profile />;

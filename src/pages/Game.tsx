@@ -12,6 +12,8 @@ import { Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, Segmented, cx, useTitle } from '../ui/kit';
+import { useBikes, type Bikes } from '../ui/useBikes';
+import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { GameIcon } from '../ui/GameIcon';
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
@@ -61,6 +63,7 @@ export function GamePage() {
   const day = berlinDayKey();
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>('game:abfahrt:season', () => source.gameLeaderboard('abfahrt'));
+  const bikes = useBikes();
   const today = useQuery<GameBest[]>(`game:abfahrt:day:${day}`, () => source.gameLeaderboard('abfahrt', since));
   const missions = useMemo(() => dailyMissions(day), [day]);
   const [doneIds, setDoneIds] = useState<string[]>(() => { try { return JSON.parse(lsGet(missionKey(day)) ?? '[]'); } catch { return []; } });
@@ -108,7 +111,7 @@ export function GamePage() {
       dayKey: day,
       names,
       friends: playing ? friends : [],
-      kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: '27' },
+      kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: '27', bike: bikes.current },
       best: myBest,
       missions,
       missionsDone: new Set(doneIds),
@@ -119,6 +122,12 @@ export function GamePage() {
     eng.setViewport(canvasRef.current?.getBoundingClientRect().width ?? 390);
     return eng;
   };
+
+  // Vorschau im Startbildschirm mit dem gewählten Rad (die Freischaltungen laden ggf. erst später)
+  useEffect(() => {
+    if (uiRef.current === 'ready' && engineRef.current) engineRef.current = makeEngine(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bikes.current]);
 
   // Ereignisse aus dem Spiel
   const bannerKey = useRef(0);
@@ -555,6 +564,7 @@ export function GamePage() {
                 <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />
                 <Missions missions={missions} done={doneIds} compact />
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
+                <BikeChip bikes={bikes} />
                 <MiniBoard rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} totalM={mine?.total_m ?? 0} />
               </>
             )}
@@ -570,6 +580,7 @@ export function GamePage() {
               <BoardView rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} />
             ) : (
               <Summary
+                bikes={bikes}
                 result={result}
                 record={result.score >= myBest && result.score > 0}
                 prevRank={prevRank}
@@ -745,8 +756,8 @@ const PART_SHORT: Record<ScoreCat, string> = {
 };
 const ORDER: ScoreCat[] = ['dist', 'overtake', 'bidons', 'draft', 'curves', 'near', 'air', 'bonus', 'friends', 'missions'];
 
-function Summary({ result, record, prevRank, today, season, meId, totalM, missions, done, onAgain, onBoard }: {
-  result: RunResult; record: boolean; prevRank: { day: number; season: number } | null; today: GameBest[]; season: GameBest[];
+function Summary({ bikes, result, record, prevRank, today, season, meId, totalM, missions, done, onAgain, onBoard }: {
+  bikes: Bikes; result: RunResult; record: boolean; prevRank: { day: number; season: number } | null; today: GameBest[]; season: GameBest[];
   meId: string; totalM: number; missions: Mission[]; done: string[]; onAgain: () => void; onBoard: () => void;
 }) {
   const shown = useCountUp(result.score);
@@ -768,10 +779,13 @@ function Summary({ result, record, prevRank, today, season, meId, totalM, missio
   return (
     <section className="abf-summary" aria-label="Ergebnis">
       <div className="abf-sum-top">
-        <span className={cx('abf-badge', record && 'is-gold')}>
-          <Icon name={record ? 'trophy' : 'flame'} size={14} />
-          {record ? 'Bestleistung' : result.reason || 'Ende'}
-        </span>
+        <div className="abf-badges">
+          <span className={cx('abf-badge', record && 'is-gold')}>
+            <Icon name={record ? 'trophy' : 'flame'} size={14} />
+            {record ? 'Bestleistung' : result.reason || 'Ende'}
+          </span>
+          <NewBikePill bikes={bikes} />
+        </div>
         <p className="abf-score"><strong>{nf(shown)}</strong><span className="sr-only"> Punkte</span></p>
         <div className="abf-stats">
           <span><Icon name="flag" size={15} />{km(result.meters)}</span>

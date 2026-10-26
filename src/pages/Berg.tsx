@@ -12,6 +12,8 @@ import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { HudBanner, PowerRing, RaceBar, SwapIcon, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
+import { useBikes, type Bikes } from '../ui/useBikes';
+import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { BergIcon } from '../ui/GameIcon';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
@@ -46,6 +48,7 @@ export function BergPage() {
   const day = berlinDayKey();
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>('game:berg:season', () => source.gameLeaderboard('berg'));
+  const bikes = useBikes();
   const today = useQuery<GameBest[]>(`game:berg:day:${day}`, () => source.gameLeaderboard('berg', since));
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -86,7 +89,7 @@ export function BergPage() {
       rider: chosen,
       rivals: rivalNames(tourData.data, chosen.id, 'climb'),
       mate: teamMate(tourData.data, chosen.id, 'climb')?.name ?? null,
-      kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number },
+      kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number, bike: bikes.current },
       town: ref,
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
@@ -165,7 +168,7 @@ export function BergPage() {
   useEffect(() => {
     if (uiRef.current === 'ready' && engineRef.current) engineRef.current = makeEngine();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [names, ref, chosen.name, chosen.type]);
+  }, [names, ref, chosen.name, chosen.type, bikes.current]);
 
   useGameLock();
 
@@ -297,6 +300,7 @@ export function BergPage() {
                 <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => BERG_STATS[t]} bars={bars} />
                 <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Angreifen · bergab ducken'], ['↓', 'Erholen · bremsen'], ['⇄', 'Führung mit dem Helfer tauschen']]} />
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
+                <BikeChip bikes={bikes} />
                 <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch niemand am Berg – hol dir den ersten Tagessieg!" />
               </>
             )}
@@ -310,6 +314,7 @@ export function BergPage() {
           <div className="abf-card abf-scroll">
             {showBoard ? boardView : (
               <BergSummary
+                bikes={bikes}
                 result={result}
                 rider={chosen}
                 record={result.score >= myBest && result.score > 0}
@@ -358,8 +363,8 @@ function BergProfile({ track }: { track: Track }) {
   );
 }
 
-function BergSummary({ result, rider, record, today, season, meId, onAgain, onRider, onBoard }: {
-  result: BergResult; rider: RiderOption; record: boolean; today: GameBest[]; season: GameBest[]; meId: string;
+function BergSummary({ bikes, result, rider, record, today, season, meId, onAgain, onRider, onBoard }: {
+  bikes: Bikes; result: BergResult; rider: RiderOption; record: boolean; today: GameBest[]; season: GameBest[]; meId: string;
   onAgain: () => void; onRider: () => void; onBoard: () => void;
 }) {
   const shown = useCountUp(result.score);
@@ -376,10 +381,13 @@ function BergSummary({ result, rider, record, today, season, meId, onAgain, onRi
   return (
     <section className="abf-summary" aria-label="Ergebnis">
       <div className="abf-sum-top">
-        <span className={cx('abf-badge', (win || record) && 'is-gold')}>
-          <Icon name={win ? 'trophy' : record ? 'star' : 'flag'} size={14} />
-          {win ? 'Etappensieg!' : record ? 'Bestleistung' : `${result.place}. von ${result.riders}`}
-        </span>
+        <div className="abf-badges">
+          <span className={cx('abf-badge', (win || record) && 'is-gold')}>
+            <Icon name={win ? 'trophy' : record ? 'star' : 'flag'} size={14} />
+            {win ? 'Etappensieg!' : record ? 'Bestleistung' : `${result.place}. von ${result.riders}`}
+          </span>
+          <NewBikePill bikes={bikes} />
+        </div>
         <p className="abf-score"><strong>{nf(shown)}</strong><span className="sr-only"> Punkte</span></p>
         <div className="abf-stats">
           <span><Icon name="podium" size={15} />{result.place}.&nbsp;Platz</span>

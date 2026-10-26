@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": { "three": ["./vendor/three/three.module.js"] }
+  }
+}

@@ -17,6 +17,8 @@ import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { Avatar, Link, cx } from './kit';
 import { Icon } from './Icon';
 import { GameBadge } from './GameIcon';
+import { useBikes } from './useBikes';
+import { BIKES } from '../game/bikes';
 
 const SWIPED = 'gruppetto.games.swiped';
 
@@ -96,7 +98,26 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
           ))}
         </div>
       ) : null}
+      <GarageRow />
     </section>
+  );
+}
+
+/** Eingang zur Radgarage: Stand der Freischaltungen, „Neu“ bei frisch freigeschalteten Rädern */
+function GarageRow() {
+  const bikes = useBikes();
+  const n = bikes.unlocked.length;
+  const fresh = bikes.fresh.length;
+  return (
+    <Link to="/spiel/garage" className={cx('games-garage', fresh > 0 && 'is-fresh')} ariaLabel={`Radgarage öffnen – ${n} von ${BIKES.length} Rädern freigeschaltet${fresh ? ', neues Rad' : ''}`}>
+      <span className="games-garage__icon" aria-hidden="true"><Icon name="bike" size={20} /></span>
+      <span className="games-garage__text">
+        <strong>Radgarage</strong>
+        <span className="muted">{bikes.loaded ? (fresh ? (fresh === 1 ? 'Neues Rad freigeschaltet' : `${fresh} neue Räder freigeschaltet`) : `${n} von ${BIKES.length} Rädern freigeschaltet`) : 'Räder zum Freischalten'}</span>
+      </span>
+      {fresh > 0 ? <span className="game-new">Neu</span> : null}
+      <Icon name="chevron" className="muted" size={18} />
+    </Link>
   );
 }
 

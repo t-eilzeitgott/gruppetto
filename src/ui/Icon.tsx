@@ -29,6 +29,7 @@ const PATHS = {
   info: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0zM12 11v6M12 7.5v.5',
   external: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
   calendar: 'M5 5h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM4 10h16M8 3v4M16 3v4',
+  bike: 'M9 15.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0zM22 15.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0zM5.5 15.5H11L9.2 8.5M5.5 15.5 9.4 9H16M11 15.5 16 9.6M15.6 7.5l2.9 8M8 8.3h3M15 7.5h2.5',
 } as const;
 
 export type IconName = keyof typeof PATHS;

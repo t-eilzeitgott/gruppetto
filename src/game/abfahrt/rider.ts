@@ -10,6 +10,8 @@ export interface Kit {
   skin: string;
   shoes: string;
   number: string;
+  /** Rad (bikes.ts); ohne Angabe das Teamrad in Trikotfarben */
+  bike?: string;
 }
 
 export const TEAM_KITS: Omit<Kit, 'skin' | 'number'>[] = [
