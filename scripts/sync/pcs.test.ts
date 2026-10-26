@@ -24,6 +24,9 @@ test('Hilfsfunktionen für Datum, Start- und Siegerzeit', () => {
   assert.equal(parseDate('9 May 2027, Saturday'), '2027-05-09');
   assert.equal(parseStartTime('16:45 '), '16:45');
   assert.equal(parseStartTime('13:05 (12:05 CET)'), '12:05');
+  // Platzhalter bei künftigen Etappen
+  assert.equal(parseStartTime('00:00:00'), null);
+  assert.equal(parseStartTime('01:00:00'), null);
   assert.equal(parseDuration('2:58:32'), 10712);
   assert.equal(parseDuration('38:46'), 2326);
   assert.equal(stagePath('giro-d-italia/2027', 7), 'race/giro-d-italia/2027/stage-7');

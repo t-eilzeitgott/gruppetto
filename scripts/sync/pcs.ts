@@ -81,11 +81,12 @@ export function parseDate(value: string): string | null {
   return `${m[3]}-${String(month).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
 }
 
-/** „13:05 (12:05 CET)“ → „12:05“, „16:45“ → „16:45“ */
+/** „13:05 (12:05 CET)“ → „12:05“, „16:45“ → „16:45“. Vor 7 Uhr startet keine Etappe – PCS zeigt
+ *  bei künftigen Etappen „00:00“ bzw. „01:00“ als Platzhalter, das zählt als unbekannt. */
 export function parseStartTime(value: string): string | null {
   const cet = /(\d{1,2}):(\d{2})\s*(?:CET|CEST)/i.exec(value);
   const m = cet ?? /(\d{1,2}):(\d{2})/.exec(value);
-  if (!m) return null;
+  if (!m || Number(m[1]) < 7) return null;
   return `${m[1].padStart(2, '0')}:${m[2]}`;
 }
 
