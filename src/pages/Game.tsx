@@ -6,7 +6,7 @@ import { navigate } from '../app/router';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
-import { Abfahrt, SCORE_LABEL, type Friend, type GameEvent, type RunResult, type ScoreCat } from '../game/abfahrt/engine';
+import { Abfahrt, type Friend, type GameEvent, type HudState, type RunResult, type ScoreCat } from '../game/abfahrt/engine';
 import { Renderer3D } from '../game/abfahrt/render3d';
 import { Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
@@ -17,6 +17,16 @@ import { GameIcon } from '../ui/GameIcon';
 
 const LS_BEST = 'gruppetto.abfahrt.best';
 const LS_TUTORIAL = 'gruppetto.abfahrt.runs';
+const LS_LEARN = 'gruppetto.abfahrt.learned';
+
+/** Tutorial der ersten Läufe: eine Geste nach der anderen, bis sie einmal geklappt hat */
+type Step = 'steer' | 'tuck' | 'brake';
+const STEPS: Step[] = ['steer', 'tuck', 'brake'];
+const COACH: Record<Step, { t: string; s: string }> = {
+  steer: { t: 'Lenken', s: 'Daumen seitlich ziehen' },
+  tuck: { t: 'Ducken = schneller', s: 'Daumen nach oben schieben' },
+  brake: { t: 'Bremsen', s: 'Daumen nach unten ziehen' },
+};
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
 const missionKey = (day: string) => `gruppetto.abfahrt.missions.${day}`;
@@ -70,6 +80,8 @@ export function GamePage() {
   const bind = (key: string) => (el: HTMLElement | null) => { hud.current[key] = el; };
   const uiRef = useRef<Ui>('ready');
   uiRef.current = ui;
+  const [coach, setCoach] = useState<Step | null>(null);
+  const coachRef = useRef<{ on: boolean; step: Step | null; t: number; hold: number; learned: Set<Step> }>({ on: false, step: null, t: 0, hold: 0, learned: new Set() });
 
   const names = useMemo(() => (members.data ?? []).map((m) => m.display_name ?? '').filter(Boolean), [members.data]);
   const track = useMemo(() => new Track(day, names), [day, names]);
@@ -177,7 +189,7 @@ export function GamePage() {
       const eng = engineRef.current!;
       if (uiRef.current !== 'paused') eng.update(dt);
       renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
-      writeHud(eng);
+      writeHud(eng, dt);
       // Bildrate beobachten und notfalls die Qualität senken
       acc += dt;
       frames += 1;
@@ -266,7 +278,7 @@ export function GamePage() {
 
   // Tastatur
   useEffect(() => {
-    const map: Record<string, 'left' | 'right' | 'down'> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', a: 'left', d: 'right', s: 'down' };
+    const map: Record<string, 'left' | 'right' | 'down' | 'up'> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', ArrowUp: 'up', a: 'left', d: 'right', s: 'down', w: 'up' };
     const down = (e: KeyboardEvent) => {
       if (e.key === ' ' || e.key === 'Enter') {
         if (uiRef.current === 'ready' || uiRef.current === 'over') { e.preventDefault(); start(); }
@@ -282,9 +294,47 @@ export function GamePage() {
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
   });
 
-  const writeHud = (eng: Abfahrt) => {
+  /** Tutorial: nächste Geste zeigen, sobald es passt; abhaken, sobald sie einmal geklappt hat */
+  const runCoach = (h: HudState, dt: number) => {
+    const c = coachRef.current;
+    if (!c.on || uiRef.current !== 'playing') return;
+    c.t += dt;
+    if (!c.step) {
+      const next = STEPS.find((x) => !c.learned.has(x));
+      if (!next) { c.on = false; return; }
+      const ready = next === 'steer' ? c.t > 0.2 : next === 'tuck' ? c.t > 1.4 : h.curveIn < 120 || c.t > 5;
+      if (ready) { c.step = next; c.t = 0; c.hold = 0; setCoach(next); }
+      return;
+    }
+    let ok = false;
+    if (c.step === 'steer') ok = h.steered > 2.2;
+    else if (c.step === 'tuck') { c.hold = h.tuck > 0.7 ? c.hold + dt : 0; ok = c.hold > 0.7; }
+    else { c.hold = h.wantBrake > 0.4 ? c.hold + dt : 0; ok = c.hold > 0.2; }
+    if (!ok) return;
+    c.learned.add(c.step);
+    lsSet(LS_LEARN, JSON.stringify([...c.learned]));
+    c.step = null;
+    c.t = 0;
+    setCoach(null);
+    bannerKey.current += 1;
+    setBanner({ key: bannerKey.current, title: c.learned.size === STEPS.length ? 'Perfekt – du hast es drauf' : 'Gut so!', tone: 'accent' });
+  };
+
+  const writeHud = (eng: Abfahrt, dt = 0) => {
     if (uiRef.current !== 'playing' && uiRef.current !== 'paused') return;
     const h = eng.hud();
+    runCoach(h, dt);
+    // Daumenring: zeigt Ankerpunkt, oben ducken, unten bremsen
+    const th = hud.current.thumb;
+    if (th) {
+      if (h.touch && uiRef.current === 'playing') {
+        th.style.opacity = '1';
+        th.style.visibility = 'visible';
+        th.style.transform = `translate(${h.touch.x.toFixed(0)}px, ${h.touch.y.toFixed(0)}px)`;
+        th.classList.toggle('is-tuck', h.wantTuck);
+        th.classList.toggle('is-brake', h.wantBrake > 0.3);
+      } else { th.style.opacity = '0'; th.style.visibility = 'hidden'; }
+    }
     const set = (key: string, val: string) => {
       if (last.current[key] === val) return;
       last.current[key] = val;
@@ -331,13 +381,13 @@ export function GamePage() {
     setShowBoard(false);
     setBanner(null);
     last.current = {};
+    let learned = new Set<Step>();
+    try { learned = new Set(JSON.parse(lsGet(LS_LEARN) ?? '[]') as Step[]); } catch { /* neu anfangen */ }
+    coachRef.current = { on: (Number(lsGet(LS_TUTORIAL)) || 0) < 3, step: null, t: 0, hold: 0, learned };
+    setCoach(null);
     setUi('countdown');
     window.setTimeout(() => {
       if (uiRef.current === 'countdown') setUi('playing');
-      if ((Number(lsGet(LS_TUTORIAL)) || 0) < 3) {
-        bannerKey.current += 1;
-        setBanner({ key: bannerKey.current, title: 'Daumen aufs Display und seitlich ziehen', sub: 'Flaschen sammeln, im Windschatten fahren, überholen' });
-      }
     }, 2300);
   };
 
@@ -365,7 +415,7 @@ export function GamePage() {
       <canvas
         ref={canvasRef}
         className="abf__canvas"
-        aria-label="Spielfeld: Daumen nach links und rechts ziehen zum Lenken"
+        aria-label="Spielfeld: Daumen seitlich ziehen zum Lenken, nach oben zum Ducken, nach unten zum Bremsen"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -413,6 +463,11 @@ export function GamePage() {
             <span ref={bind('nextName')} />
             <strong ref={bind('nextDist')} />
           </div>
+          <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
+            <span className="abf-thumb__up"><TuckIcon /></span>
+            <span className="abf-thumb__dot" />
+            <span className="abf-thumb__down"><BrakeIcon /></span>
+          </div>
           <div className="abf-draft" ref={bind('draft')}>
             <span>Windschatten</span>
             <i aria-hidden="true" />
@@ -424,6 +479,13 @@ export function GamePage() {
         <div key={banner.key} className={cx('abf-banner', banner.tone && `abf-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
           <strong>{banner.title}</strong>
           {banner.sub ? <span>{banner.sub}</span> : null}
+        </div>
+      ) : null}
+
+      {coach && ui === 'playing' ? (
+        <div key={coach} className="abf-coach" role="status">
+          <span className={cx('abf-coach__gesture', `is-${coach}`)} aria-hidden="true"><i /></span>
+          <span className="abf-coach__text"><strong>{COACH[coach].t}</strong><span>{COACH[coach].s}</span></span>
         </div>
       ) : null}
 
@@ -460,10 +522,11 @@ export function GamePage() {
                 </div>
                 <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />
                 <Missions missions={missions} done={doneIds} />
-                <div className="abf-controls">
-                  <span><ThumbIcon /> Daumen seitlich ziehen: lenken</span>
-                  <span><BrakeIcon /> Gebremst wird automatisch</span>
-                </div>
+                <ul className="abf-controls" aria-label="Steuerung">
+                  <li><ThumbIcon /><span>Lenken</span></li>
+                  <li><TuckIcon /><span>Ducken</span></li>
+                  <li><BrakeIcon /><span>Bremsen</span></li>
+                </ul>
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
                 <MiniBoard rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} best={myBest} totalM={mine?.total_m ?? 0} />
               </>
@@ -513,7 +576,7 @@ function Missions({ missions, done }: { missions: Mission[]; done: string[] }) {
             <li key={m.id} className={cx(ok && 'is-done')}>
               <span className="abf-check" aria-hidden="true">{ok ? <Icon name="check" size={14} /> : null}</span>
               <span>{m.text}</span>
-              <span className="abf-missions__pts">{ok ? 'erledigt' : '+300'}</span>
+              {ok ? null : <span className="abf-missions__pts">+300</span>}
             </li>
           );
         })}
@@ -615,11 +678,10 @@ function RankBar({ totalM, name, gained = 0 }: { totalM: number; name: string; g
   return (
     <div className="abf-rank">
       <div className="abf-row">
-        <span className="abf-rank__name">Rang: <strong>{name}</strong></span>
-        <span className="abf-muted">{r.to ? `${km(totalM)} von ${r.to} km` : km(totalM)}</span>
+        <span className="abf-rank__name"><strong>{name}</strong>{r.nextName ? <span className="abf-muted"> → {r.nextName}</span> : null}</span>
+        <span className="abf-muted">{r.to ? `${(totalM / 1000).toFixed(1).replace('.', ',')}/${r.to}\u00a0km` : km(totalM)}</span>
       </div>
       <div className="abf-rank__bar"><i style={{ width: `${(t * 100).toFixed(1)}%` }} />{gained > 0 ? <b style={{ width: `${Math.min(100, t * 100).toFixed(1)}%` }} /> : null}</div>
-      {r.nextName ? <span className="abf-muted small">Nächster Rang: {r.nextName}</span> : null}
     </div>
   );
 }
@@ -657,6 +719,11 @@ function BoardView({ rows, board, setBoard, members, meId, onBack }: {
   );
 }
 
+/** kurze Namen für die Kacheln im Ergebnis */
+const PART_SHORT: Record<ScoreCat, string> = {
+  dist: 'Strecke', overtake: 'Überholt', bidons: 'Flaschen', draft: 'Windschatten', curves: 'Kurven',
+  near: 'Knapp', air: 'Sprünge', bonus: 'Sprints', friends: 'Freunde', missions: 'Aufgaben',
+};
 const ORDER: ScoreCat[] = ['dist', 'overtake', 'bidons', 'draft', 'curves', 'near', 'air', 'bonus', 'friends', 'missions'];
 
 function Summary({ result, record, prevRank, today, season, meId, totalM, missions, done, onAgain, onBoard }: {
@@ -678,31 +745,40 @@ function Summary({ result, record, prevRank, today, season, meId, totalM, missio
   const newTotal = totalM + result.meters;
   const rankNow = rankFor(newTotal / 1000);
   const rankBefore = rankFor(totalM / 1000);
+  const beaten = result.friendsBeaten.filter((n) => n !== 'Du');
   return (
     <section className="abf-summary" aria-label="Ergebnis">
-      <p className="abf-eyebrow">{record ? 'Neue Bestleistung' : 'Sturz'}</p>
-      <h1 className="abf-title">{result.reason || 'Ende'}</h1>
-      <p className="abf-score"><strong>{nf(shown)}</strong> Punkte</p>
-      <p className="abf-muted">{km(result.meters)} · Spitze {result.topKmh}&nbsp;km/h · Kombo ×{result.stats.combo}</p>
-      <div className="abf-places">
-        <span><b>Platz {dayPlace}</b> heute</span>
-        <span><b>Platz {seasonPlace}</b> Saison{up > 0 ? <em className="pos"> ↑&nbsp;{up}</em> : null}</span>
+      <div className="abf-sum-top">
+        <span className={cx('abf-badge', record && 'is-gold')}>
+          <Icon name={record ? 'trophy' : 'flame'} size={14} />
+          {record ? 'Bestleistung' : result.reason || 'Ende'}
+        </span>
+        <p className="abf-score"><strong>{nf(shown)}</strong><span className="sr-only"> Punkte</span></p>
+        <div className="abf-stats">
+          <span><Icon name="flag" size={15} />{km(result.meters)}</span>
+          <span><Icon name="zap" size={15} />{result.topKmh}&nbsp;km/h</span>
+          <span><b>×{result.stats.combo}</b>&nbsp;Kombo</span>
+        </div>
+        <div className="abf-places">
+          <span><Icon name="podium" size={15} /><b>{dayPlace}.</b>&nbsp;heute</span>
+          <span><Icon name="trophy" size={15} /><b>{seasonPlace}.</b>&nbsp;Saison{up > 0 ? <em className="pos">&nbsp;↑{up}</em> : null}</span>
+        </div>
       </div>
       <dl className="abf-parts">
         {parts.map((k) => (
           <div key={k}>
-            <dt>{SCORE_LABEL[k]}</dt>
+            <dt>{PART_SHORT[k]}</dt>
             <dd>{nf(result.parts[k])}</dd>
           </div>
         ))}
       </dl>
-      {result.friendsBeaten.length ? <p className="abf-note">Geschlagen: {result.friendsBeaten.filter((n) => n !== 'Du').join(', ') || 'deine eigene Bestmarke'}</p> : null}
+      {result.friendsBeaten.length ? <p className="abf-note"><Icon name="users" size={15} />{beaten.length ? beaten.join(', ') : 'Eigene Bestmarke'} geschlagen</p> : null}
       <Missions missions={missions} done={done} />
       {rankNow.name !== rankBefore.name ? <p className="abf-levelup">Aufgestiegen: {rankNow.name}</p> : null}
       <RankBar totalM={newTotal} name={rankNow.name} gained={result.meters} />
       <div className="abf-actions">
-        <button type="button" className="btn btn--primary btn--full" onClick={onAgain}><span>Nochmal</span></button>
-        <button type="button" className="btn btn--secondary btn--full" onClick={onBoard}><span>Bestenliste</span></button>
+        <button type="button" className="btn btn--primary btn--full" onClick={onAgain}><Icon name="refresh" size={18} /><span>Nochmal</span></button>
+        <button type="button" className="btn btn--secondary abf-actions__board" onClick={onBoard} aria-label="Bestenliste"><Icon name="podium" size={20} /></button>
       </div>
     </section>
   );
@@ -735,6 +811,9 @@ function PlayIcon() {
 }
 function ThumbIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h16M7 9l-3 3 3 3M17 9l3 3-3 3" /></svg>;
+}
+function TuckIcon() {
+  return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V5M8 9l4-4 4 4" /></svg>;
 }
 function BrakeIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v15M8 15l4 4 4-4" /></svg>;

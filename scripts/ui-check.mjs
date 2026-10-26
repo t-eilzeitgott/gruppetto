@@ -61,9 +61,11 @@ const PAGES = [
   ['game-hud', '?demo#/spiel', async (p) => { await p.click('text=Losfahren'); await p.waitForTimeout(3200); }],
   ['game-over', '?demo#/spiel', async (p) => {
     await p.click('text=Losfahren');
-    await p.waitForTimeout(2600);
+    await p.waitForFunction(() => window.__abfahrt.engine().phase === 'playing', null, { timeout: 300000 });
     await p.evaluate(() => window.__abfahrt.engine().crash('Muuuh – Kuh erwischt'));
-    await p.waitForTimeout(2600);
+    // Sturz läuft in Zeitlupe; im langsamen Testbrowser kann das dauern
+    await p.waitForSelector('.abf-summary', { timeout: 300000 });
+    await p.waitForTimeout(1800);
   }],
   ['player', '?demo#/spieler/u-felix'],
   ['player-me', '?demo#/spieler/u-christoph'],

@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
 import { useTourContext } from '../app/context';
-import { useNow } from '../app/hooks';
+import { useMembers, useNow } from '../app/hooks';
 import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
-import { bonusDeadline, fmtDay, fmtDayTime, fmtRange, lastPublishedStage, nextOpenStage, runningStages, tourPhase, dayDiff, fmtClock, fmtKm } from '../lib/time';
+import { bonusDeadline, fmtDay, lastPublishedStage, nextOpenStage, runningStages, tourPhase, dayDiff, fmtClock, fmtKm } from '../lib/time';
 import { BONUS_CATEGORIES, type Stage, type TourData } from '../lib/types';
-import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, Loading, useTitle } from '../ui/kit';
+import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, Loading, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
-import { KindChip, Tippers, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
+import { KindChip, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
 import { TourPicker, Wordmark } from '../ui/Shell';
 import { useApp } from '../app/context';
 import { useQuery } from '../app/query';
@@ -14,7 +14,7 @@ import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import { GameIcon } from '../ui/GameIcon';
 import { Track } from '../game/abfahrt/track';
-import { berlinDayKey } from '../game/abfahrt/rng';
+import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import type { Profile } from '../lib/types';
 
 export function Home() {
@@ -69,13 +69,7 @@ function HomeBody({ data, members, me, now }: { data: TourData; members: Profile
 
   return (
     <>
-      {phase === 'upcoming' ? (
-        <section className="hero" aria-label="Start der Rundfahrt">
-          <span className="muted">{fmtRange(data.tour.start_date, data.tour.end_date)}</span>
-          <p className="hero__big"><Countdown to={deadline} now={now} prefix="Noch " /></p>
-          <span className="muted">bis zum Start von Etappe&nbsp;1 · {fmtDayTime(deadline)}</span>
-        </section>
-      ) : myRow ? (
+      {phase === 'upcoming' ? null : myRow ? (
         <section className="hero" aria-label="Dein Stand">
           <span className="muted">{last ? `${data.tour.short_name} · nach Etappe\u00a0${last.number}` : data.tour.name}</span>
           <p className="hero__big">
@@ -94,21 +88,11 @@ function HomeBody({ data, members, me, now }: { data: TourData; members: Profile
         </section>
       ) : null}
 
-      {phase === 'upcoming' ? (
-        <section className="card card--accent">
-          <div className="card__row">
-            <span className="eyebrow">Vor dem Start</span>
-            <span className="chip">{myBonusCount} von&nbsp;{BONUS_CATEGORIES.length}</span>
-          </div>
-          <h2 className="card__title">Bonustipps abgeben</h2>
-          <p className="muted">Tippe Gesamtsieger, Trikots, bestes Team und mehr. Möglich bis {fmtDayTime(deadline)}.</p>
-          <LinkButton to="/bonus" full>{myBonusCount === 0 ? 'Bonustipps starten' : 'Bonustipps bearbeiten'}</LinkButton>
-        </section>
-      ) : null}
-
       {running.length ? <RunningCard stage={running[running.length - 1]} data={data} me={me} more={running.length - 1} /> : null}
 
       {next ? <NextStageCard stage={next} data={data} me={me} members={members} now={now} /> : null}
+
+      {phase === 'upcoming' ? <BonusRow count={myBonusCount} deadline={deadline} now={now} /> : null}
 
       {!next && phase !== 'finished' && data.stages.length === 0 ? (
         <section className="card">
@@ -128,29 +112,48 @@ function HomeBody({ data, members, me, now }: { data: TourData; members: Profile
   );
 }
 
-/** Minispiel als letzte Karte auf der Startseite */
+/** Minispiel als letzte Karte: Strecke des Tages und die aktuelle Bestenliste */
 function GameCard() {
   const { me } = useApp();
+  const members = useMembers().data ?? [];
   const day = berlinDayKey();
+  const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>('game:abfahrt:season', () => source.gameLeaderboard('abfahrt'));
+  const today = useQuery<GameBest[]>(`game:abfahrt:day:${day}`, () => source.gameLeaderboard('abfahrt', since));
   const title = useMemo(() => new Track(day).title, [day]);
-  const idx = season.data?.findIndex((b) => b.user_id === me.id) ?? -1;
-  const mine = idx >= 0 ? season.data![idx] : null;
-  const leader = season.data?.[0];
+  const useToday = (today.data?.length ?? 0) > 0;
+  const rows = (useToday ? today.data : season.data) ?? [];
+  const myIdx = rows.findIndex((b) => b.user_id === me.id);
+  const shown = rows.slice(0, 3).map((r, i) => ({ r, i }));
+  if (myIdx >= 3) shown.push({ r: rows[myIdx], i: myIdx });
   return (
     <Link to="/spiel" className="card game-card" ariaLabel="Minispiel Abfahrt öffnen">
-      <GameIcon size={56} />
-      <span className="game-card__main">
-        <span className="eyebrow">Minispiel</span>
-        <strong className="game-card__title">Abfahrt</strong>
-        <span className="muted game-card__route">Heute: {title}</span>
-        <span className="game-card__meta">
-          {mine
-            ? `Bestleistung ${mine.best.toLocaleString('de-DE')} · Platz\u00a0${idx + 1}`
-            : leader ? `Rekord ${leader.best.toLocaleString('de-DE')} – schlägst du ihn?` : 'Fahr die erste Bestmarke der Runde'}
+      <span className="game-card__head">
+        <GameIcon size={48} />
+        <span className="game-card__main">
+          <strong className="game-card__title">Abfahrt</strong>
+          <span className="muted game-card__route">{title}</span>
         </span>
+        <Icon name="chevron" className="muted" />
       </span>
-      <Icon name="chevron" className="muted" />
+      {shown.length ? (
+        <span className="game-board" role="list" aria-label={useToday ? 'Bestenliste heute' : 'Bestenliste Saison'}>
+          <span className="game-board__label">{useToday ? 'Heute' : 'Saison'}</span>
+          {shown.map(({ r, i }) => {
+            const m = members.find((x) => x.id === r.user_id);
+            return (
+              <span key={r.user_id} role="listitem" className={cx('game-board__row', r.user_id === me.id && 'is-me')}>
+                <span className="game-board__rank">{i + 1}</span>
+                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={24} />
+                <span className="game-board__name">{r.user_id === me.id ? 'Du' : m?.display_name ?? 'Jemand'}</span>
+                <strong>{r.best.toLocaleString('de-DE')}</strong>
+              </span>
+            );
+          })}
+        </span>
+      ) : (
+        <span className="game-card__meta">Fahr die erste Bestmarke der Runde</span>
+      )}
     </Link>
   );
 }
@@ -168,37 +171,67 @@ function NextStageCard({ stage, data, me, members, now }: {
   const myTip = data.tips.find((t) => t.stage_id === stage.id && t.user_id === me.id);
   const route = stageRoute(stage);
   return (
-    <section className="card" aria-labelledby={`next-${stage.id}`}>
+    <section className={cx('card tip-card', !myTip && 'card--accent')} aria-labelledby={`next-${stage.id}`}>
       <div className="card__row">
         <span className="eyebrow">{dayLabel(stage, now)}</span>
-        <KindChip stage={stage} />
+        <span className="time-chip" title="Tippschluss"><Icon name="clock" size={15} /><Countdown to={stage.starts_at} now={now} prefix="" /></span>
       </div>
       <Link to={`/etappe/${stage.id}`} className="card__link">
         <h2 id={`next-${stage.id}`} className="card__title">Etappe&nbsp;{stage.number}</h2>
         {route ? <p className="card__sub">{route}</p> : null}
       </Link>
-      <p className="card__facts">
-        {[stage.distance_km ? fmtKm(stage.distance_km) : null, `Start ${fmtClock(stage.starts_at)}`].filter(Boolean).join(' · ')}
-      </p>
-      <div className="deadline-row">
-        <Icon name="clock" size={18} />
-        <span>Tippschluss</span>
-        <strong className="accent"><Countdown to={stage.starts_at} now={now} /></strong>
+      <div className="tip-facts">
+        <KindChip stage={stage} />
+        {stage.distance_km ? <span className="fact"><Icon name="flag" size={14} />{fmtKm(stage.distance_km)}</span> : null}
+        <span className="fact"><Icon name="clock" size={14} />{fmtClock(stage.starts_at)}</span>
+        <TipCount stage={stage} members={members} />
       </div>
       {myTip ? (
-        <div className="my-tip">
+        <Link to={`/tipp/${stage.id}`} className="my-tip" ariaLabel={`Dein Tipp: ${riderName(data, myTip.rider_id)} – ändern`}>
           <Icon name="check" size={18} />
-          <div className="my-tip__text">
-            <span className="muted">Dein Tipp</span>
-            <strong>{riderName(data, myTip.rider_id)}</strong>
-          </div>
-          <Link to={`/tipp/${stage.id}`} className="btn btn--secondary btn--sm"><span>Ändern</span></Link>
-        </div>
+          <strong className="my-tip__name">{riderName(data, myTip.rider_id)}</strong>
+          <Icon name="pencil" size={17} className="muted" />
+        </Link>
       ) : (
         <LinkButton to={`/tipp/${stage.id}`} full>Jetzt tippen</LinkButton>
       )}
-      <Tippers stage={stage} members={members} />
     </section>
+  );
+}
+
+/** Wer schon getippt hat: Avatare und „3/3“ – die Tipps selbst bleiben bis zum Start verdeckt */
+function TipCount({ stage, members }: { stage: Stage; members: Profile[] }) {
+  const q = useQuery<string[]>(`tippers:${stage.id}`, () => source.stageTippers(stage.id));
+  if (q.loading || !q.data) return null;
+  const ids = new Set(q.data);
+  const tipped = members.filter((m) => ids.has(m.id));
+  return (
+    <span className="fact tip-count" title={`${tipped.length} von ${members.length} getippt, sichtbar ab ${fmtClock(stage.starts_at)}`}>
+      <span className="avatar-stack avatar-stack--sm" aria-hidden="true">
+        {tipped.slice(0, 3).map((m) => <Avatar key={m.id} name={m.display_name} color={m.avatar_color} size={20} />)}
+      </span>
+      <span>{tipped.length}/{members.length}</span>
+      <span className="sr-only">getippt</span>
+    </span>
+  );
+}
+
+/** Bonustipps als kompakte Zeile mit Fortschrittsring */
+function BonusRow({ count, deadline, now }: { count: number; deadline: Date | string; now: number }) {
+  const total = BONUS_CATEGORIES.length;
+  const done = count >= total;
+  const t = Math.min(1, count / total);
+  return (
+    <Link to="/bonus" className={cx('card card--row bonus-row', !done && 'card--accent')} ariaLabel={`Bonustipps: ${count} von ${total}`}>
+      <span className="ring" style={{ ['--t' as string]: t.toFixed(3) }} aria-hidden="true">
+        <Icon name={done ? 'check' : 'star'} size={18} />
+      </span>
+      <span className="card__main">
+        <strong>Bonustipps</strong>
+        <span className="muted">{done ? 'Alle abgegeben' : <>{count}/{total} · noch <Countdown to={deadline} now={now} prefix="" /></>}</span>
+      </span>
+      <Icon name="chevron" className="muted" />
+    </Link>
   );
 }
 

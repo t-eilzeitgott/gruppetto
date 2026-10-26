@@ -307,3 +307,119 @@ export function bannerTex(text: string, sub: string, bg: string, fg: string): HT
   }
   return cv;
 }
+
+// ------------------------------------------------------------------ Werbebanden und Pappschilder
+
+/** Zellen im Atlas: oben 4×4 Banden, unten 4×4 Schilder (je 256×128) */
+export const AD_COLS = 4;
+export const AD_COUNT = 16;
+export const SIGN_COUNT = 16;
+/** UV-Rechteck einer Zelle: [u0, v0, u1, v1] */
+export function adCell(i: number, sign: boolean): [number, number, number, number] {
+  const k = (sign ? 16 : 0) + (i % 16);
+  const cx = k % AD_COLS;
+  const cy = Math.floor(k / AD_COLS);
+  const pad = 2 / 1024;
+  return [cx / 4 + pad, 1 - (cy + 1) / 8 + pad, (cx + 1) / 4 - pad, 1 - cy / 8 - pad];
+}
+
+const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Arial, sans-serif';
+const ROUND = '"Arial Rounded MT Bold", "SF Pro Rounded", ui-rounded, ' + SANS;
+const MARKER = '"Marker Felt", "Chalkboard SE", "Comic Sans MS", "Bradley Hand", ' + SANS;
+
+/** erfundene Marken – Radsport-Humor statt echter Sponsoren */
+const ADS: { t: string; s: string; bg: string; fg: string; ac?: string; style?: 'round' | 'italic' | 'stripe' }[] = [
+  { t: 'gruppetto', s: 'Tippen. Leiden. Siegen.', bg: '#ff5fa2', fg: '#ffffff', style: 'round' },
+  { t: 'BIDON-BAR', s: 'kalt · nass · gratis', bg: '#0b5394', fg: '#ffffff', ac: '#7fd3ff' },
+  { t: 'KETTE RECHTS', s: 'Fahrradwerkstatt', bg: '#111214', fg: '#ffd400', style: 'italic' },
+  { t: 'POLENTA POWER', s: 'seit 1923', bg: '#ffd400', fg: '#1a1a1a', ac: '#c0392b' },
+  { t: 'Gelateria Tornante', s: '48 Sorten · 48 Kehren', bg: '#f6efe2', fg: '#d63384', style: 'round' },
+  { t: 'ESPRESSO DOPPIO', s: 'Doping für alle', bg: '#4b2e1e', fg: '#f3e2c7', style: 'stripe' },
+  { t: 'Bremsen?', s: 'Optional.', bg: '#e74c3c', fg: '#ffffff', style: 'italic' },
+  { t: 'WINDSCHATTEN', s: 'Versicherung AG', bg: '#169c88', fg: '#ffffff' },
+  { t: 'Kaiserschmarrn', s: 'Hütte · 2 km', bg: '#ffffff', fg: '#7d1f2a', style: 'round' },
+  { t: 'SPRINT-SALAMI', s: 'luftgetrocknet', bg: '#7d1f2a', fg: '#ffffff', ac: '#ffd400' },
+  { t: 'SITZCREME', s: 'Deluxe · für lange Tage', bg: '#ffffff', fg: '#2e86de', style: 'stripe' },
+  { t: 'TOUR27', s: 'Jetzt mittippen', bg: '#1f2a44', fg: '#ff8fc0', style: 'round' },
+  { t: 'PASTA LANTERNA', s: 'für das Gruppetto', bg: '#2f9e5a', fg: '#ffffff', ac: '#ffffff' },
+  { t: 'Schlauch-Express', s: '24 h Pannendienst', bg: '#f1c40f', fg: '#111214', style: 'italic' },
+  { t: 'BERGPREIS BIER', s: 'alkoholfrei · leider', bg: '#0e3b2e', fg: '#f1c40f' },
+  { t: 'Pizzeria Kehre 7', s: 'Holzofen · Aussicht', bg: '#ffffff', fg: '#c0392b', style: 'round' },
+];
+
+const SIGNS = ['ALLEZ!', 'FORZA!', 'DAJE!', 'HOPP HOPP', 'VAI VAI!', 'GO GO GO', '♥ GIRO', 'KEINE BREMSE!', 'HALLO MAMA', 'SCHNELLER!', 'BIDON PLS!', 'TOUR27', 'MACH ES!', 'BRAVO!', 'ICH BIN IM TV', 'ALLEZ ALLEZ'];
+const BOARDS: [string, string][] = [['#fbfaf5', '#141414'], ['#ffe14d', '#141414'], ['#ff8fc0', '#141414'], ['#d8b07a', '#1a1a1a'], ['#fbfaf5', '#d6249f'], ['#fbfaf5', '#c0392b'], ['#ffffff', '#0b5394']];
+
+/** Atlas mit Banden (oben) und handgeschriebenen Pappschildern (unten); Namen der Runde kommen auf ein paar Schilder */
+export function adsTex(names: string[]): HTMLCanvasElement {
+  const cv = canvas(1024, 1024);
+  const c = cv.getContext('2d')!;
+  const r = mulberry32(77);
+  const fit = (text: string, weight: string, font: string, max: number, maxW: number) => {
+    let fs = max;
+    c.font = `${weight} ${fs}px ${font}`;
+    while (c.measureText(text).width > maxW && fs > 12) { fs -= 2; c.font = `${weight} ${fs}px ${font}`; }
+    return fs;
+  };
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  // Banden: 2 m × 0,8 m – gezeichnet in 320×128 und auf 256×128 gestaucht
+  for (let i = 0; i < AD_COUNT; i++) {
+    const ad = ADS[i];
+    const x0 = (i % 4) * 256;
+    const y0 = Math.floor(i / 4) * 128;
+    c.save();
+    c.translate(x0, y0);
+    c.scale(256 / 320, 1);
+    c.fillStyle = ad.bg;
+    c.fillRect(0, 0, 320, 128);
+    if (ad.style === 'stripe') {
+      c.fillStyle = ad.fg;
+      c.globalAlpha = 0.18;
+      for (let k = -2; k < 12; k++) { c.beginPath(); c.moveTo(k * 36, 128); c.lineTo(k * 36 + 18, 128); c.lineTo(k * 36 + 58, 0); c.lineTo(k * 36 + 40, 0); c.fill(); }
+      c.globalAlpha = 1;
+    }
+    if (ad.ac) { c.fillStyle = ad.ac; c.fillRect(0, 0, 320, 7); c.fillRect(0, 121, 320, 7); }
+    c.fillStyle = ad.fg;
+    const font = ad.style === 'round' ? ROUND : SANS;
+    const weight = ad.style === 'italic' ? 'italic 900' : '900';
+    fit(ad.t, weight, font, 54, 296);
+    c.fillText(ad.t, 160, 54);
+    c.globalAlpha = 0.85;
+    fit(ad.s, '600', SANS, 22, 280);
+    c.fillText(ad.s, 160, 98);
+    c.globalAlpha = 1;
+    c.restore();
+  }
+  // Pappschilder, leicht schief beschrieben
+  const own = names.slice(0, 5);
+  for (let i = 0; i < SIGN_COUNT; i++) {
+    const k = 16 + i;
+    const x0 = (k % 4) * 256;
+    const y0 = Math.floor(k / 4) * 128;
+    const [bg, fg] = BOARDS[Math.floor(r() * BOARDS.length)];
+    c.fillStyle = bg;
+    c.fillRect(x0, y0, 256, 128);
+    // Pappe: leichte Flecken und Kanten
+    c.globalAlpha = 0.08;
+    for (let n = 0; n < 40; n++) { c.fillStyle = r() < 0.5 ? '#000' : '#fff'; c.fillRect(x0 + r() * 250, y0 + r() * 122, 3 + r() * 10, 2 + r() * 6); }
+    c.globalAlpha = 0.25;
+    c.strokeStyle = '#000';
+    c.lineWidth = 3;
+    c.strokeRect(x0 + 1.5, y0 + 1.5, 253, 125);
+    c.globalAlpha = 1;
+    let text = SIGNS[i];
+    if (i < own.length * 2 && own.length) {
+      const n = own[Math.floor(i / 2) % own.length];
+      text = i % 2 === 0 ? `ALLEZ ${n}` : `${n} ♥`;
+    }
+    c.save();
+    c.translate(x0 + 128, y0 + 66);
+    c.rotate((r() - 0.5) * 0.12);
+    c.fillStyle = fg;
+    fit(text, '900', MARKER, 60, 226);
+    c.fillText(text, 0, 0);
+    c.restore();
+  }
+  return cv;
+}

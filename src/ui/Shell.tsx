@@ -27,6 +27,8 @@ export function Shell({ children, hideTabBar, isAdmin }: { children: ReactNode; 
   const sideActive = isAdmin && route.parts[0] === 'admin' ? '/admin' : active;
   return (
     <div className={cx('shell', hideTabBar && 'shell--no-tabbar')}>
+      {/* Hintergrund unter der Statusleiste (Uhr, Akku), damit gescrollter Inhalt nicht dahinter durchscheint */}
+      {hideTabBar ? null : <div className="status-shade" aria-hidden="true" />}
       <aside className="sidebar" aria-label="Seitenleiste">
         <div className="wordmark wordmark--lg">gruppetto<span>.</span></div>
         <nav className="sidebar__nav" aria-label="Hauptnavigation">

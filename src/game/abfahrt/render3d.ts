@@ -9,9 +9,11 @@ import * as THREE from 'three';
 import { EDGE, ROAD_HALF, SEG, Track, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
 import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
-import { asphaltTex, bannerTex, cobbleTex, detailTex, facadeTex, FACADE_BANDS, fieldsTex, gravelTex, roundTex, vergeTex } from './tex3d';
+import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, facadeTex, FACADE_BANDS, fieldsTex, gravelTex, roundTex, vergeTex } from './tex3d';
 import { GB, RiderModel, lin, lin255, propGeometries, type Prop3D, type RGBf } from './models3d';
 import type { Abfahrt, Opp, Friend } from './engine';
+import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
+import { mulberry32 } from './rng';
 
 const CH = 40;            // Segmente je Abschnitt (80 m)
 const AHEAD = 560;        // so weit voraus wird gebaut (m)
@@ -21,7 +23,7 @@ const CAM_UP = 2.75;
 
 const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'bush', 'rock', 'boulder', 'snowpole', 'hay', 'vinerow', 'fence', 'lamp', 'logs', 'palm']);
 const BILLBOARD: Record<string, { variants: number; frames: number }> = {
-  crowd: { variants: 4, frames: 2 }, cow: { variants: 2, frames: 1 }, cowBW: { variants: 2, frames: 1 }, chevron: { variants: 1, frames: 1 },
+  cow: { variants: 2, frames: 1 }, cowBW: { variants: 2, frames: 1 }, chevron: { variants: 1, frames: 1 },
   dosso: { variants: 1, frames: 1 }, chalet: { variants: 2, frames: 1 }, barn: { variants: 2, frames: 1 }, rifugio: { variants: 1, frames: 1 },
   farmhouse: { variants: 1, frames: 1 }, flowers: { variants: 4, frames: 1 }, grassTuft: { variants: 2, frames: 1 }, sunflowers: { variants: 2, frames: 1 },
   parasol: { variants: 4, frames: 1 }, boat: { variants: 4, frames: 1 }, fountain: { variants: 1, frames: 1 }, flagpole: { variants: 4, frames: 2 },
@@ -40,7 +42,9 @@ const shadeF = (c: RGBf, f: number): RGBf => [c[0] * f, c[1] * f, c[2] * f];
 const rgbLin = (c: RGB): RGBf => lin255(c[0], c[1], c[2]);
 
 interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg }
-interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null }
+interface CrowdBatch { near: THREE.Mesh[]; far: THREE.Mesh[]; c: THREE.Vector3; r: number; lod: number }
+interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[] }
+interface Runner { z: number; x: number; v: number; go: boolean; p: Person; act: number }
 interface AtlasEntry { u0: number; v0: number; u1: number; v1: number; w: number; h: number; du: number }
 
 export class Renderer3D {
@@ -82,7 +86,7 @@ export class Renderer3D {
     asphalt: THREE.MeshLambertMaterial; fresh: THREE.MeshLambertMaterial; cobble: THREE.MeshLambertMaterial; gravel: THREE.MeshLambertMaterial;
     verge: THREE.MeshLambertMaterial; marks: THREE.MeshLambertMaterial; terrain: THREE.MeshLambertMaterial; portal: THREE.MeshLambertMaterial; barrier: THREE.MeshLambertMaterial;
     water: THREE.MeshPhongMaterial; tunnel: THREE.MeshBasicMaterial; facade: THREE.MeshLambertMaterial; roof: THREE.MeshLambertMaterial;
-    props: THREE.MeshLambertMaterial; billboard: THREE.MeshLambertMaterial; glow: THREE.PointsMaterial; lampGlow: THREE.MeshBasicMaterial;
+    props: THREE.MeshLambertMaterial; ads: THREE.MeshLambertMaterial; billboard: THREE.MeshLambertMaterial; glow: THREE.PointsMaterial; lampGlow: THREE.MeshBasicMaterial;
   };
   private props!: Record<Prop3D, THREE.BufferGeometry>;
   private atlas = new Map<string, AtlasEntry>();
@@ -101,10 +105,21 @@ export class Renderer3D {
   private parts: THREE.Points;
   private partPos = new Float32Array(300 * 3);
   private partCol = new Float32Array(300 * 3);
+  // Zuschauer
+  private crowdU = { uTime: this.time, uRider: { value: new THREE.Vector3() } };
+  private crowdMat = crowdMaterial(this.crowdU);
+  private runners: Runner[] = [];
+  private runBuf = new THREE.InstancedInterleavedBuffer(new Float32Array(6 * STRIDE), STRIDE, 1).setUsage(THREE.DynamicDrawUsage);
+  private runMeshes: THREE.Mesh[] = [];
+  private runNext = 0;
+  private adsGB: GB | null = null;
+  private w2 = { x: 0, y: 0, z: 0, th: 0 };
 
   // Kamera
   private cam = { x: 0, y: 0, z: 0, th: 0, init: false, fov: 70 };
   playerScreen = { x: 0, y: 0, s: 60 };
+  /** nur für Tests: feste Kamera [x, y, z, Blickziel x, y, z] */
+  debugCam: number[] | null = null;
   private w = { x: 0, y: 0, z: 0, th: 0 };
 
   constructor(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement) {
@@ -207,11 +222,18 @@ export class Renderer3D {
       facade: L({ map: facade, emissiveMap: facadeLit, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0 }),
       roof: L({ vertexColors: true, flatShading: true }),
       props: L({ vertexColors: true, flatShading: true }),
+      ads: L({ vertexColors: true, side: THREE.DoubleSide }),
       billboard: L({ alphaTest: 0.5, side: THREE.DoubleSide }),
       glow: new THREE.PointsMaterial({ size: 3.2, map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
       lampGlow: new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }),
     };
     this.props = propGeometries();
+    // Banden und Schilder: vorn bedruckt, hinten schlichte Farbe (Eckpunktfarbe)
+    this.mats.ads.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>',
+        '#ifdef USE_COLOR\nif (!gl_FrontFacing) diffuseColor.rgb = vColor.rgb;\n#endif');
+    };
+    this.mats.ads.customProgramCacheKey = () => 'ads-1';
     // Billboards: Bild-Atlas mit Animationsrahmen
     this.buildAtlas();
     const timeRef = this.time;
@@ -313,8 +335,14 @@ export class Renderer3D {
     this.updateLight(g, biome, seg, dt);
     this.updateChunks(g);
     this.updateCamera(g, dt);
+    if (this.debugCam) {
+      const d = this.debugCam;
+      this.camera.position.set(d[0], d[1], d[2]);
+      this.camera.lookAt(d[3], d[4], d[5]);
+    }
     this.updateEnvironment(biome, dt);
     this.updateRiders(g);
+    this.updateCrowd(g, dt);
     this.updateObjects(g);
     this.updateParticles(g);
     this.gl.render(this.scene, this.camera);
@@ -323,8 +351,15 @@ export class Renderer3D {
 
   private reset(track: Track) {
     this.track = track;
+    const old = this.mats.ads.map;
+    this.mats.ads.map = this.tex(adsTex(track.names));
+    this.mats.ads.map.wrapS = this.mats.ads.map.wrapT = THREE.ClampToEdgeWrapping;
+    this.mats.ads.needsUpdate = true;
+    old?.dispose();
     this.clearChunks();
     this.cam.init = false;
+    this.runners = [];
+    this.runNext = 0;
   }
 
   private clearChunks() {
@@ -389,7 +424,7 @@ export class Renderer3D {
     const rz = w.z;
     // Blickrichtung = Fahrtrichtung des Fahrers (Straße plus Querbewegung), geglättet:
     // die Kamera steht immer direkt hinter ihm, er bleibt in der Bildmitte – auch in Kehren
-    const yaw = w.th + Math.atan2(p.vx, Math.max(5, p.v)) * 0.7;
+    const yaw = w.th + Math.atan2(p.vx, Math.max(5, p.v)) * 0.3;
     const back = CAM_BACK;
     const behindY = track.heightAt(Math.max(0, p.z - back));
     const ty = Math.max(behindY, roadY) + CAM_UP + air * 0.35;
@@ -453,78 +488,126 @@ export class Renderer3D {
     });
   }
 
-  /** Berge rund um den Horizont: echte Low-Poly-Gipfel mit Schnee, Fels und bewaldeten Flanken */
+  /**
+   * Berge rund um den Horizont: ein Höhenfeld-Ring mit Graten aus „Ridged Noise“.
+   * Schnee nur auf flacheren Stellen, steile Flanken bleiben Fels, unten Wald und Matten,
+   * mit der Entfernung zunehmender Dunst – so wirkt die Kulisse wie ein echtes Panorama.
+   */
   private buildMountains(biome: BiomeId): THREE.Mesh {
     const pal = BIOME_PALETTES[biome];
-    let seed = 0;
+    let seed = 7;
     for (const ch of biome) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
-    let st = seed || 1;
-    const r = () => { st = (Math.imul(st ^ (st >>> 15), 2246822507) + 0x9e3779b9) >>> 0; return (st >>> 8) / 16777216; };
-    const cfg: Record<BiomeId, { amp: [number, number]; snow: number; green: number; jag: number }> = {
-      pass: { amp: [750, 1350], snow: 0.48, green: 0.18, jag: 1 },
-      alpine: { amp: [650, 1250], snow: 0.55, green: 0.32, jag: 0.7 },
-      forest: { amp: [350, 800], snow: 0.86, green: 0.6, jag: 0.4 },
-      village: { amp: [550, 1150], snow: 0.6, green: 0.38, jag: 0.6 },
-      lake: { amp: [450, 1050], snow: 0.66, green: 0.42, jag: 0.5 },
-      vineyard: { amp: [120, 330], snow: 2, green: 0.95, jag: 0.15 },
+    const cfg: Record<BiomeId, { amp: number; snow: number; tree: number; sharp: number }> = {
+      pass: { amp: 1750, snow: 0.3, tree: 0.15, sharp: 1.5 },
+      alpine: { amp: 1650, snow: 0.36, tree: 0.28, sharp: 1.4 },
+      forest: { amp: 950, snow: 0.68, tree: 0.6, sharp: 1.1 },
+      village: { amp: 1450, snow: 0.42, tree: 0.34, sharp: 1.3 },
+      lake: { amp: 1350, snow: 0.44, tree: 0.36, sharp: 1.3 },
+      vineyard: { amp: 430, snow: 2, tree: 0.9, sharp: 0.8 },
     };
     const c = cfg[biome];
-    const gb = new GB();
-    const snow = lin('#f2f6fb');
-    const rock = rgbLin(mixRGB(pal.far, [150, 150, 148], 0.35));
-    const green = rgbLin(mixRGB(pal.mid, pal.haze, 0.35));
-    const haze = rgbLin(pal.haze);
-    const mix = (a: RGBf, b: RGBf, t: number): RGBf => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-    const rings = [{ R: 2100, n: 22, k: 0.55, hz: 0.3 }, { R: 3400, n: 18, k: 0.95, hz: 0.55 }];
-    for (const ring of rings) {
-      for (let i = 0; i < ring.n; i++) {
-        const a = ((i + r() * 0.7) / ring.n) * Math.PI * 2;
-        const rr = ring.R * (0.85 + r() * 0.3);
-        const h = (c.amp[0] + (c.amp[1] - c.amp[0]) * r()) * ring.k;
-        const b = h * (0.6 + r() * 0.45) + 120;
-        const cx = Math.cos(a) * rr;
-        const cz = Math.sin(a) * rr;
-        const m = 9;
-        const lv = [
-          { y: -140, rad: b * 1.1, jit: 0.15 },
-          { y: h * 0.45, rad: b * (0.55 + (1 - c.jag) * 0.1), jit: 0.18 * c.jag + 0.06 },
-          { y: h * 0.8, rad: b * (0.22 + (1 - c.jag) * 0.14), jit: 0.22 * c.jag + 0.06 },
-        ];
-        const pts = lv.map((L, li) => {
-          const off = r() * Math.PI * 2;
-          return Array.from({ length: m }, (_, j) => {
-            const ang = off + (j / m) * Math.PI * 2;
-            const rad = L.rad * (1 - L.jit / 2 + r() * L.jit);
-            return [cx + Math.cos(ang) * rad + (li ? (r() - 0.5) * b * 0.1 : 0), L.y, cz + Math.sin(ang) * rad];
-          });
-        });
-        const apex = [cx + (r() - 0.5) * b * 0.15 * c.jag, h, cz + (r() - 0.5) * b * 0.15 * c.jag];
-        const colAt = (y: number): RGBf => {
-          const t = y / h;
-          let col = t > c.snow ? snow : t < c.green ? green : rock;
-          if (t > c.snow - 0.06 && t <= c.snow) col = mix(rock, snow, 0.5);
-          return mix(col, haze, Math.min(0.9, ring.hz + Math.max(0, 0.3 - t) * 0.6));
-        };
-        for (let l = 0; l < 2; l++) {
-          for (let j = 0; j < m; j++) {
-            const A = pts[l][j];
-            const B = pts[l][(j + 1) % m];
-            const C = pts[l + 1][(j + 1) % m];
-            const D = pts[l + 1][j];
-            const y = (A[1] + B[1] + C[1] + D[1]) / 4;
-            gb.tri(A, C, B, colAt(y));
-            gb.tri(A, D, C, colAt(y + 1));
-          }
-        }
-        for (let j = 0; j < m; j++) {
-          const A = pts[2][j];
-          const B = pts[2][(j + 1) % m];
-          gb.tri(A, apex, B, colAt((A[1] + B[1] + h) / 3));
-        }
+    // Wertrauschen mit weicher Interpolation
+    const hh = (x: number, y: number) => {
+      let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 2246822519);
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    };
+    const noise = (x: number, y: number) => {
+      const xi = Math.floor(x);
+      const yi = Math.floor(y);
+      const fx = x - xi;
+      const fy = y - yi;
+      const u = fx * fx * (3 - 2 * fx);
+      const v = fy * fy * (3 - 2 * fy);
+      const a = hh(xi, yi) + (hh(xi + 1, yi) - hh(xi, yi)) * u;
+      const b = hh(xi, yi + 1) + (hh(xi + 1, yi + 1) - hh(xi, yi + 1)) * u;
+      return a + (b - a) * v;
+    };
+    // Grate: 1 - |n|, geschärft, mehrere Oktaven, feinere Oktaven folgen den groben
+    const ridged = (x: number, y: number) => {
+      let sum = 0;
+      let amp = 0.55;
+      let f = 1;
+      let w = 1;
+      for (let o = 0; o < 5; o++) {
+        let n = 1 - Math.abs(noise(x * f, y * f) * 2 - 1);
+        n = Math.pow(n, 2.2);
+        sum += n * amp * w;
+        w = Math.min(1, n * 1.6);
+        f *= 2.03;
+        amp *= 0.5;
+      }
+      return sum;
+    };
+    const R0 = 1250;
+    const R1 = 4800;
+    const NA = 240;
+    const NR = 30;
+    const pos: number[] = [];
+    const rad: number[] = [];
+    const heights: number[] = [];
+    for (let i = 0; i < NR; i++) {
+      const t = i / (NR - 1);
+      const r = R0 * Math.pow(R1 / R0, t);
+      // Anstieg vom Tal, ganz hinten etwas niedriger, damit die Gipfel davor die Silhouette bilden
+      const env = Math.min(1, Math.max(0, (r - R0) / 900)) ** 1.4 * (1 - 0.35 * Math.max(0, (r - 3600) / (R1 - 3600)));
+      for (let j = 0; j <= NA; j++) {
+        const a = (j / NA) * Math.PI * 2;
+        const x = Math.cos(a) * r;
+        const z = Math.sin(a) * r;
+        const ridge = ridged(x / 1500 + 11, z / 1500 - 7);
+        const massif = 0.55 + 0.45 * noise(x / 3800 + 3, z / 3800 + 5);
+        const hgt = -120 + c.amp * env * massif * (0.12 + Math.pow(ridge, c.sharp) * 1.25);
+        pos.push(x, hgt, z);
+        rad.push(r);
+        heights.push(hgt);
       }
     }
-    const geo = gb.build();
-    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, fog: false, transparent: true, opacity: 1, side: THREE.DoubleSide }));
+    const idx: number[] = [];
+    const W = NA + 1;
+    for (let i = 0; i < NR - 1; i++) {
+      for (let j = 0; j < NA; j++) {
+        const a = i * W + j;
+        const b = a + W;
+        idx.push(a, a + 1, b, a + 1, b + 1, b);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const nrm = geo.getAttribute('normal');
+    const snow = lin('#f4f7fb');
+    const snowShade = lin('#cdd8e6');
+    const rock = rgbLin(mixRGB(pal.far, [128, 126, 122], 0.55));
+    const rockDark = rgbLin(mixRGB(pal.far, [86, 84, 82], 0.6));
+    const forest = rgbLin(mixRGB(pal.mid, [40, 70, 45], 0.45));
+    const meadow = rgbLin(mixRGB(pal.mid, pal.valley, 0.5));
+    const haze = rgbLin(pal.haze);
+    const mix = (p: RGBf, q: RGBf, t: number): RGBf => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
+    const sm = (e0: number, e1: number, x: number) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+    const col: number[] = [];
+    for (let k = 0; k < heights.length; k++) {
+      const h = heights[k];
+      const ny = nrm.getY(k);
+      const rel = (h + 120) / c.amp;
+      const jitter = (noise(pos[k * 3] / 140, pos[k * 3 + 2] / 140) - 0.5) * 0.12;
+      const steep = 1 - sm(0.55, 0.85, ny);
+      // Fels, unten Wald und Matten
+      let cc = mix(rock, rockDark, steep * 0.7);
+      const veg = 1 - sm(c.tree - 0.06, c.tree + 0.06, rel + jitter);
+      cc = mix(cc, mix(forest, meadow, sm(0.7, 0.95, ny) * 0.6), veg * (1 - steep * 0.6));
+      // Schnee: über der Schneegrenze, nur wo es nicht zu steil ist
+      const sn = sm(c.snow - 0.06, c.snow + 0.06, rel + jitter) * sm(0.28, 0.58, ny);
+      cc = mix(cc, mix(snowShade, snow, sm(0.6, 0.95, ny)), sn);
+      // Luftperspektive: weiter weg und weiter unten mehr Dunst
+      const far = sm(R0, R1, rad[k]);
+      const low = 1 - sm(-60, c.amp * 0.35, h);
+      cc = mix(cc, haze, Math.min(0.85, 0.1 + far * 0.5 + low * 0.25));
+      col.push(cc[0], cc[1], cc[2]);
+    }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, fog: false, transparent: true, opacity: 1 }));
     mesh.renderOrder = -5;
     mesh.frustumCulled = false;
     return mesh;
@@ -580,8 +663,12 @@ export class Renderer3D {
     const roof = new GB();
     const bill = new GB();
     bill.uv = true;
+    const ads = new GB();
+    ads.uv = true;
+    this.adsGB = ads;
     const anim: number[] = [];
     const glows: number[] = [];
+    const people: Person[][] = [[], [], [], []];
     const inst = new Map<Prop3D, { m: THREE.Matrix4[]; c: THREE.Color[] }>();
     const white = lin('#f2f2ec');
     const sec = (s: Seg) => t.sections[s.sec];
@@ -622,7 +709,7 @@ export class Renderer3D {
         this.tunnelPiece(tunnel, a, b, za, P, glows);
       }
       // --- Begrenzungen
-      this.barriers(bar, a, b, P);
+      this.barriers(bar, ads, a, b, P);
       // --- Malereien
       if (s.decals) for (const d of s.decals) this.decal(group, disp, marks, rows, r, d, P);
       // --- Häuser
@@ -631,7 +718,13 @@ export class Renderer3D {
         if (bld && bld.start === s.i) this.building(facade, roof, rows, r, bld, sg, P);
       }
       // --- Sprites/Requisiten
-      if (s.sprites) for (const sp of s.sprites) this.prop(group, disp, inst, bill, anim, glows, a, sp, s, sp.x < 0 ? lim.L[r] : lim.R[r]);
+      if (s.sprites) {
+        for (const sp of s.sprites) {
+          const l = sp.x < 0 ? lim.L[r] : lim.R[r];
+          if (sp.k === 'crowd') this.crowdPeople(people[Math.min(3, Math.floor(r / 10))], s, sp.x < 0 ? -1 : 1, l, sp.v, Math.abs(sp.x) - EDGE);
+          else this.prop(group, disp, inst, bill, anim, glows, a, sp, s, l);
+        }
+      }
       // --- Banner, Portal
       if (s.banner) this.arch(group, disp, a, s.banner, s.banner.kind === 'gpm' ? this.accent : s.banner.kind === 'sprint' ? '#1f6feb' : '#ffffff');
       for (const f of g.friends) if (Math.floor(f.meters / SEG) === s.i) this.arch(group, disp, a, { kind: 'arch', text: f.userId === 'me' ? 'Deine Bestmarke' : `Bestmarke ${f.name}`, sub: fmtKm(f.meters) }, f.color);
@@ -659,6 +752,7 @@ export class Renderer3D {
     add(tunnel, this.mats.tunnel);
     add(facade, this.mats.facade);
     add(roof, this.mats.roof);
+    add(ads, this.mats.ads);
     if (!bill.empty) {
       const geo = bill.build();
       geo.setAttribute('aAnim', new THREE.Float32BufferAttribute(anim, 3));
@@ -673,6 +767,35 @@ export class Renderer3D {
       im.computeBoundingSphere();
       group.add(im);
     }
+    const crowd: CrowdBatch[] = [];
+    const crowdGeos: THREE.BufferGeometry[] = [];
+    for (const list of people) {
+      if (!list.length) continue;
+      const c = new THREE.Vector3();
+      for (const pp of list) { c.x += pp.x; c.y += pp.y; c.z += pp.z; }
+      c.divideScalar(list.length);
+      let rad = 0;
+      for (const pp of list) rad = Math.max(rad, Math.hypot(pp.x - c.x, pp.y - c.y, pp.z - c.z));
+      const sphere = new THREE.Sphere(c, rad + 4);
+      const batch: CrowdBatch = { near: [], far: [], c, r: rad, lod: -1 };
+      for (const kind of KINDS) {
+        const sub = list.filter((pp) => needs(pp, kind));
+        if (!sub.length) continue;
+        const data = new Float32Array(sub.length * STRIDE);
+        sub.forEach((pp, k) => packPerson(pp, data, k));
+        for (const lod of [0, 1] as const) {
+          const geo = crowdGeometry(kind, lod, data, sub.length);
+          if (!geo) continue;
+          geo.boundingSphere = sphere.clone();
+          crowdGeos.push(geo);
+          const m = new THREE.Mesh(geo, this.crowdMat);
+          m.visible = false;
+          group.add(m);
+          (lod ? batch.far : batch.near).push(m);
+        }
+      }
+      crowd.push(batch);
+    }
     let glow: THREE.Points | null = null;
     if (glows.length) {
       const gg = new THREE.BufferGeometry();
@@ -683,9 +806,10 @@ export class Renderer3D {
       group.add(glow);
     }
     return {
-      idx: ci, group, glow,
+      idx: ci, group, glow, crowd,
       dispose: () => {
         for (const d of disp) d.dispose();
+        for (const geo of crowdGeos) disposeCrowdGeometry(geo);
         group.traverse((o) => { if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose(); });
       },
     };
@@ -852,7 +976,7 @@ export class Renderer3D {
     }
   }
 
-  private barriers(bar: GB, a: Row, b: Row, P: (r: Row, x: number, h: number) => number[]) {
+  private barriers(bar: GB, ads: GB, a: Row, b: Row, P: (r: Row, x: number, h: number) => number[]) {
     const s = a.seg;
     if (s.tunnel) return;
     const wallQ = (x: number, h0: number, h1: number, col: RGBf) => bar.quad(P(a, x, h0), P(b, x, h0), P(b, x, h1), P(a, x, h1), col);
@@ -860,7 +984,14 @@ export class Renderer3D {
       const side = sg < 0 ? s.L : s.R;
       if (s.crowd) {
         const cloth = lin(CLOTH[(s.i >> 2) % CLOTH.length]);
-        wallQ(sg * (EDGE - 0.05), 0.15, 0.95, cloth);
+        // bedruckte Bande zur Straße, dahinter Stoff
+        const x = sg * (EDGE - 0.07);
+        const [u0, v0, u1, v1] = adCell(Math.floor(hash(s.i * 2 + (sg > 0 ? 1 : 0)) * AD_COUNT), false);
+        const A0 = P(a, x, 0.17); const B0 = P(b, x, 0.17); const A1 = P(a, x, 0.93); const B1 = P(b, x, 0.93);
+        const back = shadeF(cloth, 0.9);
+        if (sg > 0) ads.quad(B0, A0, A1, B1, back, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+        else ads.quad(A0, B0, B1, A1, back, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+        wallQ(sg * (EDGE - 0.02), 0.15, 0.95, cloth);
         wallQ(sg * (EDGE - 0.05), 0.95, 1.05, lin('#c8cdd2'));
         if ((s.i & 1) === 0) this.box(bar, a, sg * (EDGE - 0.05), 0, 0.05, 1.05, 0.05, lin('#9aa0a6'), P);
         continue;
@@ -1211,6 +1342,167 @@ export class Renderer3D {
 
   // ------------------------------------------------------------------ Fahrer, Objekte, Partikel
 
+  /**
+   * Zuschauer für einen 4-m-Abschnitt: in Fanzonen zwei bis drei lockere Reihen hinter der Absperrung,
+   * Kinder vorn, ab und zu ein Kind auf den Schultern; in Kehren (v 8) eine Traube, sonst (v 9) ein
+   * kleines Grüppchen am Rand. Immer gleich für dieselbe Stelle.
+   */
+  private crowdPeople(out: Person[], s: Seg, sg: number, lim: number, v: number, dx0: number) {
+    const t = this.track!;
+    const biome = t.sections[s.sec].biome;
+    const zone: Zone = biome === 'pass' ? 'pass' : biome === 'village' ? 'village' : 'tifosi';
+    const r = mulberry32(s.i * 7919 + (sg > 0 ? 104729 : 0));
+    const group = v === 9;
+    const rows = group ? [dx0]
+      : v === 8 ? [0.45, 1.1] : zone === 'village' ? [0.3, 0.92] : [0.34, 0.98, 1.62];
+    const side = sg < 0 ? s.L : s.R;
+    const w = this.w2;
+    const pr = this.profile(side, s, sg, lim);
+    const ground = (dx: number) => {
+      const o = pr.o;
+      for (let k = 0; k < o.length - 1; k++) {
+        if (dx <= o[k + 1]) return pr.h[k] + (pr.h[k + 1] - pr.h[k]) * Math.max(0, Math.min(1, (dx - o[k]) / Math.max(1e-6, o[k + 1] - o[k])));
+      }
+      return pr.h[pr.h.length - 1];
+    };
+    const place = (p: Person, u: number, dx: number) => {
+      const gh = ground(dx);
+      t.world(s.i * SEG + u, sg * (EDGE + dx), gh, w);
+      p.x = w.x; p.y = w.y; p.z = w.z;
+      // Blick zur Straße, etwas dorthin, wo die Fahrer herkommen
+      const rx = -sg * Math.cos(w.th);
+      const rz = -sg * Math.sin(w.th);
+      const bx = -Math.sin(w.th);
+      const bz = Math.cos(w.th);
+      const k = 0.25 + r() * 0.45;
+      const j = (r() - 0.5) * 0.5;
+      p.yaw = Math.atan2(rx + bx * k, rz + bz * k) + j;
+    };
+    for (let ri = 0; ri < rows.length; ri++) {
+      if (zone === 'tifosi' && ri === 2 && r() < 0.45) continue;
+      let u = r() * (group ? 1.2 : 0.45);
+      const step = group ? [0.55, 0.6] : ri === 0 ? [0.56, 0.22] : ri === 1 ? [0.62, 0.26] : [0.74, 0.4];
+      const end = group ? 1.4 + r() * 2.6 : 4;
+      while (u < end) {
+        let dx = rows[ri] + (r() - 0.5) * (ri ? 0.26 : 0.1);
+        if (EDGE + dx > lim - 0.45) break;
+        const kid = ri === 0 && r() < 0.1;
+        if (kid) dx -= 0.06;
+        const p = randomPerson(r, zone, { row: ri, kid });
+        if (!s.crowd && p.act === Act.lean) p.act = Act.idle; // ohne Absperrung lehnt sich niemand an
+        if (group && r() < 0.12) p.act = Act.sign;
+        place(p, u, dx);
+        out.push(p);
+        if (p.act === Act.sign) this.signBoard(p, r);
+        // Kind auf den Schultern
+        if (ri > 0 && !kid && r() < 0.05) {
+          p.act = Act.hold;
+          const c = randomPerson(r, zone, { row: ri, kid: true });
+          c.act = Act.sit;
+          c.height = 0.56 + r() * 0.06;
+          c.yaw = p.yaw;
+          c.x = p.x - Math.sin(p.yaw) * 0.1 * p.height;
+          c.z = p.z - Math.cos(p.yaw) * 0.1 * p.height;
+          c.y = p.y + 1.47 * p.height - 0.9 * c.height;
+          out.push(c);
+        }
+        u += step[0] + r() * step[1] + (!group && r() < 0.06 ? 0.5 + r() * 0.7 : 0);
+      }
+    }
+  }
+
+  /** Pappschild über dem Kopf eines Fans, zur Straße gedreht; Rückseite Pappe */
+  private signBoard(p: Person, r: () => number) {
+    const gb = this.adsGB;
+    if (!gb) return;
+    const h = p.height;
+    const w = 0.44 + r() * 0.08;
+    const tall = 0.25 + r() * 0.04;
+    const fx = Math.sin(p.yaw);
+    const fz = Math.cos(p.yaw);
+    const rx = Math.cos(p.yaw);
+    const rz = -Math.sin(p.yaw);
+    const cx = p.x + fx * 0.36 * h;
+    const cz = p.z + fz * 0.36 * h;
+    const y0 = p.y + 1.86 * h;
+    const y1 = y0 + tall * 2;
+    const tilt = 0.06 * h; // oben etwas nach hinten
+    const pt = (sx: number, y: number, back: number) => [cx + rx * sx - fx * back, y, cz + rz * sx - fz * back];
+    const [u0, v0, u1, v1] = adCell(Math.floor(r() * SIGN_COUNT), true);
+    const card: RGBf = lin('#b08a5a');
+    gb.quad(pt(-w, y0, 0), pt(w, y0, 0), pt(w, y1, tilt), pt(-w, y1, tilt), card, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+  }
+
+  /** Zuschauer schauen dem Fahrer nach; ein paar Fans laufen ein Stück neben ihm her */
+  private updateCrowd(g: Abfahrt, dt: number) {
+    const pm = this.player;
+    if (pm) this.crowdU.uRider.value.copy(pm.group.position);
+    const cp = this.camera.position;
+    for (const ch of this.chunks.values()) {
+      for (const b of ch.crowd) {
+        // nah: volle Figuren; weit: vereinfacht; ganz weit (nur noch Pünktchen): aus
+        const d = cp.distanceTo(b.c) - b.r;
+        const near = this.quality < 0.8 ? 32 : 55;
+        const lod = d < near ? 0 : d < (this.quality < 0.8 ? 200 : 300) ? 1 : 2;
+        if (lod === b.lod) continue;
+        b.lod = lod;
+        for (const m of b.near) m.visible = lod === 0;
+        for (const m of b.far) m.visible = lod === 1;
+      }
+    }
+    // Läufer
+    const t = g.track;
+    const pz = g.p.z;
+    if (g.phase === 'playing' || g.phase === 'ready' || g.phase === 'countdown') {
+      const ahead = pz + 42;
+      if (ahead > this.runNext && this.runners.length < 4 && t.segAt(ahead).crowd && !t.segAt(ahead).tunnel) {
+        const r = Math.random;
+        const sg = r() < 0.5 ? -1 : 1;
+        const zone: Zone = t.sections[t.segAt(ahead).sec].biome === 'pass' ? 'pass' : 'tifosi';
+        const p = randomPerson(r, zone, { row: 0, runner: true });
+        this.runners.push({ z: ahead, x: sg * (ROAD_HALF + 0.4 + r() * 0.15), v: 0, go: false, p, act: p.act });
+        this.runNext = ahead + 22 + r() * 34;
+      }
+    }
+    const w = this.w2;
+    let n = 0;
+    this.runners = this.runners.filter((ru) => ru.z > pz - 28);
+    for (const ru of this.runners) {
+      if (!ru.go && ru.z - pz < 15) ru.go = true;
+      if (ru.go) {
+        ru.v = Math.min(8.2, ru.v + dt * 7);
+        ru.z += ru.v * dt;
+      }
+      t.world(ru.z, ru.x, -0.04, w);
+      const p = ru.p;
+      p.x = w.x; p.y = w.y; p.z = w.z;
+      if (ru.go) {
+        p.act = ru.act;
+        p.yaw = Math.atan2(Math.sin(w.th), -Math.cos(w.th));
+      } else {
+        // wartet am Rand und jubelt dem Fahrer entgegen
+        p.act = ru.act === Act.runFlag ? Act.flag : Act.cheer;
+        p.yaw = Math.atan2(-Math.sin(w.th), Math.cos(w.th)) - Math.sign(ru.x) * 0.6;
+      }
+      if (n < 6) packPerson(p, this.runBuf.array as Float32Array, n++);
+    }
+    if (!this.runMeshes.length) {
+      for (const kind of KINDS) {
+        const geo = crowdGeometry(kind, 0, this.runBuf, 0);
+        if (!geo) continue;
+        const m = new THREE.Mesh(geo, this.crowdMat);
+        m.frustumCulled = false;
+        this.runMeshes.push(m);
+        this.scene.add(m);
+      }
+    }
+    for (const m of this.runMeshes) {
+      (m.geometry as THREE.InstancedBufferGeometry).instanceCount = n;
+      m.visible = n > 0;
+    }
+    if (n) this.runBuf.needsUpdate = true;
+  }
+
   private updateRiders(g: Abfahrt) {
     const p = g.p;
     const track = g.track;
@@ -1233,7 +1525,7 @@ export class Renderer3D {
     if (g.phase === 'crash' || g.phase === 'over') pm.crash(g.phaseT, g.crashSpin);
     else {
       pm.resetCrash();
-      pm.pose({ lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, light: this.night + this.tunnelDim });
+      pm.pose({ lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, light: this.night + this.tunnelDim, roll: p.z / 0.34 });
     }
     // Bildschirmposition für Popups
     const v = new THREE.Vector3(w.x, w.y + air + 1.9, w.z).project(this.camera);
@@ -1263,7 +1555,7 @@ export class Renderer3D {
     track.world(o.z, o.x, 0, w);
     m.group.position.set(w.x, w.y, w.z);
     m.group.rotation.y = -w.th;
-    m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.night + this.tunnelDim });
+    m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.night + this.tunnelDim, roll: o.z / 0.34 });
   }
 
   private poolGet(kind: string, make: () => THREE.Object3D): THREE.Object3D {

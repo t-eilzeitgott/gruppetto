@@ -100,6 +100,7 @@ test('Spiel: Autopilot fährt weit, überholt, sammelt und bekommt Kombos', () =
       for (const o of s.objs ?? []) if (!o.done && o.k !== 'bidon' && o.k !== 'gold' && o.z > p.z && Math.abs(o.x - want) < 1.3) want = o.x > 0 ? o.x - 1.5 : o.x + 1.5;
     }
     g.tx = Math.max(-2.4, Math.min(2.4, want));
+    g.key('up', true);
   };
   const { g } = run('2027-05-09', pilot, 90);
   assert.ok(g.p.z > 1000, `weit gekommen: ${Math.round(g.p.z)} m`);

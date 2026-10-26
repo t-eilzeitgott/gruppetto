@@ -51,6 +51,9 @@ export interface Friend { userId: string; name: string; color: string; meters: n
 export interface HudState {
   score: number; mult: number; multLeft: number; kmh: number; meters: number; draft: number;
   next: { name: string; color: string; dist: number } | null; brake: number; air: boolean;
+  /** Daumenhaltung: ducken (hoch) und bremsen (runter), für Anzeige und Tutorial */
+  tuck: number; wantTuck: boolean; wantBrake: number; steered: number;
+  touch: { x: number; y: number } | null; curveIn: number;
 }
 
 export type GameEvent =
@@ -127,7 +130,12 @@ export class Abfahrt {
   private overtakeTimes: number[] = [];
   private tipsShown = new Set<string>();
   private steer = { active: false, sx: 0, sy: 0, tx0: 0 };
-  private keys = { left: false, right: false, down: false };
+  private keys = { left: false, right: false, down: false, up: false };
+  /** Spieler will sich ducken (Daumen hoch) bzw. bremsen (Daumen runter, 0–1) */
+  private wantTuck = false;
+  private wantBrake = 0;
+  /** wie weit insgesamt gelenkt wurde (für das Tutorial) */
+  private steered = 0;
   tx = 0;
   private txs = 0;
   private viewW = 390;
@@ -192,15 +200,25 @@ export class Abfahrt {
   }
   pointerMove(x: number, y: number) {
     if (!this.steer.active) return;
-    // nur seitlich: der Fahrer folgt dem Daumen direkt (eine Daumenbreite ≈ eine Fahrspur)
-    const k = 11 / this.viewW;
-    this.tx = clamp(this.steer.tx0 + (x - this.steer.sx) * k, -EDGE - 1.2, EDGE + 1.2);
-    void y;
+    // seitlich lenken: eine Bildschirmbreite ≈ von Rand zu Rand
+    const k = 7.5 / this.viewW;
+    const nx = clamp(this.steer.tx0 + (x - this.steer.sx) * k, -EDGE - 1.2, EDGE + 1.2);
+    this.steered += Math.abs(nx - this.tx);
+    this.tx = nx;
+    // hoch schieben = ducken, runter ziehen = bremsen (mit etwas Spiel, damit Lenken nicht auslöst)
+    const dy = this.steer.sy - y;
+    this.wantTuck = this.wantTuck ? dy > 16 : dy > 30;
+    this.wantBrake = clamp((-dy - 24) / 46, 0, 1);
+    // Daumen weit weggerutscht: Ankerpunkt mitziehen, damit man nicht „festhängt“
+    if (dy > 110) this.steer.sy = y + 110;
+    if (dy < -110) this.steer.sy = y - 110;
   }
   pointerUp() {
     this.steer.active = false;
+    this.wantTuck = false;
+    this.wantBrake = 0;
   }
-  key(name: 'left' | 'right' | 'down', down: boolean) {
+  key(name: 'left' | 'right' | 'down' | 'up', down: boolean) {
     this.keys[name] = down;
   }
 
@@ -210,8 +228,8 @@ export class Abfahrt {
     const dt = Math.min(0.05, dtReal) * this.timeScale;
     this.time += dt;
     this.phaseT += dtReal;
-    if (this.keys.left) this.tx = clamp(this.tx - 7 * dt, -EDGE - 1.2, EDGE + 1.2);
-    if (this.keys.right) this.tx = clamp(this.tx + 7 * dt, -EDGE - 1.2, EDGE + 1.2);
+    if (this.keys.left) { this.tx = clamp(this.tx - 6 * dt, -EDGE - 1.2, EDGE + 1.2); this.steered += 6 * dt; }
+    if (this.keys.right) { this.tx = clamp(this.tx + 6 * dt, -EDGE - 1.2, EDGE + 1.2); this.steered += 6 * dt; }
 
     if (this.phase === 'countdown') {
       const n = 3 - Math.floor(this.phaseT / 0.75);
@@ -258,7 +276,22 @@ export class Abfahrt {
       next: next ? { name: next.name, color: next.color, dist: Math.max(0, Math.round(next.meters - this.p.z)) } : null,
       brake: this.p.brake,
       air: this.p.air,
+      tuck: this.p.tuck,
+      wantTuck: this.wantTuck || this.keys.up,
+      wantBrake: Math.max(this.wantBrake, this.keys.down ? 1 : 0),
+      steered: this.steered,
+      touch: this.steer.active ? { x: this.steer.sx, y: this.steer.sy } : null,
+      curveIn: this.curveAhead(),
     };
+  }
+
+  /** Abstand bis zur nächsten engen Kurve/Kehre (für das Tutorial), sonst 999 */
+  private curveAhead(): number {
+    for (let d = 0; d < 160; d += 4) {
+      const s = this.track.segAt(this.p.z + d);
+      if (s.hairpin || Math.abs(s.curve) > 0.03) return d;
+    }
+    return 999;
   }
 
   // ------------------------------------------------------------ Spieler
@@ -300,11 +333,15 @@ export class Abfahrt {
       const kk = Math.abs(this.track.segAt(p.z + d).curve);
       if (kk > 0.002) vSafe = Math.min(vSafe, Math.sqrt((0.92 * mu * G) / kk) + d * 0.12);
     }
-    const wantBrake = p.air ? 0 : clamp((p.v - vSafe) / 2.5, 0, 1);
+    const assist = clamp((p.v - vSafe) / 2.5, 0, 1);
+    const manual = Math.max(this.wantBrake, this.keys.down ? 1 : 0);
+    const wantBrake = p.air ? 0 : Math.max(assist, manual);
     p.brake += (wantBrake - p.brake) * Math.min(1, dt * 8);
-    const wantTuck = p.v > 13 && p.brake < 0.05 && steering < 1.4 && !p.air ? 1 : 0;
-    p.tuck += (wantTuck - p.tuck) * Math.min(1, dt * 3);
-    const cd = CD * (1 + 0.32 * (1 - p.tuck)) * (1 - 0.42 * this.draft) * (1 + p.brake * 0.4);
+    // Ducken nur auf Wunsch (Daumen hoch); beim Bremsen richtet man sich auf
+    const tuckOn = (this.wantTuck || this.keys.up) && p.brake < 0.3 && !p.air;
+    p.tuck += ((tuckOn ? 1 : 0) - p.tuck) * Math.min(1, dt * 4);
+    void steering;
+    const cd = CD * (1 + 0.45 * (1 - p.tuck)) * (1 - 0.42 * this.draft) * (1 + p.brake * 0.4);
     const aG = -G * seg.grade;
     let a = aG - RR - extra - cd * p.v * p.v;
     if (p.v < 13 && !p.air) a += 1.8 * (1 - p.v / 13) + 0.5;  // antreten
@@ -315,10 +352,12 @@ export class Abfahrt {
     // --- Querdynamik mit Fliehkraft und Grip-Grenze
     const ac = k * p.v * p.v;
     // Daumen geglättet, damit kleine Zitterbewegungen nicht durchschlagen
-    this.txs += (this.tx - this.txs) * Math.min(1, dt * 22);
-    const kp = 75;
-    const kd = 17;
-    let want = kp * (this.txs - p.x) - kd * p.vx;
+    this.txs += (this.tx - this.txs) * Math.min(1, dt * 12);
+    const kp = 46;
+    const kd = 13.5;
+    // geduckt lenkt man etwas träger
+    const steerMax = 7 - 1.6 * p.tuck;
+    let want = clamp(kp * (this.txs - p.x) - kd * p.vx, -steerMax, steerMax);
     let arel: number;
     if (p.air) {
       arel = -ac;
@@ -329,11 +368,12 @@ export class Abfahrt {
       const over = Math.abs(want + ac) - lim;
       p.slip += ((over > 0 ? Math.min(1, over / 4) : 0) - p.slip) * Math.min(1, dt * 8);
     }
-    if (p.wobble > 0) arel += Math.sin(this.time * 17) * p.wobble * 1.6;
+    if (p.wobble > 0) arel += Math.sin(this.time * 11) * p.wobble * 0.8;
     p.vx += arel * dt;
     p.x += p.vx * dt;
-    const targetLean = p.air ? p.lean * 0.98 : Math.atan2(arel + ac, G) * 0.85;
-    p.lean += (clamp(targetLean, -0.7, 0.7) + Math.sin(this.time * 13) * p.wobble * 0.035 - p.lean) * Math.min(1, dt * 5);
+    // Schräglage vor allem aus der Kurve, Spurwechsel nur angedeutet – kein Hin-und-her-Wackeln
+    const targetLean = p.air ? p.lean * 0.98 : Math.atan2(ac + arel * 0.4, G) * 0.85;
+    p.lean += (clamp(targetLean, -0.62, 0.62) + Math.sin(this.time * 9) * p.wobble * 0.02 - p.lean) * Math.min(1, dt * 3.5);
     this.heading += k * p.v * dt;
 
     // --- Höhe, Kuppen und Sprünge
@@ -595,7 +635,7 @@ export class Abfahrt {
       Object.assign(c, { active: true, sign: Math.sign(seg.curve), hairpin: seg.hairpin > 0, minV: p.v, clean: true, maxK: k });
       if (seg.hairpin > 0 && this.opts.tutorial && !this.tipsShown.has('brake') && p.v > 12) {
         this.tipsShown.add('brake');
-        this.opts.onEvent?.({ type: 'tip', text: 'Kehre! Gebremst wird automatisch – innen bleiben' });
+        this.opts.onEvent?.({ type: 'tip', text: 'Kehre! Daumen runter = bremsen' });
       }
     }
     if (c.active) {

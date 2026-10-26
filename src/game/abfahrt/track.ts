@@ -148,7 +148,7 @@ export class Track {
   private segs: Seg[] = [];
   private base = 0;
   private rng: Rng;
-  private names: string[];
+  readonly names: string[];
   private plan: { biome: BiomeId; name: string; alt: number; descent: number }[] = [];
   private passOrder: [string, number][];
   private descentNo = 0;
@@ -760,6 +760,40 @@ export class Track {
       if (s.surface === 'asphalt' && chance(r, 0.012)) this.decal(i, { k: 'patch', x: between(r, -1.6, 1.6), w: between(r, 0.35, 0.9), len: Math.round(between(r, 1, 3)) });
       if (biome === 'village' && chance(r, 0.02)) this.decal(i, { k: 'manhole', x: between(r, -1.5, 1.5), w: 0.35, len: 1 });
       if (biome === 'alpine' && k > 40 && chance(r, 0.003)) this.decal(i, { k: 'grid', x: 0, w: ROAD_HALF, len: 2 });
+    }
+    this.roadsideFans(start, n, biome, marks, curve);
+  }
+
+  /**
+   * Zuschauer am Straßenrand außerhalb der großen Fanzonen: kleine Grüppchen alle 60–120 m und
+   * eine Traube in jeder Kehre (innen). Eigener Zufall, damit die Strecke selbst gleich bleibt.
+   */
+  private roadsideFans(start: number, n: number, biome: BiomeId, marks: number[], curve: number[]) {
+    if (biome === 'village') return;
+    const rr = mulberry32((this.seed ^ Math.imul(start + 1, 0x9e3779b1)) >>> 0);
+    const ok = (s: Seg, side: Side) => !s.tunnel && !s.crowd && !side.drop && side.wall === 0 && side.ground !== 'water'
+      && side.ground !== 'pavement' && Math.abs(side.tilt) < 0.45 && !(side === s.L ? s.bL : s.bR);
+    const place = (i: number, sg: number, v: number) => {
+      const s = this.seg(i);
+      const side = sg < 0 ? s.L : s.R;
+      if (!ok(s, side)) return false;
+      const dx = v === 8 ? 0.4 : 0.35 + rr() * 0.5;
+      this.add(i, { k: 'crowd', x: sg * (EDGE + dx), h: Track.groundH(side, dx), s: 1, v, f: false });
+      return true;
+    };
+    let next = start + 12 + Math.floor(rr() * 25);
+    for (let k = 1; k < n - 2; k++) {
+      const i = start + k;
+      if (marks[k] === 1 && marks[k - 1] !== 1) {
+        // Kehre: Zuschauer auf der Innenseite über die ganze Kurve
+        const inside = curve[k] > 0 ? 1 : -1;
+        for (let j = 0; k + j < n && marks[k + j] === 1; j += 2) place(i + j, inside, 8);
+        continue;
+      }
+      if (i >= next && marks[k] !== 1) {
+        if (place(i, rr() < 0.5 ? -1 : 1, 9)) next = i + 20 + Math.floor(rr() * 22);
+        else next = i + 3;
+      }
     }
   }
 
