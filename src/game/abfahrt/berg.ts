@@ -247,7 +247,7 @@ export class BergRace {
       const name = fav ? nameAt(favNo++) : nameAt(8 + i);
       const kit = role === 'helper' ? kits[0] : kits[(1 + i) % kits.length];
       // stärkere Kletterer stehen weiter oben in der Namensliste
-      const cp = role === 'helper' ? between(r, 5.95, 6.05) : role === 'weak' ? between(r, 5.7, 5.85) : 6.4 - (favNo - 1) * 0.05 + between(r, -0.05, 0.05);
+      const cp = role === 'helper' ? between(r, 5.95, 6.05) : role === 'weak' ? between(r, 5.7, 5.85) : 6.24 - (favNo - 1) * 0.045 + between(r, -0.05, 0.05);
       this.opps.push({
         id: id++, z: z + (r() - 0.5) * 0.3, x, vx: 0, v: this.v0, tx: x, f: 0.7,
         kit: { ...kit, skin: pick(r, SKINS), number: String(Math.floor(between(r, 11, 199))) },
@@ -263,7 +263,7 @@ export class BergRace {
     this.p.x = rows[meSlot][1];
     // Angriffe: vier Favoriten haben einen Plan (Meter vor dem Gipfel)
     const favs = this.opps.filter((o) => o.role === 'fav');
-    const plan = [between(r, 600, 700), between(r, 430, 520), between(r, 270, 340), between(r, 120, 180)];
+    const plan = [between(r, 700, 780), between(r, 560, 640), between(r, 430, 500), between(r, 300, 360), between(r, 190, 240), between(r, 90, 140)];
     const order = [...favs].sort(() => r() - 0.5);
     plan.forEach((at, k) => { if (order[k]) order[k].attackAt = at; });
   }
@@ -621,14 +621,14 @@ export class BergRace {
         P = clamp(powerTo(vd, o.v, grade, CDA), 0, 9);
         if (o.v > vd + 1) B = 2;
       } else if (stage === 'climb') {
-        const own = o.cp * 0.98 + o.drift;
+        const own = o.cp * 1.0 + o.drift;
         if (o.role === 'helper' && !o.peeled) {
           if (o.z >= o.peel || empty) {
             o.peeled = true;
             o.tx = o.x >= 0 ? XMAX : -XMAX;
           }
           // Helfer vorn machen das Tempo (steigt zum Gipfel hin), die anderen bleiben am Hinterrad
-          const pace = 6.0 + 0.3 * clamp(o.z / MOUNTAIN_TOP, 0, 1);
+          const pace = 6.15 + 0.4 * clamp(o.z / MOUNTAIN_TOP, 0, 1);
           if (wheel && wheel.z - o.z < 9) P = this.follow(o, wheel, grade, dr, o.cp + 0.5);
           else P = pace;
         } else if (o.peeled) {
@@ -636,20 +636,20 @@ export class BergRace {
         } else {
           // Angriff nach Plan, wenn noch Kraft da ist
           if (o.attackAt > 0 && toTop < o.attackAt && toTop > 40) {
-            const ok = o.w > 0.45 && this.time - this.lastAttack > 6;
+            const ok = o.w > 0.35 && this.time - this.lastAttack > 5;
             if (ok) this.attack(o);
             else if (toTop < o.attackAt - 120) o.attackAt = 0;
           }
           if (o.attackT > 0) {
             o.attackT -= dt;
-            P = o.cp + o.kick * 0.92;
+            P = o.cp + o.kick;
             standTarget = 1;
             posture = 1.08;
           } else if (o.hold > 0 && o.w > o.hold) {
-            P = o.cp + 0.35;
+            P = o.cp + 0.5;
           } else {
             if (o.hold > 0) o.hold = 0;
-            const cap = o.chaseT > 0 ? o.cp + o.kick * 0.8 : o.cp + 0.6;
+            const cap = o.chaseT > 0 ? o.cp + o.kick * 0.9 : o.cp + 0.8;
             if (o.chaseT > 0) o.chaseT -= dt;
             if (wheel && wheel.z - o.z < 9) {
               P = this.follow(o, wheel, grade, dr, cap);
@@ -750,8 +750,8 @@ export class BergRace {
   /** Attacke: raus aus der Reihe, Vollgas; wer dicht dahinter ist, entscheidet, ob er mitgeht */
   private attack(o: Racer) {
     o.attackAt = 0;
-    o.attackT = between(this.rng, 6, 9);
-    o.hold = between(this.rng, 0.22, 0.32);
+    o.attackT = between(this.rng, 8, 12);
+    o.hold = between(this.rng, 0.1, 0.2);
     this.lastAttack = this.time;
     this.attacks += 1;
     this.changeLane(o);
@@ -759,7 +759,7 @@ export class BergRace {
       if (m === o || m.role === 'helper' || m.peeled) continue;
       const near = o.z - m.z;
       if (near < -4 || near > 35) continue;
-      const p = clamp(0.35 + (m.cp - 6.1) * 1.4 + (m.w - 0.5) * 0.7, 0.08, 0.9);
+      const p = clamp(0.5 + (m.cp - 6.1) * 1.4 + (m.w - 0.5) * 0.7, 0.15, 0.95);
       if (chance(this.rng, p)) m.chaseT = between(this.rng, 9, 14);
     }
     const near = Math.abs(o.z - this.p.z) < 60;
