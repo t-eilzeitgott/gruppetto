@@ -214,7 +214,9 @@ const float TAU = 6.28318;
 void armPose(float act, float t, float e, out vec4 A, out vec4 B, out vec4 legs, out vec3 body) {
   vec4 idleA = vec4(0.08 + 0.03 * sin(t * 0.9), 0.1 + 0.06 * sin(t * 0.7 + 1.0), 0.3, 0.05);
   vec4 idleB = vec4(0.08 + 0.03 * sin(t * 0.8 + 2.0), 0.1 + 0.06 * sin(t * 0.6), 0.3, 0.05);
-  float c = 0.5 + 0.5 * sin(t * TAU * (1.55 + 0.45 * e));
+  // feste Takte: die Nähe zum Fahrer ändert nur die Stärke, nie das Tempo
+  // (ein Takt, der von der Entfernung abhängt, rast beim Näherkommen)
+  float c = 0.5 + 0.5 * sin(t * TAU * 2.0);
   vec4 clap = vec4(0.0, 0.95 + 0.85 * e, 1.35 - 0.6 * e, 0.14 + 0.3 * c);
   legs = vec4(0.0);
   body = vec3(0.0); // Hüpfen, Vorlage, Kopfnicken
@@ -225,11 +227,11 @@ void armPose(float act, float t, float e, out vec4 A, out vec4 B, out vec4 legs,
   } else if (act < 1.5) {     // klatschen
     A = clap; B = clap;
   } else if (act < 2.5) {     // winken
-    float w = sin(t * TAU * (0.85 + 0.45 * e));
+    float w = sin(t * TAU * 1.3);
     B = vec4(2.35 + 0.42 * w, 0.2, 0.35 + 0.25 * w, 0.0);
     A = mix(idleA, clap, ex * 0.5);
   } else if (act < 3.5) {     // jubeln, mit Hüpfen
-    float f = 1.0 + 0.45 * e;
+    float f = 1.45;
     float pump = 0.5 + 0.5 * sin(t * TAU * f);
     float up = 0.8 + 1.95 * smoothstep(0.0, 0.6, e);
     A = vec4(up + 0.12 * pump, 0.25, 0.12 + 0.45 * pump * (0.3 + 0.7 * e), 0.0);

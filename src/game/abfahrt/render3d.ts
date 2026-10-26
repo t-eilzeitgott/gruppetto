@@ -10,7 +10,8 @@ import { EDGE, ROAD_HALF, SEG, Track, type Seg, type Side, type Sprite, type Bio
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
 import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
 import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, facadeTex, FACADE_BANDS, gravelTex, rockTex, roundTex, vergeTex } from './tex3d';
-import { GB, RiderModel, lin, lin255, propGeometries, treeGeometriesLow, type Prop3D, type RGBf } from './models3d';
+import { GB, lin, lin255, propGeometries, treeGeometriesLow, type Prop3D, type RGBf } from './models3d';
+import { RiderModel } from './rider3d';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
@@ -158,8 +159,8 @@ export class Renderer3D {
   private w = { x: 0, y: 0, z: 0, th: 0 };
 
   constructor(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement) {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.gl = new THREE.WebGLRenderer({ canvas, antialias: dpr < 1.5, powerPreference: 'high-performance', alpha: false, stencil: false });
+    // Kantenglättung immer an (MSAA): auf Handy-GPUs günstig, Kanten und Linien werden weich
+    this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false });
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
     // sanfte Tonwertkurve: helle Sonne ohne ausgefressene Farben
     this.gl.toneMapping = THREE.NeutralToneMapping;
@@ -241,7 +242,7 @@ export class Renderer3D {
     const t = new THREE.CanvasTexture(c);
     if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = Math.min(8, this.gl.capabilities.getMaxAnisotropy());
+    t.anisotropy = Math.min(16, this.gl.capabilities.getMaxAnisotropy());
     return t;
   }
 
