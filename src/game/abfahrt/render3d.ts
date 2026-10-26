@@ -534,10 +534,24 @@ export class Renderer3D {
     // großer Sprung (neuer Lauf): wie beim Start schrittweise neu aufbauen
     const jump = this.lastTerrCam.distanceTo(cp) > 250;
     this.lastTerrCam.copy(cp);
+    const fresh = this.tiles.size === 0 || jump;
     if (jump && this.tiles.size) this.boxSet.fill(false);
     const startup = !this.boxSet.every(Boolean);
-    // Aufbau verteilt auf viele Bilder (kein langes Einfrieren beim Laden), beim Start etwas großzügiger
-    const budget = this.tiles.size === 0 ? 90 : startup ? 12 : 4;
+    // Aufbau verteilt auf viele Bilder (kein langes Einfrieren beim Laden), beim Start etwas großzügiger.
+    // Der Nahbereich (feine und mittlere Stufe) entsteht aber sofort vollständig: sonst schneidet die
+    // grobe Stufe (ohne Straßenklemmen) durch Straße und Zuschauer
+    const budget = startup ? 12 : 4;
+    if (fresh) {
+      this.pending = null;
+      for (const lv of [0, 1]) {
+        const Lv = LEVELS[lv];
+        const cx = Math.floor(cp.x / Lv.size);
+        const cz = Math.floor(cp.z / Lv.size);
+        for (let j = cz - 1; j <= cz + 1; j++) {
+          for (let i = cx - 1; i <= cx + 1; i++) if (!this.tiles.has(`${lv}:${i}:${j}`)) this.buildTile(T, lv, i, j, t0, Infinity);
+        }
+      }
+    }
     // angefangene Kachel weiterbauen (nach einem Fensterwechsel neu beginnen: die Proben haben sich geändert)
     if (this.pending && this.pending.ver !== T.version) {
       const [, i, j] = this.pending.key.split(':').map(Number);
@@ -554,7 +568,7 @@ export class Renderer3D {
     };
     // 1) fehlende Kacheln: beim Start erst der Nahbereich, dann die Ferne (damit nie Leere sichtbar ist),
     //    danach der Rest; nächste zuerst
-    const order: [number, number][] = startup ? [[0, 1], [2, 9], [1, 9], [0, 9]] : [[0, 9], [1, 9], [2, 9]];
+    const order: [number, number][] = startup ? [[0, 1], [1, 1], [2, 9], [1, 9], [0, 9]] : [[0, 9], [1, 9], [2, 9]];
     let out = !!this.pending;
     for (const [lv, maxR] of order) {
       if (out) break;
@@ -1899,9 +1913,12 @@ export class Renderer3D {
     for (const ch of this.chunks.values()) {
       for (const b of ch.crowd) {
         // nah: volle Figuren; weit: vereinfacht; ganz weit (nur noch Pünktchen): aus
+        // feste Grenzen mit etwas Spiel (kein Hin- und Herspringen an der Grenze, nicht von der Qualität abhängig)
         const d = cp.distanceTo(b.c) - b.r;
-        const near = this.quality < 0.8 ? 32 : 55;
-        const lod = d < near ? 0 : d < (this.quality < 0.8 ? 200 : 300) ? 1 : 2;
+        const h = b.lod < 0 ? 0 : 6;
+        const near = 60 + (b.lod === 0 ? h : -h);
+        const far = 320 + (b.lod === 2 ? -h : h);
+        const lod = d < near ? 0 : d < far ? 1 : 2;
         if (lod === b.lod) continue;
         b.lod = lod;
         for (const m of b.near) m.visible = lod === 0;
