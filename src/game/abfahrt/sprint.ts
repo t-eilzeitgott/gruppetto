@@ -8,7 +8,7 @@
  * überholt; wer eingeklemmt ist, kommt nicht vorbei.
  */
 import { EDGE, ROAD_HALF, SPRINT_FINISH, Track } from './track';
-import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup } from './engine';
+import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup, standings, type Standing } from './engine';
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { StageRef } from './stageRef';
@@ -68,6 +68,8 @@ export interface SprintHud {
   place: number; riders: number; toGo: number; kmh: number; energy: number; draft: number;
   mode: 'sit' | 'go' | 'ease'; blocked: boolean; touch: { x: number; y: number } | null;
   ahead: string | null;
+  /** TV-Tafel: Spitze, Zweiter, du */
+  board: Standing[];
 }
 
 interface Racer extends Opp {
@@ -320,6 +322,7 @@ export class SprintRace {
       blocked: this.blocked,
       touch: this.steer.active ? { x: this.steer.sx, y: this.steer.sy } : null,
       ahead: ahead?.name ?? null,
+      board: standings(this.opps, this.p, this.finT),
     };
   }
 

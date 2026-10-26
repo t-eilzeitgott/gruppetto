@@ -16,7 +16,7 @@
  * schneller (sonst dauerte der Anstieg über zwei Minuten); Tempo und Zeitabstände bleiben echt.
  */
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, Track } from './track';
-import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup } from './engine';
+import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup, standings, type Standing } from './engine';
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { RiderType, SprintRider } from './sprint';
@@ -86,6 +86,10 @@ export interface BergHud {
   /** Abstand zur Spitze (s); vorne: Vorsprung auf den Nächsten (negativ) */
   lead: { name: string; gap: number } | null;
   ahead: string | null;
+  /** TV-Tafel: Spitze, Zweiter, du */
+  board: Standing[];
+  /** Edelhelfer am Berg: Name und ob er gerade vor dir das Tempo macht (null = nicht mehr dabei) */
+  mate: { name: string; front: boolean } | null;
 }
 
 type Role = 'helper' | 'fav' | 'weak' | 'mate';
@@ -104,6 +108,9 @@ interface Racer extends Opp {
   attackT: number;
   /** hat schon angegriffen */
   attacked?: boolean;
+  /** Edelhelfer: fährt vor dir (true) oder an deinem Hinterrad (false); Sekunden seit dem letzten Tausch */
+  mateLead?: boolean;
+  swapT?: number;
   /** nach der Attacke hart weiterfahren, bis der Vorrat unter diese Marke fällt */
   hold: number;
   /** jagt einer Attacke hinterher (Sekunden übrig) */
@@ -397,7 +404,30 @@ export class BergRace {
       touch: this.steer.active ? { x: this.steer.sx, y: this.steer.sy } : null,
       lead: this.lead(),
       ahead: ahead?.name ?? null,
+      board: standings(this.opps, this.p, this.finT),
+      mate: this.mateInfo(),
     };
+  }
+
+  private letMateBy(): boolean {
+    const m = this.opps.find((o) => o.role === 'mate' && !o.peeled);
+    if (!m || m.mateLead === false || (m.swapT ?? 0) <= 0) return false;
+    const gap = m.z - this.p.z;
+    return gap > -8 && gap < 1.7;
+  }
+
+  private mateInfo(): BergHud['mate'] {
+    const m = this.opps.find((o) => o.role === 'mate');
+    if (!m || m.peeled || BergRace.stageAt(this.p.z) !== 'climb' || this.phase !== 'playing') return null;
+    return { name: m.name, front: m.mateLead !== false };
+  }
+
+  /** Führung mit dem Helfer tauschen: er lässt dich vorbei (du machst das Tempo) oder geht wieder nach vorn */
+  swapMate() {
+    const m = this.opps.find((o) => o.role === 'mate' && !o.peeled);
+    if (!m || this.phase !== 'playing' || BergRace.stageAt(this.p.z) !== 'climb') return;
+    m.mateLead = m.mateLead === false;
+    m.swapT = 6;
   }
 
   /** Abstand zur Spitze in Sekunden (vorn: Vorsprung auf den Zweiten als negative Zahl) */
@@ -509,6 +539,8 @@ export class BergRace {
         if (!this.steer.active && wheel.z - p.z < 6 && this.losing(wheel, speedAt(s.cp * 0.98, grade, CDA))) this.passWheel();
       } else P = final ? s.cp * 0.92 : s.cp * 0.98;
       if (empty) P = Math.min(P, s.cp * 0.92);
+      // Helfer soll wieder nach vorn: kurz Tempo raus, damit er vor dich kommt
+      if (!go && !final && this.letMateBy()) P = Math.min(P, s.cp * 0.86);
       P = Math.max(0, P);
     }
     this.stand += (standTarget - this.stand) * Math.min(1, dt * 6);
@@ -694,12 +726,33 @@ export class BergRace {
             o.tx = o.x >= 0 ? XMAX : -XMAX;
             if (gap > -3 && gap < 15) this.opts.onEvent?.({ type: 'banner', title: `${lastName(o.name)} ist fertig`, sub: 'Danke, Helfer – ab jetzt fährst du selbst' });
           } else {
-            // gleichmäßig hohes Tempo vor dir; reißt du ab, wartet er; fährst du vorbei, schließt er wieder auf
-            let pace = 6.1 + 0.35 * clamp(o.z / MOUNTAIN_TOP, 0, 1);
-            if (gap > 4) pace = Math.min(pace, powerTo(this.p.v + 0.15, o.v, grade, CDA));
-            else if (gap < 0.8) pace = o.cp + 1.2;
-            P = clamp(pace, 0, o.cp + 1.4);
-            if (Math.abs(this.p.x - o.x) > 0.3 && gap > 0.9) o.tx = this.p.x;
+            o.swapT = Math.max(0, (o.swapT ?? 0) - dt);
+            // fährst du (angreifend) an ihm vorbei, übernimmst du die Führung – er hängt sich an dein Hinterrad
+            if (o.mateLead !== false && gap < -1 && this.mode === 'go' && (o.swapT ?? 0) <= 0) o.mateLead = false;
+            if (o.mateLead !== false) {
+              // gleichmäßig hohes Tempo vor dir; reißt du ab, wartet er; ist er hinter dir, kommt er an dir vorbei nach vorn
+              let pace = 6.1 + 0.35 * clamp(o.z / MOUNTAIN_TOP, 0, 1);
+              if (gap > 4) pace = Math.min(pace, powerTo(this.p.v + 0.15, o.v, grade, CDA));
+              else if (gap < 0.8) {
+                // an dir vorbei nach vorn: neben dich (freiere Seite), dann wieder vor dich
+                pace = o.cp + 1.2;
+                if (Math.abs(this.p.x - o.x) < 0.65) {
+                  const busy = (x: number) => this.opps.filter((m) => m !== o && Math.abs(m.x - x) < 0.6 && m.z - o.z > -2 && m.z - o.z < 5).length;
+                  const sides = [this.p.x + 0.72, this.p.x - 0.72].filter((x) => Math.abs(x) <= XMAX).sort((a, b) => busy(a) - busy(b));
+                  if (sides.length) o.tx = sides[0];
+                }
+              }
+              P = clamp(pace, 0, o.cp + 1.4);
+              if (Math.abs(this.p.x - o.x) > 0.3 && gap > 1.2) o.tx = this.p.x;
+            } else if (gap > -1.6) {
+              // dich vorbeilassen: zur Seite und kurz Tempo raus
+              P = o.cp * 0.72;
+              if (Math.abs(this.p.x - o.x) < 0.6) this.changeLane(o);
+            } else {
+              // an deinem Hinterrad: du bestimmst das Tempo
+              P = this.follow(o, this.p, grade, dr, o.cp + 1.0);
+              if (gap > -6) o.tx = this.p.x;
+            }
           }
         } else if (o.role === 'helper' && !o.peeled) {
           if (o.z >= o.peel || empty) {

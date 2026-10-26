@@ -54,6 +54,26 @@ export interface Popup {
 
 export interface Friend { userId: string; name: string; color: string; meters: number; passed?: boolean }
 
+/** Eintrag der TV-Tafel: Platz, Name, Abstand zur Spitze (s) */
+export interface Standing { pos: number; name: string; gap: number; me: boolean }
+
+interface Entrant { z: number; v: number; name?: string; done?: boolean; finT?: number }
+
+/** TV-Tafel wie in der Übertragung: Spitze, Zweiter und der Spieler (ohne Doppelte), Abstände zur Spitze in Sekunden */
+export function standings(opps: Entrant[], me: { z: number; v: number }, meFinT: number): Standing[] {
+  const all = [...opps.map((o) => ({ z: o.z, v: o.v, name: o.name ?? '', done: !!o.done, finT: o.finT ?? -1, me: false })),
+    { z: me.z, v: me.v, name: 'Du', done: meFinT >= 0, finT: meFinT, me: true }];
+  all.sort((a, b) => (a.done && b.done ? a.finT - b.finT : a.done ? -1 : b.done ? 1 : b.z - a.z));
+  const L = all[0];
+  const gapOf = (x: typeof L) => (x === L ? 0 : x.done && L.done ? x.finT - L.finT : Math.max(0, (L.z - x.z) / Math.max(4, x.v)));
+  const out: Standing[] = [];
+  const add = (i: number) => { const x = all[i]; if (x && !out.some((o) => o.pos === i + 1)) out.push({ pos: i + 1, name: x.name, gap: gapOf(x), me: x.me }); };
+  add(0);
+  add(1);
+  add(all.findIndex((x) => x.me));
+  return out;
+}
+
 /** Was die 3D-Darstellung von einem Rennen braucht (Abfahrt und Sprintfinale) */
 export interface RaceView {
   track: Track;

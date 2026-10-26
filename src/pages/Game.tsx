@@ -14,6 +14,7 @@ import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, Segmented, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { GameIcon } from '../ui/GameIcon';
+import { TvAd, TvBoard, TvSponsor, tvName, writeTv, type TvItem } from './hud';
 
 const LS_BEST = 'gruppetto.abfahrt.best';
 const LS_TUTORIAL = 'gruppetto.abfahrt.runs';
@@ -180,7 +181,7 @@ export function GamePage() {
         const dt = Math.min(0.05, (now - prev) / 1000);
         prev = now;
         if (uiRef.current !== 'paused') engineRef.current!.update(dt);
-        writeHud(engineRef.current!, dt);
+        hudRef.current(engineRef.current!, dt);
         raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
@@ -211,7 +212,7 @@ export function GamePage() {
       const eng = engineRef.current!;
       if (uiRef.current !== 'paused') eng.update(dt);
       if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
-      writeHud(eng, dt);
+      hudRef.current(eng, dt);
       // Bildrate beobachten und notfalls die Qualität senken
       acc += dt;
       frames += 1;
@@ -365,8 +366,8 @@ export function GamePage() {
     };
     set('score', nf(h.score));
     set('kmh', String(h.kmh));
-    set('dist', km(h.meters));
     set('mult', `×${h.mult}`);
+    writeTv(hud.current, last.current, tvItems(h.meters));
     const multEl = hud.current.multWrap;
     if (multEl) {
       multEl.style.opacity = h.mult > 1 ? '1' : '0';
@@ -374,23 +375,32 @@ export function GamePage() {
     }
     const draftEl = hud.current.draft;
     if (draftEl) {
-      draftEl.style.opacity = h.draft > 0.15 ? '1' : '0';
+      draftEl.classList.toggle('is-on', h.draft > 0.15);
+      draftEl.classList.toggle('is-draft', h.draft > 0.15);
       draftEl.style.setProperty('--d', h.draft.toFixed(2));
-    }
-    const nextEl = hud.current.next;
-    if (nextEl) {
-      if (h.next) {
-        set('nextName', h.next.name === 'Du' ? 'Deine Bestmarke' : h.next.name);
-        set('nextDist', km(h.next.dist));
-        nextEl.style.opacity = '1';
-        nextEl.style.setProperty('--c', h.next.color);
-      } else nextEl.style.opacity = '0';
     }
     const dot = hud.current.dot;
     if (dot) dot.style.left = `${Math.min(100, (h.meters / profileMax) * 100).toFixed(2)}%`;
   };
 
   const profileMax = useMemo(() => Math.max(2000, ...friends.map((f) => f.meters * 1.12)), [friends]);
+  // die Schleife läuft seit dem ersten Render: immer die aktuelle HUD-Funktion (mit geladener Bestenliste) aufrufen
+  const hudRef = useRef(writeHud);
+  hudRef.current = writeHud;
+
+  /** TV-Tafel: Spitze der Bestenliste, wer direkt vor dir liegt, du (live nach gefahrener Strecke) */
+  const tvItems = (meters: number): TvItem[] => {
+    const all = [
+      ...friends.filter((f) => f.userId !== 'me').map((f) => ({ name: f.name, m: f.meters, me: false })),
+      { name: 'Du', m: meters, me: true },
+    ].sort((a, b) => b.m - a.m);
+    const mi = all.findIndex((x) => x.me);
+    const idx = mi > 0 ? [...new Set([0, mi - 1, mi])] : [0, 1].filter((i) => i < all.length);
+    const items: TvItem[] = idx.map((i, k) => ({ head: `${i + 1} ${tvName(all[i].name)}`, value: km(all[i].m), icon: k === 0 ? 'flag' : 'gap', me: all[i].me }));
+    const own = friends.find((f) => f.userId === 'me');
+    if (all.length === 1 && own) items.push({ head: 'Bestmarke', value: km(own.meters), icon: 'gap' });
+    return items;
+  };
 
   const start = () => {
     if (!canvasRef.current) return;
@@ -456,8 +466,8 @@ export function GamePage() {
 
       {/* HUD */}
       {ui === 'playing' || ui === 'paused' || ui === 'countdown' ? (
-        <div className="abf-hud" aria-hidden={ui === 'countdown'}>
-          <div className="abf-hud__top">
+        <div className="abf-hud hud" aria-hidden={ui === 'countdown'}>
+          <div className="hud-top hud-top--score">
             <button type="button" className="abf-round" onClick={togglePause} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
               {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
             </button>
@@ -468,11 +478,9 @@ export function GamePage() {
                 <i aria-hidden="true" />
               </span>
             </div>
-            <div className="abf-hud__speed">
-              <span><strong ref={bind('kmh')}>0</strong>&nbsp;km/h</span>
-              <span className="abf-hud__dist" ref={bind('dist')}>0&nbsp;m</span>
-            </div>
           </div>
+          <TvBoard bind={bind} />
+          <TvSponsor />
           <div className="abf-strip" aria-hidden="true">
             <div className="abf-strip__line" />
             {friends.map((f) => (
@@ -480,27 +488,25 @@ export function GamePage() {
             ))}
             <span className="abf-strip__dot" ref={bind('dot')} />
           </div>
-          <div className="abf-next" ref={bind('next')}>
-            <span className="abf-next__dot" />
-            <span ref={bind('nextName')} />
-            <strong ref={bind('nextDist')} />
+          <div className="hud-row">
+            <div className="hud-pill hud-speed"><strong ref={bind('kmh')}>0</strong><span>km/h</span></div>
+            <div className="hud-pill hud-wheel" ref={bind('draft')}>
+              <span className="hud-wheel__k">Windschatten</span>
+              <i aria-hidden="true" />
+            </div>
           </div>
+          {banner && (ui === 'playing' || ui === 'countdown') ? (
+            <div key={banner.key} className={cx('hud-banner', banner.tone && `hud-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
+              <strong>{banner.title}</strong>
+              {banner.sub ? <span>{banner.sub}</span> : null}
+            </div>
+          ) : null}
           <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
             <span className="abf-thumb__up"><TuckIcon /></span>
             <span className="abf-thumb__dot" />
             <span className="abf-thumb__down"><BrakeIcon /></span>
           </div>
-          <div className="abf-draft" ref={bind('draft')}>
-            <span>Windschatten</span>
-            <i aria-hidden="true" />
-          </div>
-        </div>
-      ) : null}
-
-      {banner && (ui === 'playing' || ui === 'countdown') ? (
-        <div key={banner.key} className={cx('abf-banner', banner.tone && `abf-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
-          <strong>{banner.title}</strong>
-          {banner.sub ? <span>{banner.sub}</span> : null}
+          <TvAd hidden={!!coach || ui !== 'playing'} />
         </div>
       ) : null}
 

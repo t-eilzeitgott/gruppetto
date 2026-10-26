@@ -187,9 +187,9 @@ export function useGameLock() {
   }, []);
 }
 
-type KeyEngine = { key(name: 'left' | 'right' | 'down' | 'up', down: boolean): void };
+type KeyEngine = { key(name: 'left' | 'right' | 'down' | 'up', down: boolean): void; swapMate?: () => void };
 
-/** Tastatur: Pfeile/WASD steuern, Leertaste startet, Escape pausiert */
+/** Tastatur: Pfeile/WASD steuern, Leertaste startet, Escape pausiert, E tauscht die Führung mit dem Helfer */
 export function useRaceKeys(engineRef: RefObject<KeyEngine | null>, uiRef: RefObject<Ui>, start: () => void, togglePause: () => void) {
   useEffect(() => {
     const map: Record<string, 'left' | 'right' | 'down' | 'up'> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', ArrowUp: 'up', a: 'left', d: 'right', s: 'down', w: 'up' };
@@ -199,6 +199,7 @@ export function useRaceKeys(engineRef: RefObject<KeyEngine | null>, uiRef: RefOb
         return;
       }
       if (e.key === 'Escape' || e.key === 'p') { togglePause(); return; }
+      if ((e.key === 'e' || e.key === 'Tab') && engineRef.current?.swapMate) { e.preventDefault(); engineRef.current.swapMate(); return; }
       const k = map[e.key];
       if (k) { e.preventDefault(); engineRef.current?.key(k, true); }
     };

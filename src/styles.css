@@ -1154,9 +1154,144 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf-thumb.is-tuck .abf-thumb__up { opacity: 1; background: var(--accent); color: var(--on-accent); transform: scale(1.15); }
 .abf-thumb.is-brake .abf-thumb__down { opacity: 1; background: #e5484d; transform: scale(1.15); }
 
+/* ---------- HUD im Stil einer TV-Übertragung (alle Minispiele) ---------- */
+.hud { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.hud .abf-round { width: 40px; height: 40px; }
+.hud-top { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.hud-top--score { display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px; }
+.hud .abf-strip { margin: 2px 8px 0; }
+.hud-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; }
+.hud-pill {
+  display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: 999px; color: #fff;
+  background: rgba(12, 14, 20, 0.72); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
+  transition: opacity 0.3s, transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s, background 0.25s;
+}
+.hud-speed { gap: 4px; letter-spacing: 0; text-transform: none; font-size: 11.5px; }
+.hud-speed strong { font-size: 15px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; min-width: 2ch; text-align: right; }
+.hud-speed span { opacity: 0.7; }
+.hud-energy span { min-width: 52px; }
+.hud-energy i { position: relative; display: block; width: min(118px, 30vw); height: 7px; border-radius: 4px; background: rgba(255, 255, 255, 0.2); overflow: hidden; }
+.hud-energy i::after {
+  content: ""; position: absolute; inset: 0; border-radius: 4px; transform-origin: left; transform: scaleX(var(--e, 1)); transition: transform 0.15s linear;
+  background: linear-gradient(90deg, #e5484d, #ffd23f 35%, #3ecf6e 70%); background-size: calc(100% / max(var(--e, 1), 0.05)) 100%;
+}
+.hud-energy.is-go { box-shadow: inset 0 0 0 2px var(--accent), 0 0 16px var(--accent-soft); }
+.hud-energy.is-go span { color: var(--accent); }
+.hud-energy.is-low i { animation: spr-low 0.6s ease-in-out infinite alternate; }
+.hud-energy .brg-grade { min-width: 38px; }
+/* Hinterrad + Windschatten in einer Pille; blendet weich ein und aus */
+.hud-wheel { align-self: center; max-width: 100%; text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 600; opacity: 0; transform: translateY(-4px) scale(0.96); }
+.hud-wheel.is-on { opacity: 1; transform: none; }
+.hud-wheel__name { min-width: 0; overflow-wrap: anywhere; white-space: normal; line-height: 1.15; }
+.hud-wheel__k { font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; opacity: 0.65; }
+.hud-wheel i { position: relative; flex: none; width: 40px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.22); overflow: hidden; }
+.hud-wheel i::after { content: ""; position: absolute; inset: 0; transform-origin: left; transform: scaleX(var(--d, 0)); background: #8ccaff; transition: transform 0.2s; }
+.hud-wheel.is-draft { box-shadow: inset 0 0 0 1.5px rgba(140, 202, 255, 0.7); }
+
+/* Positionstafel: Kästen wie bei der Tour – rundes Symbol, Kopfzeile, großer Wert */
+.tv { flex: 1 1 auto; min-width: 0; display: flex; gap: 5px; }
+.tv-box {
+  position: relative; flex: 1 1 0; min-width: 0; display: grid; grid-template-columns: 22px minmax(0, 1fr); grid-template-rows: auto auto;
+  column-gap: 6px; align-items: center; padding: 4px 9px 5px 5px; border-radius: 14px; color: #fff;
+  background: linear-gradient(180deg, rgba(40, 44, 54, 0.82), rgba(12, 14, 20, 0.8));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 4px 14px rgba(0, 0, 0, 0.25);
+  animation: tv-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; transition: background 0.3s, box-shadow 0.3s;
+}
+.tv-box.is-off { display: none; }
+.tv-box__icon {
+  grid-row: 1 / span 2; width: 22px; height: 22px; border-radius: 50%; background: #fff; display: grid; place-items: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.tv-box[data-icon="flag"] .tv-box__icon { background: repeating-conic-gradient(#16171a 0 25%, #fff 0 50%) 0 0 / 8px 8px; box-shadow: 0 0 0 2px #fff, 0 1px 3px rgba(0, 0, 0, 0.35); }
+.tv-box[data-icon="gap"] .tv-box__icon::after { content: "↔"; font-size: 13px; font-weight: 900; line-height: 1; color: #16171a; }
+.tv-box__head { font-size: 10.5px; font-weight: 700; line-height: 1.2; opacity: 0.85; min-width: 0; overflow-wrap: anywhere; }
+.tv-box__val { font-size: 15px; font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tv-box.is-me { background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 42%, rgba(30, 32, 40, 0.85)), color-mix(in srgb, var(--accent) 22%, rgba(12, 14, 20, 0.85))); box-shadow: inset 0 0 0 1.5px var(--accent), 0 4px 16px rgba(0, 0, 0, 0.28); }
+.tv-box.is-flash { animation: tv-flash 0.7s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes tv-in { from { opacity: 0; transform: translateY(-8px) scale(0.96); } }
+@keyframes tv-flash { 0% { transform: none; } 30% { transform: scale(1.05); box-shadow: inset 0 0 0 2px #ffd23f, 0 0 18px rgba(255, 210, 63, 0.45); } 100% { transform: none; } }
+/* Handy hochkant: zwei Kästen (Spitze und du) – der mittlere kommt erst bei mehr Breite dazu */
+@media (max-width: 429px) { .tv:has(.tv-box:nth-child(3):not(.is-off)) .tv-box:nth-child(2) { display: none; } }
+.tv-box[data-icon="gpm"] .tv-box__icon {
+  background: radial-gradient(circle at 30% 32%, #e5484d 0 2.6px, transparent 3px), radial-gradient(circle at 70% 36%, #e5484d 0 2.6px, transparent 3px),
+    radial-gradient(circle at 50% 72%, #e5484d 0 2.6px, transparent 3px), #fff;
+}
+.hud > .tv { justify-content: center; }
+.hud > .tv .tv-box { max-width: 200px; }
+
+/* Sponsor-Logo unter der Tafel (erfundene Marken) */
+.tv-sponsor { align-self: flex-end; height: 18px; margin-top: -2px; overflow: hidden; }
+.tv-sponsor__in {
+  display: inline-flex; align-items: center; gap: 6px; height: 18px; padding: 0 9px; border-radius: 999px; color: #fff;
+  background: rgba(12, 14, 20, 0.62); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1); white-space: nowrap;
+  animation: tv-bug 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.tv-sponsor__k { font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.6; }
+.tv-sponsor__b { font-size: 11px; font-weight: 800; letter-spacing: 0.04em; }
+.tv-sponsor__b.is-serif { font-family: Georgia, "Times New Roman", serif; font-weight: 700; letter-spacing: 0.12em; color: #e8c46a; }
+.tv-sponsor__b.is-script { font-style: italic; font-weight: 800; letter-spacing: 0; color: #8ccaff; }
+.tv-sponsor__b.is-bold { color: #ffd23f; }
+.tv-sponsor__s { font-size: 9.5px; opacity: 0.7; }
+@keyframes tv-bug { from { opacity: 0; transform: translateY(8px); } }
+
+/* eingeblendete Werbung unten links */
+.tv-ad {
+  position: absolute; left: calc(12px + var(--safe-l)); bottom: calc(var(--safe-b) + 22px); max-width: min(64%, 300px);
+  display: grid; gap: 1px; padding: 8px 14px 9px 14px; border-radius: 16px; color: #fff; pointer-events: none;
+  background: linear-gradient(135deg, rgba(20, 22, 30, 0.88), rgba(12, 14, 20, 0.8)); box-shadow: inset 3px 0 0 var(--ad), 0 6px 20px rgba(0, 0, 0, 0.3);
+  animation: tv-ad 5.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.tv-ad__tag { font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.55; }
+.tv-ad strong { font-size: 15px; letter-spacing: 0.02em; color: var(--ad); }
+.tv-ad span:last-child { font-size: 11.5px; opacity: 0.85; }
+@keyframes tv-ad {
+  0% { opacity: 0; transform: translateX(-24px); }
+  8%, 90% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateX(-12px); }
+}
+
+/* Ereignisse unter der Tafel (im Fluss, überdeckt nichts) */
+.hud-banner {
+  align-self: center; margin-top: 4px; display: flex; flex-direction: column; align-items: center; gap: 1px; max-width: 100%;
+  padding: 8px 18px 9px; border-radius: 18px; text-align: center; color: #fff;
+  background: rgba(12, 14, 20, 0.78); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 6px 20px rgba(0, 0, 0, 0.25);
+  animation: hud-banner 2.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.hud-banner strong { font-size: 16.5px; letter-spacing: -0.01em; }
+.hud-banner span { font-size: 12.5px; opacity: 0.85; }
+.hud-banner--gold strong { color: #ffd23f; }
+.hud-banner--accent strong { color: var(--accent); }
+.hud-banner--red strong { color: #ff6b6b; }
+@keyframes hud-banner {
+  0% { opacity: 0; transform: translateY(-10px) scale(0.94); }
+  10% { opacity: 1; transform: none; }
+  82% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(-6px) scale(0.98); }
+}
+
+/* Führungswechsel mit dem Helfer (Bergfinale) */
+.hud-mate {
+  position: absolute; right: calc(12px + var(--safe-r)); bottom: calc(var(--safe-b) + 150px); pointer-events: auto;
+  display: flex; align-items: center; gap: 9px; padding: 5px 14px 5px 5px; border: 0; border-radius: 999px; color: #fff; font: inherit;
+  background: rgba(12, 14, 20, 0.8); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 6px 18px rgba(0, 0, 0, 0.28);
+  transition: opacity 0.3s, transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.hud-mate.is-off { opacity: 0; transform: scale(0.88); pointer-events: none; visibility: hidden; transition: opacity 0.3s, transform 0.35s, visibility 0s 0.35s; }
+.hud-mate:active { transform: scale(0.96); }
+.hud-mate__ico { width: 34px; height: 34px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); transition: transform 0.35s; }
+.hud-mate.is-me .hud-mate__ico { transform: rotate(180deg); }
+.hud-mate__txt { display: flex; flex-direction: column; text-align: left; line-height: 1.15; }
+.hud-mate__txt b { font-size: 13px; }
+.hud-mate__txt small { font-size: 11px; opacity: 0.75; }
+@media (prefers-reduced-motion: reduce) {
+  .tv-box, .tv-box.is-flash, .tv-sponsor__in, .tv-ad, .hud-banner { animation-duration: 0.01s; }
+  .tv-ad, .hud-banner { animation: none; }
+}
+
 /* Tutorial-Karte */
 .abf-coach {
-  position: absolute; left: 0; right: 0; margin: 0 auto; width: max-content; top: calc(var(--safe-t) + 168px);
+  position: absolute; left: 0; right: 0; margin: 0 auto; width: max-content; bottom: calc(var(--safe-b) + 28px);
   display: flex; align-items: center; gap: 12px; padding: 10px 16px 10px 10px; border-radius: 18px; max-width: calc(100% - 32px);
   background: rgba(10, 12, 18, 0.78); color: #fff;
   pointer-events: none; animation: abf-coach-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -1436,3 +1571,9 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 @media (max-height: 660px) {
   .brg-profile { display: none; }
 }
+.hud-row .hud-wheel:not(.is-on) { display: none; }
+.hud-row .hud-wheel.is-on { animation: hud-pop 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes hud-pop { from { opacity: 0; transform: scale(0.9); } }
+.hud > .tv { flex: none; }
+.hud-top--score .abf-hud__score { position: relative; padding-top: 2px; }
+.hud-top--score .abf-mult { position: absolute; top: calc(100% + 2px); left: 50%; translate: -50% 0; }

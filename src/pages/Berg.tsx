@@ -10,6 +10,7 @@ import { riderOptions, rivalNames, teamMate, type RiderOption } from '../game/ab
 import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
+import { SwapIcon, TvAd, TvBoard, TvSponsor, boardItems, writeTv } from './hud';
 import { cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { BergIcon } from '../ui/GameIcon';
@@ -135,10 +136,18 @@ export function BergPage() {
       const el = hud.current[key];
       if (el) el.textContent = val;
     };
-    set('place', `${h.place}.`);
-    set('riders', `von ${h.riders}`);
     set('kmh', String(h.kmh));
-    set('toGo', h.toTop > 0 ? `Gipfel ${dist(h.toTop)}` : h.toGo > 0 ? `noch ${dist(h.toGo)}` : 'Ziel');
+    // vor dem Gipfel zeigt der erste Kasten die Meter bis zur Bergwertung (gepunktetes Symbol), danach bis ins Ziel
+    writeTv(hud.current, last.current, boardItems(h.board, h.toTop > 0 ? dist(h.toTop) : h.toGo > 0 ? dist(h.toGo) : 'Ziel', h.toTop > 0 ? 'gpm' : 'flag'));
+    const mate = hud.current.mate;
+    if (mate) {
+      mate.classList.toggle('is-off', !h.mate || uiRef.current !== 'playing');
+      if (h.mate) {
+        mate.classList.toggle('is-me', !h.mate.front);
+        set('mateName', h.mate.front ? `${lastName(h.mate.name)} führt` : 'Du führst');
+        set('mateState', h.mate.front ? 'Tippen: selbst Tempo machen' : 'Tippen: Helfer nach vorn');
+      }
+    }
     const en = hud.current.energy;
     if (en) {
       en.style.setProperty('--e', h.energy.toFixed(3));
@@ -151,22 +160,13 @@ export function BergPage() {
     set('energyLabel', label);
     const g = Math.round(h.grade);
     set('grade', `${g > 0 ? '▲' : g < 0 ? '▼' : ''} ${Math.abs(g)} %`);
-    const draftEl = hud.current.draft;
-    if (draftEl) {
-      draftEl.style.opacity = h.stage === 'descent' && h.draft > 0.15 ? '1' : '0';
-      draftEl.style.setProperty('--d', h.draft.toFixed(2));
-    }
-    const lead = hud.current.lead;
-    if (lead) {
-      if (h.lead && h.toGo > 0) {
-        const l = h.lead;
-        const text = l.name === 'Du'
-          ? (l.gap < -0.5 ? `Du führst · ${sec(-l.gap)} s` : 'Du führst')
-          : l.gap < 0.8 ? 'In der Spitzengruppe' : `Spitze: ${lastName(l.name)} · +${sec(l.gap)} s`;
-        set('leadText', text);
-        lead.style.opacity = '1';
-        lead.classList.toggle('is-front', l.name === 'Du' || l.gap < 0.8);
-      } else lead.style.opacity = '0';
+    const wheel = hud.current.wheel;
+    if (wheel) {
+      const on = !!h.ahead && h.toGo > 0;
+      if (on) set('wheelName', h.ahead!);
+      wheel.classList.toggle('is-on', on);
+      wheel.classList.toggle('is-draft', h.draft > 0.15);
+      wheel.style.setProperty('--d', h.draft.toFixed(2));
     }
     const dot = hud.current.dot;
     if (dot) dot.style.left = `${Math.min(100, (1 - h.toGo / MOUNTAIN_FINISH) * 100).toFixed(2)}%`;
@@ -254,20 +254,14 @@ export function BergPage() {
       ) : null}
 
       {ui === 'playing' || ui === 'paused' || ui === 'countdown' ? (
-        <div className="abf-hud" aria-hidden={ui === 'countdown'}>
-          <div className="abf-hud__top">
+        <div className="abf-hud hud" aria-hidden={ui === 'countdown'}>
+          <div className="hud-top">
             <button type="button" className="abf-round" onClick={togglePause} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
               {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
             </button>
-            <div className="spr-place">
-              <strong ref={bind('place')}>–</strong>
-              <span ref={bind('riders')} />
-            </div>
-            <div className="abf-hud__speed">
-              <span><strong ref={bind('kmh')}>0</strong>&nbsp;km/h</span>
-              <span className="abf-hud__dist" ref={bind('toGo')} />
-            </div>
+            <TvBoard bind={bind} />
           </div>
+          <TvSponsor seed={3} />
           <div className="abf-strip spr-strip" aria-hidden="true">
             <div className="abf-strip__line" />
             <span className="brg-strip__gpm" style={{ left: pct(MOUNTAIN_TOP) }} />
@@ -275,31 +269,35 @@ export function BergPage() {
             <span className="spr-strip__finish" />
             <span className="abf-strip__dot" ref={bind('dot')} />
           </div>
-          <div className="spr-energy" ref={bind('energy')}>
-            <span ref={bind('energyLabel')}>Kraft</span>
+          <div className="hud-row">
+            <div className="hud-pill hud-speed"><strong ref={bind('kmh')}>0</strong><span>km/h</span></div>
+            <div className="hud-pill hud-energy" ref={bind('energy')}>
+              <span ref={bind('energyLabel')}>Kraft</span>
+              <i aria-hidden="true" />
+              <b className="brg-grade" ref={bind('grade')} />
+            </div>
+          </div>
+          <div className="hud-pill hud-wheel" ref={bind('wheel')}>
+            <span className="hud-wheel__k">Hinterrad</span>
+            <span className="hud-wheel__name" ref={bind('wheelName')} />
             <i aria-hidden="true" />
-            <b className="brg-grade" ref={bind('grade')} />
           </div>
-          <div className="abf-next spr-wheel brg-lead" ref={bind('lead')}>
-            <Icon name="flag" size={14} />
-            <span ref={bind('leadText')} />
-          </div>
-          <div className="abf-draft spr-draft" ref={bind('draft')}>
-            <span>Windschatten</span>
-            <i aria-hidden="true" />
-          </div>
+          {banner && (ui === 'playing' || ui === 'countdown') ? (
+            <div key={banner.key} className={cx('hud-banner', banner.tone && `hud-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
+              <strong>{banner.title}</strong>
+              {banner.sub ? <span>{banner.sub}</span> : null}
+            </div>
+          ) : null}
           <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
             <span className="abf-thumb__up"><TuckIcon /></span>
             <span className="abf-thumb__dot" />
             <span className="abf-thumb__down"><BrakeIcon /></span>
           </div>
-        </div>
-      ) : null}
-
-      {banner && (ui === 'playing' || ui === 'countdown') ? (
-        <div key={banner.key} className={cx('abf-banner', banner.tone && `abf-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
-          <strong>{banner.title}</strong>
-          {banner.sub ? <span>{banner.sub}</span> : null}
+          <button type="button" className="hud-mate is-off" ref={bind('mate')} onClick={() => engineRef.current?.swapMate()} aria-label="Führung mit dem Helfer tauschen">
+            <span className="hud-mate__ico"><SwapIcon /></span>
+            <span className="hud-mate__txt"><b ref={bind('mateName')} /><small ref={bind('mateState')} /></span>
+          </button>
+          <TvAd hidden={!!coach || ui !== 'playing'} seed={5} />
         </div>
       ) : null}
 
@@ -341,7 +339,7 @@ export function BergPage() {
                 </div>
                 <BergProfile track={track} />
                 <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => BERG_STATS[t]} bars={bars} />
-                <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Angreifen · bergab ducken'], ['↓', 'Erholen · bremsen']]} />
+                <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Angreifen · bergab ducken'], ['↓', 'Erholen · bremsen'], ['⇄', 'Führung mit dem Helfer tauschen']]} />
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
                 <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch niemand am Berg – hol dir den ersten Tagessieg!" />
               </>

@@ -10,6 +10,7 @@ import { riderOptions, rivalNames, sprintTrains, teamMate, type RiderOption } fr
 import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { SPRINT_FINISH, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
+import { TvAd, TvBoard, TvSponsor, boardItems, writeTv } from './hud';
 import { cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { SprintIcon } from '../ui/GameIcon';
@@ -132,10 +133,8 @@ export function SprintPage() {
       const el = hud.current[key];
       if (el) el.textContent = val;
     };
-    set('place', `${h.place}.`);
-    set('riders', `von ${h.riders}`);
     set('kmh', String(h.kmh));
-    set('toGo', h.toGo > 0 ? `noch ${dist(h.toGo)}` : 'Ziel');
+    writeTv(hud.current, last.current, boardItems(h.board, h.toGo > 0 ? dist(h.toGo) : 'Ziel'));
     const en = hud.current.energy;
     if (en) {
       en.style.setProperty('--e', h.energy.toFixed(3));
@@ -143,14 +142,13 @@ export function SprintPage() {
       en.classList.toggle('is-low', h.energy < 0.18);
     }
     set('energyLabel', h.mode === 'go' ? 'Antritt' : h.mode === 'ease' ? 'Erholen' : 'Kraft');
-    const draftEl = hud.current.draft;
-    if (draftEl) {
-      draftEl.style.opacity = h.draft > 0.15 ? '1' : '0';
-      draftEl.style.setProperty('--d', h.draft.toFixed(2));
-    }
     const wheel = hud.current.wheel;
     if (wheel) {
-      if (h.ahead && h.toGo > 0) { set('wheelName', h.ahead); wheel.style.opacity = '1'; } else wheel.style.opacity = '0';
+      const on = !!h.ahead && h.toGo > 0;
+      if (on) set('wheelName', h.ahead!);
+      wheel.classList.toggle('is-on', on);
+      wheel.classList.toggle('is-draft', h.draft > 0.15);
+      wheel.style.setProperty('--d', h.draft.toFixed(2));
     }
     const dot = hud.current.dot;
     if (dot) dot.style.left = `${Math.min(100, (1 - h.toGo / SPRINT_FINISH) * 100).toFixed(2)}%`;
@@ -238,50 +236,44 @@ export function SprintPage() {
       ) : null}
 
       {ui === 'playing' || ui === 'paused' || ui === 'countdown' ? (
-        <div className="abf-hud" aria-hidden={ui === 'countdown'}>
-          <div className="abf-hud__top">
+        <div className="abf-hud hud" aria-hidden={ui === 'countdown'}>
+          <div className="hud-top">
             <button type="button" className="abf-round" onClick={togglePause} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
               {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
             </button>
-            <div className="spr-place">
-              <strong ref={bind('place')}>–</strong>
-              <span ref={bind('riders')} />
-            </div>
-            <div className="abf-hud__speed">
-              <span><strong ref={bind('kmh')}>0</strong>&nbsp;km/h</span>
-              <span className="abf-hud__dist" ref={bind('toGo')} />
-            </div>
+            <TvBoard bind={bind} />
           </div>
+          <TvSponsor seed={1} />
           <div className="abf-strip spr-strip" aria-hidden="true">
             <div className="abf-strip__line" />
             <span className="spr-strip__flamme" style={{ left: `${flammePct}%` }} />
             <span className="spr-strip__finish" />
             <span className="abf-strip__dot" ref={bind('dot')} />
           </div>
-          <div className="spr-energy" ref={bind('energy')}>
-            <span ref={bind('energyLabel')}>Kraft</span>
+          <div className="hud-row">
+            <div className="hud-pill hud-speed"><strong ref={bind('kmh')}>0</strong><span>km/h</span></div>
+            <div className="hud-pill hud-energy" ref={bind('energy')}>
+              <span ref={bind('energyLabel')}>Kraft</span>
+              <i aria-hidden="true" />
+            </div>
+          </div>
+          <div className="hud-pill hud-wheel" ref={bind('wheel')}>
+            <span className="hud-wheel__k">Hinterrad</span>
+            <span className="hud-wheel__name" ref={bind('wheelName')} />
             <i aria-hidden="true" />
           </div>
-          <div className="abf-next spr-wheel" ref={bind('wheel')}>
-            <Icon name="users" size={14} />
-            <span ref={bind('wheelName')} />
-          </div>
-          <div className="abf-draft spr-draft" ref={bind('draft')}>
-            <span>Windschatten</span>
-            <i aria-hidden="true" />
-          </div>
+          {banner && (ui === 'playing' || ui === 'countdown') ? (
+            <div key={banner.key} className={cx('hud-banner', banner.tone && `hud-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
+              <strong>{banner.title}</strong>
+              {banner.sub ? <span>{banner.sub}</span> : null}
+            </div>
+          ) : null}
           <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
             <span className="abf-thumb__up"><TuckIcon /></span>
             <span className="abf-thumb__dot" />
             <span className="abf-thumb__down"><BrakeIcon /></span>
           </div>
-        </div>
-      ) : null}
-
-      {banner && (ui === 'playing' || ui === 'countdown') ? (
-        <div key={banner.key} className={cx('abf-banner', banner.tone && `abf-banner--${banner.tone}`)} onAnimationEnd={() => setBanner(null)}>
-          <strong>{banner.title}</strong>
-          {banner.sub ? <span>{banner.sub}</span> : null}
+          <TvAd hidden={!!coach || ui !== 'playing'} seed={2} />
         </div>
       ) : null}
 
