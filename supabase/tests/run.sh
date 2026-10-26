@@ -36,3 +36,7 @@ psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_giro2026.sql   # wiederholbar
 # Generalprobe der Automatik: schaltet die Testrunde auf den Workflow um
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/sync_generalprobe.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Generalprobe: Automatik ' || sync_mode from public.tours where id = 'giro-2026'"
+# Saison 2027 (zweimal: wiederholbar?)
+psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_2027.sql
+psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_2027.sql
+psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Tour 2027: ' || count(*) || ' Etappen, ' || sum(jsonb_array_length(climbs)) || ' Anstiege, ' || (select count(*) from public.stage_profiles p join public.stages x on x.id = p.stage_id where x.tour_id = 'tour-2027') || ' Profile, Etappe 1 um ' || min(to_char(starts_at at time zone 'Europe/Berlin', 'DD.MM. HH24:MI')) from public.stages where tour_id = 'tour-2027'"

@@ -873,6 +873,7 @@ tr.is-me > * { background: var(--accent-soft); }
 .cat--2 { fill: #ec8a00; background: #ec8a00; }
 .cat--3 { fill: #e5c31a; background: #e5c31a; }
 .cat--4 { fill: #4f9bd9; background: #4f9bd9; }
+.cat--tbd { fill: #8e8e93; background: #8e8e93; }
 .profile-chart text[class$="-text"] { fill: #ffffff; font-size: 10.5px; font-weight: 700; }
 .profile-chart text.cat--3-text { fill: #1a1a1a; }
 

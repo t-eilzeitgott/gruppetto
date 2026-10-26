@@ -104,6 +104,8 @@ export interface StageInfo {
   finale?: string;
   /** Verpflegungszonen, z. B. „36.6 - 70.6 - 103.1“ */
   feed?: string;
+  /** Quelle der Streckenbeschreibung (ohne Angabe: Roadbook des Giro) */
+  source?: string;
 }
 
 export interface TourInfo {

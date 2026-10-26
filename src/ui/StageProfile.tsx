@@ -38,14 +38,15 @@ export function hasProfile(stage: Stage): boolean {
   return !!(stage.climbs?.length || stage.sprints?.length || stage.elevation_m);
 }
 
-export const CAT_LABEL: Record<string, string> = { CC: 'Cima Coppi', HC: 'Hors catégorie', '1': '1. Kategorie', '2': '2. Kategorie', '3': '3. Kategorie', '4': '4. Kategorie' };
-export const CAT_SHORT: Record<string, string> = { CC: 'CC', HC: 'HC', '1': '1', '2': '2', '3': '3', '4': '4' };
+// '?' = Bergwertung bekannt, Kategorie noch nicht (steht erst im Roadbook)
+export const CAT_LABEL: Record<string, string> = { CC: 'Cima Coppi', HC: 'Hors catégorie', '1': '1. Kategorie', '2': '2. Kategorie', '3': '3. Kategorie', '4': '4. Kategorie', '?': 'Kategorie folgt' };
+export const CAT_SHORT: Record<string, string> = { CC: 'CC', HC: 'HC', '1': '1', '2': '2', '3': '3', '4': '4', '?': '?' };
 // Ersatzwerte, wenn Länge/Steigung fehlen
 const CAT_GAIN: Record<string, number> = { CC: 900, HC: 900, '1': 700, '2': 400, '3': 220, '4': 100 };
 const CAT_LEN: Record<string, number> = { CC: 14, HC: 14, '1': 11, '2': 7, '3': 5, '4': 3 };
 
 export function catClass(cat: string): string {
-  return `cat cat--${cat.toLowerCase()}`;
+  return `cat cat--${cat === '?' ? 'tbd' : cat.toLowerCase()}`;
 }
 
 const nf = (n: number, d = 1) => n.toLocaleString('de-DE', { maximumFractionDigits: d });
@@ -674,7 +675,7 @@ function Waypoints({ stage }: { stage: Stage }) {
   );
 }
 
-/** Streckenbeschreibung und Finale aus dem Roadbook */
+/** Streckenbeschreibung und Finale (Roadbook bzw. Streckenpräsentation) */
 export function StageRouteCard({ stage }: { stage: Stage }) {
   const info = stage.info ?? {};
   if (!info.route && !info.finale) return null;
@@ -688,7 +689,7 @@ export function StageRouteCard({ stage }: { stage: Stage }) {
           <p className="route-text">{info.finale}</p>
         </>
       ) : null}
-      <p className="hint">Quelle: offizielles Roadbook des Giro d’Italia.</p>
+      <p className="hint">Quelle: {info.source ?? 'offizielles Roadbook des Giro d’Italia'}.</p>
     </section>
   );
 }
