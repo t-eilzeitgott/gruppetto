@@ -525,8 +525,10 @@ export class BergRace {
     if (racing) {
       // bergauf kostet alles über der Dauerleistung den Spieler deutlich mehr (Kraft einteilen!), Erholung ist langsam
       const push = stage === 'climb' ? PUSH_COST : 1;
-      if (P > s.cp) this.energy -= ((P - s.cp) * push / WJ) * dt;
-      else this.energy += ((s.cp - P) / WJ) * (stage === 'climb' ? 0.35 : 0.55) * dt;
+      // bergab kostet Ducken (und das Antreten aus den Kehren) keine Kraft – dort erholt man sich
+      const Pe = stage === 'descent' ? Math.min(P, s.cp * 0.6) : P;
+      if (Pe > s.cp) this.energy -= ((Pe - s.cp) * push / WJ) * dt;
+      else this.energy += ((s.cp - Pe) / WJ) * (stage === 'climb' ? 0.35 : 0.55) * dt;
       this.energy = clamp(this.energy, 0, 1);
       this.emptyT = this.energy <= 0.001 ? this.emptyT + dt : 0;
       if (this.emptyT > 0.2 && !this.flags.has('empty')) {
