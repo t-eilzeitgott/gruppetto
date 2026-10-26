@@ -1203,7 +1203,6 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .hud-bar__mark.is-friend { width: 5px; height: 5px; top: -1.5px; margin-left: -2.5px; border-radius: 50%; }
 @media (max-width: 379px) {
   .hud-bar { padding: 0 13px 3px; }
-  .hud-bar__gap small { display: none; }
   .hud-bar__place { font-size: 19px; }
   .hud-bar__gap b, .hud-bar__dist b { font-size: 14px; }
 }
@@ -1624,3 +1623,11 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   .hud-bar__dist { padding-left: 8px; gap: 5px; }
 }
 .hud-bar__place, .hud-bar__dist { flex: none; }
+
+/* Leiste passt ihren Inhalt an die eigene Breite an (iOS-Schrift ist breiter): erst fällt „zur Spitze“ weg,
+   dann das Symbol – nichts schiebt sich mehr übereinander */
+.hud-bar { container-type: inline-size; }
+.hud-bar__gap small { display: none; }
+@container (min-width: 290px) { .hud-bar__gap small { display: inline; } }
+@container (max-width: 190px) { .hud-ico { display: none; } .hud-bar__place::after { margin-left: 7px; } .hud-bar__gap { margin-left: 7px; } }
+.hud-bar__gap { overflow: hidden; }
