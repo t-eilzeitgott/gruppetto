@@ -27,12 +27,16 @@ export interface Player {
   lean: number; pedal: number; tuck: number; brake: number;
   wobble: number; slip: number; grip: number; slick: number;
   kit: Kit;
+  /** Wiegetritt 0–1 (Antritt, Sprint, Attacke am Berg) */
+  stand?: number;
 }
 
 export interface Opp {
   id: number; z: number; x: number; vx: number; v: number;
   tx: number; f: number; kit: Kit; pedal: number; lean: number; tuck: number; brake: number;
   passed: boolean; group: number; bump: number; attacker: boolean;
+  /** Wiegetritt 0–1 */
+  stand?: number;
 }
 
 export interface Particle {

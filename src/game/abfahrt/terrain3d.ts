@@ -9,7 +9,7 @@
  * Lücken mehr. In Straßennähe bleibt das Höhenfeld unter dem Korridor, damit nichts durchsticht.
  */
 import * as THREE from 'three';
-import { EDGE, SEG, type BiomeId, type Seg, type Side, type Track } from './track';
+import { EDGE, MOUNTAIN_FINISH, SEG, type BiomeId, type Seg, type Side, type Track } from './track';
 import { BIOME_PALETTES, mixRGB, type RGB } from './palette';
 import { lin255, type RGBf } from './models3d';
 
@@ -287,6 +287,12 @@ export class Terrain {
     const hit = this.floorCache.get(descent);
     if (hit !== undefined) return hit;
     const t = this.track;
+    if (t.kind === 'mountain') {
+      // Bergfinale: Talboden unter Start und Ziel (der Pass liegt dazwischen hoch oben)
+      const y = Math.min(t.seg(Math.max(t.first, 0)).y, t.seg(MOUNTAIN_FINISH / SEG).y) - 30;
+      this.floorCache.set(descent, y);
+      return y;
+    }
     let guard = 0;
     for (;;) {
       const sec = t.sections.find((x) => x.descent === descent && (x.biome === 'lake' || x.biome === 'vineyard'));

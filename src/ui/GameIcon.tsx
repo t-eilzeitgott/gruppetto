@@ -50,7 +50,29 @@ export function SprintIcon({ size = 44 }: { size?: number }) {
   );
 }
 
+/** Symbol des Bergfinales: Gipfel mit Serpentinen und Bergwertungs-Fähnchen */
+export function BergIcon({ size = 44 }: { size?: number }) {
+  const id = `gb-${useId().replace(/:/g, '')}`;
+  return (
+    <svg className="game-icon" width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="var(--gi-top, #ff7ab6)" />
+          <stop offset="1" stopColor="var(--gi-bottom, #7b2cbf)" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="12" fill={`url(#${id})`} />
+      <path d="M2 44 L20 14 L27 24 L32 17 L46 44 Z" fill="rgba(255,255,255,0.9)" />
+      <path d="M20 14 L24.5 21.5 L21.5 20 L18.5 22.5 L16.8 19.4 Z" fill="var(--gi-bottom, #7b2cbf)" opacity="0.35" />
+      <path d="M12 44 C 20 41, 30 40, 26 36 C 22 32, 16 33, 21 29 C 25 26, 27 26, 23 23 L21 20" fill="none" stroke="var(--gi-bottom, #7b2cbf)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M20 14 V5" stroke="#16171a" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M20 5.2 H29 V11 H20 Z" fill="#ffffff" stroke="#16171a" strokeWidth="0.8" />
+      {[[22.2, 7], [26.6, 7], [24.4, 9.3]].map(([cx, cy]) => <circle key={`${cx}`} cx={cx} cy={cy} r="1.15" fill="#e5484d" />)}
+    </svg>
+  );
+}
+
 /** Symbol eines Minispiels nach seiner Kennung (für Bestenliste und Spielübersicht) */
 export function GameBadge({ game, size = 20 }: { game: GameId; size?: number }) {
-  return game === 'sprint' ? <SprintIcon size={size} /> : <GameIcon size={size} />;
+  return game === 'sprint' ? <SprintIcon size={size} /> : game === 'berg' ? <BergIcon size={size} /> : <GameIcon size={size} />;
 }

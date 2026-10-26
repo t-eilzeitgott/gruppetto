@@ -402,6 +402,8 @@ export class SprintRace {
     p.lean += (clamp(-p.vx * 0.12, -0.25, 0.25) - p.lean) * Math.min(1, dt * 8);
     p.pedal += p.v * dt * 0.62 * (go ? 1.15 : 1);
     p.tuck += ((go ? 0.15 : 0.6) - p.tuck) * Math.min(1, dt * 5);
+    // Antritt im Wiegetritt
+    p.stand = (p.stand ?? 0) + ((go ? 1 : 0) - (p.stand ?? 0)) * Math.min(1, dt * 6);
     // Ansagen
     if (racing) this.callouts(d);
     // Ziel
@@ -495,6 +497,7 @@ export class SprintRace {
       o.lean += (clamp(-o.vx * 0.12, -0.25, 0.25) - o.lean) * Math.min(1, dt * 8);
       o.pedal += o.v * dt * 0.62;
       o.tuck += ((o.going ? 0.15 : 0.6) - o.tuck) * Math.min(1, dt * 5);
+      o.stand = (o.stand ?? 0) + ((o.going && o.e > 0.2 ? 1 : 0) - (o.stand ?? 0)) * Math.min(1, dt * 6);
     }
   }
 

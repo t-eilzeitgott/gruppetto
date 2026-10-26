@@ -1,0 +1,357 @@
+/**
+ * Gemeinsame Bausteine der Rennfinals (Sprintfinale, Bergfinale): 3D-Schleife, Gestensperre,
+ * Tastatur, Fahrerauswahl, Bestenlisten und Podium.
+ */
+import { useEffect, useRef, type RefObject } from 'react';
+import type { GameBest } from '../data/source';
+import type { Profile } from '../lib/types';
+import type { RaceView } from '../game/abfahrt/engine';
+import type { RiderType } from '../game/abfahrt/sprint';
+import type { RiderOption } from '../game/abfahrt/sprintRiders';
+import { Renderer3D } from '../game/abfahrt/render3d';
+import { Avatar, Segmented, cx } from '../ui/kit';
+import { Icon } from '../ui/Icon';
+import { readAccent } from './Game';
+
+export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
+export const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
+
+export type Ui = 'ready' | 'countdown' | 'playing' | 'paused' | 'over';
+export type Board = 'day' | 'season';
+
+export const nf = (n: number) => Math.round(n).toLocaleString('de-DE');
+export const dist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(m)} m`);
+
+/** was die Schleife von einem Rennen braucht */
+export interface LoopEngine extends RaceView {
+  update(dt: number): void;
+  setViewport(w: number): void;
+}
+
+/**
+ * 3D-Schleife: Renderer anlegen, jedes Bild rechnen und zeichnen, Bildrate beobachten (notfalls
+ * Auflösung senken), Größe und Thema verfolgen. Testmodi: ?nogl (ohne 3D) und ?lowgfx (winzig).
+ */
+export function useRaceLoop<E extends LoopEngine>(opts: {
+  canvasRef: RefObject<HTMLCanvasElement | null>;
+  overlayRef: RefObject<HTMLCanvasElement | null>;
+  engineRef: RefObject<E | null>;
+  uiRef: RefObject<Ui>;
+  make: () => E;
+  onFrame: (eng: E, dt: number) => void;
+  onGlError: () => void;
+  onHidden: () => void;
+}) {
+  const cb = useRef(opts);
+  cb.current = opts;
+  useEffect(() => {
+    const canvas = cb.current.canvasRef.current;
+    const overlay = cb.current.overlayRef.current;
+    if (!canvas || !overlay) return undefined;
+    const engineRef = cb.current.engineRef;
+    const uiRef = cb.current.uiRef;
+    const g = window as unknown as { __abfahrt?: unknown };
+    if (/[?&]nogl\b/.test(window.location.search)) {
+      engineRef.current = cb.current.make();
+      let raf = 0;
+      let prev = performance.now();
+      const tick = (now: number) => {
+        const dt = Math.min(0.05, (now - prev) / 1000);
+        prev = now;
+        if (uiRef.current !== 'paused') engineRef.current!.update(dt);
+        cb.current.onFrame(engineRef.current!, dt);
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      g.__abfahrt = { engine: () => engineRef.current, renderer: null };
+      return () => cancelAnimationFrame(raf);
+    }
+    let renderer: Renderer3D;
+    try {
+      renderer = new Renderer3D(canvas, overlay);
+    } catch {
+      cb.current.onGlError();
+      return undefined;
+    }
+    renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
+    const low = /[?&]lowgfx\b/.test(window.location.search);
+    if (low) { renderer.quality = 0.25; renderer.resize(); }
+    renderer.warm();
+    engineRef.current = cb.current.make();
+    let raf = 0;
+    let prev = performance.now();
+    let acc = 0;
+    let frames = 0;
+    const loop = (now: number) => {
+      const dt = Math.min(0.05, (now - prev) / 1000);
+      prev = now;
+      const eng = engineRef.current!;
+      if (uiRef.current !== 'paused') eng.update(dt);
+      if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
+      cb.current.onFrame(eng, dt);
+      acc += dt;
+      frames += 1;
+      if (acc > 2.5) {
+        const fps = frames / acc;
+        if (!low && fps < 48 && renderer.quality > 0.45) { renderer.quality = Math.max(0.45, renderer.quality - 0.15); renderer.resize(); }
+        acc = 0;
+        frames = 0;
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    const onResize = () => { renderer.resize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
+    const onVis = () => { if (document.hidden && uiRef.current === 'playing') cb.current.onHidden(); };
+    const onTheme = () => window.setTimeout(() => renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark'), 30);
+    const obs = new MutationObserver(onTheme);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-tour'] });
+    window.addEventListener('resize', onResize);
+    // Homescreen-App auf iOS: 100vh ist dort zu kurz, darum die echte Bildschirmhöhe nehmen
+    const root = canvas.parentElement as HTMLElement | null;
+    const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+    const fit = () => {
+      if (!root || !standalone) return;
+      const portrait = window.innerHeight >= window.innerWidth;
+      const h = portrait ? Math.max(screen.height, screen.width) : Math.min(screen.height, screen.width);
+      root.style.height = `${Math.max(window.innerHeight, h)}px`;
+    };
+    fit();
+    window.addEventListener('orientationchange', fit);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    ro?.observe(canvas);
+    document.addEventListener('visibilitychange', onVis);
+    g.__abfahrt = { engine: () => engineRef.current, renderer };
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+      window.removeEventListener('orientationchange', fit);
+      renderer.dispose();
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVis);
+      obs.disconnect();
+    };
+  }, []);
+}
+
+/** Kein Zoomen, kein Scrollen, kein Zurückwischen während des Spiels */
+export function useGameLock() {
+  useEffect(() => {
+    const meta = document.querySelector('meta[name=viewport]');
+    const before = meta?.getAttribute('content') ?? '';
+    meta?.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+    document.documentElement.classList.add('game-lock');
+    const stop = (e: Event) => e.preventDefault();
+    const touchMove = (e: TouchEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el?.closest('.abf-scroll') && e.touches.length === 1) return;
+      e.preventDefault();
+    };
+    const touchStart = (e: TouchEvent) => { if (e.touches.length > 1) e.preventDefault(); };
+    let lastTap = 0;
+    const touchEnd = (e: TouchEvent) => {
+      const now = Date.now();
+      if (now - lastTap < 320 && !(e.target as HTMLElement | null)?.closest('button, a')) e.preventDefault();
+      lastTap = now;
+    };
+    document.addEventListener('gesturestart', stop, { passive: false } as AddEventListenerOptions);
+    document.addEventListener('gesturechange', stop, { passive: false } as AddEventListenerOptions);
+    document.addEventListener('touchmove', touchMove, { passive: false });
+    document.addEventListener('touchstart', touchStart, { passive: false });
+    document.addEventListener('touchend', touchEnd, { passive: false });
+    document.addEventListener('dblclick', stop);
+    document.addEventListener('contextmenu', stop);
+    window.scrollTo(0, 0);
+    return () => {
+      if (meta) meta.setAttribute('content', before);
+      document.documentElement.classList.remove('game-lock');
+      document.removeEventListener('gesturestart', stop);
+      document.removeEventListener('gesturechange', stop);
+      document.removeEventListener('touchmove', touchMove);
+      document.removeEventListener('touchstart', touchStart);
+      document.removeEventListener('touchend', touchEnd);
+      document.removeEventListener('dblclick', stop);
+      document.removeEventListener('contextmenu', stop);
+    };
+  }, []);
+}
+
+type KeyEngine = { key(name: 'left' | 'right' | 'down' | 'up', down: boolean): void };
+
+/** Tastatur: Pfeile/WASD steuern, Leertaste startet, Escape pausiert */
+export function useRaceKeys(engineRef: RefObject<KeyEngine | null>, uiRef: RefObject<Ui>, start: () => void, togglePause: () => void) {
+  useEffect(() => {
+    const map: Record<string, 'left' | 'right' | 'down' | 'up'> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', ArrowUp: 'up', a: 'left', d: 'right', s: 'down', w: 'up' };
+    const down = (e: KeyboardEvent) => {
+      if (e.key === ' ' || e.key === 'Enter') {
+        if (uiRef.current === 'ready' || uiRef.current === 'over') { e.preventDefault(); start(); }
+        return;
+      }
+      if (e.key === 'Escape' || e.key === 'p') { togglePause(); return; }
+      const k = map[e.key];
+      if (k) { e.preventDefault(); engineRef.current?.key(k, true); }
+    };
+    const up = (e: KeyboardEvent) => { const k = map[e.key]; if (k) engineRef.current?.key(k, false); };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  });
+}
+
+/** vorläufiger Platz eines neuen Laufs gegen die Bestwerte der anderen */
+export function placeIn(list: GameBest[], meId: string, score: number): number {
+  const others = list.filter((b) => b.user_id !== meId).map((b) => b.best);
+  const mine = Math.max(score, list.find((b) => b.user_id === meId)?.best ?? 0);
+  return others.filter((s) => s > mine).length + 1;
+}
+
+// ------------------------------------------------------------------ Fahrerauswahl
+
+export interface TypeInfo { label: string; bonus: number }
+
+function Bars({ rows }: { rows: [string, number][] }) {
+  return (
+    <span className="spr-bars" aria-hidden="true">
+      {rows.map(([label, v]) => (
+        <span key={label} className="spr-bars__row">
+          <span>{label}</span>
+          <i><b style={{ width: `${Math.round(12 + Math.max(0, Math.min(1, v)) * 88)}%` }} /></i>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Fahrer wählen: eigener Tipp, je Typ der passendste Fahrer, mit Stärken als Balken */
+export function RiderPicker({ options, chosen, onChoose, info, bars }: {
+  options: RiderOption[];
+  chosen: RiderOption;
+  onChoose: (o: RiderOption) => void;
+  info: (t: RiderType) => TypeInfo;
+  bars: (t: RiderType) => [string, number][];
+}) {
+  return (
+    <section className="spr-pick" aria-label="Fahrer auswählen">
+      <h2 className="abf-eyebrow">Dein Fahrer</h2>
+      <div className="spr-pick__list" role="radiogroup" aria-label="Fahrer">
+        {options.map((o) => {
+          const on = o === chosen;
+          const s = info(o.type);
+          return (
+            <button
+              key={`${o.id ?? 'x'}:${o.type}`}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              className={cx('spr-rider', on && 'is-on')}
+              onClick={() => onChoose(o)}
+            >
+              <span className="spr-rider__main">
+                <span className="spr-rider__name">{o.id === null ? s.label : o.name}</span>
+                <span className="spr-rider__sub">
+                  <span className="spr-chip">{s.label}</span>
+                  {o.tip ? <span className="spr-chip spr-chip--tip">Dein Tipp</span> : null}
+                  {s.bonus > 1 ? <span className="spr-rider__bonus">Punkte ×{s.bonus.toFixed(2).replace(/0$/, '').replace('.', ',')}</span> : null}
+                </span>
+                {o.why ? <span className="spr-rider__why">{o.why}</span> : null}
+              </span>
+              <Bars rows={bars(o.type)} />
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ Bestenlisten
+
+export function FinaleMini({ rows, label, members, meId, onOpen, empty }: {
+  rows: GameBest[]; label: string; members: Profile[]; meId: string; onOpen: () => void; empty: string;
+}) {
+  const myIdx = rows.findIndex((r) => r.user_id === meId);
+  const shown = rows.slice(0, 3).map((r, i) => ({ r, i }));
+  if (myIdx >= 3) shown.push({ r: rows[myIdx], i: myIdx });
+  return (
+    <section className="abf-mini" aria-label="Bestenliste">
+      <div className="abf-row">
+        <h2 className="abf-eyebrow">Bestenliste · {label}</h2>
+        <button type="button" className="abf-link" onClick={onOpen}>Alle<Icon name="chevron" size={14} /></button>
+      </div>
+      {shown.length ? (
+        <ol className="abf-top">
+          {shown.map(({ r, i }) => {
+            const m = members.find((x) => x.id === r.user_id);
+            return (
+              <li key={r.user_id} className={cx(r.user_id === meId && 'is-me')}>
+                <span className="abf-top__rank">{i + 1}</span>
+                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={24} />
+                <span className="abf-top__name">{r.user_id === meId ? 'Du' : m?.display_name ?? 'Jemand'}</span>
+                <strong>{nf(r.best)}</strong>
+              </li>
+            );
+          })}
+        </ol>
+      ) : <p className="abf-muted">{empty}</p>}
+    </section>
+  );
+}
+
+export function FinaleBoard({ title, rows, board, setBoard, members, meId, onBack, unit }: {
+  title: string; rows: GameBest[]; board: Board; setBoard: (b: Board) => void; members: Profile[]; meId: string; onBack: () => void;
+  /** Läufe benennen: „1 Sprint“ / „3 Sprints“ */
+  unit: [string, string];
+}) {
+  return (
+    <section className="abf-board" aria-label="Bestenliste">
+      <div className="abf-row">
+        <button type="button" className="abf-link" onClick={onBack}><Icon name="back" size={16} />Zurück</button>
+        <h2 className="abf-eyebrow">{title}</h2>
+      </div>
+      <Segmented<Board> label="Zeitraum" value={board} onChange={setBoard} options={[{ value: 'day', label: 'Heute' }, { value: 'season', label: 'Saison' }]} />
+      {rows.length === 0 ? <p className="abf-muted">{board === 'day' ? 'Heute ist noch niemand gefahren.' : `Noch keine ${unit[1]}.`}</p> : (
+        <ol className="list abf-list">
+          {rows.slice(0, 30).map((r, i) => {
+            const m = members.find((x) => x.id === r.user_id);
+            return (
+              <li key={r.user_id} className={cx('person-row', r.user_id === meId && 'is-me')}>
+                <span className="rank">{i + 1}</span>
+                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={30} />
+                <span className="person-row__main">
+                  <span className="person-row__name">{m?.display_name ?? 'Ehemaliges Mitglied'}{r.user_id === meId ? ' (du)' : ''}</span>
+                  <span className="person-row__sub">{r.runs === 1 ? `1 ${unit[0]}` : `${r.runs} ${unit[1]}`}</span>
+                </span>
+                <span className="points">{nf(r.best)}</span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+/** Podium eines Rennens */
+export function Podium({ podium }: { podium: { name: string; me: boolean }[] }) {
+  return (
+    <ol className="spr-podium" aria-label="Podium">
+      {podium.map((p, i) => (
+        <li key={`${p.name}-${i}`} className={cx(p.me && 'is-me')}>
+          <span className="spr-podium__pos">{i + 1}</span>
+          <span className="spr-podium__name">{p.me ? `${p.name} (du)` : p.name}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Daumenring im HUD: Anker, oben, unten */
+export function placeThumb(th: HTMLElement | null, touch: { x: number; y: number } | null, playing: boolean, up: boolean, down: boolean) {
+  if (!th) return;
+  if (touch && playing) {
+    th.style.opacity = '1';
+    th.style.visibility = 'visible';
+    th.style.transform = `translate(${touch.x.toFixed(0)}px, ${touch.y.toFixed(0)}px)`;
+    th.classList.toggle('is-tuck', up);
+    th.classList.toggle('is-brake', down);
+  } else { th.style.opacity = '0'; th.style.visibility = 'hidden'; }
+}

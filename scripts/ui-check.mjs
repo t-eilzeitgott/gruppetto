@@ -89,6 +89,19 @@ const PAGES = [
     await p.waitForSelector('.abf-summary', { timeout: 20000 });
     await p.waitForTimeout(1700);
   }],
+  ['berg', `?demo&${GFX}#/spiel/berg`],
+  ['berg-board', `?demo&${GFX}#/spiel/berg`, async (p) => { await p.click('.abf-link'); }],
+  ['berg-hud', `?demo&${GFX}#/spiel/berg`, async (p) => { await p.click('text=Losfahren'); await runGame(p, 8); }],
+  ['berg-over', `?demo&${GFX}#/spiel/berg`, async (p) => {
+    await p.click('text=Losfahren');
+    // ganzes Rennen durchrechnen, 250 m vor dem Gipfel angreifen
+    await p.evaluate(() => {
+      const g = window.__abfahrt.engine();
+      for (let i = 0; i < 60 * 300 && g.phase !== 'over'; i++) { g.key('up', g.p.z > 650 && g.p.z < 900); g.update(1 / 60); }
+    });
+    await p.waitForSelector('.abf-summary', { timeout: 20000 });
+    await p.waitForTimeout(1700);
+  }],
   ['player', '?demo#/spieler/u-felix'],
   ['player-me', '?demo#/spieler/u-christoph'],
   ['profile', '?demo#/profil'],

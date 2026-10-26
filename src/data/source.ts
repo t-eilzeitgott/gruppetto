@@ -9,7 +9,7 @@ export interface SessionUser {
   email: string;
 }
 
-export type GameId = 'abfahrt' | 'sprint';
+export type GameId = 'abfahrt' | 'sprint' | 'berg';
 
 export interface GameBest {
   user_id: string;

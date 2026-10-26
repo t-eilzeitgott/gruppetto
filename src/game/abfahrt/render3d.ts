@@ -6,7 +6,7 @@
  * 3D-Fahrer und eine 2D-Ebene für Punkte-Popups.
  */
 import * as THREE from 'three';
-import { EDGE, ROAD_HALF, SEG, Track, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
+import { EDGE, MOUNTAIN_TOP, ROAD_HALF, SEG, Track, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
 import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
 import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, facadeTex, FACADE_BANDS, gravelTex, rockTex, roundTex, vergeTex } from './tex3d';
@@ -139,7 +139,7 @@ export class Renderer3D {
   private w2 = { x: 0, y: 0, z: 0, th: 0 };
 
   // Kamera
-  private cam = { x: 0, y: 0, z: 0, th: 0, init: false, fov: 70 };
+  private cam = { x: 0, y: 0, z: 0, th: 0, init: false, fov: 70, pack: 0 };
   playerScreen = { x: 0, y: 0, s: 60 };
   /** nur für Tests: feste Kamera [x, y, z, Blickziel x, y, z] */
   debugCam: number[] | null = null;
@@ -809,11 +809,14 @@ export class Renderer3D {
     // Blickrichtung = Fahrtrichtung des Fahrers (Straße plus Querbewegung), geglättet:
     // die Kamera steht immer direkt hinter ihm, er bleibt in der Bildmitte – auch in Kehren
     const yaw = w.th + Math.atan2(p.vx, Math.max(5, p.v)) * 0.3;
-    // Sprint: höher und weiter hinten (Motorradkamera), damit man über das Feld schaut
-    const sprint = track.kind === 'sprint';
-    const back = sprint ? SPRINT_BACK : CAM_BACK;
+    // Rennfinale: höher und weiter hinten (Motorradkamera), damit man über das Feld schaut –
+    // im Bergfinale bergab wieder die nahe Abfahrtskamera (weich überblendet)
+    const wantPack = track.kind === 'sprint' || (track.kind === 'mountain' && p.z < MOUNTAIN_TOP + 25) ? 1 : 0;
+    if (!cam.init || g.phase === 'ready' || g.phase === 'countdown') cam.pack = wantPack;
+    else cam.pack += (wantPack - cam.pack) * Math.min(1, dt * 1.2);
+    const back = CAM_BACK + (SPRINT_BACK - CAM_BACK) * cam.pack;
     const behindY = track.heightAt(Math.max(0, p.z - back));
-    const ty = Math.max(behindY, roadY) + (sprint ? SPRINT_UP : CAM_UP) + air * 0.35;
+    const ty = Math.max(behindY, roadY) + CAM_UP + (SPRINT_UP - CAM_UP) * cam.pack + air * 0.35;
     if (!cam.init || g.phase === 'ready' || g.phase === 'countdown') {
       cam.th = yaw;
       cam.y = ty;
@@ -823,11 +826,13 @@ export class Renderer3D {
     d = Math.atan2(Math.sin(d), Math.cos(d));
     cam.th += d * Math.min(1, dt * 6);
     cam.y += (ty - cam.y) * Math.min(1, dt * 7);
+    // nie unter die Straße sinken (z. B. nach einem Sprung nach vorn oder steil bergauf)
+    cam.y = Math.max(cam.y, roadY + 1.2);
     const fx = Math.sin(cam.th);
     const fz = -Math.cos(cam.th);
     const shake = g.shake * 0.04;
     this.camera.position.set(rx - fx * back + (Math.random() - 0.5) * shake, cam.y + (Math.random() - 0.5) * shake, rz - fz * back);
-    const look = sprint ? 17 : 15;
+    const look = 15 + 2 * cam.pack;
     const aheadY = track.heightAt(p.z + look);
     this.camera.lookAt(rx + fx * look, roadY + (aheadY - roadY) * 0.55 + 0.9 + air * 0.4, rz + fz * look);
     cam.x = rx; cam.z = rz;
@@ -2024,7 +2029,7 @@ export class Renderer3D {
     if (g.phase === 'crash' || g.phase === 'over') pm.crash(g.phaseT, g.crashSpin);
     else {
       pm.resetCrash();
-      pm.pose({ lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, light: this.night + this.tunnelDim, roll: p.z / 0.34 });
+      pm.pose({ lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, light: this.night + this.tunnelDim, roll: p.z / 0.34, stand: p.stand ?? 0 });
     }
     // Bildschirmposition für Popups
     const v = new THREE.Vector3(w.x, w.y + air + 1.9, w.z).project(this.camera);
@@ -2033,8 +2038,8 @@ export class Renderer3D {
 
     // Gegner: die nächsten sichtbaren
     const seen = new Set<number>();
-    // im Sprint das ganze Feld; Fahrer zwischen Kamera und Spieler werden durchsichtig
-    const sprint = track.kind === 'sprint';
+    // in den Rennfinals das ganze Feld; Fahrer zwischen Kamera und Spieler werden durchsichtig
+    const sprint = track.kind !== 'descent';
     const list = g.opps.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, sprint ? 32 : 14);
     for (const o of list) {
       seen.add(o.id);
@@ -2062,7 +2067,7 @@ export class Renderer3D {
     track.world(o.z, o.x, 0, w);
     m.group.position.set(w.x, w.y, w.z);
     m.group.rotation.y = -w.th;
-    m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.night + this.tunnelDim, roll: o.z / 0.34 });
+    m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.night + this.tunnelDim, roll: o.z / 0.34, stand: o.stand ?? 0 });
   }
 
   private poolGet(kind: string, make: () => THREE.Object3D): THREE.Object3D {

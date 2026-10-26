@@ -142,16 +142,16 @@ alter table public.stage_profiles add column if not exists waypoints jsonb;  -- 
 create table if not exists public.game_scores (
   id         bigint generated always as identity primary key,
   user_id    uuid   not null default auth.uid() references public.profiles (id) on delete cascade,
-  game       text   not null check (game in ('abfahrt', 'sprint')),
+  game       text   not null check (game in ('abfahrt', 'sprint', 'berg')),
   score      int    not null check (score >= 0 and score < 10000000),
   created_at timestamptz not null default now()
 );
 create index if not exists game_scores_game_idx on public.game_scores (game, score desc);
 alter table public.game_scores add column if not exists meters int check (meters is null or (meters >= 0 and meters < 1000000));
 create index if not exists game_scores_time_idx on public.game_scores (game, created_at);
--- Spiele nachträglich erweitern (Sprintfinale)
+-- Spiele nachträglich erweitern (Sprintfinale, Bergfinale)
 alter table public.game_scores drop constraint if exists game_scores_game_check;
-alter table public.game_scores add constraint game_scores_game_check check (game in ('abfahrt', 'sprint'));
+alter table public.game_scores add constraint game_scores_game_check check (game in ('abfahrt', 'sprint', 'berg'));
 
 -- Wertungsstand nach einer Etappe (z. B. Gesamtwertung Top 10) – sichtbar mit dem Ergebnis
 create table if not exists public.stage_standings (

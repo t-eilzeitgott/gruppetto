@@ -144,10 +144,15 @@ const occKey = (cx: number, cz: number) => (cx + 32768) * 65536 + (cz + 32768);
 const LENGTH: Record<BiomeId, number> = { pass: 330, alpine: 430, forest: 420, village: 270, lake: 420, vineyard: 420 };
 const WRITINGS = ['FORZA', 'VAI VAI', 'ALLEZ', 'HOPP HOPP', 'DAJE', 'BRAVO', 'GRUPPETTO', 'VAMOS', 'ATTACCA', 'TUTTO GAS'];
 
-/** Art der Strecke: endlose Passabfahrt oder kurzes Sprintfinale mit Ziel */
-export type TrackKind = 'descent' | 'sprint';
+/** Art der Strecke: endlose Passabfahrt, Sprintfinale oder Bergfinale (Schlussanstieg, Abfahrt, Ziel) */
+export type TrackKind = 'descent' | 'sprint' | 'mountain';
 /** Sprintfinale: Ziellinie nach so vielen Metern (Start = 2,4 km vor dem Ziel) */
 export const SPRINT_FINISH = 2400;
+/** Bergfinale: Gipfel (Bergwertung) und Ziel im Tal (Meter ab Start) */
+export const MOUNTAIN_TOP = 900;
+export const MOUNTAIN_FINISH = 2000;
+/** Abschnittslängen (Segmente): Wald und Almen bergauf bis zum Gipfel, Passhöhe und Almen bergab, Zielort */
+const MOUNTAIN_SECS = [200, MOUNTAIN_TOP / SEG - 200, 170, 220];
 const SPRINT_MARKS: { z: number; kind: Banner['kind']; text: string }[] = [
   { z: SPRINT_FINISH - 2000, kind: 'arch', text: '2 km' },
   { z: SPRINT_FINISH - 1000, kind: 'flamme', text: 'Ultimo km' },
@@ -191,18 +196,30 @@ export class Track {
     this.dayKey = dayKey;
     this.kind = kind;
     this.town = town.trim().slice(0, 24);
-    this.seed = hashStr(`${kind === 'sprint' ? 'sprint' : 'abfahrt'}:${dayKey}`);
+    this.seed = hashStr(`${kind === 'sprint' ? 'sprint' : kind === 'mountain' ? 'berg' : 'abfahrt'}:${dayKey}`);
     this.rng = mulberry32(this.seed);
     this.names = names.map((n) => n.trim().split(/\s+/)[0]?.toUpperCase()).filter((n): n is string => !!n && n.length <= 10);
     this.passOrder = shuffle(this.rng, PASSES);
     this.planDescent();
     const first = this.plan[0];
     const end = this.plan.find((p, i) => i > 0 && (p.biome === 'village' || p.biome === 'lake' || p.biome === 'vineyard'));
-    this.title = kind === 'sprint' ? `Sprintfinale in ${end?.name ?? 'der Stadt'}` : `${first.name} → ${end?.name ?? 'Tal'}`;
+    const pass = this.plan.find((p) => p.biome === 'pass');
+    this.title = kind === 'sprint' ? `Sprintfinale in ${end?.name ?? 'der Stadt'}`
+      : kind === 'mountain' ? `${pass?.name ?? 'Pass'} → ${end?.name ?? 'Tal'}`
+        : `${first.name} → ${end?.name ?? 'Tal'}`;
   }
 
-  /** Name des Zielorts (Sprintfinale) */
-  get finishTown(): string { return this.sections[1]?.name ?? this.plan.find((p) => p.biome === 'village')?.name ?? ''; }
+  /** Name des Zielorts (Sprint- und Bergfinale) */
+  get finishTown(): string {
+    if (this.kind === 'mountain') return this.sections[4]?.name ?? this.plan.find((p) => p.biome === 'village')?.name ?? '';
+    return this.sections[1]?.name ?? this.plan.find((p) => p.biome === 'village')?.name ?? '';
+  }
+
+  /** Bergfinale: Name und Höhe des Passes (Bergwertung) */
+  get summit(): { name: string; alt: number } {
+    const s = this.sections.find((x) => x.biome === 'pass') ?? this.plan.find((x) => x.biome === 'pass');
+    return { name: s?.name ?? 'Passo', alt: s?.alt ?? 2000 };
+  }
 
   get length(): number { return this.base + this.segs.length; }
   /** ältestes noch vorhandenes Segment */
@@ -250,6 +267,22 @@ export class Track {
 
   private planDescent() {
     const r = this.rng;
+    if (this.kind === 'mountain') {
+      // Schlussanstieg durch Bergwald und Almen zur Passhöhe, Abfahrt über die Almen in den Zielort
+      if (this.descentNo === 0) {
+        const [pass, alt] = this.passOrder[0];
+        const up = pick(r, VALLEYS);
+        const down = pick(r, VALLEYS.filter((v) => v !== up));
+        const village = pick(r, VILLAGES);
+        this.plan.push({ biome: 'forest', name: pick(r, FORESTS), alt: Math.round((alt - 150) / 5) * 5, descent: 0 });
+        this.plan.push({ biome: 'alpine', name: up, alt: Math.round((alt - 80) / 5) * 5, descent: 0 });
+        this.plan.push({ biome: 'pass', name: pass, alt, descent: 0 });
+        this.plan.push({ biome: 'alpine', name: down, alt: Math.round((alt - 60) / 5) * 5, descent: 0 });
+        this.plan.push({ biome: 'village', name: this.town || village, alt: Math.round((alt - 150) / 5) * 5, descent: 0 });
+      } else this.plan.push({ biome: 'village', name: this.sections[4]?.name ?? pick(r, VILLAGES), alt: 1200, descent: 0 });
+      this.descentNo += 1;
+      return;
+    }
     if (this.kind === 'sprint') {
       // flach durchs Tal (See oder Weinberge), dann in die Zielstadt; danach Auslauf
       if (this.descentNo === 0) {
@@ -290,11 +323,16 @@ export class Track {
     const start = this.base + this.segs.length;
     const D = difficulty(start * SEG);
     const sprint = this.kind === 'sprint';
+    const mountain = this.kind === 'mountain';
+    /** Rennfinale (Sprint oder Berg): feste Längen, keine Hindernisse, keine Tunnel */
+    const race = sprint || mountain;
     const secIndex = this.sections.length;
     let n = Math.round(LENGTH[p.biome] * between(r, 0.9, 1.12));
     // Sprintfinale: 1,2 km Anfahrt, Zielstadt bis 250 m hinter die Linie, dann Auslauf
     if (sprint) n = secIndex === 0 ? 600 : secIndex === 1 ? SPRINT_FINISH / SEG - 600 + 125 : 300;
-    const last = !sprint && this.plan.length === 0;   // letzter Abschnitt der Abfahrt → Tunnel zum nächsten Pass
+    // Bergfinale: Gipfel genau bei MOUNTAIN_TOP, Ziel 250 m vor dem Ende des Zielorts
+    if (mountain) n = secIndex < 4 ? MOUNTAIN_SECS[secIndex] : secIndex === 4 ? MOUNTAIN_FINISH / SEG - MOUNTAIN_SECS.reduce((a, b) => a + b, 0) + 125 : 300;
+    const last = !race && this.plan.length === 0;   // letzter Abschnitt der Abfahrt → Tunnel zum nächsten Pass
     this.sections.push({ biome: p.biome, start, end: start + n, name: p.name, alt: p.alt, descent: p.descent });
 
     // 1) Linienführung
@@ -319,14 +357,29 @@ export class Track {
     const ph2 = r() * 6.28;
     for (let k = 0; k < n; k++) {
       if (grade[k] !== 0) continue;
-      let g = base + (0.016 * Math.sin((start + k) / 37 + ph1) + 0.009 * Math.sin((start + k) / 13 + ph2)) * wav;
+      const wave = 0.016 * Math.sin((start + k) / 37 + ph1) + 0.009 * Math.sin((start + k) / 13 + ph2);
+      if (mountain) {
+        // bergauf 7–10 % (oben am steilsten), über die Passhöhe, bergab, flache Zielgerade
+        const z = (start + k) * SEG;
+        let g: number;
+        if (z < MOUNTAIN_TOP - 70) g = 0.072 + 0.012 * Math.min(1, z / MOUNTAIN_TOP) + wave * 0.9;
+        else if (z < MOUNTAIN_TOP) g = 0.075 * ((MOUNTAIN_TOP - z) / 70) + 0.012;
+        else if (z < MOUNTAIN_TOP + 50) g = 0.012 - 0.082 * ((z - MOUNTAIN_TOP) / 50);
+        else if (z < MOUNTAIN_FINISH - 420) g = -0.072 + wave;
+        else if (z < MOUNTAIN_FINISH - 120) g = -0.072 + 0.062 * ((z - (MOUNTAIN_FINISH - 420)) / 300);
+        else g = -0.01;
+        if (marks[k] === 1) g *= 0.6;
+        grade[k] = z < MOUNTAIN_TOP ? Math.max(0.012, g) : Math.min(-0.004, g);
+        continue;
+      }
+      let g = base + wave * wav;
       if (marks[k] === 1) g *= 0.55;
       grade[k] = Math.min(-0.004, g);
     }
 
     // 2) Seiten, Beläge, Deko
     const tunnelLen = last ? Math.round(between(r, 70, 100)) : 0;
-    const shortTunnel = !sprint && !last && (p.biome === 'pass' || p.biome === 'forest') && chance(r, 0.55)
+    const shortTunnel = !race && !last && (p.biome === 'pass' || p.biome === 'forest') && chance(r, 0.55)
       ? { at: Math.round(between(r, n * 0.35, n * 0.6)), len: Math.round(between(r, 30, 55)) } : null;
     const tunnels: [number, number][] = [];
     if (tunnelLen) tunnels.push([n - tunnelLen, n]);
@@ -431,7 +484,54 @@ export class Track {
 
     this.decorate(start, n, p.biome, D, secIndex, marks, curve);
     if (sprint) this.sprintDeco(start, n, secIndex);
+    else if (mountain) this.mountainDeco(start, n);
     else this.items(start, n, p.biome, D);
+  }
+
+  /**
+   * Bergfinale: Tifosi-Spalier auf dem letzten Stück zum Gipfel, Namen auf der Straße, 500-m-Bogen,
+   * Flamme Rouge in der Abfahrt, Ziel im Tal mit dichtem Publikum
+   */
+  private mountainDeco(start: number, n: number) {
+    const r = this.rng;
+    const inSec = (i: number) => i >= start && i < start + n;
+    const marks: { z: number; kind: Banner['kind']; text: string; sub?: string }[] = [
+      { z: MOUNTAIN_TOP - 500, kind: 'arch', text: '500 m', sub: 'GPM' },
+      { z: MOUNTAIN_FINISH - 1000, kind: 'flamme', text: 'Ultimo km' },
+    ];
+    for (const m of marks) {
+      const i = Math.round(m.z / SEG);
+      if (inSec(i) && !this.seg(i).hairpin) this.seg(i).banner = { kind: m.kind, text: m.text, sub: m.sub };
+    }
+    const iTop = MOUNTAIN_TOP / SEG;
+    const iF = MOUNTAIN_FINISH / SEG;
+    if (inSec(iF)) {
+      this.seg(iF).banner = { kind: 'finish', text: 'Arrivo', sub: this.sections[this.seg(iF).sec].name };
+      this.decal(iF, { k: 'zebra', x: 0, w: ROAD_HALF, len: 1 });
+      this.decal(iF - 9, { k: 'text', x: 0, w: ROAD_HALF * 0.95, len: 6, text: 'ARRIVO' });
+    }
+    for (let i = start; i < start + n; i++) {
+      const s = this.seg(i);
+      // Spalier zum Gipfel: die letzten 350 m immer dichter, Fahnen
+      const toTop = (iTop - i) * SEG;
+      const toFin = (iF - i) * SEG;
+      const climb = toTop > 0 && toTop < 350;
+      const finish = toFin > -120 && toFin < 400;
+      if (!climb && !finish) continue;
+      if (s.tunnel) continue;
+      if (!s.crowd) this.crowdZone(s);
+      const every = climb ? (toTop < 150 ? 1 : 2) : toFin < 200 ? 1 : 2;
+      if (i % every === 0) {
+        for (const sg of [-1, 1]) this.add(i, { k: 'crowd', x: sg * (EDGE + 0.3), h: 0, s: 1, v: Math.floor(r() * 4), f: chance(r, 0.5) });
+      }
+      if (i % 10 === 0) this.add(i, { k: 'flagpole', x: (chance(r, 0.5) ? -1 : 1) * (EDGE + 2.6), h: 0, s: 1, v: Math.floor(r() * 4), f: false });
+      // Namen der Mitspieler auf der Straße zum Gipfel
+      if (climb && i % 37 === 0 && !s.hairpin) {
+        const useName = this.names.length > 0 && chance(r, 0.7);
+        const w = useName ? `ALLEZ ${pick(r, this.names)}` : pick(r, WRITINGS);
+        this.decal(i, { k: 'text', x: 0, w: ROAD_HALF * 0.9, len: 6, text: w });
+      }
+    }
   }
 
   /** Sprintfinale: Kilometerbögen, Flamme Rouge, Ziel mit dichtem Publikum zu beiden Seiten */
@@ -520,8 +620,18 @@ export class Track {
         ? [['straight', 0.42], ['curve', 0.33], ['tight', 0.25]]
         : [['straight', 0.35], ['curve', 0.35], ['sweep', 0.3]];
     }
-    // Zielgerade: die letzten 600 m vor dem Ziel (und dahinter) schnurgerade
-    const straightFrom = sprint && this.sections.length === 2 ? SPRINT_FINISH / SEG - 300 - start : Infinity;
+    // Bergfinale: Serpentinen bergauf und bergab, keine Kuppen; im Zielort nur noch sanfte Kurven
+    const mountain = this.kind === 'mountain';
+    if (mountain) {
+      W[biome] = biome === 'village' ? [['straight', 0.55], ['curve', 0.45]]
+        : biome === 'pass' ? [['straight', 0.2], ['curve', 0.2], ['tight', 0.12], ['hairpin', 0.48]]
+          : biome === 'forest' ? [['straight', 0.22], ['curve', 0.3], ['tight', 0.12], ['hairpin', 0.36]]
+            : this.sections.length <= 2 ? [['straight', 0.2], ['curve', 0.28], ['tight', 0.12], ['hairpin', 0.4]]
+              : [['straight', 0.2], ['curve', 0.24], ['tight', 0.14], ['sbend', 0.08], ['hairpin', 0.34]];
+    }
+    // Zielgerade: die letzten 600 m vor dem Ziel (und dahinter) schnurgerade; im Bergfinale 300 m
+    const straightFrom = sprint && this.sections.length === 2 ? SPRINT_FINISH / SEG - 300 - start
+      : mountain && this.sections.length === 5 ? MOUNTAIN_FINISH / SEG - 150 - start : Infinity;
     const choose = () => {
       let x = r();
       for (const [k, w] of W[biome]) { x -= w; if (x <= 0) return k; }
@@ -607,13 +717,14 @@ export class Track {
 
     // erste Passhöhe des Tages: langes Gipfelstück, dann sanfte Kurven zwischen Schneewänden
     const opening = this.sections.length === 1;
-    const first = opening ? 70 : 24;
+    // Bergfinale: kurzer Anlauf, dann gleich Serpentinen
+    const first = opening ? (mountain ? 26 : 70) : mountain ? 12 : 24;
     take(pickClear([[straight(first)], ...escapes(first)]));
     while (len < Math.min(n - 40, straightFrom)) {
       let kind = choose();
-      if (opening && len < 200 && (kind === 'hairpin' || kind === 'tight' || kind === 'crest')) kind = 'curve';
+      if (opening && len < (mountain ? 40 : 200) && (kind === 'hairpin' || kind === 'tight' || kind === 'crest')) kind = 'curve';
       // Kehre nur aus einem Schenkel heraus, der ungefähr in Sollrichtung liegt
-      if (kind === 'hairpin' && Math.abs(wrap(head - this.goal)) > 0.55) kind = 'curve';
+      if (kind === 'hairpin' && Math.abs(wrap(head - this.goal)) > (mountain ? 0.75 : 0.55)) kind = 'curve';
       let pcs: Piece[];
       let hair: { goal: number } | null = null;
       switch (kind) {
@@ -730,6 +841,7 @@ export class Track {
   private surface(biome: BiomeId, k: number, n: number): Surface {
     const r = this.rng;
     if (this.kind === 'sprint') return biome === 'village' && k < n * 0.25 && chance(r, 0.5) ? 'cobble' : chance(r, 0.4) ? 'fresh' : 'asphalt';
+    if (this.kind === 'mountain') return chance(r, 0.45) ? 'fresh' : 'asphalt';
     switch (biome) {
       case 'village': return k > n * 0.25 && k < n * 0.8 && chance(r, 0.6) ? 'cobble' : 'asphalt';
       case 'vineyard': return chance(r, 0.35) ? 'gravel' : chance(r, 0.3) ? 'fresh' : 'asphalt';
@@ -808,7 +920,8 @@ export class Track {
 
     // Passhöhe: Passschild, GPM-Banner, Zuschauer
     if (biome === 'pass') {
-      S(start + 4).banner = { kind: 'gpm', text: name, sub: `${this.sections[sec].alt.toLocaleString('de-DE')} m` };
+      // im Bergfinale steht das GPM-Banner genau auf der Passhöhe (Bergwertung)
+      S(this.kind === 'mountain' ? start : start + 4).banner = { kind: 'gpm', text: name, sub: `${this.sections[sec].alt.toLocaleString('de-DE')} m` };
       put(start + 10, 1, 'passSign', 1.2, { s: 1, f: false, text: name });
       for (let i = start; i < start + 60; i++) {
         this.crowdZone(S(i));
@@ -818,7 +931,7 @@ export class Track {
       for (let i = start + 14; i < start + 40; i += 7) put(i, -1, 'campervan', between(r, 6, 12), { s: 1 });
       put(start + 26, this.mountain, 'rifugio', between(r, 12, 18), { s: 1 });
     }
-    if (biome === 'village' && this.kind === 'sprint') {
+    if (biome === 'village' && this.kind !== 'descent') {
       put(start + 18, 1, 'townSign', 0.9, { s: 1, f: false, text: name });
     } else if (biome === 'village') {
       put(start + 18, 1, 'townSign', 0.9, { s: 1, f: false, text: name });

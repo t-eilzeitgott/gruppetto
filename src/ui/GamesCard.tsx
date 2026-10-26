@@ -16,10 +16,10 @@ import { Avatar, Link, cx } from './kit';
 import { Icon } from './Icon';
 import { GameBadge } from './GameIcon';
 
-/** Bergetappe: Abfahrt zuerst, sonst das Sprintfinale */
+/** Reihenfolge: das Finale zur heutigen Etappe zuerst (Bergetappe → Bergfinale, sonst Sprint), dann die Abfahrt */
 function order(kind: StageKind | null): GameInfo[] {
-  const first = kind === 'mountain' ? 'abfahrt' : 'sprint';
-  return [...GAMES].sort((a, b) => (a.id === first ? -1 : b.id === first ? 1 : 0));
+  const rank: Record<string, number> = kind === 'mountain' ? { berg: 0, abfahrt: 1, sprint: 2 } : { sprint: 0, abfahrt: 1, berg: 2 };
+  return [...GAMES].sort((a, b) => (rank[a.id] ?? 9) - (rank[b.id] ?? 9));
 }
 
 export function GamesCard({ stageKind = null, town = '' }: { stageKind?: StageKind | null; town?: string }) {
@@ -70,11 +70,14 @@ function GameSlide({ game, stageKind, town }: { game: GameInfo; stageKind: Stage
   const season = useQuery<GameBest[]>(`game:${game.id}:season`, () => source.gameLeaderboard(game.id));
   const today = useQuery<GameBest[]>(`game:${game.id}:day:${day}`, () => source.gameLeaderboard(game.id, since));
   const sprint = game.id === 'sprint';
-  const realTown = stageKind === 'flat' || stageKind === 'hilly' ? town : '';
+  const berg = game.id === 'berg';
+  const sprintTown = stageKind === 'flat' || stageKind === 'hilly' ? town : '';
+  const bergTown = stageKind === 'mountain' ? town : '';
   const sub = useMemo(() => {
-    if (!sprint) return new Track(day).title;
-    return `${new Track(day, [], 'sprint', realTown).title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km`;
-  }, [day, sprint, realTown]);
+    if (sprint) return `${new Track(day, [], 'sprint', sprintTown).title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km`;
+    if (berg) return new Track(day, [], 'mountain', bergTown).title;
+    return new Track(day).title;
+  }, [day, sprint, berg, sprintTown, bergTown]);
   const useToday = (today.data?.length ?? 0) > 0;
   const rows = (useToday ? today.data : season.data) ?? [];
   const myIdx = rows.findIndex((b) => b.user_id === me.id);
@@ -109,7 +112,7 @@ function GameSlide({ game, stageKind, town }: { game: GameInfo; stageKind: Stage
           })}
         </span>
       ) : (
-        <span className="game-card__meta">{sprint ? 'Hol dir den ersten Tagessieg' : 'Fahr die erste Bestmarke der Runde'}</span>
+        <span className="game-card__meta">{sprint || berg ? 'Hol dir den ersten Tagessieg' : 'Fahr die erste Bestmarke der Runde'}</span>
       )}
     </Link>
   );

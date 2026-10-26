@@ -11,7 +11,8 @@ import * as THREE from 'three';
 import type { Kit } from './rider';
 import { GB, lin, type RGBf } from './models3d';
 
-export interface RiderPose { lean: number; pedal: number; tuck: number; brake: number; light: number; roll?: number }
+/** Haltung: Schräglage, Kurbelwinkel, geduckt, bremsen, Licht, Radumdrehung, Wiegetritt (0–1) */
+export interface RiderPose { lean: number; pedal: number; tuck: number; brake: number; light: number; roll?: number; stand?: number }
 
 const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) => {
   const m = new THREE.Matrix4();
@@ -30,6 +31,8 @@ const UPPER = 0.3;
 const FORE = 0.3;
 const SPINE = 0.52;                            // Hüfte bis Schulterlinie
 const PELVIS = new THREE.Vector3(0, 1.01, 0.2);
+/** im Wiegetritt: Becken aus dem Sattel nach vorn über das Tretlager */
+const PELVIS_UP = new THREE.Vector3(0, 1.06, 0.06);
 /** Knöchel relativ zur Pedalachse (Fußballen über dem Pedal) */
 const ANKLE = new THREE.Vector3(0, 0.075, 0.105);
 const XAXIS = new THREE.Vector3(1, 0, 0);
@@ -472,25 +475,29 @@ export class RiderModel {
   private pole = new THREE.Vector3();
   private spine = new THREE.Vector3();
   private sq = new THREE.Quaternion();
+  private pelvis = new THREE.Vector3();
 
   pose(p: RiderPose) {
-    const tuck = Math.max(0, Math.min(1, p.tuck - p.brake * 0.6));
+    const st = Math.max(0, Math.min(1, p.stand ?? 0));
+    const tuck = Math.max(0, Math.min(1, p.tuck - p.brake * 0.6)) * (1 - st);
     const brake = Math.max(0, Math.min(1, p.brake));
-    this.body.rotation.z = -p.lean;
-    if (p.roll !== undefined) { this.wheelF.rotation.x = -p.roll; this.wheelR.rotation.x = -p.roll; }
     // Kurbel: Winkel 0 = rechtes Pedal oben, vorwärts drehend (pedal = 0 → Kurbel waagrecht)
     const th = p.pedal + Math.PI / 2;
     this.crank.rotation.x = -th;
+    // im Wiegetritt pendelt das Rad im Takt der Tritte
+    this.body.rotation.z = -p.lean + st * 0.1 * Math.sin(th);
+    if (p.roll !== undefined) { this.wheelF.rotation.x = -p.roll; this.wheelR.rotation.x = -p.roll; }
 
-    // Rumpf: auf den Griffen etwa 40° geneigt, geduckt flach, beim Bremsen aufrechter
-    const beta = ((40 - 22 * tuck + 14 * brake) * Math.PI) / 180;
+    // Rumpf: auf den Griffen etwa 40° geneigt, geduckt flach, beim Bremsen aufrechter; im Wiegetritt aus dem Sattel
+    const beta = ((40 - 22 * tuck + 14 * brake - 2 * st) * Math.PI) / 180;
     this.spine.set(0, Math.sin(beta), -Math.cos(beta));
-    this.torso.position.copy(PELVIS);
+    const pelvis = this.pelvis.copy(PELVIS).lerp(PELVIS_UP, st);
+    this.torso.position.copy(pelvis);
     this.torso.quaternion.setFromUnitVectors(UP, this.spine);
     this.sq.copy(this.torso.quaternion);
 
     // Kopf: über dem Halsansatz, Blick nach vorn auf die Straße
-    const neck = this.v1.set(0, SPINE + 0.07, 0.01).applyQuaternion(this.sq).add(PELVIS);
+    const neck = this.v1.set(0, SPINE + 0.07, 0.01).applyQuaternion(this.sq).add(pelvis);
     this.head.position.set(0, neck.y + 0.11 - tuck * 0.012, neck.z - 0.05 - tuck * 0.03);
     this.head.rotation.x = 0.08 + tuck * 0.12 - brake * 0.05;
 
@@ -505,7 +512,7 @@ export class RiderModel {
       shoe.rotation.x = pitch;
       const ankle = this.v3.copy(ANKLE).applyAxisAngle(XAXIS, pitch).add(ped);
       ankle.x -= sx * 0.008;
-      const hip = this.v1.set(sx * 0.088, PELVIS.y - 0.012, PELVIS.z - 0.02);
+      const hip = this.v1.set(sx * 0.088, pelvis.y - 0.012, pelvis.z - 0.02);
       this.pole.set(sx * 0.12, 0.25, -1);
       const knee = this.v4;
       ik(hip, ankle, THIGH, SHIN, this.pole, knee, ankle);
@@ -516,7 +523,7 @@ export class RiderModel {
     // Arme: Schulter → Hand am Bremsgriff (geduckt im Unterlenker), Ellbogen leicht nach außen
     for (let s = 0; s < 2; s++) {
       const sx = s === 0 ? -1 : 1;
-      const shoulder = this.v1.set(sx * 0.172, SPINE - 0.035, 0.0).applyQuaternion(this.sq).add(PELVIS);
+      const shoulder = this.v1.set(sx * 0.172, SPINE - 0.035, 0.0).applyQuaternion(this.sq).add(pelvis);
       const hand = this.v2.set(sx * (0.2 - tuck * 0.01), 0.955 - tuck * 0.13, -0.635 + tuck * 0.02);
       this.pole.set(sx * 0.7, -0.35, 0.45);
       const elbow = this.v4;

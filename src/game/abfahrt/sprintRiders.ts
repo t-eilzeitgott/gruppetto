@@ -118,13 +118,21 @@ export function riderOptions(data: TourData | null | undefined, me: Profile, day
   return opts;
 }
 
-/** Gegnernamen: zuerst die schnellen Männer der Rundfahrt, dann der Rest der Startliste */
-export function rivalNames(data: TourData | null | undefined, chosen: number | null): string[] {
+/**
+ * Gegnernamen: im Sprint zuerst die schnellen Männer der Rundfahrt, am Berg zuerst die Kletterer und
+ * die Besten der Gesamtwertung – dann der Rest der Startliste
+ */
+export function rivalNames(data: TourData | null | undefined, chosen: number | null, kind: 'sprint' | 'climb' = 'sprint'): string[] {
   const active = (data?.riders ?? []).filter((r) => r.status !== 'out' && r.id !== chosen);
   if (!active.length) return [];
   const scores = scoreRiders(data!);
+  const score = (id: number) => {
+    const s = scores.get(id);
+    if (!s) return 0;
+    return kind === 'climb' ? s.climber * 2 + s.allround * 1.5 + s.puncheur : s.sprinter * 2 + s.puncheur;
+  };
   return active
-    .map((r) => ({ n: r.name, s: (scores.get(r.id)?.sprinter ?? 0) * 2 + (scores.get(r.id)?.puncheur ?? 0) }))
+    .map((r) => ({ n: r.name, s: score(r.id) }))
     .sort((a, b) => b.s - a.s)
     .slice(0, 40)
     .map((x) => x.n);

@@ -13,6 +13,7 @@ export interface GameInfo {
 export const GAMES: GameInfo[] = [
   { id: 'abfahrt', name: 'Abfahrt', path: '/spiel', blurb: 'Passabfahrt mit Gegnern' },
   { id: 'sprint', name: 'Sprintfinale', path: '/spiel/sprint', blurb: 'Die letzten 2,4 km im Feld', newUntilPlayed: 'gruppetto.sprint.runs' },
+  { id: 'berg', name: 'Bergfinale', path: '/spiel/berg', blurb: 'Schlussanstieg und Abfahrt', newUntilPlayed: 'gruppetto.berg.runs' },
 ];
 
 export function gameInfo(id: GameId): GameInfo {
