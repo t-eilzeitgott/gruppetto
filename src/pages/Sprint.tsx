@@ -131,7 +131,7 @@ export function SprintPage() {
     writeRing(hud.current, last.current, { kmh: h.kmh, fill: h.energy, tone: 'energy', mode: h.mode, draft: h.draft });
   };
 
-  useRaceLoop({
+  const glGen = useRaceLoop({
     canvasRef, overlayRef, engineRef, uiRef,
     make: makeEngine,
     onFrame: writeHud,
@@ -193,6 +193,7 @@ export function SprintPage() {
   return (
     <div className={cx('abf', 'abf--sprint', `abf--${ui}`)}>
       <canvas
+        key={glGen}
         ref={canvasRef}
         className="abf__canvas"
         aria-label="Spielfeld: Daumen seitlich ziehen wechselt das Hinterrad, nach oben antreten, nach unten Tempo rausnehmen"

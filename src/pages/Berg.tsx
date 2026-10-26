@@ -153,7 +153,7 @@ export function BergPage() {
     }
   };
 
-  useRaceLoop({
+  const glGen = useRaceLoop({
     canvasRef, overlayRef, engineRef, uiRef,
     make: makeEngine,
     onFrame: writeHud,
@@ -214,6 +214,7 @@ export function BergPage() {
   return (
     <div className={cx('abf', 'abf--sprint', 'abf--berg', `abf--${ui}`)}>
       <canvas
+        key={glGen}
         ref={canvasRef}
         className="abf__canvas"
         aria-label="Spielfeld: Daumen seitlich ziehen wechselt das Hinterrad, nach oben angreifen (bergab ducken), nach unten Tempo rausnehmen (bergab bremsen)"

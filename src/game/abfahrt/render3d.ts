@@ -2735,9 +2735,16 @@ export class Renderer3D {
     c.restore();
   }
 
+  /** hat der Browser den 3D-Kontext entzogen (App im Hintergrund, Speicherdruck)? */
+  get lost(): boolean {
+    try { return this.gl.getContext().isContextLost(); } catch { return true; }
+  }
+
   dispose() {
-    this.clearChunks();
-    this.gl.dispose();
+    try { this.clearChunks(); } catch { /* Kontext evtl. schon weg */ }
+    try { this.gl.dispose(); } catch { /* egal */ }
+    // Kontext sofort freigeben: iOS erlaubt nur wenige gleichzeitig – sonst bleibt ein späteres Spiel schwarz
+    try { this.gl.forceContextLoss(); } catch { /* egal */ }
   }
 }
 

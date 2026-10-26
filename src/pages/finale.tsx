@@ -2,7 +2,7 @@
  * Gemeinsame Bausteine der Rennfinals (Sprintfinale, Bergfinale): 3D-Schleife, Gestensperre,
  * Tastatur, Fahrerauswahl, Bestenlisten und Podium.
  */
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
 import type { RaceView } from '../game/abfahrt/engine';
@@ -41,9 +41,11 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
   onFrame: (eng: E, dt: number) => void;
   onGlError: () => void;
   onHidden: () => void;
-}) {
+}): number {
   const cb = useRef(opts);
   cb.current = opts;
+  // Neuaufbau der 3D-Ansicht (neue Leinwand), wenn der Browser den Kontext entzogen hat
+  const [gen, setGen] = useState(0);
   useEffect(() => {
     const canvas = cb.current.canvasRef.current;
     const overlay = cb.current.overlayRef.current;
@@ -77,16 +79,28 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
     const low = /[?&]lowgfx\b/.test(window.location.search);
     if (low) { renderer.quality = 0.25; renderer.resize(); }
     renderer.warm();
-    engineRef.current = cb.current.make();
+    // beim Neuaufbau läuft das Rennen weiter
+    if (!engineRef.current || gen === 0) engineRef.current = cb.current.make();
     let raf = 0;
     let prev = performance.now();
     let acc = 0;
     let frames = 0;
     let idleT = 0;
+    let lostT = 0;
+    let rebuilt = false;
+    const rebuild = () => { if (!rebuilt) { rebuilt = true; setGen((x) => x + 1); } };
     const loop = (now: number) => {
       const dt = Math.min(0.05, (now - prev) / 1000);
       prev = now;
       const eng = engineRef.current!;
+      // Kontext verloren und nicht zurückgekommen: neue Leinwand statt schwarzem Bild
+      if (renderer.lost) {
+        lostT += dt;
+        if (lostT > 0.8) { rebuild(); return; }
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+      lostT = 0;
       if (uiRef.current !== 'paused') eng.update(dt);
       // Start- und Ergebniskarte: Szene dahinter nur 10-mal pro Sekunde zeichnen (spart Akku und Wärme)
       const idle = uiRef.current === 'ready' || uiRef.current === 'over';
@@ -113,7 +127,14 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
     };
     raf = requestAnimationFrame(loop);
     const onResize = () => { renderer.resize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
-    const onVis = () => { if (document.hidden && uiRef.current === 'playing') cb.current.onHidden(); };
+    const onVis = () => {
+      if (document.hidden && uiRef.current === 'playing') cb.current.onHidden();
+      if (!document.hidden && renderer.lost) rebuild();
+    };
+    const onLost = (e: Event) => { e.preventDefault(); };
+    const onRestored = () => rebuild();
+    canvas.addEventListener('webglcontextlost', onLost);
+    canvas.addEventListener('webglcontextrestored', onRestored);
     const onTheme = () => window.setTimeout(() => renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark'), 30);
     const obs = new MutationObserver(onTheme);
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-tour'] });
@@ -135,6 +156,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
     g.__abfahrt = { engine: () => engineRef.current, renderer };
     return () => {
       cancelAnimationFrame(raf);
+      canvas.removeEventListener('webglcontextlost', onLost);
+      canvas.removeEventListener('webglcontextrestored', onRestored);
       ro?.disconnect();
       window.removeEventListener('orientationchange', fit);
       renderer.dispose();
@@ -142,7 +165,9 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       document.removeEventListener('visibilitychange', onVis);
       obs.disconnect();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gen]);
+  return gen;
 }
 
 /** Kein Zoomen, kein Scrollen, kein Zurückwischen während des Spiels */

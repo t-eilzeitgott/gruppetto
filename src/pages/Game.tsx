@@ -167,6 +167,9 @@ export function GamePage() {
     }
   };
 
+  // Neuaufbau der 3D-Ansicht (neue Leinwand), wenn der Browser den Kontext entzogen hat
+  const [glGen, setGlGen] = useState(0);
+
   // Spielschleife
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -201,15 +204,27 @@ export function GamePage() {
     const low = /[?&]lowgfx\b/.test(window.location.search);
     if (low) { renderer.quality = 0.25; renderer.resize(); }
     renderer.warm();
-    engineRef.current = makeEngine(false);
+    // beim Neuaufbau läuft die Fahrt weiter
+    if (!engineRef.current || glGen === 0) engineRef.current = makeEngine(false);
     let raf = 0;
     let prev = performance.now();
     let acc = 0;
     let frames = 0;
+    let lostT = 0;
+    let rebuilt = false;
+    const rebuild = () => { if (!rebuilt) { rebuilt = true; setGlGen((x) => x + 1); } };
     const loop = (now: number) => {
       const dt = Math.min(0.05, (now - prev) / 1000);
       prev = now;
       const eng = engineRef.current!;
+      // Kontext verloren und nicht zurückgekommen: neue Leinwand statt schwarzem Bild
+      if (renderer.lost) {
+        lostT += dt;
+        if (lostT > 0.8) { rebuild(); return; }
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+      lostT = 0;
       if (uiRef.current !== 'paused') eng.update(dt);
       if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
       hudRef.current(eng, dt);
@@ -226,7 +241,14 @@ export function GamePage() {
     };
     raf = requestAnimationFrame(loop);
     const onResize = () => { renderer.resize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
-    const onVis = () => { if (document.hidden && uiRef.current === 'playing') setUi('paused'); };
+    const onVis = () => {
+      if (document.hidden && uiRef.current === 'playing') setUi('paused');
+      if (!document.hidden && renderer.lost) rebuild();
+    };
+    const onLost = (e: Event) => { e.preventDefault(); };
+    const onRestored = () => rebuild();
+    canvas.addEventListener('webglcontextlost', onLost);
+    canvas.addEventListener('webglcontextrestored', onRestored);
     const onTheme = () => window.setTimeout(() => renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark'), 30);
     const obs = new MutationObserver(onTheme);
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-tour'] });
@@ -249,6 +271,8 @@ export function GamePage() {
     (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer };
     return () => {
       cancelAnimationFrame(raf);
+      canvas.removeEventListener('webglcontextlost', onLost);
+      canvas.removeEventListener('webglcontextrestored', onRestored);
       ro?.disconnect();
       window.removeEventListener('orientationchange', fit);
       renderer.dispose();
@@ -257,7 +281,7 @@ export function GamePage() {
       obs.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [glGen]);
 
   // Kein Zoomen, kein Scrollen, kein Zurückwischen während des Spiels
   useEffect(() => {
@@ -443,6 +467,7 @@ export function GamePage() {
   return (
     <div className={cx('abf', `abf--${ui}`)}>
       <canvas
+        key={glGen}
         ref={canvasRef}
         className="abf__canvas"
         aria-label="Spielfeld: Daumen seitlich ziehen zum Lenken, nach oben zum Ducken, nach unten zum Bremsen"
