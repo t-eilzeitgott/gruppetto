@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { EDGE, ROAD_HALF, SEG, Track, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
 import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
-import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, facadeTex, FACADE_BANDS, fieldsTex, gravelTex, rockTex, roundTex, vergeTex } from './tex3d';
+import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, facadeTex, FACADE_BANDS, gravelTex, rockTex, roundTex, vergeTex } from './tex3d';
 import { GB, RiderModel, lin, lin255, propGeometries, treeGeometriesLow, type Prop3D, type RGBf } from './models3d';
 import type { Abfahrt, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
@@ -95,6 +95,8 @@ export class Renderer3D {
   private waterMats: THREE.MeshPhongMaterial[] = [];
   /** Gebiet, das eine Stufe vollständig abdeckt (dort wird die nächstgröbere abgesenkt) */
   private lvBox = LEVELS.map(() => new THREE.Vector4(1e9, 1e9, -1e9, -1e9));
+  /** Stufe einmal vollständig aufgebaut (danach bleibt die Abdeckung, bis der neue Ring fertig ist) */
+  private boxSet = LEVELS.map(() => false);
   private lastTerrCam = new THREE.Vector3(1e9, 0, 0);
   /** Kachel im Bau (wird über mehrere Bilder verteilt fertiggestellt) */
   private pending: { key: string; lv: number; gen: Generator<void, TileData, void>; ver: number } | null = null;
@@ -160,10 +162,11 @@ export class Renderer3D {
     // sanfte Tonwertkurve: helle Sonne ohne ausgefressene Farben
     this.gl.toneMapping = THREE.NeutralToneMapping;
     this.gl.toneMappingExposure = 1.08;
-    // echte Sonnenschatten im Nahbereich (folgen dem Fahrer); bei knapper Leistung aus
-    this.gl.shadowMap.enabled = true;
+    // Keine Schattenkarte: ein zweiter Zeichendurchgang ist auf älteren Handys zu teuer.
+    // Fahrer und Zuschauer haben weiche Bodenschatten.
+    this.gl.shadowMap.enabled = false;
     this.gl.shadowMap.type = THREE.PCFShadowMap;
-    this.sun.castShadow = true;
+    this.sun.castShadow = false;
     this.sun.shadow.mapSize.set(1024, 1024);
     const sc = this.sun.shadow.camera;
     sc.left = -36; sc.right = 36; sc.top = 36; sc.bottom = -36; sc.near = 20; sc.far = 420;
@@ -204,15 +207,8 @@ export class Renderer3D {
     this.scene.add(this.sky);
 
 
-    // Talboden
-    const fields = new THREE.CanvasTexture(fieldsTex());
-    fields.wrapS = fields.wrapT = THREE.RepeatWrapping;
-    fields.repeat.set(26, 26);
-    fields.colorSpace = THREE.SRGBColorSpace;
-    fields.anisotropy = 4;
-    // nur noch Rückfallfläche tief unten (die Landschaft kommt aus dem Höhenfeld)
+    // Talboden: nur noch Rückfallfläche tief unten (die Landschaft kommt aus dem Höhenfeld)
     this.valleyMat = new THREE.MeshBasicMaterial({ color: 0xcfe0ea, fog: true }) as unknown as THREE.MeshLambertMaterial;
-    void fields;
     this.valley = new THREE.Mesh(new THREE.PlaneGeometry(30000, 30000), this.valleyMat);
     this.valley.rotation.x = -Math.PI / 2;
     this.scene.add(this.valley);
@@ -412,7 +408,8 @@ export class Renderer3D {
     const rect = this.gl.domElement.getBoundingClientRect();
     const W = Math.max(100, Math.round(rect.width));
     const H = Math.max(100, Math.round(rect.height));
-    const dpr = Math.min(2, window.devicePixelRatio || 1) * this.quality;
+    // höchstens 1,6-fache Pixeldichte: auf Retina kaum sichtbar, spart aber viel Füllrate
+    const dpr = Math.min(1.6, window.devicePixelRatio || 1) * this.quality;
     this.W = W;
     this.H = H;
     this.gl.setPixelRatio(dpr);
@@ -423,7 +420,7 @@ export class Renderer3D {
     this.overlay.setTransform(odpr, 0, 0, odpr, 0, 0);
     this.camera.aspect = W / H;
     this.camera.updateProjectionMatrix();
-    this.sun.castShadow = this.quality >= 0.85;
+    // (Schatten bleiben aus – nie zur Laufzeit umschalten, das kompiliert alle Shader neu)
   }
 
   // ------------------------------------------------------------------ Bild
@@ -431,12 +428,30 @@ export class Renderer3D {
   draw(g: Abfahrt, dt: number) {
     this.time.value += dt;
     if (this.track !== g.track) {
-      // gleiche Tagesstrecke (neuer Lauf): Welt behalten – sie ist identisch, Neuaufbau würde ruckeln
-      const same = this.track && this.track.dayKey === g.track.dayKey && this.track.names.join('|') === g.track.names.join('|');
-      if (same) { this.cam.init = false; this.runners = []; this.runNext = 0; } else this.reset(g.track);
+      // gleiche Tagesstrecke (neuer Lauf, nachgeladene Namen): Landschaft behalten – sie ist identisch,
+      // ein Neuaufbau würde ruckeln. Nur Namen auf Schildern und Straße ändern sich.
+      const old = this.track;
+      if (old && old.dayKey === g.track.dayKey) {
+        this.track = g.track;
+        this.terrain?.setTrack(g.track);
+        this.cam.init = false; this.runners = []; this.runNext = 0;
+        if (old.names.join('|') !== g.track.names.join('|')) { this.setAds(g.track.names); this.clearChunks(); }
+      } else this.reset(g.track);
     }
     const fk = g.friends.map((f) => `${f.userId}:${f.meters}`).join('|');
-    if (fk !== this.friendsKey) { this.friendsKey = fk; this.clearChunks(); }
+    if (fk !== this.friendsKey) {
+      // nur die Abschnitte neu bauen, in denen sich ein Bestmarken-Bogen ändert
+      const was = new Set(this.friendsKey ? this.friendsKey.split('|') : []);
+      const now = new Set(fk ? fk.split('|') : []);
+      for (const e of [...was, ...now]) {
+        if (was.has(e) && now.has(e)) continue;
+        const m = Number(e.split(':').pop());
+        const k = Math.floor(m / SEG / CH);
+        const c = this.chunks.get(k);
+        if (c) { this.scene.remove(c.group); c.dispose(); this.chunks.delete(k); }
+      }
+      this.friendsKey = fk;
+    }
     const p = g.p;
     const track = g.track;
     const seg = track.segAt(p.z);
@@ -444,7 +459,7 @@ export class Renderer3D {
 
     this.updateLight(g, biome, seg, dt);
     // Landschaftsproben zuerst: die Abschnitte fragen beim Bau nach Geländehöhen
-    if (this.terrain?.window(Math.max(0, p.z - 520), p.z + 4300)) {
+    if (this.terrain?.window(Math.max(0, p.z - 520), p.z + 3000)) {
       // neue oder weggefallene Straßenstücke ändern die Höhen ringsum: betroffene Kacheln neu bauen
       for (const [x0, z0, x1, z1] of this.terrain.takeDirty()) {
         for (const t of this.tiles.values()) {
@@ -475,15 +490,19 @@ export class Renderer3D {
     this.track = track;
     this.clearTiles();
     this.terrain = new Terrain(track);
-    const old = this.mats.ads.map;
-    this.mats.ads.map = this.tex(adsTex(track.names));
-    this.mats.ads.map.wrapS = this.mats.ads.map.wrapT = THREE.ClampToEdgeWrapping;
-    this.mats.ads.needsUpdate = true;
-    old?.dispose();
+    this.setAds(track.names);
     this.clearChunks();
     this.cam.init = false;
     this.runners = [];
     this.runNext = 0;
+  }
+
+  private setAds(names: string[]) {
+    const old = this.mats.ads.map;
+    this.mats.ads.map = this.tex(adsTex(names));
+    this.mats.ads.map.wrapS = this.mats.ads.map.wrapT = THREE.ClampToEdgeWrapping;
+    this.mats.ads.needsUpdate = true;
+    old?.dispose();
   }
 
   private clearTiles() {
@@ -491,6 +510,7 @@ export class Renderer3D {
     this.tiles.clear();
     this.pending = null;
     for (const b of this.lvBox) b.set(1e9, 1e9, -1e9, -1e9);
+    this.boxSet.fill(false);
   }
 
   private dropTile(t: Tile) {
@@ -511,10 +531,13 @@ export class Renderer3D {
     void g;
     const cp = this.camera.position;
     const t0 = performance.now();
-    // erstes Bild oder großer Sprung (neuer Lauf): alles Nötige auf einmal; sonst wenige Millisekunden je Bild
+    // großer Sprung (neuer Lauf): wie beim Start schrittweise neu aufbauen
     const jump = this.lastTerrCam.distanceTo(cp) > 250;
     this.lastTerrCam.copy(cp);
-    const budget = this.tiles.size === 0 || jump ? 2500 : 4;
+    if (jump && this.tiles.size) this.boxSet.fill(false);
+    const startup = !this.boxSet.every(Boolean);
+    // Aufbau verteilt auf viele Bilder (kein langes Einfrieren beim Laden), beim Start etwas großzügiger
+    const budget = this.tiles.size === 0 ? 90 : startup ? 12 : 4;
     // angefangene Kachel weiterbauen (nach einem Fensterwechsel neu beginnen: die Proben haben sich geändert)
     if (this.pending && this.pending.ver !== T.version) {
       const [, i, j] = this.pending.key.split(':').map(Number);
@@ -524,37 +547,72 @@ export class Renderer3D {
       const r = this.pending.gen.next();
       if (r.done) { this.putTile(this.pending.key, this.tileObjects(r.value, this.pending.lv, this.pending.key)); this.pending = null; }
     }
-    if (this.pending) return;
-    // 1) fehlende Kacheln je Stufe (feinste zuerst, nächste zuerst); vollständiger Ring → Abdeckung melden
-    const wants: [number, number, number][][] = [];
-    for (let lv = 0; lv < LEVELS.length; lv++) {
+    const centers = LEVELS.map((Lv) => [Math.floor(cp.x / Lv.size), Math.floor(cp.z / Lv.size)]);
+    const ringOf = (lv: number, key: string) => {
+      const [, i, j] = key.split(':').map(Number);
+      return Math.max(Math.abs(i - centers[lv][0]), Math.abs(j - centers[lv][1]));
+    };
+    // 1) fehlende Kacheln: beim Start erst der Nahbereich, dann die Ferne (damit nie Leere sichtbar ist),
+    //    danach der Rest; nächste zuerst
+    const order: [number, number][] = startup ? [[0, 1], [2, 9], [1, 9], [0, 9]] : [[0, 9], [1, 9], [2, 9]];
+    let out = !!this.pending;
+    for (const [lv, maxR] of order) {
+      if (out) break;
       const Lv = LEVELS[lv];
-      const cx = Math.floor(cp.x / Lv.size);
-      const cz = Math.floor(cp.z / Lv.size);
+      const [cx, cz] = centers[lv];
       const want: [number, number, number][] = [];
-      for (let j = cz - Lv.ring; j <= cz + Lv.ring; j++) {
-        for (let i = cx - Lv.ring; i <= cx + Lv.ring; i++) want.push([i, j, (i + 0.5 - cp.x / Lv.size) ** 2 + (j + 0.5 - cp.z / Lv.size) ** 2]);
+      const R = Math.min(maxR, Lv.ring);
+      for (let j = cz - R; j <= cz + R; j++) {
+        for (let i = cx - R; i <= cx + R; i++) want.push([i, j, (i + 0.5 - cp.x / Lv.size) ** 2 + (j + 0.5 - cp.z / Lv.size) ** 2]);
       }
       want.sort((a, b) => a[2] - b[2]);
-      wants.push(want);
       for (const [i, j] of want) {
-        const key = `${lv}:${i}:${j}`;
-        if (this.tiles.has(key)) continue;
-        if (!this.buildTile(T, lv, i, j, t0, budget)) return;
-      }
-      // Ring vollständig: Abdeckung melden (gröbere Stufe sinkt dort ab) und Überzähliges entfernen
-      this.lvBox[lv].set((cx - Lv.ring) * Lv.size, (cz - Lv.ring) * Lv.size, (cx + Lv.ring + 1) * Lv.size, (cz + Lv.ring + 1) * Lv.size);
-      for (const [key, t] of this.tiles) {
-        if (t.lv !== lv) continue;
-        const [, si, sj] = key.split(':').map(Number);
-        if (Math.abs(si - cx) > Lv.ring || Math.abs(sj - cz) > Lv.ring) { this.dropTile(t); this.tiles.delete(key); }
+        if (this.tiles.has(`${lv}:${i}:${j}`)) continue;
+        if (!this.buildTile(T, lv, i, j, t0, budget)) { out = true; break; }
       }
     }
-    // 2) veraltete Kacheln erneuern (die alten bleiben stehen, bis die neuen fertig sind)
+    // 2) Abdeckung je Stufe melden (gröbere Stufe sinkt darunter ab)
     for (let lv = 0; lv < LEVELS.length; lv++) {
-      for (const [i, j] of wants[lv]) {
-        if (!this.tiles.get(`${lv}:${i}:${j}`)?.stale) continue;
-        if (!this.buildTile(T, lv, i, j, t0, budget)) return;
+      const Lv = LEVELS[lv];
+      const [cx, cz] = centers[lv];
+      // größter vollständiger Ring um die Kamera
+      let rc = -1;
+      for (let r = 0; r <= Lv.ring; r++) {
+        let ok = true;
+        for (let j = cz - r; j <= cz + r && ok; j++) for (let i = cx - r; i <= cx + r && ok; i++) if (!this.tiles.has(`${lv}:${i}:${j}`)) ok = false;
+        if (!ok) break;
+        rc = r;
+      }
+      if (!this.boxSet[lv]) {
+        // Aufbau: nur der vollständige Teil ist sichtbar, die gröbere Stufe deckt den Rest
+        if (rc >= 0) this.lvBox[lv].set((cx - rc) * Lv.size, (cz - rc) * Lv.size, (cx + rc + 1) * Lv.size, (cz + rc + 1) * Lv.size);
+        else this.lvBox[lv].set(1e9, 1e9, -1e9, -1e9);
+        for (const [key, t] of this.tiles) {
+          if (t.lv !== lv) continue;
+          const vis = ringOf(lv, key) <= rc;
+          for (const o of t.objs) o.visible = vis;
+        }
+        if (rc === Lv.ring) this.boxSet[lv] = true;
+      } else if (rc === Lv.ring) {
+        this.lvBox[lv].set((cx - rc) * Lv.size, (cz - rc) * Lv.size, (cx + rc + 1) * Lv.size, (cz + rc + 1) * Lv.size);
+      }
+      // Ring vollständig: Überzähliges entfernen
+      if (rc === Lv.ring) {
+        for (const [key, t] of this.tiles) {
+          if (t.lv === lv && ringOf(lv, key) > Lv.ring) { this.dropTile(t); this.tiles.delete(key); }
+        }
+      }
+    }
+    if (out) return;
+    // 3) veraltete Kacheln erneuern (die alten bleiben stehen, bis die neuen fertig sind)
+    for (let lv = 0; lv < LEVELS.length; lv++) {
+      const Lv = LEVELS[lv];
+      const [cx, cz] = centers[lv];
+      for (let j = cz - Lv.ring; j <= cz + Lv.ring; j++) {
+        for (let i = cx - Lv.ring; i <= cx + Lv.ring; i++) {
+          if (!this.tiles.get(`${lv}:${i}:${j}`)?.stale) continue;
+          if (!this.buildTile(T, lv, i, j, t0, budget)) return;
+        }
       }
     }
   }
@@ -581,12 +639,10 @@ export class Renderer3D {
       if (!t.trees.length) continue;
       const [x0, z0, x1, z1] = t.box;
       const d = Math.hypot(Math.max(x0 - cp.x, 0, cp.x - x1), Math.max(z0 - cp.z, 0, cp.z - z1));
-      const far = d > 190;
-      const cast = d < 40;
+      const far = d > 150;
       for (const tr of t.trees) {
         const geo = far ? this.treesLo[tr.kind] ?? this.props[tr.kind] : this.props[tr.kind];
         if (tr.im.geometry !== geo) tr.im.geometry = geo;
-        tr.im.castShadow = cast;
       }
     }
   }
@@ -1578,6 +1634,8 @@ export class Renderer3D {
     let h = sp.h;
     const px = a.x + a.rx * sp.x;
     const pz = a.z + a.rz * sp.x;
+    // nicht auf eine andere Straße stellen (Serpentinen liegen oft nur 40 m auseinander)
+    if (ax > EDGE + 1 && this.terrain!.roadDist(this.region!, px, pz) < Math.min(ax - 0.7, EDGE + 2.8)) return;
     if (ax > EDGE && !s.tunnel) {
       const side = sg < 0 ? s.L : s.R;
       if (side.ground === 'water' && ax > EDGE + 4) {

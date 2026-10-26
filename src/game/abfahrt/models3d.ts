@@ -483,7 +483,7 @@ export class RiderModel {
     this.lamp = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.02), mat('#ff2a2a', true));
     this.lamp.position.set(0, 0.86, 0.24);
     this.body.add(this.lamp);
-    this.shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.2), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.3 }));
+    this.shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.2), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.55 }));
     this.shadow.rotation.x = -Math.PI / 2;
     this.shadow.position.y = 0.03;
     this.shadow.renderOrder = 1;

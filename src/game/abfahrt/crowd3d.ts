@@ -279,7 +279,8 @@ const VERT_BEGIN = /* glsl */ `
   float part = color.g;
   float act = aI1.z;
   float ph = aI1.w;
-  float t = uTime * (0.9 + 0.25 * fract(ph * 7.0)) + ph * 37.0;
+  // gemächlich: echte Zuschauer bewegen sich langsamer, als man denkt
+  float t = uTime * 0.62 * (0.9 + 0.25 * fract(ph * 7.0)) + ph * 37.0;
   vec2 toR = uRider.xz - aI0.xz;
   float dist = length(toR);
   float e = 1.0 - smoothstep(5.0, 48.0, dist);

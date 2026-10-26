@@ -217,7 +217,7 @@ export function GamePage() {
       frames += 1;
       if (acc > 2.5) {
         const fps = frames / acc;
-        if (!low && fps < 45 && renderer.quality > 0.55) { renderer.quality = Math.max(0.55, renderer.quality - 0.15); renderer.resize(); }
+        if (!low && fps < 48 && renderer.quality > 0.45) { renderer.quality = Math.max(0.45, renderer.quality - 0.15); renderer.resize(); }
         acc = 0;
         frames = 0;
       }

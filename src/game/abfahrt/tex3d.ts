@@ -22,7 +22,11 @@ function grain(c: CanvasRenderingContext2D, S: number, r: Rng, amount: number) {
 
 /** nahtlos: Elemente am Rand zusätzlich auf der Gegenseite zeichnen */
 function wrapDraw(S: number, x: number, y: number, draw: (x: number, y: number) => void) {
-  for (const dx of [-S, 0, S]) for (const dy of [-S, 0, S]) draw(x + dx, y + dy);
+  // Kopien nur, wo das Element über einen Rand ragen kann (spart beim Laden viel Zeichenarbeit)
+  const M = Math.min(S / 4, 64);
+  const xs = x < M ? [0, S] : x > S - M ? [0, -S] : [0];
+  const ys = y < M ? [0, S] : y > S - M ? [0, -S] : [0];
+  for (const dx of xs) for (const dy of ys) draw(x + dx, y + dy);
 }
 
 export function asphaltTex(fresh = false): HTMLCanvasElement {
@@ -146,7 +150,7 @@ export function detailTex(): HTMLCanvasElement {
  * wird mit der Eckpunktfarbe multipliziert (auch Schneewände bekommen so ihre Lagen). Nahtlos.
  */
 export function rockTex(): HTMLCanvasElement {
-  const S = 512;
+  const S = 256;
   const cv = canvas(S, S);
   const c = cv.getContext('2d')!;
   const r = mulberry32(48);
@@ -156,12 +160,12 @@ export function rockTex(): HTMLCanvasElement {
   // Schichten: Bänder mit welliger Ober- und Unterkante (ganze Wellen über die Breite → nahtlos)
   let y = 0;
   while (y < S) {
-    const h = Math.min(S - y, 7 + r() * 30);
+    const h = Math.min(S - y, 4 + r() * 15);
     const tone = r();
     const fill = tone < 0.34 ? `rgba(78,68,56,${(0.05 + r() * 0.13).toFixed(2)})`
       : tone < 0.72 ? `rgba(255,252,246,${(0.08 + r() * 0.18).toFixed(2)})`
         : `rgba(132,110,86,${(0.05 + r() * 0.1).toFixed(2)})`;
-    const amp = 1.5 + r() * 5;
+    const amp = 0.8 + r() * 2.5;
     const ph = r() * TAU;
     const k = 1 + Math.floor(r() * 3);
     const edge = (x: number, off: number) => off + amp * Math.sin(ph + (x / S) * TAU * k) + 1.2 * Math.sin(ph * 3 + (x / S) * TAU * (k + 3));
@@ -184,14 +188,14 @@ export function rockTex(): HTMLCanvasElement {
     y += h;
   }
   // senkrechte Risse
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 40; i++) {
     const x0 = r() * S;
     const y0 = r() * S;
     const n = 3 + Math.floor(r() * 6);
     const steps: [number, number][] = [];
     let x = 0;
     let yy = 0;
-    for (let j = 0; j < n; j++) { x += (r() - 0.5) * 7; yy += 5 + r() * 12; steps.push([x, yy]); }
+    for (let j = 0; j < n; j++) { x += (r() - 0.5) * 3.5; yy += 2.5 + r() * 6; steps.push([x, yy]); }
     const a = (0.14 + r() * 0.24).toFixed(2);
     const w = 0.7 + r() * 1.4;
     wrapDraw(S, x0, y0, (px, py) => {
@@ -210,10 +214,10 @@ export function rockTex(): HTMLCanvasElement {
     });
   }
   // Flecken (Flechten, Feuchtigkeit)
-  for (let i = 0; i < 140; i++) {
+  for (let i = 0; i < 70; i++) {
     const x0 = r() * S;
     const y0 = r() * S;
-    const rad = 3 + r() * 16;
+    const rad = 1.5 + r() * 8;
     const dark = r() < 0.6;
     const col = dark ? `rgba(60,58,44,${(0.05 + r() * 0.08).toFixed(2)})` : `rgba(255,255,240,${(0.06 + r() * 0.1).toFixed(2)})`;
     wrapDraw(S, x0, y0, (px, py) => { c.fillStyle = col; c.beginPath(); c.ellipse(px, py, rad * 1.6, rad * 0.7, 0, 0, TAU); c.fill(); });

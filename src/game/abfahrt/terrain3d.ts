@@ -148,7 +148,7 @@ export interface TerrainLevel { size: number; n: number; ring: number; skirt: nu
 export const LEVELS: TerrainLevel[] = [
   { size: 128, n: 32, ring: 2, skirt: 22 },
   { size: 512, n: 32, ring: 2, skirt: 60 },
-  { size: 2048, n: 32, ring: 2, skirt: 160 },
+  { size: 2048, n: 32, ring: 1, skirt: 160 },
 ];
 
 /** Baum auf dem Höhenfeld */
@@ -199,10 +199,10 @@ interface SegGrid { buf: Float64Array; n: number; x0: number; z0: number; cs: nu
 export interface Region { cand: number[]; sg: SegGrid }
 
 /** Ergebnis der Höhenberechnung an einem Punkt */
-interface HPoint { h: number; water: number; lakeY: number; floor: number; b: number; dRoad: number; skip: boolean; near: boolean; ridge: number }
+interface HPoint { h: number; water: number; lakeY: number; floor: number; b: number; dRoad: number; skip: boolean; near: boolean; ridge: number; floorMin: number }
 
 export class Terrain {
-  readonly track: Track;
+  track: Track;
   private s = new Samples();
   private zFrom = 0;
   private zTo = -1;
@@ -219,6 +219,9 @@ export class Terrain {
     this.track = track;
     NOISE_SEED = (track.seed % 100000) + 7;
   }
+
+  /** gleiche Tagesstrecke, neues Objekt (z. B. neuer Lauf): Lage ist identisch, Zwischenspeicher bleiben gültig */
+  setTrack(t: Track) { this.track = t; }
 
   // ---------------------------------------------------------------- Korridorbreite
 
@@ -401,7 +404,7 @@ export class Terrain {
 
   // ---------------------------------------------------------------- Höhe
 
-  private hp: HPoint = { h: 0, water: 0, lakeY: 0, floor: 0, b: 0, dRoad: 1e9, skip: false, near: false, ridge: 0 };
+  private hp: HPoint = { h: 0, water: 0, lakeY: 0, floor: 0, b: 0, dRoad: 1e9, skip: false, near: false, ridge: 0, floorMin: -Infinity };
 
   /**
    * Großform an (x, z): gewichtetes Mittel der Querprofile aller Straßenstücke im Umkreis
@@ -489,6 +492,7 @@ export class Terrain {
   private finish(x: number, z: number, o: HPoint, sg: SegGrid | null, cell: number): HPoint {
     o.skip = false;
     o.near = false;
+    o.floorMin = -Infinity;
     const dr = o.dRoad;
     // Kleinere Formen: Kuppen, Rinnen – in Straßennähe zurückhaltend
     const wb = sstep(0.3, 0.72, o.water);
@@ -553,7 +557,8 @@ export class Terrain {
     // unter der Straße und über dem Tunnel zugleich: nur an Portalen möglich – dort aussparen
     if (minUnder < Infinity && maxOver > -Infinity) o.skip = true;
     if (minUnder < Infinity) { o.h = Math.min(o.h, minUnder); o.near = true; }
-    if (maxOver > -Infinity) { o.h = Math.max(o.h, maxOver); o.near = true; }
+    // über einem Tunnel: Schürzen dürfen nicht in die Röhre hängen
+    if (maxOver > -Infinity) { o.h = Math.max(o.h, maxOver); o.near = true; o.floorMin = maxOver - 1.6; }
     if (nd2 < 1e17) {
       // unter dem Korridor bleiben (sonst flimmern zwei Flächen übereinander)
       const lim = nLat < 0 ? nLimL : nLimR;
@@ -566,6 +571,11 @@ export class Terrain {
 
   private heightAt(x: number, z: number, cand: number[], sg: SegGrid | null, cell = 4): HPoint {
     return this.finish(x, z, this.base(x, z, cand), sg, cell);
+  }
+
+  /** Abstand (Draufsicht) zum nächsten Straßenstück im Rechenbereich – für Bäume und Requisiten */
+  roadDist(r: Region, x: number, z: number): number {
+    return segDist(r.sg, x, z);
   }
 
   /** Höhe für Requisiten außerhalb des Korridors (gleiche Rechnung wie die Kacheln) */
@@ -654,8 +664,7 @@ export class Terrain {
     const z0 = tz * L.size;
     const cx = x0 + L.size / 2;
     const cz = z0 + L.size / 2;
-    const cand: number[] = [];
-    this.near(cx, cz, L.size * 0.75 + R_INF, cand);
+    void cx; void cz;
     const sgr = lv < 2 ? this.segsNear(x0, z0, x0 + L.size, z0 + L.size, clampR(cell) + 24) : null;
     const G = N + 3; // mit Rand
     const H = new Float32Array(G * G);
@@ -667,6 +676,7 @@ export class Terrain {
     const SK = new Uint8Array(G * G);
     const NR = new Uint8Array(G * G);
     const RG = new Float32Array(G * G);
+    const SF = new Float32Array(G * G);
     // Großform: auf der feinsten Stufe nur jeden zweiten Punkt rechnen und dazwischen interpolieren.
     // Die Stützpunkte liegen auf Vielfachen von 8 m – genau dort, wo die nächstgröbere Stufe ihre Punkte
     // hat; so stimmen die Höhen an der Grenze zwischen den Stufen überein.
@@ -680,9 +690,25 @@ export class Terrain {
     const cB = new Uint8Array(GC * GC);
     const cDR = new Float32Array(GC * GC);
     const cRG = new Float32Array(GC * GC);
+    // Straßenproben je Block von 8×8 Stützpunkten (statt für die ganze Kachel): deutlich weniger Rechnerei
+    const BLK = 8;
+    const blocks = new Map<number, number[]>();
+    const candAt = (i: number, j: number) => {
+      const key = Math.floor(j / BLK) * 4096 + Math.floor(i / BLK);
+      let c = blocks.get(key);
+      if (!c) {
+        c = [];
+        const span = (BLK - 1) * step * cell;
+        const bx = x0 + (Math.floor(i / BLK) * BLK * step - off) * cell + span / 2;
+        const bz = z0 + (Math.floor(j / BLK) * BLK * step - off) * cell + span / 2;
+        this.near(bx, bz, span * 0.72 + R_INF + 1, c);
+        blocks.set(key, c);
+      }
+      return c;
+    };
     for (let j = 0; j < GC; j++) {
       for (let i = 0; i < GC; i++) {
-        const p = this.base(x0 + (i * step - off) * cell, z0 + (j * step - off) * cell, cand);
+        const p = this.base(x0 + (i * step - off) * cell, z0 + (j * step - off) * cell, candAt(i, j));
         const k = j * GC + i;
         cH[k] = p.h; cW[k] = p.water; cLY[k] = p.lakeY; cFL[k] = p.floor; cB[k] = p.b; cDR[k] = p.dRoad; cRG[k] = p.ridge;
       }
@@ -714,6 +740,7 @@ export class Terrain {
         DR[k] = p.dRoad;
         SK[k] = p.skip ? 1 : 0;
         NR[k] = p.near ? 1 : 0;
+        SF[k] = p.floorMin;
         RG[k] = p.ridge;
       }
       if (j % 6 === 5) yield;
@@ -796,7 +823,7 @@ export class Terrain {
     // Schürzen an allen vier Rändern: verdecken Ritzen zu Nachbarn und zur gröberen Stufe
     let vn = V * V;
     const skirt = (vIdx: number) => {
-      pos[vn * 3] = pos[vIdx * 3]; pos[vn * 3 + 1] = pos[vIdx * 3 + 1] - L.skirt; pos[vn * 3 + 2] = pos[vIdx * 3 + 2];
+      pos[vn * 3] = pos[vIdx * 3]; pos[vn * 3 + 1] = Math.max(pos[vIdx * 3 + 1] - L.skirt, SF[this.gridK(vIdx, V, G)]); pos[vn * 3 + 2] = pos[vIdx * 3 + 2];
       nor[vn * 3] = nor[vIdx * 3]; nor[vn * 3 + 1] = nor[vIdx * 3 + 1]; nor[vn * 3 + 2] = nor[vIdx * 3 + 2];
       col[vn * 3] = col[vIdx * 3] * 0.8; col[vn * 3 + 1] = col[vIdx * 3 + 1] * 0.8; col[vn * 3 + 2] = col[vIdx * 3 + 2] * 0.8;
       uvs[vn * 2] = uvs[vIdx * 2]; uvs[vn * 2 + 1] = uvs[vIdx * 2 + 1] + 0.5;
@@ -859,7 +886,7 @@ export class Terrain {
     // Bäume (nur feinste Stufe): Wald nach Rauschmaske, vereinzelte Bäume auf Wiesen
     const trees: TreeSpot[] = [];
     if (lv === 0) {
-      const step = 7;
+      const step = 8;
       const M = Math.floor(L.size / step);
       for (let j = 0; j < M; j++) {
         for (let i = 0; i < M; i++) {
@@ -871,7 +898,7 @@ export class Terrain {
           const gi = Math.round((x - x0) / cell) + 1;
           const gj = Math.round((z - z0) / cell) + 1;
           const k = gj * G + gi;
-          if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < LIM_MAX + 3) continue;
+          if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < LIM_MAX + 3 || segDist(sgr, x, z) < LIM_MAX + 2) continue;
           const b = BI[k];
           const C = cols[b];
           // Höhe genau wie im Gitter (bilinear), damit nichts schwebt
@@ -892,7 +919,7 @@ export class Terrain {
           const n1 = fbm(x / 230, z / 230, 3);
           const n2 = vnoise(x / 31, z / 31);
           const forest = sstep(C.forestThr, C.forestThr + 0.08, n1 + (n2 - 0.5) * 0.12);
-          const p = forest > 0.5 ? 0.85 : C.meadowTrees;
+          const p = forest > 0.5 ? 0.78 : C.meadowTrees;
           if (h2(tx * 3000 + i * 7, tz * 3000 + j * 13) > p) continue;
           const kind = pickTree(b, above, h2(i * 31 + tx, j * 17 + tz), forest > 0.5);
           trees.push({ kind, x, y: y - 0.35, z, s: 0.75 + h2(i + tx * 77, j + tz * 91) * 0.65, rot: r1 * Math.PI * 2, tint: 0.82 + r2 * 0.32 });
@@ -916,6 +943,27 @@ export class Terrain {
     this.colorCache.set(lv, out);
     return out;
   }
+}
+
+/** Abstand zum nächsten Segment-Anfangspunkt im Raster (3×3 Nachbarzellen) */
+function segDist(sg: SegGrid | null, x: number, z: number): number {
+  if (!sg || sg.n === 0) return Infinity;
+  const ci = Math.floor((x - sg.x0) / sg.cs);
+  const cj = Math.floor((z - sg.z0) / sg.cs);
+  let best = Infinity;
+  for (let jj = cj - 1; jj <= cj + 1; jj++) {
+    if (jj < 0 || jj >= sg.nz) continue;
+    for (let ii = ci - 1; ii <= ci + 1; ii++) {
+      if (ii < 0 || ii >= sg.nx) continue;
+      const c = jj * sg.nx + ii;
+      for (let q = sg.start[c]; q < sg.start[c + 1]; q++) {
+        const b = sg.order[q] * 9;
+        const d = Math.hypot(x - sg.buf[b], z - sg.buf[b + 1]);
+        if (d < best) best = d;
+      }
+    }
+  }
+  return best;
 }
 
 interface ColorSet {

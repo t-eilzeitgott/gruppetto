@@ -765,13 +765,16 @@ export class Track {
         this.crowdZone(S(i));
         if (i % 2 === 0) put(i, chance(r, 0.5) ? -1 : 1, 'crowd', 0.4, { s: 1 });
       }
-      const w = this.names.length && chance(r, 0.6) ? `ALLEZ ${pick(r, this.names)}` : pick(r, WRITINGS);
+      // Zufallszahlen immer gleich verbrauchen – sonst hinge die ganze Strecke davon ab, ob die Namen schon geladen sind
+      const useName = chance(r, 0.6) && this.names.length > 0;
+      const w = useName ? `ALLEZ ${pick(r, this.names)}` : pick(r, WRITINGS);
       this.decal(at + 4, { k: 'text', x: 0, w: ROAD_HALF * 0.9, len: 6, text: w });
     }
     // Straßenmalerei auch sonst
     for (let i = start + 40; i < start + n - 20; i += Math.round(between(r, 90, 170))) {
       if (S(i).tunnel || S(i).hairpin || biome === 'village') continue;
-      const w = this.names.length && chance(r, 0.35) ? pick(r, this.names) : pick(r, WRITINGS);
+      const useName = chance(r, 0.35) && this.names.length > 0;
+      const w = useName ? pick(r, this.names) : pick(r, WRITINGS);
       this.decal(i, { k: 'text', x: chance(r, 0.5) ? -ROAD_HALF / 2 : ROAD_HALF / 2, w: ROAD_HALF * 0.42, len: 5, text: w });
     }
 
