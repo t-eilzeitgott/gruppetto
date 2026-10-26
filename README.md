@@ -36,8 +36,40 @@ Ohne die beiden Variablen läuft die App automatisch im Demo-Modus. Der Workflow
 
 1. **Etappen:** 21 Etappen mit Ruhetagen generieren, Startzeiten (= Tippschluss), Profil, Start/Ziel und km eintragen.
 2. **Startliste:** PCS-Startliste kopieren und einfügen (oder `Nr;Name;Team` pro Zeile), Joker-Limit und „Best of the Rest“-Ausschluss setzen.
-3. **Nach jeder Etappe:** Top 10 von der PCS-Ergebnisseite einfügen, prüfen, *Veröffentlichen*.
+3. **Nach jeder Etappe:** kommt das Ergebnis automatisch (siehe [Automatische Ergebnisse](#automatische-ergebnisse)) – oder Top 10 von der PCS-Ergebnisseite einfügen, prüfen, *Veröffentlichen*.
 4. **Bonuswertungen:** Zwischenstand für die Hochrechnung, nach Etappe 21 Endstand + *Endstand setzen*.
+
+## Automatische Ergebnisse
+
+Eine offizielle Schnittstelle von Giro, Tour oder Vuelta gibt es nicht. Der Workflow [`ergebnisse.yml`](.github/workflows/ergebnisse.yml) liest deshalb die Etappenseiten von procyclingstats.com (PCS) – höflich, mit höchstens ein paar Abrufen pro Lauf – und trägt ein:
+
+- **Etappenergebnis** (Top 10), **Wertungsstände** nach der Etappe (Gesamt, Punkte, Berg, Nachwuchs), **Ausstiege** (DNF/DNS/OTL/DSQ → Fahrer nicht mehr tippbar)
+- **Bonus-Zwischenstand** (Gesamt, Best of the Rest, Punkte, Berg, Nachwuchs, Team) – den Kämpferischsten Fahrer und den Endstand setzt weiter der Admin
+- **Änderungen**: nachträgliche Jury-Entscheidungen bis 36 Stunden nach dem Start, verkürzte Etappen (Distanz), fehlende Start-/Zielorte; ein früherer Start als der Tippschluss oder ein verschobenes Datum wird als Warnung gemeldet (Tippschluss bleibt Sache des Admins)
+
+Läuft an Renntagen alle 10 Minuten von 13 bis 22 Uhr, dazu morgens und vor dem Tippschluss. Außerhalb der Rundfahrten endet jeder Lauf nach einer Datenbankabfrage.
+
+**Einrichtung:**
+
+1. [`supabase/schema.sql`](supabase/schema.sql) im SQL Editor neu ausführen (Abschnitt 7 ist neu, bestehende Daten bleiben).
+2. Supabase → *Project Settings → API Keys* → *Secret key* anlegen (`sb_secret_…`). In GitHub unter *Settings → Secrets and variables → Actions → Secrets* als `SUPABASE_SECRET_KEY` speichern. Der Schlüssel umgeht die Zugriffsregeln, gehört also nie in die App oder in eine Variable.
+3. In der App: *Admin → Rundfahrten* das PCS-Kürzel prüfen (z. B. `giro-d-italia/2027`), dann *Admin → Automatische Ergebnisse* einschalten:
+   - **Vorschlag** – Ergebnis wird eingetragen, der Admin prüft und veröffentlicht unter *Etappenergebnis*.
+   - **Automatisch** – Ergebnis wird selbst veröffentlicht.
+
+**Sicherheitsregeln:** Übernommen wird erst nach der Zielankunft (Start laut PCS + Siegerzeit, beim Zeitfahren frühestens 3½ Stunden nach dem Start), wenn mindestens 80 % der Starter im Ergebnis stehen und das Ergebnis 10 Minuten unverändert bleibt. Fehlt ein Fahrer der Top 10 in der Startliste, wird nichts veröffentlicht und der Lauf schlägt fehl (GitHub schickt dann eine Mail). Mannschaftszeitfahren bitte von Hand eintragen. Speichert der Admin ein Ergebnis von Hand oder zieht eine Veröffentlichung zurück, pausiert die Automatik für diese Etappe (fortsetzen unter *Automatische Ergebnisse*). Blockiert PCS den Abruf, steht das im Protokoll – dann wie bisher von Hand eintragen.
+
+**Testen** – alles ohne echtes Rennen:
+
+1. `npm test` prüft den Parser gegen echte, gekürzte PCS-Seiten (Sprint mit DNS und gestrichenem Platz, Bergetappe mit DNF, Mannschaftszeitfahren) und den ganzen Ablauf (Zielankunft, Stabilität, Jury-Änderung, Vorschlagsmodus, fehlender Fahrer, PCS-Sperre). `npm run test:db` prüft die Datenbankfunktion, Rechte und das Pausieren.
+2. **PCS-Test:** *Actions → Ergebnisse → Run workflow → „Nur PCS-Test“* ruft eine echte vergangene Etappe ab und zeigt, was gelesen wurde. Läuft auch bei jedem Push, der `scripts/sync/` ändert – so merkt man sofort, ob PCS von GitHub aus erreichbar ist oder sein Layout geändert hat.
+3. **Probelauf:** *Run workflow → „Probelauf“*, Rundfahrt `giro-2026`, Modus `auto`, *sofort* anhaken → die Zusammenfassung des Laufs zeigt für die Giro-2026-Testrunde, was übernommen würde. Gespeichert wird nichts.
+4. **Generalprobe:** [`supabase/sync_generalprobe.sql`](supabase/sync_generalprobe.sql) ausführen. Dann übernimmt der Workflow statt pg_cron die Testrunde und holt jeden Tag das echte Giro-2026-Ergebnis von PCS – etwa zur damaligen Zielankunft, mit Ausstiegen und Wertungen. Verlauf in der App unter *Automatische Ergebnisse*.
+5. Lokal: `pip install -r scripts/sync/requirements.txt`, dann `npm run sync -- --pcs race/giro-d-italia/2026/stage-7` (nur PCS), `--datei seite.html` (gespeicherte Seite), mit `SUPABASE_URL` und `SUPABASE_SECRET_KEY` auch `npm run sync -- --probelauf --jetzt 2026-11-02T17:30`.
+
+**Zum Abruf:** PCS steht hinter Cloudflare und sperrt Anfragen von Servern mit Node-`fetch` oder `curl` (HTTP 403). Mit dem TLS-Fingerabdruck eines Browsers über das Python-Paket [curl_cffi](https://github.com/lexiforest/curl_cffi) kommt die Seite – der Workflow installiert es selbst. Ändert PCS den Seitenaufbau (zuletzt Anfang 2026), schlägt der PCS-Test fehl, bevor falsche Daten in die App kommen; der Parser liest derzeit den aktuellen und den vorherigen Aufbau.
+
+GitHub schaltet Zeitpläne in Repos ohne Aktivität nach 60 Tagen ab – vor einer Rundfahrt unter *Actions → Ergebnisse* prüfen und gegebenenfalls wieder einschalten.
 
 ## Entwicklung
 
@@ -59,6 +91,7 @@ UI-Check mit Playwright (lokal, falls installiert): `node scripts/build.mjs && n
 - `src/data/demo.ts` – Demo-Modus mit denselben Regeln im Speicher
 - `src/lib/scoring.ts` – Punkteberechnung (Etappen, Außenseiter-Bonus, Bonuswertungen, Rangliste)
 - `src/lib/pcsParse.ts` – Einlesen kopierter Startlisten und Ergebnisse von procyclingstats.com
+- `scripts/sync/` – automatische Ergebnisse: `pcs.ts` (Etappenseite lesen), `plan.ts` (was wird übernommen), `sync.ts` (Ablauf), `run.ts` (Kommandozeile), Testseiten in `fixtures/`
 - `src/pages/` – Screens, `src/pages/admin/` – Admin-Bereich
 - Build: esbuild (`scripts/build.mjs`), Deploy: `.github/workflows/deploy.yml`
 

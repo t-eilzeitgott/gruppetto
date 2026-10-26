@@ -1,6 +1,7 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type {
   AdminUser, BonusCategory, BonusResult, Profile, Rider, Stage, Tour, TourData, StageKind, TourTheme,
+  SyncMode, SyncStatus,
 } from '../lib/types';
 
 export interface SessionUser {
@@ -118,6 +119,11 @@ export interface DataSource {
   setStageResults(stageId: number, riderIds: number[]): Promise<void>;
   setStagePublished(stageId: number, published: boolean): Promise<void>;
   setBonusResults(tourId: string, category: BonusResult['category'], entries: BonusResultInput[]): Promise<void>;
+
+  // Automatische Ergebnisse (Workflow „Ergebnisse“)
+  loadSyncStatus(tourId: string, stageIds: number[]): Promise<SyncStatus>;
+  setSyncMode(tourId: string, mode: SyncMode): Promise<void>;
+  setStageSyncPaused(stageId: number, paused: boolean): Promise<void>;
 }
 
 export type { Stage };
@@ -143,6 +149,7 @@ const MESSAGES: Record<string, string> = {
   cannot_remove_own_admin: 'Du kannst dir die Admin-Rechte nicht selbst entziehen.',
   not_authenticated: 'Bitte melde dich erneut an.',
   locked: 'Tippschluss ist vorbei – der Tipp kann nicht mehr geändert werden.',
+  schema_outdated: 'Die Datenbank kennt die Automatik noch nicht – bitte supabase/schema.sql im SQL Editor neu ausführen.',
 };
 
 /** Wandelt Fehler in einen verständlichen deutschen Satz um. */

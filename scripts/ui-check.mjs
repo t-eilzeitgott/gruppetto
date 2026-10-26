@@ -89,6 +89,7 @@ const PAGES = [
   ['admin-results', '?demo#/admin/ergebnis'],
   ['admin-bonus', '?demo#/admin/bonus'],
   ['admin-members', '?demo#/admin/mitglieder'],
+  ['admin-sync', '?demo#/admin/automatik'],
   ['impressum', '?demo#/impressum'],
   ['notfound', '?demo#/gibtsnicht'],
 ];

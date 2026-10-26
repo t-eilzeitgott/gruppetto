@@ -36,6 +36,35 @@ export interface Tour {
   /** Wie oft man denselben Fahrer pro Rundfahrt höchstens tippen darf (null = unbegrenzt) */
   tip_limit?: number | null;
   info?: TourInfo;
+  /** Automatische Ergebnisse von procyclingstats.com: aus, als Vorschlag oder automatisch veröffentlichen */
+  sync_mode?: SyncMode;
+}
+
+export type SyncMode = 'off' | 'draft' | 'auto';
+
+/** Stand der Automatik für eine Etappe (nur für Admins sichtbar) */
+export interface StageSyncInfo {
+  stage_id: number;
+  paused: boolean;
+  paused_reason: string | null;
+  checked_at: string | null;
+  synced_at: string | null;
+  status: string | null;
+  source_url: string | null;
+  last_error: string | null;
+}
+
+export interface SyncLogEntry {
+  id: number;
+  at: string;
+  stage_id: number | null;
+  level: 'info' | 'change' | 'warning' | 'error';
+  message: string;
+}
+
+export interface SyncStatus {
+  stages: StageSyncInfo[];
+  log: SyncLogEntry[];
 }
 
 export interface Rider {

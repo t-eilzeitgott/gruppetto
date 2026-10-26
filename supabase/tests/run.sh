@@ -9,6 +9,7 @@ psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/tests/supabase_shim.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/schema.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/schema.sql   # zweiter Lauf: wiederholbar?
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/tests/rls_test.sql
+psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/tests/sync_test.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_testrunde.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_testrunde.sql   # wiederholbar?
 psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Testrunde: ' || (select count(*) from public.stages where tour_id = 'testrunde') || ' Etappen, ' || (select count(*) from public.riders where tour_id = 'testrunde') || ' Fahrer'"
@@ -32,3 +33,6 @@ psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Nachgespielt: ' || public.replay
 psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Ende: ' || (select count(*) from public.stage_results sr join public.stages s on s.id = sr.stage_id where s.tour_id = 'giro-2026') || ' Ergebnisse, ' || (select count(*) from public.riders where tour_id = 'giro-2026' and status = 'out') || ' ausgestiegen, Bonus-Einträge ' || (select count(*) from public.bonus_results where tour_id = 'giro-2026') || ', final ' || (select bonus_final from public.tours where id = 'giro-2026')"
 psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Giro-Wertungsstände: ' || count(*) from public.stage_standings"
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_giro2026.sql   # wiederholbar?
+# Generalprobe der Automatik: schaltet die Testrunde auf den Workflow um
+psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/sync_generalprobe.sql
+psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Generalprobe: Automatik ' || sync_mode from public.tours where id = 'giro-2026'"

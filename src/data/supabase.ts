@@ -1,7 +1,7 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, PointScale, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
-  Tour, TourData,
+  Tour, TourData, StageSyncInfo, SyncLogEntry, SyncMode, SyncStatus,
 } from '../lib/types';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
@@ -471,6 +471,40 @@ export class SupabaseSource implements DataSource {
         prefer: 'return=minimal',
       });
     }
+  }
+
+  // ---------- Automatische Ergebnisse ----------
+
+  async loadSyncStatus(tourId: string, stageIds: number[]): Promise<SyncStatus> {
+    return schemaCheck(async () => {
+      const [stages, log] = await Promise.all([
+        stageIds.length
+          ? this.rest<StageSyncInfo[]>(`stage_sync?stage_id=in.(${stageIds.join(',')})&select=stage_id,paused,paused_reason,checked_at,synced_at,status,source_url,last_error`)
+          : Promise.resolve([]),
+        this.rest<SyncLogEntry[]>(`sync_log?tour_id=eq.${encodeURIComponent(tourId)}&select=id,at,stage_id,level,message&order=at.desc,id.desc&limit=40`),
+      ]);
+      return { stages, log };
+    });
+  }
+
+  async setSyncMode(tourId: string, mode: SyncMode): Promise<void> {
+    await schemaCheck(() => this.rest(`tours?id=eq.${encodeURIComponent(tourId)}`, { method: 'PATCH', body: { sync_mode: mode }, prefer: 'return=minimal' }));
+  }
+
+  async setStageSyncPaused(stageId: number, paused: boolean): Promise<void> {
+    await schemaCheck(() => this.rpc('admin_set_stage_sync_paused', { p_stage: stageId, p_paused: paused }));
+  }
+}
+
+/** Fehlende Tabelle/Spalte/Funktion = schema.sql noch nicht neu eingespielt */
+async function schemaCheck<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ApiError && (['PGRST205', 'PGRST204', 'PGRST202', '42P01', '42703'].includes(err.code ?? '') || err.status === 404)) {
+      throw new ApiError('schema_outdated', 'schema_outdated', err.status);
+    }
+    throw err;
   }
 }
 

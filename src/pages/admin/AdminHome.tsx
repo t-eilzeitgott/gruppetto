@@ -4,6 +4,7 @@ import { Icon, type IconName } from '../../ui/Icon';
 import { AdminPage } from './common';
 import type { Tour } from '../../lib/types';
 import { runningStages } from '../../lib/time';
+import { SYNC_MODE_LABEL } from './AdminSync';
 
 export function AdminHome() {
   useTitle('Admin');
@@ -33,6 +34,12 @@ function Sections({ tour }: { tour: Tour }) {
       alert: pending.length > 0,
     },
     { to: '/admin/bonus', icon: 'star', title: 'Bonuswertungen', sub: tour.bonus_final ? 'Endstand eingetragen' : 'Zwischenstand für die Hochrechnung' },
+    {
+      to: '/admin/automatik',
+      icon: 'refresh',
+      title: 'Automatische Ergebnisse',
+      sub: !tour.sync_mode || tour.sync_mode === 'off' ? 'Aus · Ergebnisse von procyclingstats.com holen' : `Von procyclingstats.com · ${SYNC_MODE_LABEL[tour.sync_mode]}`,
+    },
     { to: '/admin/mitglieder', icon: 'user', title: 'Mitglieder & Einladung', sub: 'Einladungscode, Admins, Pro' },
   ];
   return (

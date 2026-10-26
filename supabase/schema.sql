@@ -682,3 +682,236 @@ drop policy if exists bonus_tips_delete on public.bonus_tips;
 create policy bonus_tips_delete on public.bonus_tips
   for delete to authenticated
   using (user_id = auth.uid() and public.bonus_deadline(tour_id) > now());
+
+-- ---------------------------------------------------------------------
+-- 7. Automatische Ergebnisse (GitHub-Workflow „Ergebnisse“ liest procyclingstats.com)
+--
+-- Der Workflow schreibt mit dem Secret Key (Rolle service_role) über sync_apply_stage().
+-- Ändert ein Admin in der App ein Ergebnis von Hand oder zieht die Veröffentlichung
+-- zurück, pausiert die Automatik für diese Etappe (Admin → Automatik → fortsetzen).
+-- ---------------------------------------------------------------------
+
+-- off = aus, draft = Ergebnis als Vorschlag eintragen (Admin veröffentlicht), auto = selbst veröffentlichen
+alter table public.tours add column if not exists sync_mode text not null default 'off';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'tours_sync_mode_check') then
+    alter table public.tours add constraint tours_sync_mode_check check (sync_mode in ('off', 'draft', 'auto'));
+  end if;
+end $$;
+
+create table if not exists public.stage_sync (
+  stage_id      bigint primary key references public.stages (id) on delete cascade,
+  paused        boolean not null default false,   -- von Hand geändert → Automatik lässt die Etappe in Ruhe
+  paused_reason text,
+  paused_at     timestamptz,
+  checked_at    timestamptz,                      -- letzter Abruf bei procyclingstats.com
+  candidate     jsonb,                            -- zuletzt gelesenes Ergebnis (Stabilitätsprüfung)
+  candidate_at  timestamptz,                      -- seit wann es unverändert ist
+  synced_at     timestamptz,                      -- Ergebnis zuletzt übernommen
+  status        text,                             -- Kurzstand für die Admin-Seite
+  source_url    text,
+  last_error    text
+);
+
+create table if not exists public.sync_log (
+  id       bigint generated always as identity primary key,
+  at       timestamptz not null default now(),
+  tour_id  text   references public.tours (id) on delete cascade,
+  stage_id bigint references public.stages (id) on delete cascade,
+  level    text   not null check (level in ('info', 'change', 'warning', 'error')),
+  message  text   not null,
+  details  jsonb
+);
+create index if not exists sync_log_tour_idx on public.sync_log (tour_id, at desc);
+
+-- Handeingriff aus der App (Rolle authenticated) pausiert die Automatik für die Etappe.
+-- Der Workflow (service_role), pg_cron und der SQL Editor pausieren nichts.
+create or replace function public.pause_sync_on_manual_change()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_stage  bigint;
+  v_reason text;
+begin
+  if coalesce(current_setting('role', true), '') <> 'authenticated' then
+    return null;
+  end if;
+  if tg_table_name = 'stages' then
+    v_stage := new.id;
+    v_reason := 'Veröffentlichung von Hand zurückgezogen';
+  else
+    v_stage := coalesce(new.stage_id, old.stage_id);
+    v_reason := 'Ergebnis von Hand geändert';
+  end if;
+  insert into public.stage_sync (stage_id, paused, paused_reason, paused_at, status)
+  values (v_stage, true, v_reason, now(), 'pausiert')
+  on conflict (stage_id) do update
+    set paused = true, paused_reason = excluded.paused_reason, paused_at = now(), status = 'pausiert'
+    where not public.stage_sync.paused;
+  return null;
+end;
+$$;
+
+drop trigger if exists stage_results_pause_sync on public.stage_results;
+create trigger stage_results_pause_sync
+  after insert or update or delete on public.stage_results
+  for each row execute function public.pause_sync_on_manual_change();
+
+drop trigger if exists stages_pause_sync on public.stages;
+create trigger stages_pause_sync
+  after update of results_published on public.stages
+  for each row when (old.results_published and not new.results_published)
+  execute function public.pause_sync_on_manual_change();
+
+-- Schreibzugriff des Workflows: alles für eine Etappe in einer Transaktion.
+-- p = { state, results, standings, publish, out, stage, bonus, logs } – jeder Teil ist optional.
+create or replace function public.sync_apply_stage(p_stage bigint, p jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_tour    text;
+  v_final   boolean;
+  v_paused  boolean;
+  v_done    text[] := '{}';
+  v_skipped text[] := '{}';
+  v_cat     text;
+  v_rows    jsonb;
+begin
+  select s.tour_id, t.bonus_final into v_tour, v_final
+    from public.stages s join public.tours t on t.id = s.tour_id where s.id = p_stage;
+  if v_tour is null then
+    raise exception 'stage_not_found' using errcode = 'P0001';
+  end if;
+
+  insert into public.stage_sync (stage_id) values (p_stage) on conflict (stage_id) do nothing;
+  select ss.paused into v_paused from public.stage_sync ss where ss.stage_id = p_stage for update;
+
+  -- Alle Fahrer müssen zu dieser Rundfahrt gehören
+  if exists (
+    with ids as (
+      select (e->>'rider_id')::bigint as id from jsonb_array_elements(coalesce(p->'results', '[]')) e
+      union all
+      select (e->>'rider_id')::bigint from jsonb_each(coalesce(p->'standings', '{}')) c, jsonb_array_elements(c.value) e
+      union all
+      select x::bigint from jsonb_array_elements_text(coalesce(p->'out', '[]')) x
+      union all
+      select (e->>'rider_id')::bigint from jsonb_each(coalesce(p->'bonus', '{}')) c, jsonb_array_elements(c.value) e
+       where e ? 'rider_id' and e->>'rider_id' is not null
+    )
+    select 1 from ids where not exists (select 1 from public.riders r where r.id = ids.id and r.tour_id = v_tour)
+  ) then
+    raise exception 'rider_not_in_tour' using errcode = 'P0001';
+  end if;
+
+  if p ? 'results' or p ? 'standings' or p ? 'out' or coalesce((p->>'publish')::boolean, false) then
+    if v_paused then
+      v_skipped := v_skipped || array['results'];
+    else
+      if p ? 'results' then
+        delete from public.stage_results where stage_id = p_stage;
+        insert into public.stage_results (stage_id, position, rider_id)
+        select p_stage, (e->>'position')::int, (e->>'rider_id')::bigint from jsonb_array_elements(p->'results') e;
+        v_done := v_done || array['results'];
+      end if;
+      if p ? 'standings' then
+        for v_cat, v_rows in select key, value from jsonb_each(p->'standings') loop
+          delete from public.stage_standings where stage_id = p_stage and category = v_cat;
+          insert into public.stage_standings (stage_id, category, position, rider_id)
+          select p_stage, v_cat, (e->>'position')::int, (e->>'rider_id')::bigint from jsonb_array_elements(v_rows) e;
+        end loop;
+        v_done := v_done || array['standings'];
+      end if;
+      if p ? 'out' then
+        update public.riders set status = 'out'
+         where tour_id = v_tour and status = 'active'
+           and id in (select x::bigint from jsonb_array_elements_text(p->'out') x);
+        v_done := v_done || array['out'];
+      end if;
+      if coalesce((p->>'publish')::boolean, false) then
+        update public.stages set results_published = true where id = p_stage and not results_published;
+        v_done := v_done || array['publish'];
+      end if;
+    end if;
+  end if;
+
+  if p ? 'stage' then
+    update public.stages s set
+      distance_km = coalesce((p->'stage'->>'distance_km')::numeric, s.distance_km),
+      departure   = coalesce(p->'stage'->>'departure', s.departure),
+      arrival     = coalesce(p->'stage'->>'arrival', s.arrival)
+     where s.id = p_stage;
+    v_done := v_done || array['stage'];
+  end if;
+
+  if p ? 'bonus' then
+    if v_final then
+      v_skipped := v_skipped || array['bonus'];
+    else
+      for v_cat, v_rows in select key, value from jsonb_each(p->'bonus') loop
+        if v_cat not in ('gc', 'rest', 'points', 'mountains', 'youth', 'team') then
+          raise exception 'invalid_category' using errcode = 'P0001';
+        end if;
+        delete from public.bonus_results where tour_id = v_tour and category = v_cat;
+        insert into public.bonus_results (tour_id, category, position, rider_id, team)
+        select v_tour, v_cat, (e->>'position')::int, nullif(e->>'rider_id', '')::bigint, e->>'team'
+          from jsonb_array_elements(v_rows) e;
+      end loop;
+      v_done := v_done || array['bonus'];
+    end if;
+  end if;
+
+  update public.stage_sync ss set
+    checked_at   = coalesce((p->'state'->>'checked_at')::timestamptz, now()),
+    candidate    = case when p->'state' ? 'candidate' then p->'state'->'candidate' else ss.candidate end,
+    candidate_at = case when p->'state' ? 'candidate_at' then (p->'state'->>'candidate_at')::timestamptz else ss.candidate_at end,
+    synced_at    = case when 'results' = any(v_done) or 'publish' = any(v_done) then now() else ss.synced_at end,
+    status       = case when v_paused then 'pausiert' else coalesce(p->'state'->>'status', ss.status) end,
+    source_url   = coalesce(p->'state'->>'source_url', ss.source_url),
+    last_error   = case when p->'state' ? 'last_error' then p->'state'->>'last_error' else ss.last_error end
+   where ss.stage_id = p_stage;
+
+  insert into public.sync_log (tour_id, stage_id, level, message, details)
+  select v_tour, p_stage, e->>'level', e->>'message', e->'details'
+    from jsonb_array_elements(coalesce(p->'logs', '[]')) e;
+
+  return jsonb_build_object('applied', to_jsonb(v_done), 'skipped', to_jsonb(v_skipped), 'paused', v_paused);
+end;
+$$;
+
+-- Admin: Automatik für eine Etappe anhalten bzw. fortsetzen
+create or replace function public.admin_set_stage_sync_paused(p_stage bigint, p_paused boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then
+    raise exception 'not_admin' using errcode = 'P0001';
+  end if;
+  insert into public.stage_sync (stage_id) values (p_stage) on conflict (stage_id) do nothing;
+  update public.stage_sync set
+    paused        = p_paused,
+    paused_reason = case when p_paused then 'von Hand angehalten' end,
+    paused_at     = case when p_paused then now() end,
+    candidate     = null,
+    candidate_at  = null,
+    status        = case when p_paused then 'pausiert' else 'wartet' end
+   where stage_id = p_stage;
+  insert into public.sync_log (tour_id, stage_id, level, message)
+  select s.tour_id, s.id, 'info',
+         'Automatik für Etappe ' || s.number || case when p_paused then ' angehalten' else ' fortgesetzt' end
+    from public.stages s where s.id = p_stage;
+end;
+$$;
+
+revoke execute on function public.sync_apply_stage(bigint, jsonb)              from public, anon, authenticated;
+grant  execute on function public.sync_apply_stage(bigint, jsonb)              to service_role;
+revoke execute on function public.pause_sync_on_manual_change()               from public, anon, authenticated;
+revoke execute on function public.admin_set_stage_sync_paused(bigint, boolean) from public, anon;
+grant  execute on function public.admin_set_stage_sync_paused(bigint, boolean) to authenticated;
+
+alter table public.stage_sync enable row level security;
+alter table public.sync_log   enable row level security;
+revoke insert, update, delete on public.stage_sync, public.sync_log from anon, authenticated;
+
+drop policy if exists stage_sync_admin on public.stage_sync;
+create policy stage_sync_admin on public.stage_sync
+  for select to authenticated using (public.is_admin());
+drop policy if exists sync_log_admin on public.sync_log;
+create policy sync_log_admin on public.sync_log
+  for select to authenticated using (public.is_admin());

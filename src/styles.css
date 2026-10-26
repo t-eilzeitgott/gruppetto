@@ -1277,3 +1277,17 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .game-board__rank { width: 16px; text-align: center; color: var(--muted); font-weight: 700; font-size: 13px; flex: none; }
 .game-board__name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
 .game-icon { --gi-top: var(--accent); --gi-bottom: color-mix(in srgb, var(--accent) 45%, #1d0b3d); border-radius: 12px; box-shadow: 0 6px 16px var(--accent-soft); flex: none; }
+
+/* Admin: automatische Ergebnisse */
+.sync-stage { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.list > .sync-stage:last-child { border-bottom: 0; }
+.sync-stage .btn { flex: none; }
+.sync-stage__error { color: var(--neg); font-size: 13px; line-height: 1.4; }
+.sync-log { gap: 0; }
+.sync-log__item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; line-height: 1.4; }
+.sync-log__item:last-child { border-bottom: 0; }
+.sync-log__item > svg { flex: none; margin-top: 1px; color: var(--muted); }
+.sync-log__item--change > svg { color: var(--accent); }
+.sync-log__item--warning > svg, .sync-log__item--error > svg { color: var(--neg); }
+.sync-log__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.sync-log__main .muted { font-size: 12.5px; }
