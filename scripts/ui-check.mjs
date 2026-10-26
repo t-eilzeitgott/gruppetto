@@ -148,7 +148,7 @@ const CHECK = () => {
     }
     if (ownText && st.textOverflow === 'ellipsis') issues.push(`Ellipse: ${tag} „${txt}“`);
     const r = el.getBoundingClientRect();
-    if (r.width > 0 && (r.right > vw + 1 || r.left < -1) && !el.closest('.table-scroll')) {
+    if (r.width > 0 && (r.right > vw + 1 || r.left < -1) && !el.closest('.table-scroll, .games-scroller')) {
       issues.push(`Ragt aus dem Bildschirm: ${tag} ${Math.round(r.left)}–${Math.round(r.right)} „${txt.slice(0, 40)}“`);
     }
   }
