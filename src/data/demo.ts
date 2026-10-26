@@ -10,7 +10,7 @@ import {
 } from './source';
 import {
   DEMO_BONUS_RESULTS, DEMO_BONUS_TIPS, DEMO_ME, DEMO_NOW, DEMO_PROFILES, DEMO_RESULTS, DEMO_RIDERS, DEMO_STAGES,
-  DEMO_STANDINGS, DEMO_TIPS, DEMO_TOURS,
+  DEMO_STANDINGS, DEMO_TIPS, DEMO_TOURS, DEMO_REAL_PROFILES,
 } from './demoData';
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -123,6 +123,7 @@ export class DemoSource implements DataSource {
   async loadStageProfile(stageId: number): Promise<StageProfileData | null> {
     await wait(80);
     if (this.heightProfiles.has(stageId)) return { points: this.heightProfiles.get(stageId)! };
+    if (DEMO_REAL_PROFILES[stageId]) return DEMO_REAL_PROFILES[stageId];
     const stage = this.stages.find((s) => s.id === stageId);
     const points = stage ? demoProfile(stage) : null;
     if (!points || !stage) return null;
@@ -145,7 +146,7 @@ export class DemoSource implements DataSource {
     const out: Record<number, ProfilePoint[]> = {};
     for (const id of stageIds) {
       const st = this.stages.find((s) => s.id === id);
-      const pts = this.heightProfiles.get(id) ?? (st ? demoProfile(st) : null);
+      const pts = this.heightProfiles.get(id) ?? DEMO_REAL_PROFILES[id]?.points ?? (st ? demoProfile(st) : null);
       if (pts) out[id] = pts;
     }
     return out;
@@ -153,7 +154,7 @@ export class DemoSource implements DataSource {
 
   async listStageProfiles(stageIds: number[]): Promise<number[]> {
     await wait(60);
-    return stageIds.filter((id) => this.heightProfiles.has(id) || !!demoProfile(this.stages.find((s) => s.id === id)!));
+    return stageIds.filter((id) => this.heightProfiles.has(id) || !!DEMO_REAL_PROFILES[id] || !!demoProfile(this.stages.find((s) => s.id === id)!));
   }
 
   private scores: { user_id: string; game: GameId; score: number; meters: number; at: string }[] = [

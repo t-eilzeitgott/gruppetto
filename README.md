@@ -30,6 +30,8 @@ Das Grand-Tour-Tippspiel für eure Runde: Giro, Tour und Vuelta – ein Tipp pro
    `update public.profiles set is_admin = true where id = (select id from auth.users where email = 'deine@mail.de');`
 7. Testrunde mit echten Daten: [`supabase/seed_giro2026.sql`](supabase/seed_giro2026.sql) spielt den Giro d'Italia 2026 nach – 184 echte Fahrer, 21 Etappen mit Anstiegen und Sprints, ab morgen eine Etappe pro Tag um 12 Uhr. Das echte Ergebnis erscheint etwa zur echten Zielankunft (pg_cron), Ausstiege und Wertungen wie im Rennen. Die Datei wird von `node scripts/giro2026/build-sql.mjs` aus `scripts/giro2026/` erzeugt (prüft die Daten auf Widersprüche). Die ältere Würfel-Testrunde (`seed_testrunde.sql` + `simulate_testrunde.sql`) gibt es weiterhin.
 
+8. **Saison 2027:** [`supabase/seed_2027.sql`](supabase/seed_2027.sql) trägt ein, was bisher feststeht – die komplette Tour de France 2027 (Etappen, Höhenmeter, Anstiege mit Länge und Steigung, Höhenprofile aus den offiziellen Profilen, Kategorien folgen mit dem Roadbook) sowie Zeitraum und Reglement von Giro und Vuelta. Wiederholbar; die Daten stehen in `src/data/season2027.ts`, neu erzeugen mit `node scripts/season2027/build-sql.ts`.
+
 Ohne die beiden Variablen läuft die App automatisch im Demo-Modus. Der Workflow *Keep-alive* pingt die Datenbank täglich, damit Supabase das Free-Projekt nicht pausiert.
 
 ## Ablauf je Rundfahrt (Admin-Bereich in der App)

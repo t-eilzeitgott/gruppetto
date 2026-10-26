@@ -32,3 +32,7 @@ psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Nachgespielt: ' || public.replay
 psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Ende: ' || (select count(*) from public.stage_results sr join public.stages s on s.id = sr.stage_id where s.tour_id = 'giro-2026') || ' Ergebnisse, ' || (select count(*) from public.riders where tour_id = 'giro-2026' and status = 'out') || ' ausgestiegen, Bonus-Einträge ' || (select count(*) from public.bonus_results where tour_id = 'giro-2026') || ', final ' || (select bonus_final from public.tours where id = 'giro-2026')"
 psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Giro-Wertungsstände: ' || count(*) from public.stage_standings"
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_giro2026.sql   # wiederholbar?
+# Saison 2027 (zweimal: wiederholbar?)
+psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_2027.sql
+psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_2027.sql
+psql -q -v ON_ERROR_STOP=1 -d $DB -tAc "select 'Tour 2027: ' || count(*) || ' Etappen, ' || sum(jsonb_array_length(climbs)) || ' Anstiege, ' || (select count(*) from public.stage_profiles p join public.stages x on x.id = p.stage_id where x.tour_id = 'tour-2027') || ' Profile, Etappe 1 um ' || min(to_char(starts_at at time zone 'Europe/Berlin', 'DD.MM. HH24:MI')) from public.stages where tour_id = 'tour-2027'"

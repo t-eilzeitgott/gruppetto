@@ -1,6 +1,8 @@
 import type {
   BonusResult, BonusTip, Climb, Profile, Rider, Sprint, Stage, StageKind, StageResult, StageStanding, StageTip, Tour,
 } from '../lib/types';
+import type { StageProfileData } from '../lib/gpx';
+import { SEASON_2027, profilePoints } from './season2027';
 
 // Nation und Alter der Demo-Fahrer (Beispielwerte)
 const NAT: Record<string, [string, number]> = {
@@ -38,7 +40,7 @@ const GIRO_RULES = {
 
 export const DEMO_TOURS: Tour[] = [
   { id: 'giro-2027', name: "Giro d'Italia 2027", short_name: 'Giro', theme: 'giro', year: 2027, start_date: '2027-05-08', end_date: '2027-05-30', is_visible: true, bonus_final: false, pcs_slug: 'giro-d-italia/2027', tip_limit: 3, info: GIRO_RULES },
-  { id: 'tour-2027', name: 'Tour de France 2027', short_name: 'Tour', theme: 'tour', year: 2027, start_date: '2027-07-02', end_date: '2027-07-25', is_visible: true, bonus_final: false, pcs_slug: 'tour-de-france/2027', tip_limit: 3 },
+  { id: 'tour-2027', name: 'Tour de France 2027', short_name: 'Tour', theme: 'tour', year: 2027, start_date: '2027-07-02', end_date: '2027-07-25', is_visible: true, bonus_final: false, pcs_slug: 'tour-de-france/2027', tip_limit: 3, info: SEASON_2027.find((t) => t.id === 'tour-2027')?.info },
   { id: 'vuelta-2027', name: 'La Vuelta 2027', short_name: 'Vuelta', theme: 'vuelta', year: 2027, start_date: '2027-09-04', end_date: '2027-09-26', is_visible: true, bonus_final: false, pcs_slug: 'vuelta-a-espana/2027', tip_limit: 3 },
 ];
 
@@ -104,7 +106,35 @@ const PLAN: [number, number, number, StageKind, number, string, string][] = [
   [30, 15, 0, 'flat', 141, 'Verona', 'Verona'],
 ];
 
-export const DEMO_STAGES: Stage[] = PLAN.map(([day, h, m, kind, km, from, to], i) => ({
+// Echte Strecke der Tour de France 2027 (src/data/season2027.ts), noch ohne Startliste und Ergebnisse
+const TOUR_2027 = SEASON_2027.find((t) => t.id === 'tour-2027')!;
+const tourStageId = (n: number) => 2000 + n;
+const TOUR_2027_STAGES: Stage[] = TOUR_2027.stages.map((s) => {
+  const [y, m, d] = s.date.split('-').map(Number);
+  return {
+    id: tourStageId(s.n),
+    tour_id: 'tour-2027',
+    number: s.n,
+    starts_at: new Date(Date.UTC(y, m - 1, d, 10, 0)).toISOString(), // 12:00 Uhr Sommerzeit
+    kind: s.kind,
+    departure: s.from,
+    arrival: s.to,
+    distance_km: s.km,
+    results_published: false,
+    climbs: s.climbs ?? [],
+    sprints: [],
+    elevation_m: s.elevation ?? null,
+    info: s.route ? { route: s.route, source: TOUR_2027.routeSource } : undefined,
+  };
+});
+
+/** Höhenprofile aus den offiziellen Profilen (statt der ausgedachten Demo-Profile) */
+export const DEMO_REAL_PROFILES: Record<number, StageProfileData> = Object.fromEntries(
+  TOUR_2027.stages.filter((s) => (s.waypoints ?? []).length > 1)
+    .map((s) => [tourStageId(s.n), { points: profilePoints(s), waypoints: s.waypoints, source: TOUR_2027.source }]),
+);
+
+const GIRO_STAGES: Stage[] = PLAN.map(([day, h, m, kind, km, from, to], i) => ({
   id: 1000 + i + 1,
   tour_id: 'giro-2027',
   number: i + 1,
@@ -125,6 +155,8 @@ export const DEMO_STAGES: Stage[] = PLAN.map(([day, h, m, kind, km, from, to], i
     neutral_km: 3,
   } : undefined,
 }));
+
+export const DEMO_STAGES: Stage[] = [...GIRO_STAGES, ...TOUR_2027_STAGES];
 
 const RESULTS: string[][] = [
   ['Evenepoel', 'Vingegaard', 'Ganna', 'Pogačar', 'Tarling', 'Roglič', 'Seixas', 'Arensman', 'Lipowitz', 'Ayuso'],
@@ -231,7 +263,7 @@ function buildTips(): StageTip[] {
     // Etappe 1–8 (gefahren), Etappe 9 (heute, außer Christoph und 5 weiteren), Etappe 10 bei manchen vorab
     const lastStage = id === DEMO_ME ? 8 : ['u-anna', 'u-moritz', 'u-david', 'u-emma', 'u-finn'].includes(id) ? 8 : id.length % 3 === 0 ? 10 : 9;
     for (let n = 1; n <= lastStage; n += 1) {
-      const stage = DEMO_STAGES[n - 1];
+      const stage = GIRO_STAGES[n - 1];
       let name = fixed?.[n - 1];
       let rid = name ? riderId(name) : 0;
       if (!name) {
