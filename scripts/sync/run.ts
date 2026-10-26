@@ -8,9 +8,14 @@
 //
 // Weitere Schalter: --jetzt 2027-05-15T17:30 (Uhrzeit simulieren), --seiten-ordner pcs-seiten
 // (abgerufene Seiten speichern), --max-abrufe 6, --stabil 10 (Minuten).
+//
+// Abruf: procyclingstats.com sperrt Server-Anfragen per Cloudflare. Mit python3 + curl_cffi
+// (pip install -r scripts/sync/requirements.txt) geht es über einen Browser-Fingerabdruck.
+// PCS_FETCH=browser erzwingt das, PCS_FETCH=node nimmt Node-fetch, sonst automatisch.
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fetchPcsPage, parseDuration, parseStagePage, type PcsRow, type PcsStage } from './pcs.ts';
+import { browserFetch, hasBrowserFetch } from './fetcher.ts';
 import { SupabaseStore } from './store.ts';
 import { DEFAULT_RUN, formatReport, runSync, type RunOptions } from './sync.ts';
 import { berlinToDate } from './time.ts';
@@ -72,6 +77,20 @@ async function summary(markdown: string) {
   if (file) await appendFile(file, `${markdown}\n`);
 }
 
+async function pickFetcher(): Promise<typeof fetch | undefined> {
+  const mode = (process.env.PCS_FETCH ?? 'auto').toLowerCase();
+  if (mode === 'node') return undefined;
+  if (mode === 'browser' || await hasBrowserFetch()) {
+    if (mode === 'browser' && !(await hasBrowserFetch())) {
+      throw new Error('PCS_FETCH=browser, aber python3 mit curl_cffi fehlt (pip install -r scripts/sync/requirements.txt)');
+    }
+    console.log('Abruf über curl_cffi (Browser-Fingerabdruck)');
+    return browserFetch();
+  }
+  console.log('Abruf über Node-fetch – procyclingstats.com blockiert das von Servern aus meist. Besser: pip install -r scripts/sync/requirements.txt');
+  return undefined;
+}
+
 async function main() {
   const { str, bool } = parseArgs(process.argv.slice(2));
 
@@ -79,14 +98,20 @@ async function main() {
   const pcsPath = str('pcs', 'smoke');
   const file = str('datei', 'file');
   if (pcsPath || file) {
-    const html = file ? await readFile(file, 'utf8') : await fetchPcsPage(pcsPath!);
+    const html = file ? await readFile(file, 'utf8') : await fetchPcsPage(pcsPath!, { fetchImpl: await pickFetcher() });
     const st = parseStagePage(html);
     const text = describeStage(st);
     console.log(text);
     await summary(`## PCS-Test: ${pcsPath ?? file}\n\n\`\`\`\n${text}\n\`\`\``);
     const minRows = Number(str('mindestens') ?? 0);
     const classified = st.stage.filter((r) => r.rank !== null);
-    if (minRows && classified.length < minRows) {
+    const winner = str('sieger');
+    if (winner && classified[0]?.name !== winner) {
+      const msg = `Sieger laut Seite: ${classified[0]?.name ?? 'keiner'} – erwartet ${winner}. Liest der Parser die Seite falsch?`;
+      console.error(`\nFEHLER: ${msg}`);
+      annotate('error', msg);
+      process.exitCode = 1;
+    } else if (minRows && classified.length < minRows) {
       const msg = `Nur ${classified.length} klassierte Fahrer gelesen (erwartet mindestens ${minRows}) – hat PCS den Seitenaufbau geändert? Reiter: ${st.tabs.join(', ') || 'keine'}, Titel: ${st.title || '–'}`;
       console.error(`\nFEHLER: ${msg}`);
       annotate('error', msg);
@@ -130,11 +155,12 @@ async function main() {
   if (opts.mode && !opts.dryRun && !opts.tourId) throw new Error('--modus geht im echten Lauf nur zusammen mit --tour');
   if (opts.stage !== undefined && !opts.tourId) throw new Error('--etappe geht nur zusammen mit --tour');
 
+  const fetchImpl = await pickFetcher();
   const pagesDir = str('seiten-ordner');
   if (pagesDir) await mkdir(pagesDir, { recursive: true });
   const report = await runSync(opts, {
     store: new SupabaseStore(url, key),
-    fetchPage: (path) => fetchPcsPage(path),
+    fetchPage: (path) => fetchPcsPage(path, { fetchImpl }),
     savePage: pagesDir ? (path, html) => writeFile(join(pagesDir, `${path.replace(/[^a-z0-9-]+/gi, '_')}.html`), html) : undefined,
   });
   const md = formatReport(report, opts);

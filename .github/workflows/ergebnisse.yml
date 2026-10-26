@@ -61,8 +61,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/sync/requirements.txt
+      # procyclingstats.com sperrt normale Server-Anfragen (Cloudflare) – curl_cffi ruft mit Browser-Fingerabdruck ab
+      - name: curl_cffi installieren
+        run: pip install -q -r scripts/sync/requirements.txt
       - name: Abgleichen
         env:
+          PCS_FETCH: browser
           SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           EVENT: ${{ github.event_name }}
@@ -75,10 +84,10 @@ jobs:
           args=(--seiten-ordner pcs-seiten)
           if [ "$EVENT" = "workflow_dispatch" ]; then
             case "$ART" in Echt*) ;; *) args+=(--probelauf) ;; esac
-            [ -n "$RUNDFAHRT" ] && args+=(--tour "$RUNDFAHRT")
-            [ -n "$ETAPPE" ] && args+=(--etappe "$ETAPPE")
-            [ -n "$MODUS" ] && args+=(--modus "$MODUS")
-            [ "$SOFORT" = "true" ] && args+=(--sofort)
+            if [ -n "$RUNDFAHRT" ]; then args+=(--tour "$RUNDFAHRT"); fi
+            if [ -n "$ETAPPE" ]; then args+=(--etappe "$ETAPPE"); fi
+            if [ -n "$MODUS" ]; then args+=(--modus "$MODUS"); fi
+            if [ "$SOFORT" = "true" ]; then args+=(--sofort); fi
           fi
           node --no-warnings scripts/sync/run.ts "${args[@]}"
       - name: Abgerufene Seiten aufbewahren
@@ -102,7 +111,20 @@ jobs:
           node-version: 22
       - name: Tests mit gespeicherten PCS-Seiten
         run: node --no-warnings --test scripts/sync/*.test.ts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/sync/requirements.txt
+      # procyclingstats.com sperrt normale Server-Anfragen (Cloudflare) – curl_cffi ruft mit Browser-Fingerabdruck ab
+      - name: curl_cffi installieren
+        run: pip install -q -r scripts/sync/requirements.txt
       - name: Echte Seite abrufen und auslesen
         env:
+          PCS_FETCH: browser
           SEITE: ${{ inputs.pcs_seite || 'race/giro-d-italia/2026/stage-7' }}
-        run: node --no-warnings scripts/sync/run.ts --pcs "$SEITE" --mindestens 10
+        run: |
+          args=(--pcs "$SEITE" --mindestens 10)
+          # bekannte Etappe: Sieger muss stimmen, sonst liest der Parser falsch
+          if [ "$SEITE" = "race/giro-d-italia/2026/stage-7" ]; then args+=(--sieger "Jonas Vingegaard"); fi
+          node --no-warnings scripts/sync/run.ts "${args[@]}"
