@@ -29,6 +29,14 @@ def trim_table(t, keep):
             out.append(r)
     return head + '<tbody>\n' + '\n'.join(out) + '\n</tbody>' + tail
 
+def first_table(seg, keep):
+    ts = seg.find('<table')
+    if ts < 0:
+        return seg
+    te = block(seg, ts, 'table')
+    return seg[:ts] + trim_table(seg[ts:te], keep) + seg[te:]
+
+
 def trim(h, keep=12):
     parts = []
     t = re.search(r'<title>.*?</title>', h, flags=re.S).group(0)
@@ -36,9 +44,18 @@ def trim(h, keep=12):
     parts.append('<!DOCTYPE html><html><head>' + t + (canon.group(0) if canon else '') + '</head><body>')
     i = h.find('<div class="page-title">')
     parts.append(h[i:block(h, i, 'div')])
-    m = re.search(r'<ul class="(tabs tabnav resultTabs|restabs)[^"]*"', h)
+    m = re.search(r'<ul class="(unitTabs|tabs tabnav resultTabs|restabs)[^"]*"', h)
     if m:
         parts.append(h[m.start():block(h, m.start(), 'ul')])
+    # aktueller Aufbau: je Reiter das erste div.resultCont[data-navid]
+    seen = set()
+    for m in re.finditer(r'<div class="resultCont[^"]*" data-navid="(\d+)"[^>]*>', h):
+        if m.group(1) in seen:
+            continue
+        seen.add(m.group(1))
+        s = m.start()
+        parts.append(first_table(h[s:block(h, s, 'div')], keep))
+    # älterer Aufbau: div.resTab mit div.general
     for m in re.finditer(r'<div class="resTab[^"]*" data-id="\d+">', h):
         s = m.start(); e = block(h, s, 'div')
         seg = h[s:e]
@@ -46,20 +63,20 @@ def trim(h, keep=12):
         if g < 0:
             parts.append(seg)  # z. B. Mannschaftszeitfahren
             continue
-        ge = block(seg, g, 'div')
-        general = seg[g:ge]
-        ts = general.find('<table')
-        if ts >= 0:
-            te = block(general, ts, 'table')
-            general = general[:ts] + trim_table(general[ts:te], keep) + '</div>'
-        parts.append(m.group(0) + general + '</div>')
-    i = h.find('<h4>Race information</h4>')
-    j = h.find('<ul', i)
-    parts.append('<div class="info">' + h[i:j] + h[j:block(h, j, 'ul')] + '</div>')
+        general = seg[g:block(seg, g, 'div')]
+        parts.append(m.group(0) + first_table(general, keep) + '</div>')
+    i = h.find('<div class="unitInfo')
+    if i >= 0:
+        parts.append(h[i:block(h, i, 'div')])
+    else:
+        i = h.find('<h4>Race information</h4>')
+        j = h.find('<ul', i)
+        parts.append('<div class="info">' + h[i:j] + h[j:block(h, j, 'ul')] + '</div>')
     parts.append('</body></html>\n')
     out = '\n'.join(parts)
     out = re.sub(r'<script\b.*?</script>', '', out, flags=re.S)
     return out
+
 
 if __name__ == '__main__':
     src, dst = sys.argv[1], sys.argv[2]

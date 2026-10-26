@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import type { Rider } from '../../src/lib/types.ts';
 import { planBonus, planStartedStage, planUpcomingStage, type StartedStageInput, type StageSyncRow } from './plan.ts';
@@ -196,4 +197,34 @@ test('Bonus-Zwischenstand aus den Wertungen, „Best of the Rest“ ohne Favorit
   const current = Object.entries(bonus!).flatMap(([category, rows]) => rows!.map((r) => ({ tour_id: 't', category: category as 'gc', ...r })));
   assert.equal(planBonus({ tour: tour(), stageNumber: 21, riders, current, pcs }).bonus, undefined);
   assert.equal(planBonus({ tour: tour({ bonus_final: true }), stageNumber: 21, riders, current: [], pcs }).bonus, undefined);
+});
+
+test('Giro 2026 mit der echten Startliste der Testrunde: alles zugeordnet, Ausstieg erkannt', () => {
+  // Startliste wie in supabase/seed_giro2026.sql (184 Fahrer, teils andere Startnummern als bei PCS)
+  const csv = readFileSync(new URL('../giro2026/startlist.csv', import.meta.url), 'utf8').trim().split('\n').slice(1);
+  const riders: Rider[] = csv.map((line, i) => {
+    const [bib, name, , team] = line.split(';');
+    return { id: i + 1, tour_id: 'giro-2026', bib: Number(bib), name, team, tip_limit: null, excluded_from_rest: false, status: 'active' };
+  });
+  const name = (id: number | null) => riders.find((r) => r.id === id)?.name;
+  const giro = tour({ id: 'giro-2026', year: 2026, start_date: '2026-05-08', end_date: '2026-05-31' });
+  const plan = (n: number) => planStartedStage({
+    now: new Date('2026-05-23T20:00:00+02:00'),
+    tour: giro,
+    stage: stage({ id: n, tour_id: 'giro-2026', number: n, starts_at: '2026-05-23T10:00:00Z' }),
+    riders,
+    results: [],
+    standings: [],
+    sync: null,
+    pcs: fixture(`giro-d-italia-2026-stage-${n}`),
+    url: '',
+    options: { force: true, completeness: 0 },
+  });
+  const e7 = plan(7);
+  assert.equal(e7.newErrors, 0);
+  assert.deepEqual(e7.payload.results?.slice(0, 3).map((r) => name(r.rider_id)), ['Jonas Vingegaard', 'Felix Gall', 'Jai Hindley']);
+  assert.equal(name(e7.payload.standings!.gc![0].rider_id), 'Afonso Eulálio');
+  const e14 = plan(14);
+  assert.deepEqual(e14.payload.out?.map(name), ['Christian Scaroni']);
+  assert.ok(e14.payload.logs.some((l) => l.message === 'Etappe 14: ausgestiegen – Christian Scaroni'));
 });

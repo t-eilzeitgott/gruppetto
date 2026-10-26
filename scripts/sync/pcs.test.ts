@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { parseDate, parseDuration, parseStagePage, parseStartTime, stagePath, fetchPcsPage, PcsError } from './pcs.ts';
 import { parseHtml, select, selectAll, text } from './html.ts';
 
-// Echte PCS-Seiten, gekürzt auf die ersten 12 Plätze je Wertung (Aufbau unverändert), siehe fixtures/README.md
+// Echte PCS-Seiten (aktueller Aufbau: Giro 2026, älterer: Tour 2018/2022), gekürzt auf die ersten
+// 12 Plätze je Wertung (Aufbau unverändert), siehe fixtures/README.md
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}.html`, import.meta.url), 'utf8');
 
 test('HTML-Parser: Selektoren, Entities, kaputte Tags', () => {
@@ -29,7 +30,52 @@ test('Hilfsfunktionen für Datum, Start- und Siegerzeit', () => {
   assert.equal(stagePath('/race/tour-de-france/2027/', 1, 'prologue'), 'race/tour-de-france/2027/prologue');
 });
 
-test('Etappenseite: Tour de France 2022, Etappe 21 (Sprint, DNS, Disqualifikation)', () => {
+test('Aktueller Aufbau: Giro 2026, Etappe 7 (Bergankunft Blockhaus)', () => {
+  const st = parseStagePage(fixture('giro-d-italia-2026-stage-7'));
+  assert.equal(st.type, 'RR');
+  assert.equal(st.date, '2026-05-15');
+  assert.equal(st.startTime, '10:55');
+  assert.equal(st.distanceKm, 244);
+  assert.equal(st.departure, 'Formia');
+  assert.equal(st.arrival, 'Blockhaus');
+  assert.equal(st.profile, 'p5');
+  assert.equal(st.wonHow, '4.5 km solo');
+  assert.deepEqual(st.tabs, ['stage', 'gc', 'points', 'kom', 'youth', 'teams']);
+  const top = st.stage.filter((r) => r.rank !== null);
+  assert.deepEqual(top.slice(0, 3).map((r) => [r.rank, r.name, r.bib, r.slug, r.team]), [
+    [1, 'Jonas Vingegaard', 171, 'jonas-vingegaard', 'Team Visma | Lease a Bike'],
+    [2, 'Felix Gall', 31, 'felix-gall', 'Decathlon CMA CGM Team'],
+    [3, 'Jai Hindley', 121, 'jai-hindley', 'Red Bull - BORA - hansgrohe'],
+  ]);
+  assert.equal(parseDuration(top[0].time), 6 * 3600 + 9 * 60 + 15);
+  assert.equal(st.gc[0].name, 'Afonso Eulálio');
+  assert.equal(st.gc[1].name, 'Jonas Vingegaard');
+  assert.equal(st.points[0].name, 'Paul Magnier');
+  assert.equal(st.kom[0].name, 'Jonas Vingegaard');
+  assert.equal(st.youth[0].name, 'Afonso Eulálio');
+  assert.equal(st.teams[0].team, 'Red Bull - BORA - hansgrohe');
+});
+
+test('Aktueller Aufbau: Einzelzeitfahren mit Hundertstel, Ausstiege (DNF, DNS)', () => {
+  const itt = parseStagePage(fixture('giro-d-italia-2026-stage-10'));
+  assert.equal(itt.type, 'ITT');
+  assert.equal(itt.stage[0].name, 'Filippo Ganna');
+  assert.equal(itt.stage[0].time, '45:53,87');
+  assert.equal(parseDuration(itt.stage[0].time), 45 * 60 + 53);
+  assert.equal(itt.startTime, '13:15');
+
+  const e14 = parseStagePage(fixture('giro-d-italia-2026-stage-14'));
+  assert.deepEqual(e14.stage.filter((r) => r.rank === null).map((r) => [r.status, r.name, r.bib]), [['DNF', 'Christian Scaroni', 226]]);
+  assert.equal(e14.arrival, 'Pila (Gressan)');
+
+  const e21 = parseStagePage(fixture('giro-d-italia-2026-stage-21'));
+  assert.deepEqual(e21.stage.filter((r) => r.rank === null).map((r) => [r.status, r.name]), [['DNS', 'Sean Flynn']]);
+  assert.equal(e21.stage[0].name, 'Jonathan Milan');
+  assert.equal(e21.gc[0].name, 'Jonas Vingegaard');
+  assert.equal(e21.kom[0].name, 'Giulio Ciccone');
+});
+
+test('Älterer Aufbau: Tour de France 2022, Etappe 21 (Sprint, DNS, Disqualifikation)', () => {
   const st = parseStagePage(fixture('tour-de-france-2022-stage-21'));
   assert.equal(st.type, 'RR');
   assert.equal(st.date, '2022-07-24');
@@ -63,7 +109,7 @@ test('Etappenseite: Tour de France 2022, Etappe 21 (Sprint, DNS, Disqualifikatio
   assert.equal(st.teams[0].team, 'INEOS Grenadiers');
 });
 
-test('Etappenseite: Tour de France 2018, Etappe 19 (Bergetappe mit Ausstieg)', () => {
+test('Älterer Aufbau: Tour de France 2018, Etappe 19 (Bergetappe mit Ausstieg)', () => {
   const st = parseStagePage(fixture('tour-de-france-2018-stage-19'));
   assert.equal(st.type, 'RR');
   assert.equal(st.startTime, '12:15');
@@ -75,7 +121,7 @@ test('Etappenseite: Tour de France 2018, Etappe 19 (Bergetappe mit Ausstieg)', (
   assert.equal(st.stage.filter((r) => r.rank !== null).length, 12);
 });
 
-test('Etappenseite: Mannschaftszeitfahren wird erkannt, Gesamtwertung trotzdem gelesen', () => {
+test('Älterer Aufbau: Mannschaftszeitfahren wird erkannt, Gesamtwertung trotzdem gelesen', () => {
   const st = parseStagePage(fixture('tour-de-france-2018-stage-3'));
   assert.equal(st.type, 'TTT');
   assert.equal(st.stage.length, 0);
@@ -84,11 +130,12 @@ test('Etappenseite: Mannschaftszeitfahren wird erkannt, Gesamtwertung trotzdem g
 });
 
 test('Etappenseite vor dem Rennen: keine Ergebnisse, aber Infos', () => {
-  const html = fixture('tour-de-france-2022-stage-21').replace(/<tbody>[\s\S]*?<\/tbody>/g, '<tbody></tbody>');
+  const html = fixture('giro-d-italia-2026-stage-7').replace(/<tbody>[\s\S]*?<\/tbody>/g, '<tbody></tbody>');
   const st = parseStagePage(html);
   assert.equal(st.stage.length, 0);
   assert.equal(st.gc.length, 0);
-  assert.equal(st.distanceKm, 115.6);
+  assert.equal(st.distanceKm, 244);
+  assert.equal(st.startTime, '10:55');
 });
 
 test('Abruf: Cloudflare-Sperre wird als solche gemeldet, 404 ohne Wiederholung', async () => {

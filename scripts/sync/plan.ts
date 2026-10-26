@@ -218,7 +218,9 @@ export function planStartedStage(input: StartedStageInput): StagePlan {
     return done(`Ergebnis unvollständig (${listed} von ${expected})`);
   }
 
-  // Frühestens zur Zielankunft: Start (laut PCS, sonst Tippschluss) + Siegerzeit
+  // Frühestens zur Zielankunft: Start (laut PCS, sonst Tippschluss) + Siegerzeit.
+  // PCS nennt die Ortszeit; außerhalb der deutschen Zeitzone liegt die Schätzung bis zu einer Stunde daneben –
+  // Vollständigkeit und Stabilitätsprüfung schützen trotzdem.
   const stageDate = berlinDate(new Date(stage.starts_at));
   const start = pcs.startTime ? berlinToDate(stageDate, pcs.startTime) : new Date(stage.starts_at);
   const isTimeTrial = pcs.type === 'ITT' || stage.kind === 'itt';

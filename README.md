@@ -65,7 +65,9 @@ Läuft an Renntagen alle 10 Minuten von 13 bis 22 Uhr, dazu morgens und vor dem 
 2. **PCS-Test:** *Actions → Ergebnisse → Run workflow → „Nur PCS-Test“* ruft eine echte vergangene Etappe ab und zeigt, was gelesen wurde. Läuft auch bei jedem Push, der `scripts/sync/` ändert – so merkt man sofort, ob PCS von GitHub aus erreichbar ist oder sein Layout geändert hat.
 3. **Probelauf:** *Run workflow → „Probelauf“*, Rundfahrt `giro-2026`, Modus `auto`, *sofort* anhaken → die Zusammenfassung des Laufs zeigt für die Giro-2026-Testrunde, was übernommen würde. Gespeichert wird nichts.
 4. **Generalprobe:** [`supabase/sync_generalprobe.sql`](supabase/sync_generalprobe.sql) ausführen. Dann übernimmt der Workflow statt pg_cron die Testrunde und holt jeden Tag das echte Giro-2026-Ergebnis von PCS – etwa zur damaligen Zielankunft, mit Ausstiegen und Wertungen. Verlauf in der App unter *Automatische Ergebnisse*.
-5. Lokal: `npm run sync -- --pcs race/giro-d-italia/2026/stage-7` (nur PCS), `--datei seite.html` (gespeicherte Seite), mit `SUPABASE_URL` und `SUPABASE_SECRET_KEY` auch `npm run sync -- --probelauf --jetzt 2026-11-02T17:30`.
+5. Lokal: `pip install -r scripts/sync/requirements.txt`, dann `npm run sync -- --pcs race/giro-d-italia/2026/stage-7` (nur PCS), `--datei seite.html` (gespeicherte Seite), mit `SUPABASE_URL` und `SUPABASE_SECRET_KEY` auch `npm run sync -- --probelauf --jetzt 2026-11-02T17:30`.
+
+**Zum Abruf:** PCS steht hinter Cloudflare und sperrt Anfragen von Servern mit Node-`fetch` oder `curl` (HTTP 403). Mit dem TLS-Fingerabdruck eines Browsers über das Python-Paket [curl_cffi](https://github.com/lexiforest/curl_cffi) kommt die Seite – der Workflow installiert es selbst. Ändert PCS den Seitenaufbau (zuletzt Anfang 2026), schlägt der PCS-Test fehl, bevor falsche Daten in die App kommen; der Parser liest derzeit den aktuellen und den vorherigen Aufbau.
 
 GitHub schaltet Zeitpläne in Repos ohne Aktivität nach 60 Tagen ab – vor einer Rundfahrt unter *Actions → Ergebnisse* prüfen und gegebenenfalls wieder einschalten.
 

@@ -1,8 +1,11 @@
-// Etappenseiten von procyclingstats.com abrufen und auslesen.
-// Aufbau der Seite (Stand 2026): Reiter „STAGE / GC / POINTS / KOM / YOUTH / TEAMS“ (ul.resultTabs),
-// je Reiter ein div.resTab[data-id] mit der Wertung in div.general > table.results,
-// Spalten über th[data-code] (rnk, bib, ridername, teamnamelink, time …), Infos in ul.keyvalueList.
-import { childElements, parseHtml, select, selectAll, text, type El } from './html.ts';
+// Etappenseiten von procyclingstats.com abrufen und auslesen. Zwei Seitenaufbauten werden gelesen:
+//  • aktuell (seit 2026): Reiter ul.unitTabs a.resultNav[data-navid] → div.resultCont[data-navid],
+//    Spalten th[data-code] rnk, bib, rider, riderteam, timelag; Namen „NACHNAME Vorname“;
+//    Infos in div.unitInfo (div.bold = Bezeichnung, danach Werte bis <br>)
+//  • älter: ul.resultTabs a[data-id] → div.resTab[data-id] mit div.general > table.results,
+//    Spalten ridername, teamnamelink, time; Nachname in span.uppercase; Infos in ul.keyvalueList
+import { childElements, hasClass, isEl, parseHtml, select, selectAll, text, type El } from './html.ts';
+import { pcsName } from '../../src/lib/pcsParse.ts';
 
 export const PCS_BASE = 'https://www.procyclingstats.com';
 
@@ -94,13 +97,28 @@ export function parseDuration(value: string | null): number | null {
   return Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
-function infoList(doc: El): Map<string, El> {
-  const map = new Map<string, El>();
+function infoList(doc: El): Map<string, string> {
+  const map = new Map<string, string>();
+  const put = (label: string, value: string) => {
+    const key = label.replace(/:\s*$/, '').trim().toLowerCase();
+    if (key && !map.has(key)) map.set(key, value.replace(/\s+/g, ' ').trim());
+  };
+  // älterer Aufbau: <li><div class="title">Date:</div><div class="value">…</div></li>
   for (const li of selectAll(doc, 'ul.keyvalueList li')) {
     const divs = childElements(li).filter((e) => e.tag === 'div');
-    if (divs.length < 2) continue;
-    const label = text(divs[0]).replace(/:\s*$/, '').toLowerCase();
-    if (label) map.set(label, divs[1]);
+    if (divs.length >= 2) put(text(divs[0]), text(divs[1]));
+  }
+  // aktueller Aufbau: <div class="bold">Distance:</div><div>244</div><div>km</div><br>
+  for (const label of selectAll(doc, '.unitInfo div.bold')) {
+    const siblings = label.parent?.children ?? [];
+    const parts: string[] = [];
+    for (let i = siblings.indexOf(label) + 1; i < siblings.length; i += 1) {
+      const n = siblings[i];
+      if (isEl(n) && (n.tag === 'br' || hasClass(n, 'bold'))) break;
+      const t = text(n);
+      if (t) parts.push(t);
+    }
+    put(text(label), parts.join(' '));
   }
   return map;
 }
@@ -122,13 +140,23 @@ function riderFromCell(cell: El | undefined): { name: string; slug: string | nul
   const slug = a.attrs.href.replace(/^rider\//, '').replace(/\/.*$/, '') || null;
   const lastEl = select(a, 'span.uppercase');
   const full = text(a);
-  let name = full;
+  let name: string;
   if (lastEl) {
+    // älterer Aufbau: <span class="uppercase">van der Poel</span> Mathieu
     const last = text(lastEl);
     const first = full.slice(full.indexOf(last) + last.length).trim() || full.replace(last, '').trim();
     name = [first, last].filter(Boolean).join(' ');
+  } else {
+    // aktueller Aufbau: „VAN DER POEL Mathieu“
+    name = pcsName(full);
   }
   return { name, slug };
+}
+
+/** Zeit einer Zelle: älterer Aufbau doppelt sie in span.hide, der aktuelle hängt Hundertstel an („45:53,87“) */
+function cellTime(cell: El): string | null {
+  const t = cell.children.map((c) => (isEl(c) && hasClass(c, 'hide') ? '' : text(c))).join('').replace(/\s+/g, '').trim();
+  return t || null;
 }
 
 function parseRiderTable(table: El | null): PcsRow[] {
@@ -145,16 +173,15 @@ function parseRiderTable(table: El | null): PcsRow[] {
     const rankText = text(rankCell).toUpperCase();
     const rank = /^\d+$/.test(rankText) && !removed ? Number(rankText) : null;
     const status: PcsStatus = /^\d+$/.test(rankText) ? (removed ? 'DSQ' : 'DF') : rankText || 'DF';
-    let riderCell = cells[idx('ridername', -1) ?? -1];
+    let riderCell = cells[idx('ridername', null) ?? idx('rider', -1) ?? -1];
     if (!riderCell || !select(riderCell, 'a[href^="rider/"]')) riderCell = cells.find((c) => !!select(c, 'a[href^="rider/"]')) as El;
     const rider = riderFromCell(riderCell);
     if (!rider) continue;
     const bibCell = cells[idx('bib', -1) ?? -1];
     const bibText = text(bibCell);
-    const teamCell = cells[idx('teamnamelink', -1) ?? -1] ?? cells.find((c) => !!select(c, 'a[href^="team/"]'));
+    const teamCell = cells[idx('teamnamelink', null) ?? idx('riderteam', -1) ?? -1] ?? cells.find((c) => !!select(c, 'a[href^="team/"]'));
     const teamA = teamCell ? select(teamCell, 'a[href^="team/"]') : null;
-    const timeCell = cells[idx('time', -1) ?? -1];
-    const timeFirst = timeCell ? childElements(timeCell)[0] : undefined;
+    const timeCell = cells[idx('time', null) ?? idx('timelag', -1) ?? -1];
     rows.push({
       rank,
       status,
@@ -163,7 +190,7 @@ function parseRiderTable(table: El | null): PcsRow[] {
       name: rider.name,
       slug: rider.slug,
       team: teamA ? text(teamA) : null,
-      time: timeCell ? text(timeFirst ?? timeCell) || null : null,
+      time: timeCell ? cellTime(timeCell) : null,
     });
   }
   return rows;
@@ -197,21 +224,18 @@ export function parseStagePage(html: string): PcsStage {
   const title = text(select(doc, 'title'));
   const heading = text(select(doc, '.page-title'));
   const info = infoList(doc);
-  const val = (label: string) => {
-    const el = info.get(label);
-    const v = el ? text(el) : '';
-    return v || null;
-  };
+  const val = (label: string) => info.get(label) || null;
 
   const tables: Partial<Record<PcsTable, El | null>> = {};
   const tabs: PcsTable[] = [];
-  const tabLinks = selectAll(doc, 'ul.resultTabs li a, ul.restabs li a');
+  const tabLinks = selectAll(doc, 'ul.unitTabs li a.resultNav, ul.resultTabs li a, ul.restabs li a');
   for (const a of tabLinks) {
     const label = text(a).toUpperCase();
     const entry = TAB_NAMES.find(([, re]) => re.test(label));
-    const id = a.attrs['data-id'];
+    const id = a.attrs['data-navid'] ?? a.attrs['data-id'];
     if (!entry || !id || tables[entry[0]] !== undefined) continue;
-    const tab = select(doc, `div.resTab[data-id="${id}"]`);
+    // die erste Tabelle mit dieser Kennung ist die Wertung, weitere sind Unterwertungen (z. B. Zwischensprints)
+    const tab = a.attrs['data-navid'] ? select(doc, `div.resultCont[data-navid="${id}"]`) : select(doc, `div.resTab[data-id="${id}"]`);
     if (!tab) continue;
     tables[entry[0]] = tab;
     tabs.push(entry[0]);
