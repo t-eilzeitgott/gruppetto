@@ -1,0 +1,18 @@
+import type { GameId } from '../data/source';
+
+/** Alle Minispiele – ein neues Spiel braucht hier einen Eintrag (plus Symbol in GameBadge) */
+export interface GameInfo {
+  id: GameId;
+  name: string;
+  path: string;
+  blurb: string;
+}
+
+export const GAMES: GameInfo[] = [
+  { id: 'abfahrt', name: 'Abfahrt', path: '/spiel', blurb: 'Passabfahrt mit Gegnern' },
+  { id: 'sprint', name: 'Sprintfinale', path: '/spiel/sprint', blurb: 'Die letzten 2,4 km im Feld' },
+];
+
+export function gameInfo(id: GameId): GameInfo {
+  return GAMES.find((g) => g.id === id) ?? GAMES[0];
+}

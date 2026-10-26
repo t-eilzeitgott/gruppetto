@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useTourContext } from '../app/context';
-import { useMembers, useNow } from '../app/hooks';
+import { useNow } from '../app/hooks';
 import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
 import { bonusDeadline, fmtDay, lastPublishedStage, nextOpenStage, runningStages, tourPhase, dayDiff, fmtClock, fmtKm } from '../lib/time';
 import { BONUS_CATEGORIES, type Stage, type TourData } from '../lib/types';
@@ -8,13 +8,11 @@ import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, Loading, cx, useT
 import { Icon } from '../ui/Icon';
 import { KindChip, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
 import { TourPicker, Wordmark } from '../ui/Shell';
-import { useApp } from '../app/context';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
-import type { GameBest, GameId } from '../data/source';
-import { GameIcon, SprintIcon } from '../ui/GameIcon';
-import { Track } from '../game/abfahrt/track';
-import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
+import { GamesCard } from '../ui/GamesCard';
+import { stageOfDay } from '../game/abfahrt/sprintRiders';
+import { berlinDayKey } from '../game/abfahrt/rng';
 import type { Profile } from '../lib/types';
 
 export function Home() {
@@ -38,8 +36,7 @@ export function Home() {
         {header}
         <div className="stack">
           <Empty title="Noch keine Rundfahrt">Sobald der Admin eine Rundfahrt anlegt, kannst du hier tippen.</Empty>
-          <GameCard />
-          <GameCard game="sprint" />
+          <GamesCard />
         </div>
       </>
     );
@@ -60,6 +57,7 @@ export function Home() {
 
 function HomeBody({ data, members, me, now }: { data: TourData; members: Profile[]; me: Profile; now: number }) {
   const phase = tourPhase(data.tour, data.stages, now);
+  const todayStage = stageOfDay(data.stages, berlinDayKey());
   const board = useMemo(() => leaderboard(data, members), [data, members]);
   const myRow = board.find((r) => r.userId === me.id);
   const next = nextOpenStage(data.stages, now);
@@ -108,56 +106,8 @@ function HomeBody({ data, members, me, now }: { data: TourData; members: Profile
 
       {phase !== 'upcoming' ? <Tiles data={data} me={me} next={next} /> : null}
 
-      <GameCard />
-      <GameCard game="sprint" />
+      <GamesCard stageKind={todayStage?.kind ?? null} town={todayStage?.arrival ?? ''} />
     </>
-  );
-}
-
-/** Minispiele als letzte Karten: Strecke des Tages und die aktuelle Bestenliste */
-function GameCard({ game = 'abfahrt' }: { game?: GameId }) {
-  const { me } = useApp();
-  const members = useMembers().data ?? [];
-  const day = berlinDayKey();
-  const since = useMemo(() => berlinDayStart().toISOString(), [day]);
-  const season = useQuery<GameBest[]>(`game:${game}:season`, () => source.gameLeaderboard(game));
-  const today = useQuery<GameBest[]>(`game:${game}:day:${day}`, () => source.gameLeaderboard(game, since));
-  const sprint = game === 'sprint';
-  const title = useMemo(() => (sprint ? 'Die letzten 2,4 km im Feld: Windschatten, Position, Antritt' : new Track(day).title), [day, sprint]);
-  const useToday = (today.data?.length ?? 0) > 0;
-  const rows = (useToday ? today.data : season.data) ?? [];
-  const myIdx = rows.findIndex((b) => b.user_id === me.id);
-  const shown = rows.slice(0, 3).map((r, i) => ({ r, i }));
-  if (myIdx >= 3) shown.push({ r: rows[myIdx], i: myIdx });
-  return (
-    <Link to={sprint ? '/spiel/sprint' : '/spiel'} className="card game-card" ariaLabel={sprint ? 'Minispiel Sprintfinale öffnen' : 'Minispiel Abfahrt öffnen'}>
-      <span className="game-card__head">
-        {sprint ? <SprintIcon size={48} /> : <GameIcon size={48} />}
-        <span className="game-card__main">
-          <strong className="game-card__title">{sprint ? 'Sprintfinale' : 'Abfahrt'}</strong>
-          <span className="muted game-card__route">{title}</span>
-        </span>
-        <Icon name="chevron" className="muted" />
-      </span>
-      {shown.length ? (
-        <span className="game-board" role="list" aria-label={useToday ? 'Bestenliste heute' : 'Bestenliste Saison'}>
-          <span className="game-board__label">{useToday ? 'Heute' : 'Saison'}</span>
-          {shown.map(({ r, i }) => {
-            const m = members.find((x) => x.id === r.user_id);
-            return (
-              <span key={r.user_id} role="listitem" className={cx('game-board__row', r.user_id === me.id && 'is-me')}>
-                <span className="game-board__rank">{i + 1}</span>
-                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={24} />
-                <span className="game-board__name">{r.user_id === me.id ? 'Du' : m?.display_name ?? 'Jemand'}</span>
-                <strong>{r.best.toLocaleString('de-DE')}</strong>
-              </span>
-            );
-          })}
-        </span>
-      ) : (
-        <span className="game-card__meta">{sprint ? 'Hol dir den ersten Tagessieg' : 'Fahr die erste Bestmarke der Runde'}</span>
-      )}
-    </Link>
   );
 }
 

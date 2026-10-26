@@ -279,8 +279,8 @@ const VERT_BEGIN = /* glsl */ `
   float part = color.g;
   float act = aI1.z;
   float ph = aI1.w;
-  // gemächlich: echte Zuschauer bewegen sich langsamer, als man denkt
-  float t = uTime * 0.62 * (0.9 + 0.25 * fract(ph * 7.0)) + ph * 37.0;
+  // gemächlich: echte Zuschauer bewegen sich langsamer, als man denkt (Hüpfen und Jubeln halb so schnell)
+  float t = uTime * 0.31 * (0.9 + 0.25 * fract(ph * 7.0)) + ph * 37.0;
   vec2 toR = uRider.xz - aI0.xz;
   float dist = length(toR);
   float e = 1.0 - smoothstep(5.0, 48.0, dist);
@@ -301,8 +301,8 @@ const VERT_BEGIN = /* glsl */ `
   // Fahne flattert
   if (part > 12.5 && part < 13.5) {
     float d = abs(transformed.x - 0.252);
-    transformed.z += sin(d * 7.0 - t * 7.0 + transformed.y * 2.0) * 0.09 * d * 1.4;
-    transformed.y += sin(d * 5.0 - t * 5.0) * 0.03 * d;
+    transformed.z += sin(d * 7.0 - t * 14.0 + transformed.y * 2.0) * 0.09 * d * 1.4;
+    transformed.y += sin(d * 5.0 - t * 10.0) * 0.03 * d;
   }
 
   // Arme

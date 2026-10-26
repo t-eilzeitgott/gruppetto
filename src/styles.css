@@ -1329,6 +1329,18 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 
 /* Startseite: Spielkarte */
 .game-card { display: flex; flex-direction: column; gap: 12px; text-decoration: none; color: inherit; }
+.games-card { padding: 0; gap: 0; overflow: hidden; }
+.games-scroller {
+  position: relative; display: flex; gap: 0; padding: 0; overflow-x: auto;
+  overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none; touch-action: pan-x pan-y;
+}
+.games-scroller::-webkit-scrollbar { display: none; }
+.games-slide { flex: 0 0 100%; min-width: 0; padding: 16px 16px 4px; scroll-snap-align: start; scroll-snap-stop: always; }
+.games-dots { display: flex; justify-content: center; gap: 2px; padding: 6px 0 8px; }
+.games-dots__dot { width: 28px; height: 24px; border: 0; padding: 0; background: none; display: grid; place-items: center; }
+.games-dots__dot::before { content: ""; width: 7px; height: 7px; border-radius: 4px; background: var(--line); transition: width 0.2s, background 0.2s; }
+.games-dots__dot.is-on::before { width: 18px; background: var(--accent); }
 .game-card__head { display: flex; align-items: center; gap: 14px; }
 .game-card__main { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
 .game-card__title { font-size: 19px; letter-spacing: -0.02em; }
