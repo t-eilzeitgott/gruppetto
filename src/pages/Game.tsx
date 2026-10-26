@@ -18,6 +18,8 @@ import { GameIcon } from '../ui/GameIcon';
 const LS_BEST = 'gruppetto.abfahrt.best';
 const LS_TUTORIAL = 'gruppetto.abfahrt.runs';
 const LS_LEARN = 'gruppetto.abfahrt.learned';
+/** eigener Zähler fürs Tutorial: die neue Steuerung (ducken, bremsen) sieht jeder einmal */
+const LS_COACH = 'gruppetto.abfahrt.coachRuns';
 
 /** Tutorial der ersten Läufe: eine Geste nach der anderen, bis sie einmal geklappt hat */
 type Step = 'steer' | 'tuck' | 'brake';
@@ -157,6 +159,7 @@ export function GamePage() {
     setUi('over');
     const runs = (Number(lsGet(LS_TUTORIAL)) || 0) + 1;
     lsSet(LS_TUTORIAL, String(runs));
+    lsSet(LS_COACH, String((Number(lsGet(LS_COACH)) || 0) + 1));
     if (r.score > (Number(lsGet(LS_BEST)) || 0)) { lsSet(LS_BEST, String(r.score)); setBest(r.score); }
     if (r.score > 0) {
       source.submitScore('abfahrt', r.score, r.meters).then(() => invalidate('game:abfahrt')).catch(() => undefined);
@@ -383,7 +386,7 @@ export function GamePage() {
     last.current = {};
     let learned = new Set<Step>();
     try { learned = new Set(JSON.parse(lsGet(LS_LEARN) ?? '[]') as Step[]); } catch { /* neu anfangen */ }
-    coachRef.current = { on: (Number(lsGet(LS_TUTORIAL)) || 0) < 3, step: null, t: 0, hold: 0, learned };
+    coachRef.current = { on: (Number(lsGet(LS_COACH)) || 0) < 3, step: null, t: 0, hold: 0, learned };
     setCoach(null);
     setUi('countdown');
     window.setTimeout(() => {
