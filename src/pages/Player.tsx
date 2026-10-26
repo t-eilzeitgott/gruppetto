@@ -8,6 +8,7 @@ import { BONUS_CATEGORIES } from '../lib/types';
 import { Avatar, ProBadge, Empty, ErrorBox, JerseyTile, Link, Loading, TopBar, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { lastName, riderName } from '../ui/bits';
+import { PlayerGames } from '../ui/PlayerGames';
 
 export function Player({ id }: { id: string }) {
   const { me, data, members, loading, error, reload } = useTourContext();
@@ -61,6 +62,8 @@ export function Player({ id }: { id: string }) {
             }).join(' · ')}
           </p>
         ) : null}
+
+        <PlayerGames userId={id} isMe={isMe} />
 
         <section aria-labelledby="player-tips">
           <h2 id="player-tips" className="section-title">Etappentipps</h2>
