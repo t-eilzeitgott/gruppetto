@@ -21,14 +21,17 @@ export function ProBadge({ large }: { large?: boolean }) {
 }
 
 /** Interner Link (Hash-Routing mit eigener History). */
-export function Link({ to, className, children, ariaLabel, ariaCurrent }: {
+export function Link({ to, className, children, ariaLabel, ariaCurrent, onNavigate }: {
   to: string;
   className?: string;
   children: ReactNode;
   ariaLabel?: string;
   ariaCurrent?: 'page';
+  /** wird vor dem Wechsel aufgerufen (z. B. um einen Hinweis als gesehen zu markieren) */
+  onNavigate?: () => void;
 }) {
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    onNavigate?.();
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
     e.preventDefault();
     navigate(to);
