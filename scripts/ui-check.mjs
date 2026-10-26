@@ -76,6 +76,19 @@ const PAGES = [
     await p.waitForSelector('.abf-summary', { timeout: 20000 });
     await p.waitForTimeout(1700); // Punkte zählen hoch
   }],
+  ['sprint', `?demo&${GFX}#/spiel/sprint`],
+  ['sprint-board', `?demo&${GFX}#/spiel/sprint`, async (p) => { await p.click('.abf-link'); }],
+  ['sprint-hud', `?demo&${GFX}#/spiel/sprint`, async (p) => { await p.click('text=Losfahren'); await runGame(p, 8); }],
+  ['sprint-over', `?demo&${GFX}#/spiel/sprint`, async (p) => {
+    await p.click('text=Losfahren');
+    // ganzes Rennen durchrechnen, 230 m vor dem Ziel antreten
+    await p.evaluate(() => {
+      const g = window.__abfahrt.engine();
+      for (let i = 0; i < 60 * 240 && g.phase !== 'over'; i++) { g.key('up', 2400 - g.p.z < 230); g.update(1 / 60); }
+    });
+    await p.waitForSelector('.abf-summary', { timeout: 20000 });
+    await p.waitForTimeout(1700);
+  }],
   ['player', '?demo#/spieler/u-felix'],
   ['player-me', '?demo#/spieler/u-christoph'],
   ['profile', '?demo#/profil'],

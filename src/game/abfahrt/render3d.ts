@@ -11,7 +11,7 @@ import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette
 import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
 import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, facadeTex, FACADE_BANDS, gravelTex, rockTex, roundTex, vergeTex } from './tex3d';
 import { GB, RiderModel, lin, lin255, propGeometries, treeGeometriesLow, type Prop3D, type RGBf } from './models3d';
-import type { Abfahrt, Opp, Friend } from './engine';
+import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
 import { mulberry32 } from './rng';
@@ -21,6 +21,8 @@ const AHEAD = 560;        // so weit voraus wird gebaut (m)
 const BEHIND = 30;
 const CAM_BACK = 6.2;
 const CAM_UP = 2.75;
+const SPRINT_BACK = 7.4;
+const SPRINT_UP = 3.7;
 
 const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'bush', 'rock', 'boulder', 'snowpole', 'hay', 'vinerow', 'fence', 'lamp', 'logs', 'palm']);
 const BILLBOARD: Record<string, { variants: number; frames: number }> = {
@@ -425,13 +427,16 @@ export class Renderer3D {
 
   // ------------------------------------------------------------------ Bild
 
-  draw(g: Abfahrt, dt: number) {
+  private lastDt = 0.016;
+
+  draw(g: RaceView, dt: number) {
+    this.lastDt = dt;
     this.time.value += dt;
     if (this.track !== g.track) {
       // gleiche Tagesstrecke (neuer Lauf, nachgeladene Namen): Landschaft behalten – sie ist identisch,
       // ein Neuaufbau würde ruckeln. Nur Namen auf Schildern und Straße ändern sich.
       const old = this.track;
-      if (old && old.dayKey === g.track.dayKey) {
+      if (old && old.dayKey === g.track.dayKey && old.kind === g.track.kind) {
         this.track = g.track;
         this.terrain?.setTrack(g.track);
         this.cam.init = false; this.runners = []; this.runNext = 0;
@@ -525,7 +530,7 @@ export class Renderer3D {
    * Landschaftskacheln rund um die Kamera nachladen: feinste Stufe zuerst, nächstgelegene zuerst,
    * mit Zeitbudget je Bild. Alte Kacheln verschwinden erst, wenn der neue Ring vollständig ist.
    */
-  private updateTerrain(g: Abfahrt) {
+  private updateTerrain(g: RaceView) {
     const T = this.terrain;
     if (!T) return;
     void g;
@@ -720,7 +725,7 @@ export class Renderer3D {
     this.chunks.clear();
   }
 
-  private updateLight(g: Abfahrt, biome: BiomeId, seg: Seg, dt: number) {
+  private updateLight(g: RaceView, biome: BiomeId, seg: Seg, dt: number) {
     const z = g.p.z;
     // immer heller Tag (auch im dunklen Design): später Vormittag, gegen Ende Richtung goldene Stunde
     const tod = 0.06 + Math.min(0.3, z / 16000);
@@ -778,7 +783,7 @@ export class Renderer3D {
   private sAx = new THREE.Vector3();
   private sAy = new THREE.Vector3();
   /** Mittelpunkt des Schattenbereichs: etwas vor dem Fahrer, im Lichtraum auf Texelgröße gerastet */
-  private shadowCenter(g: Abfahrt, sd: THREE.Vector3): THREE.Vector3 {
+  private shadowCenter(g: RaceView, sd: THREE.Vector3): THREE.Vector3 {
     const w = this.track!.world(g.p.z + 16, 0, 0, this.w2);
     const c = this.sc0.set(w.x, w.y, w.z);
     const ax = this.sAx.set(0, 1, 0).cross(sd).normalize();
@@ -789,7 +794,7 @@ export class Renderer3D {
     return c.addScaledVector(ax, u).addScaledVector(ay, v);
   }
 
-  private updateCamera(g: Abfahrt, dt: number) {
+  private updateCamera(g: RaceView, dt: number) {
     const p = g.p;
     const track = g.track;
     const cam = this.cam;
@@ -803,9 +808,11 @@ export class Renderer3D {
     // Blickrichtung = Fahrtrichtung des Fahrers (Straße plus Querbewegung), geglättet:
     // die Kamera steht immer direkt hinter ihm, er bleibt in der Bildmitte – auch in Kehren
     const yaw = w.th + Math.atan2(p.vx, Math.max(5, p.v)) * 0.3;
-    const back = CAM_BACK;
+    // Sprint: höher und weiter hinten (Motorradkamera), damit man über das Feld schaut
+    const sprint = track.kind === 'sprint';
+    const back = sprint ? SPRINT_BACK : CAM_BACK;
     const behindY = track.heightAt(Math.max(0, p.z - back));
-    const ty = Math.max(behindY, roadY) + CAM_UP + air * 0.35;
+    const ty = Math.max(behindY, roadY) + (sprint ? SPRINT_UP : CAM_UP) + air * 0.35;
     if (!cam.init || g.phase === 'ready' || g.phase === 'countdown') {
       cam.th = yaw;
       cam.y = ty;
@@ -819,7 +826,7 @@ export class Renderer3D {
     const fz = -Math.cos(cam.th);
     const shake = g.shake * 0.04;
     this.camera.position.set(rx - fx * back + (Math.random() - 0.5) * shake, cam.y + (Math.random() - 0.5) * shake, rz - fz * back);
-    const look = 15;
+    const look = sprint ? 17 : 15;
     const aheadY = track.heightAt(p.z + look);
     this.camera.lookAt(rx + fx * look, roadY + (aheadY - roadY) * 0.55 + 0.9 + air * 0.4, rz + fz * look);
     cam.x = rx; cam.z = rz;
@@ -994,7 +1001,7 @@ export class Renderer3D {
 
   // ------------------------------------------------------------------ Abschnitte
 
-  private updateChunks(g: Abfahrt) {
+  private updateChunks(g: RaceView) {
     const z = g.p.z;
     const from = Math.max(0, Math.floor((z - BEHIND) / SEG / CH));
     const to = Math.floor((z + AHEAD) / SEG / CH);
@@ -1017,7 +1024,7 @@ export class Renderer3D {
     return { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), th: w.th, seg };
   }
 
-  private buildChunk(g: Abfahrt, ci: number): Chunk {
+  private buildChunk(g: RaceView, ci: number): Chunk {
     const t = this.track!;
     const i0 = ci * CH;
     const rows: Row[] = [];
@@ -1110,7 +1117,10 @@ export class Renderer3D {
         }
       }
       // --- Banner, Portal
-      if (s.banner) this.arch(group, disp, a, s.banner, s.banner.kind === 'gpm' ? this.accent : s.banner.kind === 'sprint' ? '#1f6feb' : '#ffffff');
+      if (s.banner) {
+        const k = s.banner.kind;
+        this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : '#ffffff');
+      }
       for (const f of g.friends) if (Math.floor(f.meters / SEG) === s.i) this.arch(group, disp, a, { kind: 'arch', text: f.userId === 'me' ? 'Deine Bestmarke' : `Bestmarke ${f.name}`, sub: fmtKm(f.meters) }, f.color);
       if (s.portal === 1) this.portal(portal, a, P, sec(s).biome, 1);
       if (s.portal === 2) this.portal(portal, b, P, sec(s).biome, -1);
@@ -1906,7 +1916,7 @@ export class Renderer3D {
   }
 
   /** Zuschauer schauen dem Fahrer nach; ein paar Fans laufen ein Stück neben ihm her */
-  private updateCrowd(g: Abfahrt, dt: number) {
+  private updateCrowd(g: RaceView, dt: number) {
     const pm = this.player;
     if (pm) this.crowdU.uRider.value.copy(pm.group.position);
     const cp = this.camera.position;
@@ -1991,7 +2001,7 @@ export class Renderer3D {
     if (n) this.runBuf.needsUpdate = true;
   }
 
-  private updateRiders(g: Abfahrt) {
+  private updateRiders(g: RaceView) {
     const p = g.p;
     const track = g.track;
     const w = this.w;
@@ -2022,16 +2032,24 @@ export class Renderer3D {
 
     // Gegner: die nächsten sichtbaren
     const seen = new Set<number>();
-    const list = g.opps.filter((o) => o.z > p.z - 8 && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, 14);
+    // im Sprint das ganze Feld; Fahrer zwischen Kamera und Spieler werden durchsichtig
+    const sprint = track.kind === 'sprint';
+    const list = g.opps.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, sprint ? 32 : 14);
     for (const o of list) {
       seen.add(o.id);
       let m = this.riders.get(o.id);
       if (!m) {
         m = new RiderModel(o.kit, this.shadowTex);
+        if (sprint) m.prepareFade();
         this.riders.set(o.id, m);
         this.scene.add(m.group);
       }
       this.placeOpp(m, o, track);
+      if (sprint) {
+        const dz = o.z - p.z;
+        const block = dz < 0.8 && dz > -SPRINT_BACK - 1 && Math.abs(o.x - p.x) < 1.05 + Math.max(0, -dz) * 0.06;
+        m.fade(block ? 0.28 : 1, this.lastDt);
+      }
     }
     for (const [id, m] of this.riders) {
       if (!seen.has(id)) { this.scene.remove(m.group); this.riders.delete(id); }
@@ -2099,7 +2117,7 @@ export class Renderer3D {
     };
   }
 
-  private updateObjects(g: Abfahrt) {
+  private updateObjects(g: RaceView) {
     this.makeObjAssets();
     for (const list of this.objPool.values()) for (const o of list) o.visible = false;
     this.objUsed.clear();
@@ -2197,7 +2215,7 @@ export class Renderer3D {
     }
   }
 
-  private updateParticles(g: Abfahrt) {
+  private updateParticles(g: RaceView) {
     const n = Math.min(300, g.parts.length);
     const w = this.w;
     const col = new THREE.Color();
@@ -2224,7 +2242,7 @@ export class Renderer3D {
 
   // ------------------------------------------------------------------ 2D-Ebene: Popups und Tempo-Linien
 
-  private drawOverlay(g: Abfahrt) {
+  private drawOverlay(g: RaceView) {
     const c = this.overlay;
     c.clearRect(0, 0, this.W, this.H);
     // Tempo-Linien am Rand

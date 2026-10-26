@@ -1263,6 +1263,70 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf-actions .btn--primary { flex: 1 1 auto; }
 .abf-actions__board { flex: none; width: 54px; padding: 0; }
 
+/* Sprintfinale */
+.abf-banner--red strong { color: #ff6b6b; }
+.spr-place { justify-self: center; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; text-shadow: 0 2px 14px rgba(0, 0, 0, 0.45), 0 0 2px rgba(0, 0, 0, 0.35); }
+.spr-place strong { font-size: 38px; line-height: 1; font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spr-place span { font-size: 12.5px; font-weight: 600; opacity: 0.9; white-space: nowrap; }
+.spr-strip__flamme { position: absolute; top: 2px; width: 4px; height: 12px; margin-left: -2px; border-radius: 2px; background: #e5484d; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+.spr-strip__finish {
+  position: absolute; right: -6px; top: 1px; width: 12px; height: 14px; border-radius: 2px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  background: repeating-conic-gradient(#16171a 0 25%, #fff 0 50%) 0 0 / 6px 7px;
+}
+.spr-energy {
+  position: absolute; left: 50%; top: calc(var(--safe-t) + 96px); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 9px; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap;
+  background: rgba(10, 12, 18, 0.42); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.spr-energy span { min-width: 56px; }
+.spr-energy i { position: relative; display: block; width: min(150px, 40vw); height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.22); overflow: hidden; }
+.spr-energy i::after {
+  content: ""; position: absolute; inset: 0; border-radius: 4px; transform-origin: left; transform: scaleX(var(--e, 1));
+  background: linear-gradient(90deg, #e5484d, #ffd23f 35%, #3ecf6e 70%); background-size: calc(100% / max(var(--e, 1), 0.05)) 100%;
+}
+.spr-energy.is-go { box-shadow: inset 0 0 0 2px var(--accent), 0 0 18px var(--accent); }
+.spr-energy.is-go span { color: var(--accent); }
+.spr-energy.is-low i { animation: spr-low 0.6s ease-in-out infinite alternate; }
+@keyframes spr-low { to { opacity: 0.45; } }
+.spr-wheel { top: calc(var(--safe-t) + 136px); max-width: calc(100% - 32px); }
+.spr-wheel span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.spr-draft { top: calc(var(--safe-t) + 170px); }
+.abf--sprint .abf-banner { top: calc(var(--safe-t) + 200px); }
+.spr-coach { top: auto; bottom: calc(var(--safe-b) + 28px); }
+
+.spr-pick { display: flex; flex-direction: column; gap: 8px; }
+.spr-pick__list { display: flex; flex-direction: column; gap: 6px; }
+.spr-rider {
+  display: grid; grid-template-columns: minmax(0, 1fr) 112px; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 9px 11px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--surface); color: inherit; font: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.spr-rider.is-on { border-color: var(--accent); background: var(--accent-soft); }
+.spr-rider__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.spr-rider__name { font-weight: 650; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
+.spr-rider__sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12px; }
+.spr-rider__why { font-size: 12px; color: var(--muted); line-height: 1.3; }
+.spr-rider__bonus { color: var(--muted); white-space: nowrap; }
+.spr-chip { padding: 1px 7px; border-radius: 999px; background: var(--surface2); font-weight: 600; white-space: nowrap; }
+.spr-rider.is-on .spr-chip { background: var(--accent); color: var(--on-accent); }
+.spr-chip--tip { background: #ffd23f !important; color: #1a1400 !important; }
+.spr-bars { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.spr-bars__row { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); }
+.spr-bars__row i { display: block; height: 5px; border-radius: 3px; background: var(--surface2); overflow: hidden; }
+.spr-bars__row b { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.spr-howto { display: flex; flex-direction: column; gap: 5px; font-size: 13.5px; color: var(--muted); }
+.spr-howto li { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: start; gap: 8px; line-height: 1.35; }
+.spr-howto__k { display: grid; place-items: center; width: 22px; height: 20px; border-radius: 6px; background: var(--surface2); color: var(--text); font-weight: 700; font-size: 12px; }
+.spr-podium { display: flex; flex-direction: column; gap: 4px; }
+.spr-podium li { display: flex; align-items: center; gap: 10px; min-height: 32px; font-size: 15px; }
+.spr-podium li.is-me { color: var(--accent); font-weight: 650; }
+.spr-podium__pos { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 50%; background: var(--surface2); font-weight: 700; font-size: 13px; }
+.spr-podium li:first-child .spr-podium__pos { background: #ffd23f; color: #1a1400; }
+.spr-podium__name { min-width: 0; overflow-wrap: anywhere; }
+.spr-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.spr-change { align-self: center; }
+
 /* Startseite: Spielkarte */
 .game-card { display: flex; flex-direction: column; gap: 12px; text-decoration: none; color: inherit; }
 .game-card__head { display: flex; align-items: center; gap: 14px; }

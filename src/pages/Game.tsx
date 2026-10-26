@@ -48,7 +48,7 @@ export function rankFor(totalKm: number) {
   return { name: RANKS[i][1], from: RANKS[i][0], to: next?.[0] ?? null, nextName: next?.[1] ?? null };
 }
 
-function readAccent(): string {
+export function readAccent(): string {
   return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#ff5fa2';
 }
 
@@ -793,7 +793,7 @@ function Summary({ result, record, prevRank, today, season, meId, totalM, missio
   );
 }
 
-function useCountUp(target: number) {
+export function useCountUp(target: number) {
   const [v, setV] = useState(0);
   useEffect(() => {
     let raf = 0;
@@ -812,15 +812,15 @@ function useCountUp(target: number) {
 
 // ------------------------------------------------------------------ Symbole
 
-function PauseIcon() {
+export function PauseIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1.2" fill="currentColor" /><rect x="14" y="5" width="4" height="14" rx="1.2" fill="currentColor" /></svg>;
 }
-function PlayIcon() {
+export function PlayIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" fill="currentColor" /></svg>;
 }
-function TuckIcon() {
+export function TuckIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V5M8 9l4-4 4 4" /></svg>;
 }
-function BrakeIcon() {
+export function BrakeIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v15M8 15l4 4 4-4" /></svg>;
 }

@@ -18,3 +18,29 @@ export function GameIcon({ size = 44 }: { size?: number }) {
     </svg>
   );
 }
+
+/** Symbol des Sprintfinales: Zielgerade mit Zielbogen */
+export function SprintIcon({ size = 44 }: { size?: number }) {
+  return (
+    <svg className="game-icon" width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
+      <defs>
+        <linearGradient id="gi-sprint" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="var(--gi-top, #ff7ab6)" />
+          <stop offset="1" stopColor="var(--gi-bottom, #7b2cbf)" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="12" fill="url(#gi-sprint)" />
+      <path d="M19 22 L29 22 L44 48 H4 Z" fill="rgba(0,0,0,0.22)" />
+      <path d="M24 24 V48" stroke="rgba(255,255,255,0.55)" strokeWidth="1.6" strokeDasharray="3 3" />
+      <path d="M8 26 V11 H40 V26" fill="none" stroke="#ffffff" strokeWidth="3" strokeLinejoin="round" />
+      <rect x="9.5" y="11" width="29" height="7" fill="#ffffff" />
+      <path d="M9.5 18 h29" stroke="var(--gi-bottom, #7b2cbf)" strokeWidth="0.8" />
+      {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+        <rect key={i} x={9.5 + i * 3.625} y={i % 2 ? 11 : 14.5} width="3.625" height="3.5" fill="#16171a" />
+      ))}
+      <path d="M13 37 h22" stroke="#ffffff" strokeWidth="3" />
+      <path d="M13 37 h22" stroke="#16171a" strokeWidth="3" strokeDasharray="2.75 2.75" />
+      <circle cx="28" cy="31" r="2.6" fill="#ffd23f" stroke="#fff" strokeWidth="1" />
+    </svg>
+  );
+}

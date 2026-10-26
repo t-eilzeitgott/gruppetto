@@ -50,6 +50,20 @@ export interface Popup {
 
 export interface Friend { userId: string; name: string; color: string; meters: number; passed?: boolean }
 
+/** Was die 3D-Darstellung von einem Rennen braucht (Abfahrt und Sprintfinale) */
+export interface RaceView {
+  track: Track;
+  phase: Phase;
+  phaseT: number;
+  p: Player;
+  opps: Opp[];
+  popups: Popup[];
+  parts: Particle[];
+  friends: Friend[];
+  shake: number;
+  crashSpin: number;
+}
+
 export interface HudState {
   score: number; mult: number; multLeft: number; kmh: number; meters: number; draft: number;
   next: { name: string; color: string; dist: number } | null; brake: number; air: boolean;

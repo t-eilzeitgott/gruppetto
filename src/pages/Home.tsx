@@ -11,8 +11,8 @@ import { TourPicker, Wordmark } from '../ui/Shell';
 import { useApp } from '../app/context';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
-import type { GameBest } from '../data/source';
-import { GameIcon } from '../ui/GameIcon';
+import type { GameBest, GameId } from '../data/source';
+import { GameIcon, SprintIcon } from '../ui/GameIcon';
 import { Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import type { Profile } from '../lib/types';
@@ -39,6 +39,7 @@ export function Home() {
         <div className="stack">
           <Empty title="Noch keine Rundfahrt">Sobald der Admin eine Rundfahrt anlegt, kannst du hier tippen.</Empty>
           <GameCard />
+          <GameCard game="sprint" />
         </div>
       </>
     );
@@ -108,30 +109,32 @@ function HomeBody({ data, members, me, now }: { data: TourData; members: Profile
       {phase !== 'upcoming' ? <Tiles data={data} me={me} next={next} /> : null}
 
       <GameCard />
+      <GameCard game="sprint" />
     </>
   );
 }
 
-/** Minispiel als letzte Karte: Strecke des Tages und die aktuelle Bestenliste */
-function GameCard() {
+/** Minispiele als letzte Karten: Strecke des Tages und die aktuelle Bestenliste */
+function GameCard({ game = 'abfahrt' }: { game?: GameId }) {
   const { me } = useApp();
   const members = useMembers().data ?? [];
   const day = berlinDayKey();
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
-  const season = useQuery<GameBest[]>('game:abfahrt:season', () => source.gameLeaderboard('abfahrt'));
-  const today = useQuery<GameBest[]>(`game:abfahrt:day:${day}`, () => source.gameLeaderboard('abfahrt', since));
-  const title = useMemo(() => new Track(day).title, [day]);
+  const season = useQuery<GameBest[]>(`game:${game}:season`, () => source.gameLeaderboard(game));
+  const today = useQuery<GameBest[]>(`game:${game}:day:${day}`, () => source.gameLeaderboard(game, since));
+  const sprint = game === 'sprint';
+  const title = useMemo(() => (sprint ? 'Die letzten 2,4 km im Feld: Windschatten, Position, Antritt' : new Track(day).title), [day, sprint]);
   const useToday = (today.data?.length ?? 0) > 0;
   const rows = (useToday ? today.data : season.data) ?? [];
   const myIdx = rows.findIndex((b) => b.user_id === me.id);
   const shown = rows.slice(0, 3).map((r, i) => ({ r, i }));
   if (myIdx >= 3) shown.push({ r: rows[myIdx], i: myIdx });
   return (
-    <Link to="/spiel" className="card game-card" ariaLabel="Minispiel Abfahrt öffnen">
+    <Link to={sprint ? '/spiel/sprint' : '/spiel'} className="card game-card" ariaLabel={sprint ? 'Minispiel Sprintfinale öffnen' : 'Minispiel Abfahrt öffnen'}>
       <span className="game-card__head">
-        <GameIcon size={48} />
+        {sprint ? <SprintIcon size={48} /> : <GameIcon size={48} />}
         <span className="game-card__main">
-          <strong className="game-card__title">Abfahrt</strong>
+          <strong className="game-card__title">{sprint ? 'Sprintfinale' : 'Abfahrt'}</strong>
           <span className="muted game-card__route">{title}</span>
         </span>
         <Icon name="chevron" className="muted" />
@@ -152,7 +155,7 @@ function GameCard() {
           })}
         </span>
       ) : (
-        <span className="game-card__meta">Fahr die erste Bestmarke der Runde</span>
+        <span className="game-card__meta">{sprint ? 'Hol dir den ersten Tagessieg' : 'Fahr die erste Bestmarke der Runde'}</span>
       )}
     </Link>
   );

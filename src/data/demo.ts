@@ -168,7 +168,12 @@ export class DemoSource implements DataSource {
   ].map(([user_id, score, meters, h]) => ({
     user_id: user_id as string, game: 'abfahrt' as GameId, score: score as number, meters: meters as number,
     at: new Date(Date.now() - (h as number) * 3600e3).toISOString(),
-  }));
+  })).concat([
+    ['u-julian', 1480, 1], ['u-lena', 1210, 2], ['u-felix', 960, 26], ['u-tobi', 720, 4],
+  ].map(([user_id, score, h]) => ({
+    user_id: user_id as string, game: 'sprint' as GameId, score: score as number, meters: 2400,
+    at: new Date(Date.now() - (h as number) * 3600e3).toISOString(),
+  })));
 
   async submitScore(game: GameId, score: number, meters = 0): Promise<void> {
     await wait(80);

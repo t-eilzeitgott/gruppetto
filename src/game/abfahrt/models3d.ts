@@ -493,6 +493,34 @@ export class RiderModel {
     this.body.traverse((o) => { if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true; });
   }
 
+  private fadeMats: THREE.Material[] | null = null;
+  private alpha = 1;
+
+  /** Für Durchsichtigkeit vorbereiten (eigene Materialien); danach ändert fade() nur die Deckkraft */
+  prepareFade() {
+    if (this.fadeMats) return;
+    const list: THREE.Material[] = [];
+    const cache = new Map<THREE.Material, THREE.Material>();
+    this.body.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || Array.isArray(m.material)) return;
+      const src = m.material as THREE.Material;
+      let c = cache.get(src);
+      if (!c) { c = src.clone(); c.transparent = true; cache.set(src, c); list.push(c); }
+      m.material = c;
+    });
+    this.fadeMats = list;
+  }
+
+  /** Deckkraft weich auf das Ziel bringen (Fahrer zwischen Kamera und Spieler werden durchsichtig) */
+  fade(target: number, dt: number) {
+    if (!this.fadeMats) return;
+    const a = Math.abs(target - this.alpha) < 0.01 ? target : this.alpha + (target - this.alpha) * Math.min(1, dt * 9);
+    if (a === this.alpha) return;
+    this.alpha = a;
+    for (const m of this.fadeMats) { m.opacity = a; m.depthWrite = a > 0.97; }
+  }
+
   private hip = new THREE.Vector3();
   private sh = new THREE.Vector3();
   private a = new THREE.Vector3();
