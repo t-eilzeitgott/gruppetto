@@ -83,7 +83,9 @@ npm run typecheck
 npm run test:db    # Schema + RLS gegen ein lokales PostgreSQL (PGHOST/PGPORT/PGUSER setzen)
 ```
 
-Demo-Parameter: `?demo` (eingeloggt), `?demo=login`, `?demo=join`, `&demotime=2027-05-16T15:00` (Demo-Uhr).
+Demo-Parameter: `?demo` (eingeloggt), `?demo=login`, `?demo=join`, `&demotime=2027-05-16T15:00` (Demo-Uhr), `&install=ios|android` (Installationshinweis wie auf dem Handy).
+
+**Zum Home-Bildschirm** (`src/lib/install.ts`, `src/ui/InstallSteps.tsx`): Auf dem Handy im Browser zeigt die App vor der Anmeldung zuerst „Erst aufs Handy, dann los.“ – auf Android mit Knopf „App installieren“ (`beforeinstallprompt`), auf dem iPhone mit Anleitung über *Teilen → Zum Home-Bildschirm* (iOS erlaubt kein Auslösen per Code). Grund: Die installierte App hat auf dem iPhone einen eigenen Speicher, eine Anmeldung im Browser gilt dort nicht. „Ohne Installation im Browser weiter“ merkt sich die Wahl im Gerät; am Desktop und in der installierten App erscheint der Hinweis nie.
 UI-Check mit Playwright (lokal, falls installiert): `node scripts/build.mjs && node scripts/ui-check.mjs` – prüft alle Seiten auf 320–1440 px in Hell und Dunkel auf abgeschnittenen Text, horizontales Scrollen und verdeckte Inhalte (parallel, etwa 5 Minuten). Schneller: `--quick` (3 Größen, nur dunkel, etwa 1 Minute), `--only=game` (Seitennamen enthalten), `--vp=390`, `--theme=dark`; `--shots` speichert Screenshots. Das Minispiel läuft dabei ohne 3D (`?nogl`, mit `--shots` in winziger Auflösung `?lowgfx`), Countdown und Sturz rechnet der Check direkt durch.
 
 ### Aufbau

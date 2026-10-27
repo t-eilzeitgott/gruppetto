@@ -3,9 +3,45 @@ import { source } from '../app/config';
 import { invalidate } from '../app/query';
 import { Button, ErrorBox, Notice, useAction, useTitle } from '../ui/kit';
 import { Wordmark } from '../ui/Shell';
+import { InstallSteps } from '../ui/InstallSteps';
+import { shouldGateLogin, skipInstall, useInstall } from '../lib/install';
 
+/**
+ * Auf dem Handy im Browser zuerst „Zum Home-Bildschirm“: Die installierte App hat (vor allem auf dem iPhone)
+ * einen eigenen Speicher – eine Anmeldung im Browser gilt dort nicht.
+ */
 export function Login() {
+  const install = useInstall();
+  return shouldGateLogin(install) ? <InstallFirst /> : <LoginForm />;
+}
+
+function InstallFirst() {
+  useTitle('App installieren');
+  const install = useInstall();
+  return (
+    <div className="auth">
+      <div className="auth__top">
+        <Wordmark />
+      </div>
+      <div className="auth__hero">
+        <h1 className="display"><span>Erst aufs Handy,</span> <span>dann los.</span></h1>
+        <p className="lead muted">
+          Leg gruppetto auf deinen Home-Bildschirm und melde dich dort an. So startest du mit einem Tipp und bleibst angemeldet.
+        </p>
+      </div>
+      <div className="auth__form">
+        <InstallSteps install={install} />
+        <div className="auth__links auth__links--center">
+          <button type="button" className="text-btn text-btn--muted" onClick={() => skipInstall()}>Ohne Installation im Browser weiter</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoginForm() {
   useTitle('Anmelden');
+  const install = useInstall();
   const [step, setStep] = useState<'email' | 'code'>('email');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -74,6 +110,11 @@ export function Login() {
           <Button type="submit" full busy={send.busy} disabled={!/^\S+@\S+\.\S+$/.test(email.trim())}>Code per E‑Mail senden</Button>
           <p className="hint">Kein Passwort nötig: Du bekommst einen Code per E‑Mail und bleibst auf diesem Gerät angemeldet.</p>
           {source.mode === 'demo' ? <Notice><p>Demo: Gib eine beliebige E‑Mail ein, der Code ist <strong>123456</strong>.</p></Notice> : null}
+          {!install.standalone && install.platform !== 'desktop' ? (
+            <div className="auth__links auth__links--center">
+              <button type="button" className="text-btn" onClick={() => skipInstall(false)}>Doch lieber als App installieren</button>
+            </div>
+          ) : null}
         </form>
       ) : (
         <form className="auth__form" onSubmit={submitCode} noValidate>

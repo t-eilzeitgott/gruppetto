@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
 import { applyTheme } from './app/theme';
+import './lib/install'; // Installations-Ereignis früh abfangen
 import { BUILD_ID, source } from './app/config';
 import { persistQueries } from './app/query';
 import './styles.css';

@@ -1814,3 +1814,17 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .pg-best__sub { font-size: 13px; color: var(--muted); line-height: 1.3; }
 .pg-row__icon { width: 34px; flex: none; display: flex; align-items: center; }
 .pg-row__sub { flex-basis: 100%; }
+
+/* ---------- Zum Home-Bildschirm ---------- */
+
+.install-steps { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: var(--radius-lg); background: var(--surface); border: 1px solid var(--line); }
+.install-steps > li { display: flex; align-items: flex-start; gap: 12px; font-size: 15px; line-height: 1.45; }
+.install-steps__n {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 14px;
+}
+.install-steps__icon { display: inline-block; vertical-align: -3px; color: var(--accent); }
+.setting .install-steps { padding: 0; background: none; border: 0; }
+.auth__links--center { justify-content: center; }
+.text-btn--muted { color: var(--muted); font-weight: 500; }

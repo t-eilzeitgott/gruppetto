@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useApp } from '../app/context';
 import { useTourData } from '../app/hooks';
 import { source, BUILD_ID } from '../app/config';
@@ -9,6 +9,8 @@ import type { TourData } from '../lib/types';
 import { Avatar, ProBadge, Button, ErrorBox, Link, PageTitle, Segmented, cx, toast, useAction, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { lastName } from '../ui/bits';
+import { InstallSteps } from '../ui/InstallSteps';
+import { useInstall } from '../lib/install';
 
 const COLORS = ['#6A3FB5', '#1F6F8B', '#B23A6B', '#2E7D4F', '#A0522D', '#3D5AFE', '#8E44AD', '#00796B', '#C0392B', '#455A64', '#6D4C41', '#5C6BC0'];
 
@@ -144,36 +146,14 @@ function EditProfile({ onDone }: { onDone: () => void }) {
   );
 }
 
-interface InstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-}
-
 function InstallHint() {
-  const [prompt, setPrompt] = useState<InstallPromptEvent | null>(null);
-  const standalone = window.matchMedia('(display-mode: standalone)').matches
-    || (navigator as Navigator & { standalone?: boolean }).standalone === true;
-  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      e.preventDefault();
-      setPrompt(e as InstallPromptEvent);
-    };
-    window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, []);
-
-  if (standalone) return null;
+  const install = useInstall();
+  if (install.standalone) return null;
   return (
     <div className="setting setting--column">
       <span className="setting__label">Als App auf den Home-Bildschirm</span>
-      {prompt ? (
-        <Button variant="secondary" icon="plus" onClick={() => prompt.prompt()}>App installieren</Button>
-      ) : ios ? (
-        <p className="muted">In Safari unten auf <Icon name="share" size={16} /> <strong>Teilen</strong> tippen und <strong>Zum Home-Bildschirm</strong> wählen.</p>
-      ) : (
-        <p className="muted">Im Browser-Menü <strong>App installieren</strong> bzw. <strong>Zum Startbildschirm hinzufügen</strong> wählen.</p>
-      )}
+      <InstallSteps install={install} compact />
+      {install.platform === 'ios' ? <p className="hint">In der App meldest du dich einmal neu an – sie hat einen eigenen Speicher.</p> : null}
     </div>
   );
 }

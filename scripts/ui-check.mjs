@@ -38,6 +38,8 @@ const server = createServer(async (req, res) => {
 const PAGES = [
   ['login', '?demo=login#/'],
   ['login-code', '?demo=login#/', async (p) => { await p.fill('#login-email', 'christoph@beispiel.de'); await p.click('button[type=submit]'); await p.waitForSelector('#login-code'); }],
+  ['install-ios', '?demo=login&install=ios#/'],
+  ['install-android', '?demo=login&install=android#/'],
   ['join', '?demo=join#/'],
   ['home', '?demo#/'],
   ['home-running', '?demo&demotime=2027-05-16T15:00#/'],
