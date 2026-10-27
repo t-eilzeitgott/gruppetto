@@ -366,17 +366,18 @@ export function bannerTex(text: string, sub: string, bg: string, fg: string): HT
 
 // ------------------------------------------------------------------ Werbebanden und Pappschilder
 
-/** Zellen im Atlas: oben 4×4 Banden, unten 4×4 Schilder (je 256×128) */
+/** Zellen im Atlas (1024×2048, je 256×128, 4 Spalten × 16 Zeilen): oben die Banden, ab Zelle SIGN_BASE die Schilder */
 export const AD_COLS = 4;
-export const AD_COUNT = 16;
-export const SIGN_COUNT = 16;
+const AD_ROWS = 16;
+const SIGN_BASE = 40;
 /** UV-Rechteck einer Zelle: [u0, v0, u1, v1] */
 export function adCell(i: number, sign: boolean): [number, number, number, number] {
-  const k = (sign ? 16 : 0) + (i % 16);
+  const k = sign ? SIGN_BASE + (i % SIGN_COUNT) : i % AD_COUNT;
   const cx = k % AD_COLS;
   const cy = Math.floor(k / AD_COLS);
-  const pad = 2 / 1024;
-  return [cx / 4 + pad, 1 - (cy + 1) / 8 + pad, (cx + 1) / 4 - pad, 1 - cy / 8 - pad];
+  const pu = 2 / 1024;
+  const pv = 2 / 2048;
+  return [cx / AD_COLS + pu, 1 - (cy + 1) / AD_ROWS + pv, (cx + 1) / AD_COLS - pu, 1 - cy / AD_ROWS - pv];
 }
 
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Arial, sans-serif';
@@ -401,14 +402,43 @@ const ADS: { t: string; s: string; bg: string; fg: string; ac?: string; style?: 
   { t: 'Schlauch-Express', s: '24 h Pannendienst', bg: '#f1c40f', fg: '#111214', style: 'italic' },
   { t: 'BERGPREIS BIER', s: 'alkoholfrei · leider', bg: '#0e3b2e', fg: '#f1c40f' },
   { t: 'Pizzeria Kehre 7', s: 'Holzofen · Aussicht', bg: '#ffffff', fg: '#c0392b', style: 'round' },
+  // Essen & Trinken
+  { t: 'TRATTORIA TEMPOLIMIT', s: 'Pasta in 4 Minuten 59', bg: '#c0392b', fg: '#ffffff', ac: '#2f9e5a' },
+  { t: 'GEL-O-MAT', s: '24 h Zucker', bg: '#ff8c1a', fg: '#ffffff', style: 'stripe' },
+  { t: 'Bäckerei Bergwertung', s: 'Kuchen der 1. Kategorie', bg: '#fbf3e4', fg: '#8a4b1f', style: 'round' },
+  { t: 'RISOTTO RIVALE', s: 'wartet auf niemanden', bg: '#f4e7c5', fg: '#1a1a1a', ac: '#c0392b' },
+  { t: 'CAPPUCCINO-STOPP', s: 'nur vor 11 Uhr. Ernsthaft.', bg: '#6f4e37', fg: '#fff4e0', style: 'italic' },
+  { t: 'Banane GmbH', s: 'gelb wie das Trikot', bg: '#ffe14d', fg: '#3b2f00', style: 'round' },
+  // Rad & Material
+  { t: 'CARBON-KUMMER', s: 'leichter als dein Konto', bg: '#1b1b1d', fg: '#e8e8e8', style: 'stripe' },
+  { t: 'NOCH EIN RAD?', s: 'N+1 Finanzierung', bg: '#2e86de', fg: '#ffffff', style: 'italic' },
+  { t: 'Speichen Schmidt', s: 'wir ziehen alles nach', bg: '#ffffff', fg: '#34495e', ac: '#e67e22' },
+  { t: 'RITZEL-REHA', s: 'für Knie ab 40', bg: '#16a085', fg: '#ffffff', style: 'round' },
+  { t: 'Kettenfett Klaus', s: 'schmiert alles', bg: '#2d2a26', fg: '#f5b041', style: 'italic' },
+  // Dienstleistungen & Pseudo-Sponsoren
+  { t: 'ZEITLIMIT AIRLINES', s: 'wir warten nicht', bg: '#0b2545', fg: '#ffffff', ac: '#ff5fa2' },
+  { t: 'BESENWAGEN TAXI', s: 'holt dich überall ab', bg: '#ffd400', fg: '#111214', style: 'stripe' },
+  { t: 'Physio Pedalo', s: 'Waden & Seele', bg: '#e8f6f3', fg: '#117a65', style: 'round' },
+  { t: 'LEISTUNGSDATEN AG', s: 'lügt nie, leider', bg: '#5b2c6f', fg: '#ffffff', ac: '#f1c40f' },
+  { t: 'WATT-WETTE', s: 'Bauchgefühl statt Powermeter', bg: '#ff5733', fg: '#ffffff', style: 'italic' },
+  { t: 'Gegenwind GmbH', s: 'immer für dich da', bg: '#aed6f1', fg: '#1b4f72', style: 'round' },
+  { t: 'SERPENTINEN-SPARKASSE', s: 'es geht aufwärts', bg: '#d63031', fg: '#ffffff', ac: '#ffffff' },
+  // gruppetto in eigener Sache
+  { t: 'gruppetto', s: 'Hinten ist das neue Vorne', bg: '#1f2a44', fg: '#ff8fc0', style: 'round' },
+  { t: 'TIPP-SCHLUSS', s: '12 Uhr. Kein Pardon.', bg: '#ff5fa2', fg: '#ffffff', style: 'italic' },
+  { t: 'Außenseiter-Bonus', s: 'einsam, aber reich', bg: '#ffffff', fg: '#d6249f', style: 'round' },
+  { t: 'gruppetto', s: 'Wir kommen an. Irgendwann.', bg: '#ffd400', fg: '#1f2a44', style: 'round' },
 ];
+export const AD_COUNT = ADS.length;
 
-const SIGNS = ['ALLEZ!', 'FORZA!', 'DAJE!', 'HOPP HOPP', 'VAI VAI!', 'GO GO GO', '♥ GIRO', 'KEINE BREMSE!', 'HALLO MAMA', 'SCHNELLER!', 'BIDON PLS!', 'TOUR27', 'MACH ES!', 'BRAVO!', 'ICH BIN IM TV', 'ALLEZ ALLEZ'];
+const SIGNS = ['ALLEZ!', 'FORZA!', 'DAJE!', 'HOPP HOPP', 'VAI VAI!', 'GO GO GO', '♥ GIRO', 'KEINE BREMSE!', 'HALLO MAMA', 'SCHNELLER!', 'BIDON PLS!', 'TOUR27', 'MACH ES!', 'BRAVO!', 'ICH BIN IM TV', 'ALLEZ ALLEZ',
+  'ZIEL IST DA →', 'TRET DOCH!', 'PAPA FÄHRT MIT', 'NUR NOCH 14 KEHREN', 'WO IST DEIN E-BIKE?', 'KUCHEN OBEN!', 'TIPP: PLATZ 1'];
+export const SIGN_COUNT = SIGNS.length;
 const BOARDS: [string, string][] = [['#fbfaf5', '#141414'], ['#ffe14d', '#141414'], ['#ff8fc0', '#141414'], ['#d8b07a', '#1a1a1a'], ['#fbfaf5', '#d6249f'], ['#fbfaf5', '#c0392b'], ['#ffffff', '#0b5394']];
 
 /** Atlas mit Banden (oben) und handgeschriebenen Pappschildern (unten); Namen der Runde kommen auf ein paar Schilder */
 export function adsTex(names: string[]): HTMLCanvasElement {
-  const cv = canvas(1024, 1024);
+  const cv = canvas(1024, 2048);
   const c = cv.getContext('2d')!;
   const r = mulberry32(77);
   const fit = (text: string, weight: string, font: string, max: number, maxW: number) => {
@@ -450,7 +480,7 @@ export function adsTex(names: string[]): HTMLCanvasElement {
   // Pappschilder, leicht schief beschrieben
   const own = names.slice(0, 5);
   for (let i = 0; i < SIGN_COUNT; i++) {
-    const k = 16 + i;
+    const k = SIGN_BASE + i;
     const x0 = (k % 4) * 256;
     const y0 = Math.floor(k / 4) * 128;
     const [bg, fg] = BOARDS[Math.floor(r() * BOARDS.length)];
