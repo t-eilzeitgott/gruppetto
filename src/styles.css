@@ -1247,11 +1247,6 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 /* Platz für die 3D-Bühne: die Leinwand kommt aus dem Vorrat (vorgewärmt beim App-Start) */
 .abf__stage { position: absolute; inset: 0; touch-action: none; cursor: grab; }
-/* sanfte Vignette als Filter über der Spielwelt: lenkt den Blick zur Mitte, kostet die Grafik nichts (CSS) */
-.abf__stage::after {
-  content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(ellipse 85% 75% at 50% 52%, rgba(12, 16, 24, 0) 58%, rgba(12, 16, 24, 0.22) 100%);
-}
 /* unsichtbarer Platz zum Vorwärmen (echte Größe, nicht zu sehen) */
 .stage-holder { position: fixed; inset: 0; opacity: 0; pointer-events: none; z-index: -1; overflow: hidden; }
 /* 3D-Szene blendet ein, sobald das erste Bild gezeichnet ist (die Startkarte steht schon) */

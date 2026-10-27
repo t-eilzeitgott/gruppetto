@@ -72,6 +72,23 @@ export function alphaTex(cv: HTMLCanvasElement, fill?: [number, number, number] 
 
 const tmpColor = new THREE.Color();
 /** sRGB-Hex → lineare Farbe für Vertexfarben */
+/**
+ * Gezeichneten Vorrat (Render-Ziel mit Kantenglättung) in eine einfache Textur umkopieren und das Ziel freigeben:
+ * die mehrfach abgetasteten Puffer eines Render-Ziels belegen sonst dauerhaft ein Vielfaches an Grafikspeicher.
+ */
+export function freezeTarget(gl: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget): THREE.DataTexture {
+  const px = new Uint8Array(rt.width * rt.height * 4);
+  gl.readRenderTargetPixels(rt, 0, 0, rt.width, rt.height, px);
+  const t = new THREE.DataTexture(px, rt.width, rt.height, THREE.RGBAFormat);
+  t.colorSpace = THREE.NoColorSpace;
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  rt.dispose();
+  return t;
+}
+
 export function lin(hex: string | number): RGBf {
   tmpColor.set(hex as THREE.ColorRepresentation);
   return [tmpColor.r, tmpColor.g, tmpColor.b];
@@ -185,13 +202,12 @@ export class GB {
   }
 }
 
-const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) => {
+export const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) => {
   const m = new THREE.Matrix4();
   m.compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
   return m;
 };
 
-const TRUNK = lin('#5a3d27');
 
 
 
@@ -199,7 +215,7 @@ const TRUNK = lin('#5a3d27');
  * Weiche Normalen für Bäume: zum Großteil vom Stamm nach außen (wie eine Kugel um die Krone), ein wenig von der
  * Fläche selbst. So wirken Kronen rund und belaubt statt facettiert, ohne ein Dreieck mehr.
  */
-function softNormals(g: THREE.BufferGeometry, yc: number, k: number, keep = 0.3): THREE.BufferGeometry {
+export function softNormals(g: THREE.BufferGeometry, yc: number, k: number, keep = 0.3): THREE.BufferGeometry {
   const pos = g.getAttribute('position');
   const nrm = g.getAttribute('normal') as THREE.BufferAttribute;
   const v = new THREE.Vector3();
@@ -216,128 +232,14 @@ function softNormals(g: THREE.BufferGeometry, yc: number, k: number, keep = 0.3)
   return g;
 }
 
-const mixC = (a: RGBf, b: RGBf, t: number): RGBf => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-const mulC = (a: RGBf, f: number): RGBf => [a[0] * f, a[1] * f, a[2] * f];
-
-/**
- * Fichte/Tanne: Stamm und viele sternförmige Astetagen. Jede Etage hat Astspitzen mit unterschiedlicher Länge,
- * die nach außen hängen, dazwischen Kerben; innen am Stamm dunkel, an den Spitzen hell (frische Triebe),
- * die Unterseite im Schatten. Mit snow liegt Schnee auf den Oberseiten.
- */
-function spruce(o: { h: number; w: number; tiers: number; spikes: number; dark: string; light: string; seed: number; snow?: boolean; droop?: number; sparse?: number; low?: boolean }): THREE.BufferGeometry {
-  const b = new GB();
-  let rs = o.seed * 9301 + 49297;
-  const rnd = () => { rs = (rs * 9301 + 49297) % 233280; return rs / 233280; };
-  const trunk = lin('#4e3524');
-  b.addFn(new THREE.CylinderGeometry(0.1, 0.2, o.h * 0.55, o.low ? 4 : 7), M(0, o.h * 0.275), (p) => mulC(trunk, 0.75 + 0.35 * Math.min(1, p.y / 3)));
-  const dark = lin(o.dark);
-  const light = lin(o.light);
-  const snowC = lin('#eef3f8');
-  const base = 1.05;
-  const droop = o.droop ?? 0.24;
-  for (let t = 0; t < o.tiers; t++) {
-    const k = t / (o.tiers - 1);
-    const th = ((o.h - base) / o.tiers) * 2.1;
-    const y = base + k * (o.h - base - th * 0.75);
-    const r = o.w * Math.pow(1 - k, 0.85) * (0.88 + rnd() * 0.24) + 0.18;
-    const n = Math.max(5, Math.round(o.spikes * (1 - k * 0.35)));
-    const apex = [0, y + th, 0];
-    const under = [0, y + th * 0.18, 0];
-    const rot = rnd() * Math.PI * 2;
-    const rim: number[][] = [];
-    const notch: number[][] = [];
-    for (let i = 0; i < n; i++) {
-      const a = rot + ((i + (rnd() - 0.5) * 0.35) / n) * Math.PI * 2;
-      const ri = r * (0.78 + rnd() * 0.4) * (o.sparse && rnd() < o.sparse ? 0.55 : 1);
-      rim.push([Math.cos(a) * ri, y - droop * ri * (0.7 + rnd() * 0.5), Math.sin(a) * ri]);
-      const an = a + Math.PI / n;
-      notch.push([Math.cos(an) * ri * 0.74, y - droop * ri * 0.45 + th * 0.1, Math.sin(an) * ri * 0.74]);
-    }
-    const shade = 0.82 + 0.3 * k;
-    const cIn = mulC(dark, 0.7);
-    for (let i = 0; i < n; i++) {
-      const R = rim[i];
-      const Nb = notch[i];
-      const Na = notch[(i + n - 1) % n];
-      const tip = mulC(mixC(dark, light, 0.55 + rnd() * 0.45), shade);
-      const mid = mulC(mixC(dark, light, 0.25), shade);
-      const top = o.snow && t < o.tiers - 1 ? mixC(tip, snowC, 0.85) : tip;
-      const midT = o.snow && t < o.tiers - 1 ? mixC(mid, snowC, 0.6) : mid;
-      // Oberseite: von der Spitze der Etage zu Kerbe – Astspitze – nächste Kerbe
-      b.triC(apex, Na, R, cIn, midT, top);
-      b.triC(apex, R, Nb, cIn, top, midT);
-      // Unterseite im Schatten
-      if (o.low) continue;
-      b.triC(under, R, Na, mulC(dark, 0.45), mulC(tip, 0.55), mulC(dark, 0.5));
-      b.triC(under, Nb, R, mulC(dark, 0.45), mulC(dark, 0.5), mulC(tip, 0.55));
-    }
-  }
-  // Wipfel
-  if (!o.low) b.addFn(new THREE.ConeGeometry(0.16, 1.1, 5), M(0, o.h + 0.25), () => mixC(dark, light, 0.6));
-  return softNormals(b.build(), o.h * 0.42, 0.45);
-}
-
-/** Laubbaum: viele unregelmäßige Blätterballen, oben im Licht hell, unten und innen dunkel, dazu Äste */
-function leafTree(crowns: [number, number, number, number][], trunkH: number, dark: string, light: string, branches = 3, detail = 1): THREE.BufferGeometry {
-  const b = new GB();
-  const trunk = lin('#5a4030');
-  b.addFn(new THREE.CylinderGeometry(0.12, 0.27, trunkH + 0.6, detail ? 7 : 4), M(0, (trunkH + 0.6) / 2), (p) => mulC(trunk, 0.8 + 0.25 * Math.min(1, p.y / trunkH)));
-  for (let i = 0; i < branches; i++) {
-    const a = (i / branches) * Math.PI * 2 + 0.4;
-    b.add(new THREE.CylinderGeometry(0.05, 0.1, 1.9, 5), M(Math.cos(a) * 0.55, trunkH + 0.55, Math.sin(a) * 0.55, 1, 1, 1, 0, Math.sin(a) * 0.75, -Math.cos(a) * 0.75), trunk);
-  }
-  const D = lin(dark);
-  const Lc = lin(light);
-  const top = Math.max(...crowns.map(([, y, , r]) => y + r));
-  const bot = Math.min(...crowns.map(([, y, , r]) => y - r));
-  crowns.forEach(([x, y, z, r], i) => {
-    const g = new THREE.IcosahedronGeometry(r, detail);
-    const pos = g.getAttribute('position');
-    const v = new THREE.Vector3();
-    for (let q = 0; q < pos.count; q++) {
-      v.fromBufferAttribute(pos, q);
-      const k = 0.84 + 0.24 * Math.abs(Math.sin(v.x * 3.1 + v.y * 2.3 + i) * Math.cos(v.z * 2.7 - i));
-      pos.setXYZ(q, v.x * k, v.y * k * 0.86, v.z * k);
-    }
-    b.addFn(g, M(x, y, z, 1, 1, 1, i * 1.3), (p, n) => {
-      const hgt = (p.y - bot) / Math.max(0.1, top - bot);
-      const lit = 0.5 + 0.5 * n.y;
-      return mulC(mixC(D, Lc, Math.min(1, hgt * 0.55 + lit * 0.5)), 0.78 + 0.3 * hgt);
-    });
-  });
-  return softNormals(b.build(), (top + bot) / 2, 0.8, 0.25);
-}
-
-
-/** einfache Fassungen der Bäume für weiter entfernte Landschaftskacheln (gleiche Umrisse, weniger Dreiecke) */
-export function treeGeometriesLow(): Partial<Record<Prop3D, THREE.BufferGeometry>> {
-  const cypress = new GB();
-  cypress.add(new THREE.IcosahedronGeometry(1, 0), M(0, 4.6, 0, 0.72, 4.3, 0.72), lin('#2b4d27'));
-  return {
-    pine: spruce({ h: 12, w: 2.8, tiers: 7, spikes: 8, dark: '#16391f', light: '#4f8448', seed: 3, low: true }),
-    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 7, spikes: 8, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true, low: true }),
-    larch: spruce({ h: 11, w: 2.3, tiers: 7, spikes: 8, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, low: true }),
-    tree: leafTree([[0, 5.4, 0, 2.3], [1.4, 4.7, 0.5, 1.7], [-1.3, 4.8, -0.4, 1.8], [0.3, 6.4, -0.2, 1.5]], 3.6, '#2f5e22', '#7fb64e', 0, 0),
-    treeRound: leafTree([[0, 3.8, 0, 1.7], [0.6, 4.3, 0.3, 1.1]], 2.6, '#3a6e28', '#8cc256', 0, 0),
-    cypress: softNormals(cypress.build(), 4.6, 0.25),
-  };
-}
-
-/** ganz einfache Fassungen für Bäume jenseits von gut 130 m: dort sind sie nur noch wenige Pixel hoch */
-export function treeGeometriesFar(): Partial<Record<Prop3D, THREE.BufferGeometry>> {
-  return {
-    pine: spruce({ h: 12, w: 2.8, tiers: 4, spikes: 6, dark: '#16391f', light: '#4f8448', seed: 3, low: true }),
-    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 4, spikes: 6, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true, low: true }),
-    larch: spruce({ h: 11, w: 2.3, tiers: 4, spikes: 6, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, low: true }),
-    tree: leafTree([[0, 5.3, 0, 2.6], [0.9, 4.6, 0.4, 1.9]], 3.6, '#2f5e22', '#7fb64e', 0, 0),
-    treeRound: leafTree([[0, 3.9, 0, 1.9]], 2.6, '#3a6e28', '#8cc256', 0, 0),
-  };
-}
+export const mixC = (a: RGBf, b: RGBf, t: number): RGBf => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+export const mulC = (a: RGBf, f: number): RGBf => [a[0] * f, a[1] * f, a[2] * f];
 
 export type Prop3D = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'bush' | 'rock' | 'boulder'
   | 'snowpole' | 'hay' | 'vinerow' | 'fence' | 'lamp' | 'logs' | 'palm';
 
-export function propGeometries(): Record<Prop3D, THREE.BufferGeometry> {
+/** Requisiten (Bäume kommen aus forest3d: Bildvorrat und nahe 3D-Modelle) */
+export function propGeometries(): Partial<Record<Prop3D, THREE.BufferGeometry>> {
   const snowpole = new GB();
   for (let i = 0; i < 6; i++) snowpole.add(new THREE.CylinderGeometry(0.04, 0.04, 0.34, 6), M(0, 0.17 + i * 0.34), lin(i % 2 ? '#ffffff' : '#e03131'));
   const hay = new GB();
@@ -357,35 +259,15 @@ export function propGeometries(): Record<Prop3D, THREE.BufferGeometry> {
   for (let row = 0; row < 3; row++) for (let i = 0; i < 4 - row; i++) {
     logs.add(new THREE.CylinderGeometry(0.22, 0.22, 2.4, 8), M((i - (3 - row) / 2) * 0.46, 0.22 + row * 0.4, 0, 1, 1, 1, Math.PI / 2, Math.PI / 2), lin(i % 2 ? '#a5784c' : '#b98c5a'));
   }
-  const palm = new GB();
-  for (let i = 0; i < 8; i++) palm.add(new THREE.CylinderGeometry(0.15, 0.18, 0.9, 6), M(i * 0.06, 0.45 + i * 0.85, 0, 1, 1, 1, 0, 0, -0.05), lin(i % 2 ? '#7a5a3a' : '#8a6a46'));
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2;
-    palm.add(new THREE.BoxGeometry(2.6, 0.06, 0.55), M(0.5 + Math.cos(a) * 1.3, 7.1, Math.sin(a) * 1.3, 1, 1, 1, -a, 0, -0.35), lin(i % 2 ? '#3f7a32' : '#4f8f3c'));
-  }
   const rock = new GB();
   rock.add(new THREE.DodecahedronGeometry(0.65, 0), M(0, 0.32, 0, 1, 0.7, 0.85), lin('#8e8a82'));
   const boulder = new GB();
   boulder.add(new THREE.DodecahedronGeometry(1.5, 0), M(0, 0.9, 0, 1, 0.75, 0.9, 0.4), lin('#8a867c'));
   boulder.add(new THREE.DodecahedronGeometry(0.9, 0), M(0.6, 1.7, 0.2, 1, 0.45, 0.8, 1.2), lin('#6f8a52'));
-  const olive = new GB();
-  olive.add(new THREE.CylinderGeometry(0.16, 0.3, 2.2, 6), M(0, 1.1, 0, 1, 1, 1, 0, 0.15, 0.1), lin('#6b5a48'));
-  olive.add(new THREE.IcosahedronGeometry(1.3, 0), M(-0.4, 2.8, 0, 1, 0.65, 1), lin('#8f9c72'));
-  olive.add(new THREE.IcosahedronGeometry(1.1, 0), M(0.6, 3.1, 0.3, 1, 0.65, 1), lin('#7c8b60'));
-  const cypress = new GB();
-  cypress.add(new THREE.CylinderGeometry(0.1, 0.14, 0.8, 5), M(0, 0.4), TRUNK);
-  cypress.add(new THREE.IcosahedronGeometry(1, 1), M(0, 4.6, 0, 0.72, 4.3, 0.72), lin('#2b4d27'));
   const bush = new GB();
   bush.add(new THREE.IcosahedronGeometry(0.75, 0), M(0, 0.45, 0, 1.2, 0.75, 1), lin('#456f2e'));
   bush.add(new THREE.IcosahedronGeometry(0.55, 0), M(0.5, 0.55, 0.2, 1, 0.8, 1), lin('#5b8a3c'));
   return {
-    pine: spruce({ h: 12, w: 2.8, tiers: 9, spikes: 10, dark: '#16391f', light: '#4f8448', seed: 3 }),
-    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 9, spikes: 10, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true }),
-    larch: spruce({ h: 11, w: 2.3, tiers: 8, spikes: 9, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, sparse: 0.25 }),
-    tree: leafTree([[0, 5.4, 0, 2.1], [1.4, 4.7, 0.5, 1.6], [-1.3, 4.8, -0.4, 1.7], [0.3, 6.5, -0.2, 1.5], [-0.5, 5.9, 1.2, 1.3], [0.8, 5.6, -1.2, 1.35], [-0.9, 4.2, 0.9, 1.1]], 3.6, '#2f5e22', '#7fb64e'),
-    treeRound: leafTree([[0, 3.8, 0, 1.55], [0.7, 4.4, 0.3, 1.05], [-0.6, 4.3, -0.4, 1.0], [0.1, 3.3, 0.8, 0.95]], 2.6, '#3a6e28', '#8cc256', 2),
-    cypress: softNormals(cypress.build(), 4.6, 0.25),
-    olive: softNormals(olive.build(), 2.8, 0.8),
     bush: bush.build(),
     rock: rock.build(),
     boulder: boulder.build(),
@@ -395,6 +277,5 @@ export function propGeometries(): Record<Prop3D, THREE.BufferGeometry> {
     fence: fence.build(),
     lamp: lamp.build(),
     logs: logs.build(),
-    palm: palm.build(),
   };
 }

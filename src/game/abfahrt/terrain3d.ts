@@ -737,7 +737,8 @@ export class Terrain {
         const k = j * GC + i;
         cH[k] = p.h; cW[k] = p.water; cLY[k] = p.lakeY; cFL[k] = p.floor; cB[k] = p.b; cDR[k] = p.dRoad; cRG[k] = p.ridge;
       }
-      if (j % 3 === 2) yield;
+      // kleine Schritte: ein Schritt soll ein Bild nicht spürbar verlängern
+      if (lv > 0 || j % 2 === 1) yield;
     }
     const hp = this.hp;
     for (let j = 0; j < G; j++) {
@@ -768,7 +769,7 @@ export class Terrain {
         SF[k] = p.floorMin;
         RG[k] = p.ridge;
       }
-      if (j % 6 === 5) yield;
+      if (j % 3 === 2) yield;
     }
     const cols = this.colorsFor(lv);
     // Kronendach: In der Ferne ragt der Wald als Fläche über den Boden (statt einzelner Bäume) – mit leicht welliger
@@ -793,6 +794,8 @@ export class Terrain {
     const col = new Float32Array(pos.length);
     // je Ecke: Gewichte für Wald, Fels, Schnee (der Shader mischt pro Bildpunkt mit Rauschen) und die Felsfarbe
     const mat = new Float32Array((pos.length / 3) * 4);
+    // großflächiges Rauschen je Ecke (Waldrand, Schneegrenze) – spart dem Shader einen Texturzugriff
+    const nzA = new Float32Array((pos.length / 3) * 2);
     const rck = new Float32Array(pos.length);
     const can = new Float32Array(pos.length / 3);
     const uvs = new Float32Array((pos.length / 3) * 2);
@@ -832,6 +835,8 @@ export class Terrain {
         const wet = W[k];
         // großflächiges Rauschen für den Shader (Flecken in Wiese, Waldrand, Fels, Schnee)
         mat[v * 4 + 3] = Math.max(0, Math.min(1, 0.5 + (fbm(x / 150 + 9.1, z / 150 - 3.3, 2) - 0.5) * 1.9));
+        nzA[v * 2] = Math.max(0, Math.min(1, 0.5 + (fbm(x / 170 - 4.7, z / 170 + 8.2, 2) - 0.5) * 1.7));
+        nzA[v * 2 + 1] = Math.max(0, Math.min(1, 0.5 + (fbm(x / 170 + 2.9, z / 170 - 6.4, 2) - 0.5) * 1.7));
         let c: RGBf;
         const rc = mix(C.rock, C.rockDark, n2 * 0.8 + steep * 0.3, [0, 0, 0]);
         rck[v * 3] = rc[0]; rck[v * 3 + 1] = rc[1]; rck[v * 3 + 2] = rc[2];
@@ -851,6 +856,7 @@ export class Terrain {
         col[v * 3] = c[0] * shadeV; col[v * 3 + 1] = c[1] * shadeV; col[v * 3 + 2] = c[2] * shadeV;
         void pal;
       }
+      if (j % 8 === 7) yield;
     }
     // Dreiecke (ohne die ausgesparten Stellen an Tunnelportalen)
     const idx: number[] = [];
@@ -875,6 +881,7 @@ export class Terrain {
       col[vn * 3] = col[vIdx * 3] * 0.8; col[vn * 3 + 1] = col[vIdx * 3 + 1] * 0.8; col[vn * 3 + 2] = col[vIdx * 3 + 2] * 0.8;
       for (let q = 0; q < 3; q++) rck[vn * 3 + q] = rck[vIdx * 3 + q] * 0.8;
       for (let q = 0; q < 4; q++) mat[vn * 4 + q] = mat[vIdx * 4 + q];
+      nzA[vn * 2] = nzA[vIdx * 2]; nzA[vn * 2 + 1] = nzA[vIdx * 2 + 1];
       can[vn] = can[vIdx];
       uvs[vn * 2] = uvs[vIdx * 2]; uvs[vn * 2 + 1] = uvs[vIdx * 2 + 1] + 0.5;
       return vn++;
@@ -906,6 +913,7 @@ export class Terrain {
     geo.setAttribute('aMat', new THREE.BufferAttribute(mat.subarray(0, vn * 4), 4));
     geo.setAttribute('aCan', new THREE.BufferAttribute(can.subarray(0, vn), 1));
     geo.setAttribute('aRock', new THREE.BufferAttribute(rck.subarray(0, vn * 3), 3));
+    geo.setAttribute('aNz', new THREE.BufferAttribute(nzA.subarray(0, vn * 2), 2));
     geo.setIndex(idx);
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
@@ -913,6 +921,7 @@ export class Terrain {
     geo.boundingSphere!.radius += CANOPY * 1.3;
     geo.boundingBox!.max.y += CANOPY * 1.3;
 
+    yield;
     // Seen: eigene Wasserfläche auf fester Höhe
     let water: THREE.BufferGeometry | null = null;
     {
@@ -981,8 +990,10 @@ export class Terrain {
           const kind = pickTree(b, above, h2(i * 31 + tx, j * 17 + tz), forest > 0.5);
           trees.push({ kind, x, y: y - 0.35, z, s: 0.75 + h2(i + tx * 77, j + tz * 91) * 0.65, rot: r1 * Math.PI * 2, tint: 0.82 + r2 * 0.32 });
         }
+        if (j % 8 === 7) yield;
       }
     }
+    yield;
     // Dinge zum Entdecken (mittlere Stufe: dort sieht man sie aus der Ferne; die Kacheln sind am Raster ausgerichtet)
     const marks: TreeSpot[] = [];
     const fp: number[] = [];
@@ -1092,6 +1103,7 @@ export class Terrain {
         }
       }
     }
+    yield;
     let falls: THREE.BufferGeometry | null = null;
     if (fp.length) {
       falls = new THREE.BufferGeometry();

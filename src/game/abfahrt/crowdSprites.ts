@@ -12,6 +12,7 @@
  */
 import * as THREE from 'three';
 import { Act, CROWD_FLAGS, CROWD_PAL, CROWD_VERT, KINDS, STRIDE, crowdGeometry, disposeCrowdGeometry, needs, packPerson, type Person } from './crowd3d';
+import { freezeTarget } from './models3d';
 
 // ------------------------------------------------------------------ Bildvorrat
 
@@ -104,7 +105,7 @@ const ROLE = /* glsl */ `
   }
 `;
 
-export interface CrowdAtlas { a: THREE.Texture; b: THREE.Texture; rts: THREE.WebGLRenderTarget[]; dispose: () => void }
+export interface CrowdAtlas { a: THREE.Texture; b: THREE.Texture; dispose: () => void }
 
 /** Vorrat zeichnen (einmal, beim Anlegen der Grafik) */
 export function bakeCrowdAtlas(gl: THREE.WebGLRenderer): CrowdAtlas {
@@ -180,7 +181,9 @@ void main() {
   gl.setClearColor(prevC, prevA);
   for (const g of geos) disposeCrowdGeometry(g);
   mat.dispose();
-  return { a: rts[0].texture, b: rts[1].texture, rts, dispose: () => { for (const r of rts) r.dispose(); } };
+  const a = freezeTarget(gl, rts[0]);
+  const b = freezeTarget(gl, rts[1]);
+  return { a, b, dispose: () => { a.dispose(); b.dispose(); } };
 }
 
 // ------------------------------------------------------------------ Zeichnen

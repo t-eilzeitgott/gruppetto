@@ -4,6 +4,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/abfahrt/pool';
+import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { afterPaint } from '../lib/afterPaint';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
@@ -84,6 +85,9 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
       const low = /[?&]lowgfx\b/.test(window.location.search);
       if (low) { renderer.quality = 0.25; renderer.resize(); }
+      // zuletzt gefundene Auflösungsstufe dieses Geräts
+      else if (renderer.quality !== storedQuality()) { renderer.quality = storedQuality(); renderer.resize(); }
+      const gov = new QualityGovernor(0.5);
       // beim Neuaufbau läuft das Rennen weiter
       if (!engineRef.current || (gen === 0 && uiRef.current === 'ready')) engineRef.current = cb.current.make();
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
@@ -94,13 +98,12 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       let frames = 0;
       let idleT = 0;
       let lostT = 0;
-      let fpsT = 0;
-      let fpsN = 0;
       let rebuilt = false;
       let drawn = false;
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGen((x) => x + 1); } };
       const loop = (now: number) => {
-        const dt = Math.min(0.05, (now - prev) / 1000);
+        const raw = (now - prev) / 1000;
+        const dt = Math.min(0.05, raw);
         prev = now;
         const eng = engineRef.current!;
         // Kontext verloren und nicht zurückgekommen: neue Leinwand statt schwarzem Bild
@@ -128,15 +131,10 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         if (idle) { frames += 1; raf = requestAnimationFrame(loop); return; }
         acc += dt;
         frames += 1;
-        // nur echte Fahrt zählt (nicht Startkarte, Pause oder Bilder, in denen gerade Landschaft entsteht)
-        if (uiRef.current === 'playing' && !renderer.busy) { fpsT += dt; fpsN += 1; }
-        if (fpsT > 2.5) {
-          const fps = fpsN / fpsT;
-          if (!low && fps < 48 && renderer.quality > 0.45) { renderer.quality = Math.max(0.45, renderer.quality - 0.15); renderer.resize(); }
-          // läuft es wieder flüssig: Schärfe schrittweise zurück
-          else if (!low && fps > 57 && renderer.quality < 1) { renderer.quality = Math.min(1, renderer.quality + 0.1); renderer.resize(); }
-          fpsT = 0;
-          fpsN = 0;
+        // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
+        if (uiRef.current === 'playing' && !low) {
+          const nq = gov.frame(raw, renderer.quality);
+          if (nq !== null) { renderer.quality = nq; renderer.resize(); }
         }
         raf = requestAnimationFrame(loop);
       };

@@ -407,6 +407,9 @@ export class RiderModel {
   private blurs: THREE.Mesh[] = [];
   private lastRoll = 0;
   private blurOn = false;
+  /** weit weg: kleine Teile (Kurbel, Schriftzüge, Schuhe, Gelenkkappen, Speichen) nicht zeichnen */
+  private far = false;
+  private minor: THREE.Object3D[] = [];
   private crank: THREE.Mesh;
   readonly shadow: THREE.Mesh;
   readonly lamp: THREE.Mesh;
@@ -452,10 +455,13 @@ export class RiderModel {
       this.blurs.push(bd);
     }
     if (bike.decal) {
-      this.body.add(new THREE.Mesh(bike.decal.frame, bike.decal.mat));
-      if (bike.decal.rimF) this.wheelF.add(new THREE.Mesh(bike.decal.rimF, bike.decal.rimMat));
-      if (bike.decal.rimR) this.wheelR.add(new THREE.Mesh(bike.decal.rimR, bike.decal.rimMat));
+      const d = new THREE.Mesh(bike.decal.frame, bike.decal.mat);
+      this.body.add(d);
+      this.minor.push(d);
+      if (bike.decal.rimF) { const m = new THREE.Mesh(bike.decal.rimF, bike.decal.rimMat); this.wheelF.add(m); this.minor.push(m); }
+      if (bike.decal.rimR) { const m = new THREE.Mesh(bike.decal.rimR, bike.decal.rimMat); this.wheelR.add(m); this.minor.push(m); }
     }
+    this.minor.push(this.crank);
     const g = limbGeos(kit);
     const shoe = shoeBuild(kit, bike.spec.pedals, q);
     for (let s = 0; s < 2; s++) {
@@ -474,6 +480,7 @@ export class RiderModel {
       this.elbows.push(el);
       this.knees.push(kn);
       this.body.add(t, c, u, f, sh, el, kn);
+      this.minor.push(sh, el, kn);
     }
     this.torso = new THREE.Mesh(cached('torso', () => torsoGeo()), torsoMat(kit));
     // manche Räder bringen ihren eigenen Helm mit (Weltmeisterweiß, Gold)
@@ -516,6 +523,17 @@ export class RiderModel {
     this.shadow.renderOrder = 1;
     this.group.add(this.shadow);
     this.kitKey = riderKitKey(kit);
+  }
+
+  /** Detailstufe nach Abstand: weit weg die kleinen Teile weglassen (halb so viele Zeichenaufrufe) */
+  get isFar() { return this.far; }
+
+  setFar(far: boolean) {
+    if (far === this.far) return;
+    this.far = far;
+    for (const o of this.minor) o.visible = !far;
+    for (const m of this.spokes) m.visible = !far && !this.blurOn;
+    for (const m of this.blurs) m.visible = !far && this.blurOn;
   }
 
   private fadeMats: THREE.Material[] | null = null;
@@ -584,8 +602,8 @@ export class RiderModel {
       const on = this.blurOn ? dr > 0.16 : dr > 0.26;
       if (on !== this.blurOn && dr < 3) {
         this.blurOn = on;
-        for (const m of this.spokes) m.visible = !on;
-        for (const m of this.blurs) m.visible = on;
+        for (const m of this.spokes) m.visible = !on && !this.far;
+        for (const m of this.blurs) m.visible = on && !this.far;
       }
       this.wheelF.rotation.x = -p.roll * (this.fit.spinF ?? 1);
       this.wheelR.rotation.x = -p.roll * (this.fit.spinR ?? 1);

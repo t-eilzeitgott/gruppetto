@@ -62,21 +62,18 @@ void main() {
   vec3 n2 = texture2D(uNoise, vP.xz / 820.0).rgb;
   // Rinnen den Hang hinunter – nur an steilen Flanken gelesen
   float wallW = 1.0 - smoothstep(0.55, 0.85, N.y);
-  vec2 gA = vec2(vP.z / 520.0, h / 800.0);
-  vec2 gB = vec2(vP.x / 520.0, h / 800.0);
+  // Rinnen entlang der Wand (eine Projektion: waagrecht in Wandrichtung, senkrecht nach Höhe), Schichten quer dazu
+  vec2 tw = vec2(-N.z, N.x) / max(1e-3, length(N.xz));
+  vec2 gA = vec2(dot(vP.xz, tw) / 520.0, h / 800.0);
   vec2 gAx = dFdx(gA);
   vec2 gAy = dFdy(gA);
-  vec2 gBx = dFdx(gB);
-  vec2 gBy = dFdy(gB);
-  // Schichten quer zur Wand (gestreckt: Bänder alle gut 90 m)
   vec2 sA = vec2((vP.x + vP.z) / 2000.0, h / 90.0);
   vec2 sAx = dFdx(sA);
   vec2 sAy = dFdy(sA);
   float gul = 0.5;
   float strat = 0.5;
   if (wallW > 0.01) {
-    float wxz = abs(N.x) / (abs(N.x) + abs(N.z) + 1e-4);
-    gul = mix(0.5, mix(textureGrad(uNoise, gA, gAx, gAy).g, textureGrad(uNoise, gB, gBx, gBy).g, 1.0 - wxz), wallW);
+    gul = mix(0.5, textureGrad(uNoise, gA, gAx, gAy).g, wallW);
     strat = mix(0.5, textureGrad(uNoise, sA, sAx, sAy).r, wallW);
   }
   float rel = (h + 120.0) / uAmp;
