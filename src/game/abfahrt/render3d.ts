@@ -9,7 +9,11 @@ import * as THREE from 'three';
 import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
 import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
-import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, cobbleTex, detailTex, gravelTex, rockTex, roundTex, vergeTex } from './tex3d';
+import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, canopyTex, fallTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
+import { SkyLife } from './sky3d';
+import { landmarkGeometries, type Landmark } from './landmarks3d';
+import { buildPeaks, peakLight, setPeakOpacity } from './peaks3d';
+import { FAC_B, FAC_H, FAC_W, TB, portalFacade, tunnelMaterial, tunnelName, tunnelRing, tunnelUniforms, type TunnelUniforms } from './tunnel3d';
 import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
 import { GB, lin, lin255, propGeometries, treeGeometriesLow, type Prop3D, type RGBf } from './models3d';
 import { RiderModel, riderKitKey } from './rider3d';
@@ -91,9 +95,14 @@ export class Renderer3D {
   private mtnOld: THREE.Mesh | null = null;
   private mtnBiome: BiomeId | null = null;
   private mtnFade = 1;
+  /** Licht für die Berge am Horizont (eigener Shader) */
+  private peakU = peakLight();
   private valley: THREE.Mesh;
   private valleyMat: THREE.MeshLambertMaterial;
   private clouds: THREE.Sprite[] = [];
+  /** Adler, Gleitschirme, Ballon, Fernsehhubschrauber */
+  private skyLife = new SkyLife();
+  private leaderV = new THREE.Vector3();
 
   // Landschaft (Höhenfeld in drei Stufen)
   private terrain: Terrain | null = null;
@@ -115,16 +124,26 @@ export class Renderer3D {
   private mats!: {
     asphalt: THREE.MeshLambertMaterial; fresh: THREE.MeshLambertMaterial; cobble: THREE.MeshLambertMaterial; gravel: THREE.MeshLambertMaterial;
     verge: THREE.MeshLambertMaterial; marks: THREE.MeshLambertMaterial; terrain: THREE.MeshLambertMaterial; portal: THREE.MeshLambertMaterial; barrier: THREE.MeshLambertMaterial;
-    water: THREE.MeshPhongMaterial; tunnel: THREE.MeshBasicMaterial; facade: THREE.MeshLambertMaterial; roof: THREE.MeshLambertMaterial;
+    water: THREE.MeshPhongMaterial; facade: THREE.MeshLambertMaterial; roof: THREE.MeshLambertMaterial;
+    tunWall: THREE.MeshBasicMaterial; tunRoad: THREE.MeshBasicMaterial; tunMarks: THREE.MeshBasicMaterial; tunSign: THREE.MeshBasicMaterial; masonry: THREE.MeshLambertMaterial;
+    tunGlow: THREE.MeshBasicMaterial;
     tiles: THREE.MeshLambertMaterial; sign: THREE.MeshLambertMaterial; bulb: THREE.PointsMaterial; lantern: THREE.PointsMaterial;
     props: THREE.MeshLambertMaterial; ads: THREE.MeshLambertMaterial; billboard: THREE.MeshLambertMaterial; glow: THREE.PointsMaterial; lampGlow: THREE.MeshBasicMaterial;
   };
   private props!: Record<Prop3D, THREE.BufferGeometry>;
+  private markGeo!: Record<Landmark, THREE.BufferGeometry>;
+  private markMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
+  /** Wasserfälle: fließende Gischt (Textur läuft nach unten) */
+  private fallMat: THREE.MeshBasicMaterial | null = null;
   private atlas = new Map<string, AtlasEntry>();
   private bank = new SpriteBank();
   private labelTex = new Map<string, THREE.Texture>();
   private shadowTex!: THREE.Texture;
   private time = { value: 0 };
+  /** Licht in den Tunnelröhren (Leuchten, Tageslicht an den Portalen) */
+  private tunU: TunnelUniforms = tunnelUniforms();
+  /** Tunnel: erstes und letztes Segment je Segment im Tunnel */
+  private tunSpan = new Map<number, [number, number, number]>();
 
   // Dynamisches
   private riders = new Map<number, RiderModel>();
@@ -186,7 +205,7 @@ export class Renderer3D {
     this.overlayCv = overlay;
     this.overlay = overlay.getContext('2d')!;
     this.scene.fog = this.fog;
-    this.scene.add(this.hemi, this.sun, this.sun.target, this.fill, this.fill.target, this.objRoot);
+    this.scene.add(this.hemi, this.sun, this.sun.target, this.fill, this.fill.target, this.objRoot, this.skyLife.group);
 
     // Himmel
     this.skyMat = new THREE.ShaderMaterial({
@@ -246,11 +265,18 @@ export class Renderer3D {
     this.resize();
   }
 
-  private tex(c: HTMLCanvasElement, repeat = true): THREE.CanvasTexture {
+  /** Datentextur (Rauschen, Helligkeit): Werte wie gemalt, ohne Farbraum-Umrechnung */
+  private dataTex(c: HTMLCanvasElement, aniso: number): THREE.CanvasTexture {
+    const t = this.tex(c, true, aniso);
+    t.colorSpace = THREE.NoColorSpace;
+    return t;
+  }
+
+  private tex(c: HTMLCanvasElement, repeat = true, aniso = 16): THREE.CanvasTexture {
     const t = new THREE.CanvasTexture(c);
     if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = Math.min(16, this.gl.capabilities.getMaxAnisotropy());
+    t.anisotropy = Math.min(aniso, this.gl.capabilities.getMaxAnisotropy());
     return t;
   }
 
@@ -271,10 +297,16 @@ export class Renderer3D {
       verge: L({ map: this.tex(vergeTex()) }),
       marks: L({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
       terrain: L({ vertexColors: true, flatShading: true, map: detail }),
-      portal: L({ vertexColors: true, flatShading: true, side: THREE.DoubleSide }),
+      portal: L({ vertexColors: true, side: THREE.DoubleSide }),
       barrier: L({ vertexColors: true, side: THREE.DoubleSide }),
       water: new THREE.MeshPhongMaterial({ color: 0x2f7fb5, shininess: 90, specular: 0x88aacc, transparent: true, opacity: 0.92, flatShading: true }),
-      tunnel: new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+      tunWall: tunnelMaterial(this.tex(shotcreteTex()), this.tunU, 'wall'),
+      tunRoad: tunnelMaterial(this.tex(asphaltTex(false)), this.tunU, 'road'),
+      tunMarks: tunnelMaterial(null, this.tunU, 'marks', true),
+      tunSign: new THREE.MeshBasicMaterial({ map: this.tex(tunnelSignTex(), false), color: new THREE.Color(1.15, 1.15, 1.15) }),
+      masonry: L({ vertexColors: true, map: this.tex(masonryTex()), side: THREE.DoubleSide }),
+      // Tageslicht im Portal, von innen gesehen: weicher Schein über den Rand der Öffnung hinaus
+      tunGlow: new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(roundTex('rgba(255,255,255,1)', 'rgba(255,255,255,0)', 128)), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0, side: THREE.DoubleSide, fog: false }),
       facade: L({ map: facade, emissiveMap: facadeLit, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0 }),
       // Dächer, Giebel, Kamine, Fahnen: beidseitig (Dachüberstände sieht man von unten)
       roof: L({ vertexColors: true, flatShading: true, side: THREE.DoubleSide }),
@@ -289,6 +321,7 @@ export class Renderer3D {
       lampGlow: new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }),
     };
     this.props = propGeometries();
+    this.markGeo = landmarkGeometries();
     this.treesLo = treeGeometriesLow();
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
     // Weltkoordinaten statt UV – waagrechte Lagen laufen so über alle Flächen hinweg
@@ -325,11 +358,89 @@ export class Renderer3D {
       m.onBeforeCompile = rockify;
       m.customProgramCacheKey = () => key;
     }
+    // Landschaft pro Bildpunkt: Wald (Kronendach, organischer Rand), Fels und Schnee aus Gewichten je Ecke,
+    // aufgebrochen mit Rauschen – statt verwaschener Eckpunktfarben
+    const splatU = {
+      // ohne anisotrope Filterung: großflächig, fein genug ohne – und auf schwachen Grafikchips teuer
+      uNoise: { value: this.dataTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canopyTex(), 2) },
+      uForA: { value: new THREE.Color().setRGB(...lin255(30, 60, 34)) }, uForB: { value: new THREE.Color().setRGB(...lin255(56, 88, 46)) },
+      uSnow: { value: new THREE.Color().setRGB(...lin255(240, 245, 250)) },
+    };
+    const splat = (sh: THREE.WebGLProgramParametersWithUniforms) => {
+      Object.assign(sh.uniforms, splatU);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute vec3 aMat;\nattribute vec3 aRock;\nvarying vec3 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvMat = aMat;\nvRk = aRock;\nvTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec3 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;')
+        .replace('#include <color_fragment>', `
+          // Relief für die Beleuchtung (m): Rinnen im Fels, Kronen im Wald, Buckel in der Wiese
+          float tBump = 0.0;
+          #ifdef USE_COLOR
+            // Normale in Weltkoordinaten (weich zwischen den Ecken – keine Dreiecke im Schnee)
+            vec3 fnT = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
+            float camD = distance(vTW, cameraPosition);
+            vec3 nz = texture2D(uNoise, vTW.xz / 170.0).rgb;
+            vec3 nz2 = texture2D(uNoise, vTW.xz / 33.0).rgb;
+            vec3 tCol = vColor.rgb;
+            // Fels: Gewicht, Rauschen und die Steilheit dieser Fläche
+            float rk = smoothstep(0.42, 0.64, vMat.y + (nz.g - 0.5) * 0.45 + (nz2.b - 0.5) * 0.22 + (1.0 - fnT.y) * 0.45);
+            // Felswände: senkrechte Rinnen (Erosion) und waagrechte Bänder (Schichten) entlang der Wand
+            // zwei senkrechte Projektionen (x–y und z–y), nach Ausrichtung der Wand gemischt: keine Sprünge
+            float wxz = abs(fnT.x) / (abs(fnT.x) + abs(fnT.z) + 1e-4);
+            float gul = mix(texture2D(uNoise, vec2(vTW.z / 120.0, vTW.y / 190.0)).g, texture2D(uNoise, vec2(vTW.x / 120.0, vTW.y / 190.0)).g, 1.0 - wxz);
+            // feine Rinnen aus dem mittleren Rauschen (spart eigene Texturzugriffe)
+            float gul2 = nz2.b;
+            float strat = 0.5;
+            float far = smoothstep(60.0, 220.0, camD);
+            // feine Muster nur bis in mittlere Entfernung (weiter weg flimmern sie als Treppen)
+            float hiF = 1.0 - smoothstep(450.0, 1300.0, camD);
+            // Rinnen und Schichten nur an steilen Flächen (auf flachen würden die Projektionen zu Streifen)
+            float wallW = 1.0 - smoothstep(0.55, 0.85, fnT.y);
+            gul = mix(0.5, gul, wallW);
+            gul2 = mix(0.5, gul2, hiF * wallW);
+            strat = mix(0.5, strat, hiF * wallW);
+            vec3 rc = vRk * (0.8 + 0.42 * nz2.r) * mix(1.0, (0.84 + 0.26 * mix(gul, gul2, 0.4)) * (0.93 + 0.14 * strat), far);
+            // auf Absätzen (weniger steil) Gras und Geröll
+            rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, nz.g) * 0.6);
+            tBump += rk * far * ((gul - 0.5) * 18.0 + (gul2 - 0.5) * 3.5 * hiF);
+            // Wald: Rand aus Rauschen; aus der Nähe Waldboden (dort stehen echte Bäume), weiter weg das Kronendach
+            float fo = smoothstep(0.46, 0.58, vMat.x + (nz.r - 0.5) * 0.6 + (nz2.g - 0.5) * 0.28) * (1.0 - rk);
+            float crown = texture2D(uCanopy, vTW.xz / 10.0).r;
+            vec3 fc = mix(uForA, uForB, nz2.r) * (0.42 + crown * 0.72);
+            fc = mix(fc, uForA * vec3(0.62, 0.6, 0.5), smoothstep(0.78, 0.45, fnT.y));
+            float canopy = smoothstep(110.0, 240.0, camD);
+            fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, canopy);
+            tBump += fo * canopy * crown * 2.2;
+            tCol = mix(tCol, fc, fo);
+            tCol = mix(tCol, rc, rk);
+            // Schnee: bleibt in den Rinnen länger liegen
+            float sn = smoothstep(0.42, 0.6, vMat.z + (nz.b - 0.5) * 0.55 + (nz2.g - 0.5) * 0.25 + rk * (0.5 - gul) * 0.5) * smoothstep(0.38, 0.7, fnT.y + (nz2.r - 0.5) * 0.3 + (0.5 - gul) * 0.25);
+            tCol = mix(tCol, uSnow * (0.9 + 0.12 * nz2.b), sn);
+            tBump += (1.0 - rk) * (1.0 - fo) * far * (nz2.g - 0.5) * 3.0;
+            // Schnee glättet das Relief
+            tBump *= 1.0 - 0.7 * sn;
+            diffuseColor.rgb *= tCol;
+          #endif`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          {
+            // Relief als Höhenfeld: Normale über die Ableitungen im Bild verbiegen (wie eine Bump-Map)
+            vec3 sPos = -vViewPosition;
+            vec3 sX = dFdx(sPos);
+            vec3 sY = dFdy(sPos);
+            vec3 r1 = cross(sY, normal);
+            vec3 r2 = cross(normal, sX);
+            float det = dot(sX, r1) * faceDirection;
+            vec2 dH = vec2(dFdx(tBump), dFdy(tBump));
+            vec3 grad = sign(det) * (dH.x * r1 + dH.y * r2);
+            normal = normalize(abs(det) * normal - grad);
+          }`);
+    };
     // Landschaftsmaterialien: gröbere Stufen sinken dort ab, wo die feinere liegt
     const lower = <M extends THREE.Material>(m: M, lv: number, drop: number, key: string, rock: boolean): M => {
       const u = { uBox: { value: this.lvBox[Math.max(0, lv - 1)] }, uDrop: { value: drop }, uHole: this.holeU };
       m.onBeforeCompile = (sh) => {
-        if (rock) rockify(sh);
+        if (rock) { rockify(sh); splat(sh); }
         if (lv === 0) return;
         Object.assign(sh.uniforms, u);
         sh.vertexShader = sh.vertexShader
@@ -351,6 +462,25 @@ export class Renderer3D {
         '#ifdef USE_COLOR\nif (!gl_FrontFacing) diffuseColor.rgb = vColor.rgb;\n#endif');
     };
     this.mats.ads.customProgramCacheKey = () => 'ads-1';
+    // Bäume wiegen sich leise im Wind (nur Instanzen; je höher, desto mehr – Felsen und Zäune bleiben ruhig)
+    const windT = this.time;
+    this.mats.props.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = windT;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uTime;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          #ifdef USE_INSTANCING
+          {
+            vec3 ip = instanceMatrix[3].xyz;
+            float sw = max(0.0, position.y - 2.0);
+            float ph = uTime * 1.1 + ip.x * 0.11 + ip.z * 0.07;
+            float g = sin(ph) * 0.6 + sin(ph * 2.3 + 1.7) * 0.4;
+            transformed.x += g * sw * sw * 0.0016;
+            transformed.z += cos(ph * 0.8) * sw * sw * 0.0011;
+          }
+          #endif`);
+    };
+    this.mats.props.customProgramCacheKey = () => 'props-wind';
     // Billboards: Bild-Atlas mit Animationsrahmen
     this.buildAtlas();
     const timeRef = this.time;
@@ -498,6 +628,8 @@ export class Renderer3D {
     this.updateTerrain(g);
     this.updateTreeLod();
     this.updateRiders(g);
+    this.updateSky(g, biome, dt);
+    if (this.fallMat?.map) this.fallMat.map.offset.y -= dt * 0.9;
     this.updateCrowd(g, dt);
     this.updateObjects(g);
     this.updateParticles(g);
@@ -505,8 +637,24 @@ export class Renderer3D {
     this.drawOverlay(g);
   }
 
+  /** Himmel: Flieger; in den Finals der Hubschrauber über der Spitze des Feldes */
+  private updateSky(g: RaceView, biome: BiomeId, dt: number) {
+    const t = g.track;
+    let leader: THREE.Vector3 | null = null;
+    if (t.kind !== 'descent') {
+      let z = g.p.z;
+      let x = g.p.x;
+      for (const o of g.opps) if (o.z > z) { z = o.z; x = o.x; }
+      t.world(z, x, 0, this.w2);
+      leader = this.leaderV.set(this.w2.x, this.w2.y, this.w2.z);
+    }
+    this.skyLife.update(t, g.p.z, this.time.value, dt, biome, this.night, leader, this.camera.position);
+  }
+
   private reset(track: Track) {
     this.track = track;
+    this.skyLife.reset();
+    this.tunSpan.clear();
     this.clearTiles();
     this.terrain = new Terrain(track);
     this.setAds(track.names);
@@ -553,8 +701,10 @@ export class Renderer3D {
     // großer Sprung (neuer Lauf): wie beim Start schrittweise neu aufbauen
     const jump = this.lastTerrCam.distanceTo(cp) > 250;
     this.lastTerrCam.copy(cp);
-    const fresh = this.tiles.size === 0 || jump;
-    if (jump && this.tiles.size) this.boxSet.fill(false);
+    // nach einem Sprung passen die alten Kacheln nicht mehr zur Strecke (sie stünden als Berge im Bild):
+    // weg damit und wie beim Start neu aufbauen
+    if (jump && this.tiles.size) this.clearTiles();
+    const fresh = this.tiles.size === 0;
     const startup = !this.boxSet.every(Boolean);
     // Aufbau verteilt auf viele Bilder (kein langes Einfrieren beim Laden), beim Start etwas großzügiger.
     // Der Nahbereich (feine und mittlere Stufe) entsteht aber sofort vollständig: sonst schneidet die
@@ -730,6 +880,39 @@ export class Renderer3D {
         objs.push(im);
       }
     }
+    if (d.falls) {
+      if (!this.fallMat) {
+        const t = this.tex(fallTex());
+        this.fallMat = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(0.95, 0.97, 1) });
+      }
+      geos.push(d.falls);
+      const fm = new THREE.Mesh(d.falls, this.fallMat);
+      fm.renderOrder = 3;
+      objs.push(fm);
+    }
+    if (d.marks.length) {
+      const by = new Map<string, typeof d.marks>();
+      for (const t of d.marks) { let l = by.get(t.kind); if (!l) { l = []; by.set(t.kind, l); } l.push(t); }
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const up = new THREE.Vector3(0, 1, 0);
+      const c = new THREE.Color();
+      for (const [kind, list] of by) {
+        const geo = this.markGeo[kind as Landmark];
+        if (!geo) continue;
+        const im = new THREE.InstancedMesh(geo, this.markMat, list.length);
+        list.forEach((t, k) => {
+          q.setFromAxisAngle(up, t.rot);
+          m.compose(new THREE.Vector3(t.x, t.y, t.z), q, new THREE.Vector3(t.s, t.s, t.s));
+          im.setMatrixAt(k, m);
+          im.setColorAt(k, c.setRGB(t.tint, t.tint, t.tint));
+        });
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
+        im.computeBoundingSphere();
+        objs.push(im);
+      }
+    }
     for (const o of objs) this.scene.add(o);
     return { lv, key, objs, geos, trees, box: [tx * size, tz * size, (tx + 1) * size, (tz + 1) * size] };
   }
@@ -814,6 +997,28 @@ export class Renderer3D {
     this.mats.lantern.opacity = dusk * 0.85;
     this.mats.glow.opacity = Math.max(0, L.lights - 0.2) * 1.1 + this.tunnelDim * 0.4;
     if (!this.holeMode) this.valleyMat.color.copy(fogC);
+    // Berge am Horizont: dasselbe Licht wie die Landschaft (Lambert: Lichtfarbe · Stärke / π)
+    {
+      const P = this.peakU;
+      const ip = 1 / Math.PI;
+      P.uSunDir.value.copy(sd);
+      P.uSunC.value.copy(this.sun.color).multiplyScalar(this.sun.intensity * ip);
+      P.uSkyC.value.copy(this.hemi.color).multiplyScalar(this.hemi.intensity * ip);
+      P.uGroundC.value.copy(this.hemi.groundColor).multiplyScalar(this.hemi.intensity * ip);
+      P.uFillDir.value.set(-sd.x, 0.45, -sd.z).normalize();
+      P.uFillC.value.copy(this.fill.color).multiplyScalar(this.fill.intensity * ip);
+      P.uHaze.value.copy(fogC);
+    }
+    // Tunnel: warmweiße Leuchten, an den Portalen Tageslicht in der Farbe des Dunstes
+    // Augen gewöhnen sich an das Dunkel: im Tunnel heller belichten – die Röhre bleibt gleich, draußen
+    // (am Ausgang) wird es gleißend hell
+    const adapt = 1 + this.tunnelDim * 0.55;
+    this.gl.toneMappingExposure = 1.08 * adapt;
+    this.tunU.uDay.value.copy(fogC).multiplyScalar((0.9 + Math.min(2.7, this.sun.intensity / Math.max(0.2, dim)) * 0.32) / adapt);
+    this.tunU.uLamp.value.setRGB(1.0, 0.82, 0.58).multiplyScalar(15 / adapt);
+    this.tunU.uAmb.value = 0.06 / adapt;
+    this.mats.tunGlow.color.copy(fogC).lerp(new THREE.Color(1, 1, 1), 0.5);
+    this.mats.tunGlow.opacity = this.tunnelDim * 0.55;
     const water = pal.water;
     this.mats.water.color.setRGB(water[0] / 255, water[1] / 255, water[2] / 255, THREE.SRGBColorSpace);
     for (const m of this.waterMats) m.color.copy(this.mats.water.color);
@@ -891,7 +1096,8 @@ export class Renderer3D {
     if (biome !== this.mtnBiome) {
       if (this.mtnOld) { this.scene.remove(this.mtnOld); this.mtnOld.geometry.dispose(); (this.mtnOld.material as THREE.Material).dispose(); }
       this.mtnOld = this.mtn;
-      this.mtn = this.buildMountains(biome);
+      this.peakU.uNoise.value ??= this.dataTex(noiseTex(), 1);
+      this.mtn = buildPeaks(biome, this.peakU);
       this.scene.add(this.mtn);
       this.mtnFade = this.mtnOld ? 0 : 1;
       this.mtnBiome = biome;
@@ -900,7 +1106,7 @@ export class Renderer3D {
     for (const [m, a] of [[this.mtn, this.mtnFade], [this.mtnOld, 1 - this.mtnFade]] as [THREE.Mesh | null, number][]) {
       if (!m) continue;
       m.position.set(cp.x, cp.y - 240, cp.z);
-      (m.material as THREE.MeshLambertMaterial).opacity = a;
+      setPeakOpacity(m, a);
       m.visible = a > 0.01;
     }
     if (this.mtnFade >= 1 && this.mtnOld) {
@@ -916,132 +1122,6 @@ export class Renderer3D {
       (c.material as THREE.SpriteMaterial).opacity = 0.85 * (1 - this.light.stars * 0.6);
       (c.material as THREE.SpriteMaterial).color.setRGB(this.light.tint[0] / 255, this.light.tint[1] / 255, this.light.tint[2] / 255, THREE.SRGBColorSpace);
     });
-  }
-
-  /**
-   * Berge rund um den Horizont: ein Höhenfeld-Ring mit Graten aus „Ridged Noise“.
-   * Schnee nur auf flacheren Stellen, steile Flanken bleiben Fels, unten Wald und Matten,
-   * mit der Entfernung zunehmender Dunst – so wirkt die Kulisse wie ein echtes Panorama.
-   */
-  private buildMountains(biome: BiomeId): THREE.Mesh {
-    const pal = BIOME_PALETTES[biome];
-    let seed = 7;
-    for (const ch of biome) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
-    const cfg: Record<BiomeId, { amp: number; snow: number; tree: number; sharp: number }> = {
-      pass: { amp: 1750, snow: 0.3, tree: 0.15, sharp: 1.5 },
-      alpine: { amp: 1650, snow: 0.36, tree: 0.28, sharp: 1.4 },
-      forest: { amp: 950, snow: 0.68, tree: 0.6, sharp: 1.1 },
-      village: { amp: 1450, snow: 0.42, tree: 0.34, sharp: 1.3 },
-      lake: { amp: 1350, snow: 0.44, tree: 0.36, sharp: 1.3 },
-      vineyard: { amp: 430, snow: 2, tree: 0.9, sharp: 0.8 },
-    };
-    const c = cfg[biome];
-    // Wertrauschen mit weicher Interpolation
-    const hh = (x: number, y: number) => {
-      let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 2246822519);
-      h = Math.imul(h ^ (h >>> 13), 1274126177);
-      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-    };
-    const noise = (x: number, y: number) => {
-      const xi = Math.floor(x);
-      const yi = Math.floor(y);
-      const fx = x - xi;
-      const fy = y - yi;
-      const u = fx * fx * (3 - 2 * fx);
-      const v = fy * fy * (3 - 2 * fy);
-      const a = hh(xi, yi) + (hh(xi + 1, yi) - hh(xi, yi)) * u;
-      const b = hh(xi, yi + 1) + (hh(xi + 1, yi + 1) - hh(xi, yi + 1)) * u;
-      return a + (b - a) * v;
-    };
-    // Grate: 1 - |n|, geschärft, mehrere Oktaven, feinere Oktaven folgen den groben
-    const ridged = (x: number, y: number) => {
-      let sum = 0;
-      let amp = 0.55;
-      let f = 1;
-      let w = 1;
-      for (let o = 0; o < 5; o++) {
-        let n = 1 - Math.abs(noise(x * f, y * f) * 2 - 1);
-        n = Math.pow(n, 2.2);
-        sum += n * amp * w;
-        w = Math.min(1, n * 1.6);
-        f *= 2.03;
-        amp *= 0.5;
-      }
-      return sum;
-    };
-    // Horizont: hinter der Landschaft (die bis etwa 5 km reicht)
-    const R0 = 4600;
-    const R1 = 15000;
-    const NA = 260;
-    const NR = 26;
-    const pos: number[] = [];
-    const rad: number[] = [];
-    const heights: number[] = [];
-    for (let i = 0; i < NR; i++) {
-      const t = i / (NR - 1);
-      const r = R0 * Math.pow(R1 / R0, t);
-      // Anstieg vom Tal, ganz hinten etwas niedriger, damit die Gipfel davor die Silhouette bilden
-      const env = Math.min(1, Math.max(0, (r - R0) / 1800)) ** 1.3 * (1 - 0.3 * Math.max(0, (r - 9000) / (R1 - 9000)));
-      for (let j = 0; j <= NA; j++) {
-        const a = (j / NA) * Math.PI * 2;
-        const x = Math.cos(a) * r;
-        const z = Math.sin(a) * r;
-        const ridge = ridged(x / 2600 + 11, z / 2600 - 7);
-        const massif = 0.55 + 0.45 * noise(x / 6000 + 3, z / 6000 + 5);
-        const hgt = -420 + c.amp * 1.5 * env * massif * (0.12 + Math.pow(ridge, c.sharp) * 1.25);
-        pos.push(x, hgt, z);
-        rad.push(r);
-        heights.push(hgt);
-      }
-    }
-    const idx: number[] = [];
-    const W = NA + 1;
-    for (let i = 0; i < NR - 1; i++) {
-      for (let j = 0; j < NA; j++) {
-        const a = i * W + j;
-        const b = a + W;
-        idx.push(a, a + 1, b, a + 1, b + 1, b);
-      }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setIndex(idx);
-    geo.computeVertexNormals();
-    const nrm = geo.getAttribute('normal');
-    const snow = lin('#f4f7fb');
-    const snowShade = lin('#cdd8e6');
-    const rock = rgbLin(mixRGB(pal.far, [128, 126, 122], 0.55));
-    const rockDark = rgbLin(mixRGB(pal.far, [86, 84, 82], 0.6));
-    const forest = rgbLin(mixRGB(pal.mid, [40, 70, 45], 0.45));
-    const meadow = rgbLin(mixRGB(pal.mid, pal.valley, 0.5));
-    const haze = rgbLin(pal.haze);
-    const mix = (p: RGBf, q: RGBf, t: number): RGBf => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
-    const sm = (e0: number, e1: number, x: number) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
-    const col: number[] = [];
-    for (let k = 0; k < heights.length; k++) {
-      const h = heights[k];
-      const ny = nrm.getY(k);
-      const rel = (h + 120) / c.amp;
-      const jitter = (noise(pos[k * 3] / 140, pos[k * 3 + 2] / 140) - 0.5) * 0.12;
-      const steep = 1 - sm(0.55, 0.85, ny);
-      // Fels, unten Wald und Matten
-      let cc = mix(rock, rockDark, steep * 0.7);
-      const veg = 1 - sm(c.tree - 0.06, c.tree + 0.06, rel + jitter);
-      cc = mix(cc, mix(forest, meadow, sm(0.7, 0.95, ny) * 0.6), veg * (1 - steep * 0.6));
-      // Schnee: über der Schneegrenze, nur wo es nicht zu steil ist
-      const sn = sm(c.snow - 0.06, c.snow + 0.06, rel + jitter) * sm(0.28, 0.58, ny);
-      cc = mix(cc, mix(snowShade, snow, sm(0.6, 0.95, ny)), sn);
-      // Luftperspektive: weiter weg und weiter unten mehr Dunst
-      const far = sm(R0, R1, rad[k]);
-      const low = 1 - sm(-60, c.amp * 0.35, h);
-      cc = mix(cc, haze, Math.min(0.85, 0.34 + far * 0.36 + low * 0.18));
-      col.push(cc[0], cc[1], cc[2]);
-    }
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, fog: false, transparent: true, opacity: 1 }));
-    mesh.renderOrder = -5;
-    mesh.frustumCulled = false;
-    return mesh;
   }
 
   // ------------------------------------------------------------------ Abschnitte
@@ -1094,7 +1174,13 @@ export class Renderer3D {
     const portal = new GB();
     const bar = new GB();
     const water = new GB();
-    const tunnel = new GB();
+    const tunWall = new TB();
+    const tunRoad = new TB();
+    const tunMarks = new TB();
+    const tunSigns = new GB();
+    tunSigns.uv = true;
+    const mas = new GB();
+    mas.uv = true;
     const facade = new GB();
     facade.uv = true;
     const roof = new GB();
@@ -1122,7 +1208,7 @@ export class Renderer3D {
       const za = (i0 + r) * SEG;
       const zb = za + SEG;
       // --- Fahrbahn
-      if (!s.tunnel || true) {
+      if (!s.tunnel) {
         const tl = s.surface === 'cobble' ? 2.2 : 5;
         surf[s.surface].quad(P(a, -ROAD_HALF, 0), P(a, ROAD_HALF, 0), P(b, ROAD_HALF, 0), P(b, -ROAD_HALF, 0), [1, 1, 1],
           [[-ROAD_HALF / tl, za / tl], [ROAD_HALF / tl, za / tl], [ROAD_HALF / tl, zb / tl], [-ROAD_HALF / tl, zb / tl]]);
@@ -1146,9 +1232,14 @@ export class Renderer3D {
       }
       // --- Gelände
       if (!s.tunnel) {
-        for (const sg of [-1, 1]) this.terrainSide(terr, water, a, b, sg, P, sg < 0 ? lim.L[r] : lim.R[r], sg < 0 ? lim.L[r + 1] : lim.R[r + 1]);
+        for (const sg of [-1, 1]) this.terrainSide(terr, mas, a, b, sg, P, sg < 0 ? lim.L[r] : lim.R[r], sg < 0 ? lim.L[r + 1] : lim.R[r + 1]);
       } else {
-        this.tunnelPiece(tunnel, a, b, za, P, glows);
+        const [t0, t1, len] = this.tunnelOf(s.i);
+        const zs = t0 * SEG;
+        const ze = (t1 + 1) * SEG;
+        tunnelRing(tunWall, tunRoad, tunMarks, tunSigns, a, b, P, {
+          za, zb, dpa: Math.min(za - zs, ze - za), dpb: Math.min(zb - zs, ze - zb), lamp: s.lamp, len,
+        }, glows);
       }
       // --- Begrenzungen
       this.barriers(bar, ads, a, b, P);
@@ -1175,8 +1266,8 @@ export class Renderer3D {
         this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : '#ffffff');
       }
       for (const f of g.friends) if (Math.floor(f.meters / SEG) === s.i) this.arch(group, disp, a, { kind: 'arch', text: f.userId === 'me' ? 'Deine Bestmarke' : `Bestmarke ${f.name}`, sub: fmtKm(f.meters) }, f.color);
-      if (s.portal === 1) this.portal(portal, a, P, sec(s).biome, 1);
-      if (s.portal === 2) this.portal(portal, b, P, sec(s).biome, -1);
+      if (s.portal === 1) this.portal(portal, mas, roof, group, disp, a, P, sec(s).biome, 1);
+      if (s.portal === 2) this.portal(portal, mas, roof, group, disp, b, P, sec(s).biome, -1);
     }
 
     const add = (gb: GB, m: THREE.Material, order = 0, cast = false) => {
@@ -1199,7 +1290,14 @@ export class Renderer3D {
     add(portal, this.mats.portal, 0, true);
     add(bar, this.mats.barrier, 0, true);
     add(water, this.mats.water, 2);
-    add(tunnel, this.mats.tunnel);
+    for (const [tb, m] of [[tunWall, this.mats.tunWall], [tunRoad, this.mats.tunRoad], [tunMarks, this.mats.tunMarks]] as [TB, THREE.Material][]) {
+      if (tb.empty) continue;
+      const geo = tb.build();
+      disp.push(geo);
+      group.add(new THREE.Mesh(geo, m));
+    }
+    add(tunSigns, this.mats.tunSign);
+    add(mas, this.mats.masonry, 0, true);
     add(facade, this.mats.facade, 0, true);
     add(roof, this.mats.roof, 0, true);
     add(tiles, this.mats.tiles, 0, true);
@@ -1339,6 +1437,17 @@ export class Renderer3D {
         cols: [sand, sand, sand, wet, wet, bed, bed, bed],
       };
     }
+    if (side.wall > 0 && side.stone) {
+      // gemauerte Stützmauer mit Abdeckplatte, dahinter der Hang
+      const W = side.wall;
+      const top = side.ground === 'rock' ? 'meadow' : side.ground;
+      const o = [0, 0.025, 0.05, 0.07, 0.075, 0.48, 2.2, 9, 30];
+      const h = [0, W * 0.4, W * 0.75, W, W + 0.13, W + 0.13, 0, 0, 0];
+      for (let k = 6; k < 9; k++) h[k] = W + 0.13 + side.tilt * (o[k] - 0.48) + (k === 6 ? n(1) * 0.3 : 0);
+      const st = shadeF(lin('#c9c0b0'), 0.92 + n(80) * 0.12);
+      const cap = shadeF(lin('#dcd5c8'), 0.95 + n(81) * 0.08);
+      return { o, h, cols: [st, st, st, cap, shadeF(cap, 1.06), gcol(top, 2), gcol(top, 3), gcol(top, 4)] };
+    }
     if (side.wall > 0) {
       // Fels- oder Schneewand: vier Bänder mit leichten Buckeln und Schichtung statt einer glatten Fläche
       const W = side.wall;
@@ -1383,7 +1492,7 @@ export class Renderer3D {
     return { o, h, cols: [gcol(g, 0), gcol(g, 0), gcol(g, 1), gcol(g, 1), gcol(g, 1), gcol(g, 2), gcol(g, 3), gcol(g, 5)] };
   }
 
-  private terrainSide(terr: GB, water: GB, a: Row, b: Row, sg: number, P: (r: Row, x: number, h: number) => number[], limA: number, limB: number) {
+  private terrainSide(terr: GB, mas: GB, a: Row, b: Row, sg: number, P: (r: Row, x: number, h: number) => number[], limA: number, limB: number) {
     const sa = sg < 0 ? a.seg.L : a.seg.R;
     // am Tunnelportal läuft das Profil des Einschnitts bis an die Felswand
     const bt = b.seg.tunnel;
@@ -1400,6 +1509,16 @@ export class Renderer3D {
       const B0 = P(b, xb0, pb.h[k] - 0.04);
       const B1 = P(b, xb1, pb.h[k + 1] - 0.04);
       const col = pa.cols[k];
+      if (sa.stone && k < 5) {
+        // Stützmauer: Bruchstein, Lagen waagrecht entlang der Strecke
+        const za = a.seg.i * SEG / 1.8;
+        const zb = za + SEG / 1.8;
+        const hv = (h: number) => h / 1.8;
+        const q = [[za * sg, hv(pa.h[k])], [za * sg, hv(pa.h[k + 1])], [zb * sg, hv(pb.h[k + 1])], [zb * sg, hv(pb.h[k])]];
+        if (sg > 0) mas.quad(A0, A1, B1, B0, col, q);
+        else mas.quad(A1, A0, B0, B1, col, [q[1], q[0], q[3], q[2]]);
+        continue;
+      }
       const uv = (v: number[]) => [(v[0] + v[1] * 0.7) / 6, (v[2] - v[1] * 0.7) / 6];
       if (sg > 0) terr.quad(A0, A1, B1, B0, col, [uv(A0), uv(A1), uv(B1), uv(B0)]);
       else terr.quad(A1, A0, B0, B1, col, [uv(A1), uv(A0), uv(B0), uv(B1)]);
@@ -1414,7 +1533,6 @@ export class Renderer3D {
     const sc = shadeF(pa.cols[pa.cols.length - 1], 0.82);
     terr.quad(E0, D0, D1, E1, sc, [[0, 0], [0, 0.5], [0.3, 0.5], [0.3, 0]]);
     terr.quad(E0, E1, D1, D0, sc, [[0, 0], [0.3, 0], [0.3, 0.5], [0, 0.5]]);
-    void water;
   }
 
   private barriers(bar: GB, ads: GB, a: Row, b: Row, P: (r: Row, x: number, h: number) => number[]) {
@@ -1477,32 +1595,19 @@ export class Renderer3D {
     gb.quad(corner(-w / 2, -d / 2, y1), corner(w / 2, -d / 2, y1), corner(w / 2, d / 2, y1), corner(-w / 2, d / 2, y1), shadeF(col, 1.1));
   }
 
-  private tunnelPiece(gb: GB, a: Row, b: Row, za: number, P: (r: Row, x: number, h: number) => number[], glows: number[]) {
-    const x = EDGE - 0.35;
-    const m = ((za % 12) + 12) % 12;
-    const near = Math.min(m, 12 - m);
-    const br = 0.45 + 0.55 * Math.max(0, 1 - near / 5);
-    const c = (hex: string) => shadeF(lin(hex), br);
-    const prof: [number, number][] = [[-x, 0], [-x, 1.3], [-x, 4.3], [-1.7, 5.7], [1.7, 5.7], [x, 4.3], [x, 1.3], [x, 0]];
-    const cols = [c('#c4c6c8'), c('#6e7176'), c('#575a5f'), c('#4b4e53'), c('#575a5f'), c('#6e7176'), c('#c4c6c8')];
-    for (let k = 0; k < prof.length - 1; k++) {
-      const [x0, h0] = prof[k];
-      const [x1, h1] = prof[k + 1];
-      gb.quad(P(a, x0, h0), P(b, x0, h0), P(b, x1, h1), P(a, x1, h1), cols[k]);
-    }
-    if (a.seg.lamp) {
-      for (const sg of [-1, 1]) {
-        const lamp = lin('#fff1c8');
-        const p0 = P(a, sg * 1.2 - 0.3, 5.62);
-        const p1 = P(a, sg * 1.2 + 0.3, 5.62);
-        const p2 = P(b, sg * 1.2 + 0.3, 5.62);
-        const p3 = P(b, sg * 1.2 - 0.3, 5.62);
-        const mid = (u: number[], v: number[]) => [(u[0] + v[0]) / 2, u[1], (u[2] + v[2]) / 2];
-        gb.quad(p0, p1, mid(p1, p2), mid(p0, p3), lamp);
-        const g = P(a, sg * 1.2, 5.3);
-        glows.push(g[0], g[1], g[2]);
-      }
-    }
+  /** Tunnel, in dem Segment i liegt: erstes und letztes Segment, Länge in m */
+  private tunnelOf(i: number): [number, number, number] {
+    const hit = this.tunSpan.get(i);
+    if (hit) return hit;
+    const t = this.track!;
+    let a = i;
+    while (a > t.first && t.seg(a - 1).tunnel) a--;
+    let b = i;
+    while (t.seg(b + 1).tunnel) b++;
+    const out: [number, number, number] = [a, b, (b - a + 1) * SEG];
+    for (let k = a; k <= b; k++) this.tunSpan.set(k, out);
+    if (this.tunSpan.size > 4000) this.tunSpan.clear();
+    return out;
   }
 
   /**
@@ -1511,8 +1616,11 @@ export class Renderer3D {
    * Gelände – so sieht man nirgends an ihr vorbei. dir = 1: Einfahrt (Vorbau zeigt zur Anfahrt),
    * dir = −1: Ausfahrt (Vorbau zeigt in Fahrtrichtung).
    */
-  private portal(gb: GB, a: Row, P: (r: Row, x: number, h: number) => number[], biome: BiomeId, dir: 1 | -1) {
+  private portal(gb: GB, mas: GB, trim: GB, group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], a: Row, P: (r: Row, x: number, h: number) => number[], biome: BiomeId, dir: 1 | -1) {
     const pal = BIOME_PALETTES[biome];
+    // Felswand: eigene Geometrie mit weichen Normalen (sonst sieht man jedes Dreieck des Reliefs)
+    const outer = gb;
+    gb = new GB();
     const x = EDGE - 0.35;
     const T = this.terrain!;
     const reg = this.region!;
@@ -1531,7 +1639,7 @@ export class Renderer3D {
       // Gelände gleich hinter der Wand (dort beginnt der Berg über der Röhre): die Wand reicht bis darüber
       const hb = T.heightIn(reg, wp[0] + fx * dir * 6, wp[2] + fz * dir * 6) - a.y;
       const al = Math.abs(l);
-      const minTop = al < 26 ? 10 : -Infinity;
+      const minTop = al < FAC_W + 2 ? FAC_H + 2.4 : al < 26 ? FAC_H + 2.4 - (al - FAC_W - 2) * 0.35 : -Infinity;
       tops.push(Math.max(minTop, ht + 2.2, al < 26 ? hb + 0.8 : -Infinity));
       bots.push(Math.min(-9, ht - 6));
     }
@@ -1542,7 +1650,8 @@ export class Renderer3D {
       for (let j = 0; j <= NJ; j++) {
         const l = lat(i);
         const h = hAt(i, j);
-        const k = Math.max(0, Math.min(1, (Math.hypot(l, (h - 2.8) * 1.15) - 6.2) / 6));
+        // Relief erst mit Abstand zur Fassade
+        const k = Math.max(0, Math.min(1, (Math.hypot(Math.max(0, Math.abs(l) - FAC_W), Math.max(0, h - FAC_H)) - 0.4) / 5));
         const edge = j === NJ ? 0.4 : 1; // Oberkante ruhiger (schließt an die Landschaft an)
         const v = 1.5 * Math.sin(l * 0.37 + h * 0.21) + 1.1 * Math.sin(l * 0.13 - h * 0.43 + 1.7)
           + 0.6 * Math.sin(l * 0.71 + h * 0.67) + (hash(i * 131 + j * 977 + a.seg.i) - 0.5) * 1.3;
@@ -1566,7 +1675,7 @@ export class Renderer3D {
       const l0 = lat(i);
       const l1 = lat(i + 1);
       const h1 = Math.max(hAt(i, j + 1), hAt(i + 1, j + 1));
-      return l1 > -x - 1.4 && l0 < x + 1.4 && h1 > -9.5 && Math.min(hAt(i, j), hAt(i + 1, j)) < 7.6;
+      return l1 > -FAC_W - 0.9 && l0 < FAC_W + 0.9 && h1 > FAC_B - 9 && Math.min(hAt(i, j), hAt(i + 1, j)) < FAC_H + 0.7;
     };
     const top = new Array<number>(NI).fill(-1); // je Spalte: höchste ausgesparte Zeile
     for (let i = 0; i < NI; i++) for (let j = 0; j < NJ; j++) if (near(i, j)) top[i] = j;
@@ -1600,18 +1709,8 @@ export class Renderer3D {
         outline.push(N(i, jt));
       }
       for (let j = top[i0]; j >= 1; j--) outline.push(N(i0, j));               // links hinunter
-      const hole: number[][] = [];
-      const steps = 10;
-      hole.push([-x, 0], [x, 0], [x, 4.3]);
-      for (let k = 1; k <= steps; k++) {
-        const t = k / steps;
-        hole.push([x * (1 - t) * (1 - t) + x * 2 * t * (1 - t) * 1 + 0 * t * t, 4.3 * (1 - t) * (1 - t) + 5.8 * 2 * t * (1 - t) + 5.85 * t * t]);
-      }
-      for (let k = 1; k < steps; k++) {
-        const t = k / steps;
-        hole.push([0 * (1 - t) * (1 - t) - x * 2 * t * (1 - t) - x * t * t, 5.85 * (1 - t) * (1 - t) + 5.8 * 2 * t * (1 - t) + 4.3 * t * t]);
-      }
-      hole.push([-x, 4.3]);
+      // Aussparung: Rechteck der Fassade (sie steht davor und reicht seitlich in den Fels)
+      const hole: number[][] = [[-FAC_W + 0.3, FAC_B], [FAC_W - 0.3, FAC_B], [FAC_W - 0.3, FAC_H - 0.2], [-FAC_W + 0.3, FAC_H - 0.2]];
       const v2 = (pts: number[][]) => pts.map((p) => new THREE.Vector2(p[0], p[1]));
       const contour = v2(outline.map((n) => [n[3], n[4]]));
       const holeV = v2(hole);
@@ -1627,24 +1726,42 @@ export class Renderer3D {
         gb.tri([A[0], A[1], A[2]], [B[0], B[1], B[2]], [C[0], C[1], C[2]], colAt(0, cy, i * 17 + k));
       }
     }
-    // Betonvorbau: kurzes Stück Röhre vor der Felswand, außen Beton, vorn ein kräftiger Rahmen
-    const conc = lin('#d6d1c7');
-    const concD = lin('#b2ada3');
-    const inner: [number, number][] = [[-x, 0], [-x, 1.3], [-x, 4.3], [-1.7, 5.7], [1.7, 5.7], [x, 4.3], [x, 1.3], [x, 0]];
-    const outer: [number, number][] = [[-x - 0.7, -0.3], [-x - 0.7, 1.3], [-x - 0.7, 4.6], [-2.0, 6.55], [2.0, 6.55], [x + 0.7, 4.6], [x + 0.7, 1.3], [x + 0.7, -0.3]];
-    const D = 3.2;
-    const at = (l: number, h: number, d: number) => { const q = P(a, l, h); return [q[0] - fx * d * dir, q[1], q[2] - fz * d * dir]; };
-    const tc = lin('#7a7d82');
-    for (let k = 0; k < inner.length - 1; k++) {
-      const [i0x, i0h] = inner[k];
-      const [i1x, i1h] = inner[k + 1];
-      const [o0x, o0h] = outer[k];
-      const [o1x, o1h] = outer[k + 1];
-      // Innenseite (wie die Röhre), Außenseite (Beton), Stirnseite vorn
-      gb.quad(at(i0x, i0h, 0), at(i1x, i1h, 0), at(i1x, i1h, D), at(i0x, i0h, D), shadeF(tc, 0.9 + (k % 2) * 0.08));
-      gb.quad(at(o0x, o0h, D), at(o1x, o1h, D), at(o1x, o1h, 0), at(o0x, o0h, 0), k === 3 ? shadeF(concD, 1.05) : concD);
-      gb.quad(at(i0x, i0h, D), at(i1x, i1h, D), at(o1x, o1h, D), at(o0x, o0h, D), conc);
+    // gemauerte Fassade mit Bogen, davor die Inschrift
+    const { plaque } = portalFacade(mas, trim, a, P, dir);
+    const t = this.track!;
+    const [t0, t1, len] = this.tunnelOf(dir > 0 ? a.seg.i : a.seg.i - 1);
+    const name = tunnelName(t.lang, t0 * 7 + t1 * 13 + t.seed);
+    const key = `plaque:${name}:${len}`;
+    let tex = this.labelTex.get(key);
+    if (!tex) { tex = this.tex(plaqueTex(name, `m ${Math.round(len / 2) * 2}`), false); this.labelTex.set(key, tex); }
+    const pg = new GB();
+    pg.uv = true;
+    pg.quad(plaque[0], plaque[1], plaque[2], plaque[3], [1, 1, 1], [[0, 0], [1, 0], [1, 1], [0, 1]]);
+    const geo = pg.build();
+    const mat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+    disp.push(geo, mat);
+    group.add(new THREE.Mesh(geo, mat));
+    if (!gb.empty) {
+      const rg = gb.buildSmooth(new THREE.Vector3(-fx * dir, 0.25, -fz * dir));
+      disp.push(rg);
+      const rm = new THREE.Mesh(rg, this.mats.portal);
+      rm.castShadow = true;
+      group.add(rm);
     }
+    void outer;
+    // Schein des Tageslichts in der Öffnung (nur von innen zu sehen, siehe tunGlow)
+    {
+      const at = (l: number, h: number) => { const q = P(a, l, h); return [q[0] + fx * 0.4 * dir, q[1], q[2] + fz * 0.4 * dir]; };
+      const gg = new GB();
+      gg.uv = true;
+      gg.quad(at(-8, -2.6), at(8, -2.6), at(8, 9.4), at(-8, 9.4), [1, 1, 1], [[0, 0], [1, 0], [1, 1], [0, 1]]);
+      const g2 = gg.build();
+      disp.push(g2);
+      const m = new THREE.Mesh(g2, this.mats.tunGlow);
+      m.renderOrder = 6;
+      group.add(m);
+    }
+    void gb; void x;
   }
 
   /**
@@ -2315,7 +2432,7 @@ export class Renderer3D {
     if (g.phase === 'crash' || g.phase === 'over') pm.crash(g.phaseT, g.crashSpin);
     else {
       pm.resetCrash();
-      pm.pose({ lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, light: this.bikeLight(), roll: p.z / 0.34, stand: p.stand ?? 0 });
+      pm.pose({ lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, light: this.bikeLight(), roll: p.z / 0.34, stand: p.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0 });
     }
     // Bildschirmposition für Popups
     const v = new THREE.Vector3(w.x, w.y + air + 1.9, w.z).project(this.camera);
@@ -2385,7 +2502,7 @@ export class Renderer3D {
     track.world(o.z, o.x, 0, w);
     m.group.position.set(w.x, w.y, w.z);
     m.group.rotation.y = -w.th;
-    m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.bikeLight(), roll: o.z / 0.34, stand: o.stand ?? 0 });
+    m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.bikeLight(), roll: o.z / 0.34, stand: o.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0 });
   }
 
   private poolGet(kind: string, make: () => THREE.Object3D): THREE.Object3D {
@@ -2727,7 +2844,7 @@ export class Renderer3D {
   }
 
   dispose() {
-    try { this.clearChunks(); } catch { /* Kontext evtl. schon weg */ }
+    try { this.clearChunks(); this.skyLife.dispose(); } catch { /* Kontext evtl. schon weg */ }
     try { this.gl.dispose(); } catch { /* egal */ }
     // Kontext sofort freigeben: iOS erlaubt nur wenige gleichzeitig – sonst bleibt ein späteres Spiel schwarz
     try { this.gl.forceContextLoss(); } catch { /* egal */ }

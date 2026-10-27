@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { EDGE, MOUNTAIN_FINISH, SEG, type BiomeId, type Seg, type Side, type Track } from './track';
 import { BIOME_PALETTES, mixRGB, type RGB } from './palette';
 import { lin255, type RGBf } from './models3d';
+import { MARK_CELL, markCandidate, nearMark, type Landmark } from './landmarks3d';
 
 // ------------------------------------------------------------------ Rauschen
 
@@ -79,6 +80,8 @@ const STEP = 4;
 /** Einflussradius einer Probe */
 const R_INF = 620;
 const R_INF2 = R_INF * R_INF;
+/** Höhe des Kronendachs auf den gröberen Stufen (m) */
+const CANOPY = 12;
 /** Maximale Breite des Korridors (Nahbereich) ab Straßenmitte */
 export const LIM_MAX = EDGE + 12;
 /** Bis hierhin (ab Straßenmitte) bleibt das Höhenfeld sicher unter der Straße – je nach Gitterweite */
@@ -108,7 +111,7 @@ function profile(kind: number, tilt: number, wall: number, e: number, b: number,
     case K_TUNNEL: {
       // Berg über dem Tunnel: am Portal gut 10 m, nach innen steil ansteigend (Felsrücken statt Erdwall).
       // Bergseitig steigt er weiter an, talseitig fällt er zum Tal hin ab (sonst stünde dort eine Wand)
-      const top = 10 + Math.min(depth * 0.62, 44);
+      const top = 13 + Math.min(depth * 1.25, 80);
       if (tilt < -0.03) return smax(top - Math.max(0, e - 4) * 0.8, floorRel, 20);
       return smin(top + 0.5 * e, Math.max(ridgeRel, 60), 40);
     }
@@ -158,6 +161,10 @@ export interface TileData {
   geo: THREE.BufferGeometry;
   water: THREE.BufferGeometry | null;
   trees: TreeSpot[];
+  /** Hütten, Kapellen, Höfe … (nur mittlere Stufe) */
+  marks: TreeSpot[];
+  /** Wasserfälle: Bänder, die an steilen Hängen hinabfallen (nur mittlere Stufe) */
+  falls: THREE.BufferGeometry | null;
   minY: number;
   maxY: number;
 }
@@ -424,6 +431,10 @@ export class Terrain {
     if (S.n === 0) { o.h = 0; o.water = 0; o.lakeY = -1e4; o.floor = -300; o.b = 0; o.dRoad = 1e9; o.ridge = 400; return o; }
     // Gipfel und Grate über dem Talboden: hoch genug, dass über jedem Pass noch Berge aufragen
     const ridgeH = 300 + 400 * ridged(x / 1300, z / 1300) + 120 * fbm(x / 2600, z / 2600, 2) + 60 * (ridged(x / 430 + 3.1, z / 430 - 1.7) - 0.45);
+    // wo der freie Berg beginnt, schwankt entlang des Tals: Rippen reichen weit herab, dazwischen steile Buchten
+    const spur = 140 + 330 * fbm(x / 360 + 4.1, z / 360 - 2.7, 2);
+    // Höhenlinien wellig: der Hang hat Rippen und Rinnen statt einer glatten schiefen Ebene
+    const warp = (fbm(x / 240 + 1.3, z / 240 - 0.7, 3) - 0.5) * 1.1;
     let sw = 0;
     let sh = 0;
     let swat = 0;
@@ -446,14 +457,18 @@ export class Terrain {
       const kind = right ? S.kR[q] : S.kL[q];
       const tilt = right ? S.tR[q] : S.tL[q];
       const wall = right ? S.wR[q] : S.wL[q];
-      const e = Math.max(0, Math.abs(lat) - EDGE);
+      const e0 = Math.max(0, Math.abs(lat) - EDGE);
+      const e = kind === K_WATER || kind === K_TUNNEL ? e0 : e0 * (1 + warp * sstep(30, 170, e0));
       const y = S.y[q];
       const fl = S.floor[q];
       const lk = S.lake[q];
       let p = profile(kind, tilt, wall, e, S.b[q], fl - y, fl + ridgeH - y, lk - y, S.lakeW[q], S.dep[q]);
       // weiter draußen gehen alle Querprofile in dieselbe freie Berglandschaft über – sonst stünde am Rand
       // des Einflussbereichs eine Wand (Talseiten steigen so zu Bergen auf der Gegenseite an)
-      const kf = kind === K_WATER ? sstep(S.lakeW[q] + 15, R_INF - 20, e) : sstep(200, R_INF - 20, e);
+      // auch vor und hinter einem Straßenstück (seitlicher Abstand klein, wirklicher Abstand groß) – sonst
+      // stünde dort, wo die Straße abbiegt, am Rand des Einflussbereichs eine Wand
+      const ed = Math.max(e, Math.sqrt(d2) * 0.88);
+      const kf = kind === K_WATER ? sstep(S.lakeW[q] + 15, R_INF - 20, ed) : sstep(spur, R_INF - 20, ed);
       if (kf > 0) p += (fl + ridgeH * 0.75 - y - p) * kf;
       sw += w;
       sh += w * (y + p);
@@ -507,6 +522,10 @@ export class Terrain {
       const a2 = Math.min(4, 0.25 + dr * 0.012);
       o.h += ((fbm(x / 70, z / 70, 3) - 0.5) * 2 * a1 + (vnoise(x / 19, z / 19) - 0.5) * 2 * a2) * (1 - wb);
     }
+    // Rippen und Rinnen an den großen Hängen weit weg von der Straße: Grate laufen den Hang hinunter,
+    // dazwischen Mulden – sonst steht dort eine glatte Wand. Im Talboden bleibt es ruhig.
+    const sp = sstep(150, 430, dr) * sstep(25, 190, o.h - o.floor) * (1 - wb);
+    if (sp > 0) o.h += ((ridged(x / 430 + 5.3, z / 430 - 2.1) - 0.42) * 95 + (ridged(x / 170 - 1.7, z / 170 + 4.2) - 0.42) * 26) * sp;
     // Seegrund, zum Ufer hin weich ansteigend (keine senkrechten Wände rund um den See)
     if (wb > 0) o.h += (o.lakeY - 6 - Math.min(20, dr * 0.05) - o.h) * wb;
     if (!sg || sg.n === 0) return o;
@@ -751,18 +770,36 @@ export class Terrain {
       }
       if (j % 6 === 5) yield;
     }
+    const cols = this.colorsFor(lv);
+    // Kronendach: Wald ragt auf den gröberen Stufen als Fläche über den Boden (dort stehen keine einzelnen
+    // Bäume) – mit leicht welliger Höhe. Nicht in Straßennähe, nicht an Seen und Tunnelportalen.
+    if (lv >= 1) {
+      const H0 = H.slice();
+      for (let j = 1; j < G - 1; j++) {
+        for (let i = 1; i < G - 1; i++) {
+          const k = j * G + i;
+          if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < 45) continue;
+          const x = x0 + (i - 1) * cell;
+          const z = z0 + (j - 1) * cell;
+          const f = this.forestAt(x, z, H0[k] - FL[k], (H0[k + 1] - H0[k - 1]) / (2 * cell), (H0[k + G] - H0[k - G]) / (2 * cell), cols[BI[k]]);
+          if (f > 0) H[k] = H0[k] + f * CANOPY * (0.8 + 0.4 * vnoise(x / 37, z / 37)) * sstep(45, 90, DR[k]);
+        }
+      }
+    }
     // Normalen aus dem Gitter (Rand macht sie über Kachelgrenzen hinweg gleich)
     const V = N + 1;
     const pos = new Float32Array((V * V + 4 * V * 2) * 3);
     const nor = new Float32Array(pos.length);
     const col = new Float32Array(pos.length);
+    // je Ecke: Gewichte für Wald, Fels, Schnee (der Shader mischt pro Bildpunkt mit Rauschen) und die Felsfarbe
+    const mat = new Float32Array(pos.length);
+    const rck = new Float32Array(pos.length);
     const uvs = new Float32Array((pos.length / 3) * 2);
     let minY = Infinity;
     let maxY = -Infinity;
     const pal = (b: number) => BIOME_PALETTES[BIOMES[b]];
     const tmp: RGBf = [0, 0, 0];
     const mix = (a: RGBf, b: RGBf, t: number, out: RGBf) => { out[0] = a[0] + (b[0] - a[0]) * t; out[1] = a[1] + (b[1] - a[1]) * t; out[2] = a[2] + (b[2] - a[2]) * t; return out; };
-    const cols = this.colorsFor(lv);
     for (let j = 0; j < V; j++) {
       for (let i = 0; i < V; i++) {
         const k = (j + 1) * G + (i + 1);
@@ -792,19 +829,19 @@ export class Terrain {
         const n2 = vnoise(x / 31, z / 31);
         const wet = W[k];
         let c: RGBf;
+        const rc = mix(C.rock, C.rockDark, n2 * 0.8 + steep * 0.3, [0, 0, 0]);
+        rck[v * 3] = rc[0]; rck[v * 3 + 1] = rc[1]; rck[v * 3 + 2] = rc[2];
         if (wet > 0.5 && y < LY[k] - 0.5) {
           c = mix(C.sand, C.lakeBed, sstep(0, 6, LY[k] - y), tmp);
         } else {
-          // Wiese oder Feld im Tal, Wald am Hang, Fels oben und an steilen Stellen
+          // Wiese oder Feld im Tal; Wald am Hang, Fels oben und an steilen Stellen, Schnee als Gewichte
           const field = C.fieldy * sstep(55, 12, above) * (n1 > 0.5 ? 1 : 0.4);
           c = mix(C.meadow, C.meadow2, n2, tmp);
           if (field > 0) c = mix(c, (Math.floor(x / 37 + n1 * 4) + Math.floor(z / 29)) % 3 === 0 ? C.field : C.field2, field * 0.85, c);
           const forest = sstep(C.forestThr, C.forestThr + 0.08, n1 + (n2 - 0.5) * 0.12) * sstep(C.treeLine + 25, C.treeLine - 15, above) * (1 - steep);
-          if (forest > 0) c = mix(c, mix(C.forest, C.forest2, n2, [0, 0, 0]), forest, c);
           const rocky = Math.max(steep, sstep(C.rockLine - 20, C.rockLine + 60, above + (n1 - 0.5) * 40) * 0.85);
-          if (rocky > 0) c = mix(c, mix(C.rock, C.rockDark, n2 * 0.8 + steep * 0.3, [0, 0, 0]), rocky, c);
           const snow = sstep(C.snowLine - 25, C.snowLine + 15, above + (n2 - 0.5) * 50 + (n1 - 0.5) * 60) * sstep(0.5, 0.74, ny);
-          if (snow > 0) c = mix(c, C.snow, snow, c);
+          mat[v * 3] = forest; mat[v * 3 + 1] = rocky; mat[v * 3 + 2] = snow;
         }
         const shadeV = 0.94 + (n2 - 0.5) * 0.1;
         col[v * 3] = c[0] * shadeV; col[v * 3 + 1] = c[1] * shadeV; col[v * 3 + 2] = c[2] * shadeV;
@@ -832,6 +869,7 @@ export class Terrain {
       pos[vn * 3] = pos[vIdx * 3]; pos[vn * 3 + 1] = Math.max(pos[vIdx * 3 + 1] - L.skirt, SF[this.gridK(vIdx, V, G)]); pos[vn * 3 + 2] = pos[vIdx * 3 + 2];
       nor[vn * 3] = nor[vIdx * 3]; nor[vn * 3 + 1] = nor[vIdx * 3 + 1]; nor[vn * 3 + 2] = nor[vIdx * 3 + 2];
       col[vn * 3] = col[vIdx * 3] * 0.8; col[vn * 3 + 1] = col[vIdx * 3 + 1] * 0.8; col[vn * 3 + 2] = col[vIdx * 3 + 2] * 0.8;
+      for (let q = 0; q < 3; q++) { mat[vn * 3 + q] = mat[vIdx * 3 + q]; rck[vn * 3 + q] = rck[vIdx * 3 + q] * 0.8; }
       uvs[vn * 2] = uvs[vIdx * 2]; uvs[vn * 2 + 1] = uvs[vIdx * 2 + 1] + 0.5;
       return vn++;
     };
@@ -859,6 +897,8 @@ export class Terrain {
     geo.setAttribute('normal', new THREE.BufferAttribute(nor.subarray(0, vn * 3), 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col.subarray(0, vn * 3), 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uvs.subarray(0, vn * 2), 2));
+    geo.setAttribute('aMat', new THREE.BufferAttribute(mat.subarray(0, vn * 3), 3));
+    geo.setAttribute('aRock', new THREE.BufferAttribute(rck.subarray(0, vn * 3), 3));
     geo.setIndex(idx);
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
@@ -905,6 +945,7 @@ export class Terrain {
           const gj = Math.round((z - z0) / cell) + 1;
           const k = gj * G + gi;
           if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < LIM_MAX + 3 || segDist(sgr, x, z) < LIM_MAX + 2) continue;
+          if (nearMark(x, z, NOISE_SEED)) continue;
           const b = BI[k];
           const C = cols[b];
           // Höhe genau wie im Gitter (bilinear), damit nichts schwebt
@@ -932,7 +973,132 @@ export class Terrain {
         }
       }
     }
-    return { geo, water, trees, minY, maxY };
+    // Dinge zum Entdecken (mittlere Stufe: dort sieht man sie aus der Ferne; die Kacheln sind am Raster ausgerichtet)
+    const marks: TreeSpot[] = [];
+    const fp: number[] = [];
+    const fuv: number[] = [];
+    // Höhe auf dem Gitter (bilinear), innerhalb der Kachel
+    const hAt = (px: number, pz: number) => {
+      const gx = Math.min(G - 2.001, Math.max(0, (px - x0) / cell + 1));
+      const gz = Math.min(G - 2.001, Math.max(0, (pz - z0) / cell + 1));
+      const ix = Math.floor(gx);
+      const iz = Math.floor(gz);
+      const ux = gx - ix;
+      const uz = gz - iz;
+      const k = iz * G + ix;
+      return H[k] * (1 - ux) * (1 - uz) + H[k + 1] * ux * (1 - uz) + H[k + G] * (1 - ux) * uz + H[k + G + 1] * ux * uz;
+    };
+    /** Wasserfall: vom Punkt aus immer steilsten Weges bergab, solange es steil bleibt; Band knapp über dem Hang */
+    const fall = (sx: number, sz: number, wid: number) => {
+      const pts: number[][] = [];
+      let px = sx;
+      let pz = sz;
+      for (let q = 0; q < 60; q++) {
+        const h = hAt(px, pz);
+        const gx = (hAt(px + 2, pz) - hAt(px - 2, pz)) / 4;
+        const gz = (hAt(px, pz + 2) - hAt(px, pz - 2)) / 4;
+        const sl = Math.hypot(gx, gz);
+        pts.push([px, h, pz]);
+        if (sl < 0.32 && q > 3) break;
+        if (px < x0 + cell || px > x0 + L.size - cell || pz < z0 + cell || pz > z0 + L.size - cell) break;
+        px -= (gx / Math.max(1e-4, sl)) * 4;
+        pz -= (gz / Math.max(1e-4, sl)) * 4;
+      }
+      if (pts.length < 10 || pts[0][1] - pts[pts.length - 1][1] < 35) return false;
+      let v = 0;
+      for (let q = 0; q < pts.length - 1; q++) {
+        const [ax, ay, az] = pts[q];
+        const [bx, by, bz] = pts[q + 1];
+        const dx = bx - ax;
+        const dz = bz - az;
+        const dl = Math.hypot(dx, dz) || 1;
+        const nx = -dz / dl;
+        const nz = dx / dl;
+        const t0 = q / (pts.length - 1);
+        const t1 = (q + 1) / (pts.length - 1);
+        const w0 = wid * (0.45 + t0 * 0.9);
+        const w1 = wid * (0.45 + t1 * 0.9);
+        const seg = Math.hypot(dx, by - ay, dz);
+        const v1 = v + seg / 18;
+        const up = 0.7;
+        fp.push(ax - nx * w0, ay + up, az - nz * w0, ax + nx * w0, ay + up, az + nz * w0, bx + nx * w1, by + up, bz + nz * w1);
+        fp.push(ax - nx * w0, ay + up, az - nz * w0, bx + nx * w1, by + up, bz + nz * w1, bx - nx * w1, by + up, bz - nz * w1);
+        fuv.push(0, v, 1, v, 1, v1, 0, v, 1, v1, 0, v1);
+        v = v1;
+      }
+      return true;
+    };
+    if (lv === 1) {
+      const n = L.size / MARK_CELL;
+      const i0 = Math.round(x0 / MARK_CELL);
+      const j0 = Math.round(z0 / MARK_CELL);
+      for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+          const c = markCandidate(i0 + i, j0 + j, NOISE_SEED);
+          if (!c) continue;
+
+          const fx = (c.x - x0) / cell + 1;
+          const fz = (c.z - z0) / cell + 1;
+          const ix = Math.min(G - 3, Math.max(1, Math.floor(fx)));
+          const iz = Math.min(G - 3, Math.max(1, Math.floor(fz)));
+          const k = iz * G + ix;
+          if (SK[k] || NR[k] || W[k] > 0.05 || DR[k] < 70) continue;
+          const ux = fx - ix;
+          const uz = fz - iz;
+          const y = H[k] * (1 - ux) * (1 - uz) + H[k + 1] * ux * (1 - uz) + H[k + G] * (1 - ux) * uz + H[k + G + 1] * ux * uz;
+          // flach genug (über die ganze Grundfläche), kein Wald
+          let lo = Infinity;
+          let hi = -Infinity;
+          for (let dj = 0; dj <= 1; dj++) for (let di = 0; di <= 1; di++) { const h = H[k + dj * G + di]; lo = Math.min(lo, h); hi = Math.max(hi, h); }
+          const C = cols[BI[k]];
+          const above = y - FL[k];
+          // steil: dort vielleicht ein Wasserfall statt eines Hauses
+          if (hi - lo > 8) {
+            if (hi - lo > 13 && c.r1 < 0.5 && above > 30 && above < C.snowLine + 40) fall(c.x, c.z, 2.6 + c.r2 * 2.6);
+            continue;
+          }
+          if (this.forestAt(c.x, c.z, above, (H[k + 1] - H[k - 1]) / (2 * cell), (H[k + G] - H[k - G]) / (2 * cell), C) > 0.25) continue;
+          // Kuppe: höher als die Umgebung
+          const knoll = H[k] >= Math.max(H[k - 2], H[k + 2], H[k - 2 * G], H[k + 2 * G]) - 1;
+          const biome = BIOMES[BI[k]];
+          let kind: Landmark;
+          const low = biome === 'village' || biome === 'lake' || biome === 'vineyard';
+          if (knoll && c.r1 < 0.3) kind = low && c.r2 < 0.35 ? 'ruin' : 'chapel';
+          else if (above < 70 && low) kind = c.r1 < 0.65 ? 'farm' : 'barn';
+          else kind = c.r1 < 0.5 ? 'hut' : c.r1 < 0.88 ? 'barn' : 'chapel';
+          marks.push({ kind, x: c.x, y: Math.min(y, lo + (hi - lo) * 0.35) - 0.3, z: c.z, s: 0.9 + c.r2 * 0.25, rot: c.r2 * Math.PI * 2, tint: 0.9 + c.r1 * 0.2 });
+          // Schafe weiden um Hütten und Stadel
+          if ((kind === 'hut' || kind === 'barn') && c.r2 < 0.55 && above < C.snowLine - 20) {
+            const n = 4 + Math.floor(c.r1 * 9);
+            const a0 = c.r2 * 20;
+            for (let q = 0; q < n; q++) {
+              const a = a0 + q * 2.4 + h2(q, i0 + i) * 0.8;
+              const rr = 12 + h2(q + 9, j0 + j) * 16;
+              const sx = c.x + Math.cos(a) * rr;
+              const sz = c.z + Math.sin(a) * rr;
+              marks.push({ kind: 'sheep', x: sx, y: hAt(sx, sz) - 0.05, z: sz, s: 0.85 + h2(q, 5) * 0.3, rot: h2(q, 7) * Math.PI * 2, tint: 0.9 + h2(q, 3) * 0.15 });
+            }
+          }
+        }
+      }
+    }
+    let falls: THREE.BufferGeometry | null = null;
+    if (fp.length) {
+      falls = new THREE.BufferGeometry();
+      falls.setAttribute('position', new THREE.Float32BufferAttribute(fp, 3));
+      falls.setAttribute('uv', new THREE.Float32BufferAttribute(fuv, 2));
+      falls.computeBoundingSphere();
+    }
+    return { geo, water, trees, marks, falls, minY, maxY };
+  }
+
+  /** Waldanteil an einem Punkt (gleiche Rechnung wie beim Einfärben); hx/hz: Steigung */
+  private forestAt(x: number, z: number, above: number, hx: number, hz: number, C: ColorSet): number {
+    const ny = 1 / Math.hypot(hx, 1, hz);
+    const steep = 1 - sstep(0.5, 0.76, ny);
+    const n1 = fbm(x / 230, z / 230, 3);
+    const n2 = vnoise(x / 31, z / 31);
+    return sstep(C.forestThr, C.forestThr + 0.08, n1 + (n2 - 0.5) * 0.12) * sstep(C.treeLine + 25, C.treeLine - 15, above) * (1 - steep);
   }
 
   private gridK(v: number, V: number, G: number): number {

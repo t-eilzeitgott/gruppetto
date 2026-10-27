@@ -58,7 +58,10 @@ interface WarmEngine extends RaceView { update(dt: number): void; setViewport(w:
  */
 export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: boolean }, frames = 8): Promise<void> {
   // Testmodus ohne 3D (?nogl): nichts vorwärmen
-  if (spare || inUse > 0 || /[?&]nogl\b/.test(window.location.search)) return Promise.resolve();
+  let off = /[?&]nogl\b/.test(window.location.search);
+  // automatische Oberflächenprüfung: ohne Grafikchip würde das Vorwärmen die Seiten lange blockieren
+  try { off = off || localStorage.getItem('gruppetto.nowarm') === '1'; } catch { /* egal */ }
+  if (spare || inUse > 0 || off) return Promise.resolve();
   let s: Stage;
   try {
     s = makeStage();

@@ -27,6 +27,8 @@ export interface Side {
   wall: number;
   /** Abgrund: ohne Begrenzung führt das Abkommen zum Sturz */
   drop: boolean;
+  /** Wand als gemauerte Stützmauer (vor Tunnelportalen) statt Fels */
+  stone?: boolean;
 }
 
 export interface Building {
@@ -495,12 +497,12 @@ export class Track {
         const balcony: Side = { ground: 'snow', tilt: -0.9, barrier: 'stone', wall: 0, drop: true };
         if (mtn[k] > 0) { l = balcony; rr = snowWall; } else { l = snowWall; rr = balcony; }
       }
-      // Einschnitt vor einem Tunnel: das Gelände steigt zu beiden Seiten an
+      // Anfahrt zum Tunnel: niedrige gemauerte Stützmauern, dahinter steigt der Hang steil zum Berg an
       const ahead = tunnels.find(([a]) => k < a && k >= a - 45);
       if (ahead) {
         const t = 1 - (ahead[0] - k) / 45;
         const g: Ground = p.biome === 'pass' ? 'rock' : p.biome === 'forest' ? 'forest' : 'meadow';
-        const cut: Side = { ground: g, tilt: 0.45, barrier: 'none', wall: 1.2 + t * 7.5, drop: false };
+        const cut: Side = { ground: g, tilt: 0.55 + t * 0.35, barrier: 'none', wall: 0.9 + t * 1.5, drop: false, stone: true };
         l = cut;
         rr = cut;
       }

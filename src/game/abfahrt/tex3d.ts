@@ -427,3 +427,295 @@ export function adsTex(names: string[]): HTMLCanvasElement {
   }
   return cv;
 }
+
+// ------------------------------------------------------------------ Tunnel
+
+/**
+ * Bruchsteinmauer für Portale und Stützmauern: Lagen unterschiedlich hoher, behauener Steine mit hellen
+ * Fugen, jeder Stein mit eigener Tönung, Kantenlicht oben, Schatten unten. Hell – die Eckpunktfarbe tönt. Nahtlos.
+ */
+export function masonryTex(): HTMLCanvasElement {
+  const S = 256;
+  const cv = canvas(S, S);
+  const c = cv.getContext('2d')!;
+  const r = mulberry32(51);
+  c.fillStyle = '#b9b2a6';
+  c.fillRect(0, 0, S, S);
+  // Lagen: Höhen, die zusammen genau S ergeben
+  const rows: number[] = [];
+  let sum = 0;
+  while (sum < S - 30) { const h = 26 + Math.floor(r() * 16); rows.push(h); sum += h; }
+  rows.push(S - sum);
+  let y = 0;
+  for (const h of rows) {
+    let x = -r() * 40;
+    const x0 = x;
+    while (x < x0 + S) {
+      const w = 34 + r() * 46;
+      const tone = 196 + r() * 44;
+      const warm = (r() - 0.5) * 18;
+      const col = `rgb(${Math.round(tone + warm)},${Math.round(tone + warm * 0.3)},${Math.round(tone - warm * 0.6 - 6)})`;
+      const draw = (px: number) => {
+        const g = 2.2;
+        c.fillStyle = col;
+        c.beginPath();
+        c.roundRect(px + g, y + g, w - 2 * g, h - 2 * g, 4);
+        c.fill();
+        // Kantenlicht oben links, Schatten unten
+        c.fillStyle = 'rgba(255,255,255,0.22)';
+        c.fillRect(px + g + 2, y + g, w - 2 * g - 4, 2.5);
+        c.fillStyle = 'rgba(40,32,24,0.2)';
+        c.fillRect(px + g + 1, y + h - g - 3, w - 2 * g - 2, 3);
+        // behauene Fläche: ein paar Flecken
+        for (let k = 0; k < 5; k++) {
+          c.fillStyle = r() < 0.5 ? 'rgba(60,50,40,0.08)' : 'rgba(255,255,255,0.1)';
+          c.beginPath();
+          c.ellipse(px + g + r() * (w - 2 * g), y + g + r() * (h - 2 * g), 2 + r() * 7, 1.5 + r() * 4, 0, 0, Math.PI * 2);
+          c.fill();
+        }
+      };
+      draw(x);
+      if (x + w > S) draw(x - S);
+      if (x < 0) draw(x + S);
+      x += w;
+    }
+    y += h;
+  }
+  grain(c, S, r, 16);
+  return cv;
+}
+
+/** Spritzbeton im Gewölbe: unruhige graue Fläche mit Wasserflecken und Fugen der Betonierabschnitte. Nahtlos. */
+export function shotcreteTex(): HTMLCanvasElement {
+  const S = 256;
+  const cv = canvas(S, S);
+  const c = cv.getContext('2d')!;
+  const r = mulberry32(52);
+  c.fillStyle = '#d9d8d4';
+  c.fillRect(0, 0, S, S);
+  for (let i = 0; i < 200; i++) {
+    const x = r() * S;
+    const y = r() * S;
+    const rad = 3 + r() * 14;
+    const col = r() < 0.55 ? `rgba(70,68,64,${(0.03 + r() * 0.05).toFixed(2)})` : `rgba(255,255,255,${(0.04 + r() * 0.06).toFixed(2)})`;
+    wrapDraw(S, x, y, (a, b) => { c.fillStyle = col; c.beginPath(); c.ellipse(a, b, rad, rad * (0.5 + r() * 0.5), r() * 3, 0, Math.PI * 2); c.fill(); });
+  }
+  // Sickerspuren: senkrechte dunkle Schlieren
+  for (let i = 0; i < 14; i++) {
+    const x = r() * S;
+    const w = 2 + r() * 6;
+    const g = c.createLinearGradient(0, 0, 0, S);
+    g.addColorStop(0, 'rgba(60,56,50,0)');
+    g.addColorStop(0.3 + r() * 0.3, `rgba(60,56,50,${(0.08 + r() * 0.1).toFixed(2)})`);
+    g.addColorStop(1, 'rgba(60,56,50,0)');
+    c.fillStyle = g;
+    c.fillRect(x, 0, w, S);
+  }
+  // Fuge zwischen Betonierabschnitten (quer)
+  c.fillStyle = 'rgba(40,40,40,0.35)';
+  c.fillRect(0, S - 2, S, 2);
+  grain(c, S, r, 26);
+  return cv;
+}
+
+/** Schilder im Tunnel (Atlas 4 Zellen nebeneinander, je 128×128): SOS, Notausgang, Feuerlöscher, Abstand */
+export const TSIGN = { sos: 0, exit: 1, fire: 2, dist: 3 } as const;
+export function tunnelSignTex(): HTMLCanvasElement {
+  const cv = canvas(512, 128);
+  const c = cv.getContext('2d')!;
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  // SOS: blau mit weißer Schrift und Telefon
+  c.fillStyle = '#1d5fd1'; c.fillRect(0, 0, 128, 128);
+  c.strokeStyle = '#ffffff'; c.lineWidth = 6; c.strokeRect(6, 6, 116, 116);
+  c.fillStyle = '#ffffff'; c.font = `900 46px ${SANS}`; c.fillText('SOS', 64, 46);
+  c.beginPath(); c.roundRect(40, 74, 48, 30, 8); c.fill();
+  c.fillStyle = '#1d5fd1'; c.fillRect(50, 84, 28, 10);
+  // Notausgang: grün mit laufender Figur und Pfeil
+  c.fillStyle = '#15a34a'; c.fillRect(128, 0, 128, 128);
+  c.fillStyle = '#ffffff';
+  c.beginPath(); c.arc(128 + 52, 30, 10, 0, Math.PI * 2); c.fill();
+  c.lineCap = 'round'; c.strokeStyle = '#ffffff'; c.lineWidth = 12;
+  c.beginPath(); c.moveTo(128 + 50, 46); c.lineTo(128 + 42, 76); c.lineTo(128 + 58, 92); c.lineTo(128 + 52, 116); c.stroke();
+  c.beginPath(); c.moveTo(128 + 42, 76); c.lineTo(128 + 26, 100); c.stroke();
+  c.beginPath(); c.moveTo(128 + 50, 50); c.lineTo(128 + 68, 64); c.stroke();
+  c.beginPath(); c.moveTo(128 + 48, 52); c.lineTo(128 + 30, 62); c.stroke();
+  c.lineWidth = 9;
+  c.beginPath(); c.moveTo(128 + 80, 64); c.lineTo(128 + 112, 64); c.stroke();
+  c.beginPath(); c.moveTo(128 + 100, 50); c.lineTo(128 + 114, 64); c.lineTo(128 + 100, 78); c.stroke();
+  // Feuerlöscher: rot mit weißem Symbol
+  c.fillStyle = '#d7261e'; c.fillRect(256, 0, 128, 128);
+  c.fillStyle = '#ffffff';
+  c.beginPath(); c.roundRect(256 + 46, 34, 36, 74, 12); c.fill();
+  c.fillRect(256 + 56, 20, 16, 16);
+  c.lineWidth = 6; c.strokeStyle = '#ffffff';
+  c.beginPath(); c.moveTo(256 + 72, 26); c.lineTo(256 + 96, 22); c.lineTo(256 + 100, 44); c.stroke();
+  // Abstand: weiß mit schwarzem Rand
+  c.fillStyle = '#f4f4f0'; c.fillRect(384, 0, 128, 128);
+  c.strokeStyle = '#111111'; c.lineWidth = 6; c.strokeRect(390, 6, 116, 116);
+  c.fillStyle = '#111111'; c.font = `800 40px ${SANS}`; c.fillText('100 m', 448, 64);
+  return cv;
+}
+
+/** Inschrift über dem Portal: Marmortafel mit Name und Länge */
+export function plaqueTex(name: string, len: string): HTMLCanvasElement {
+  const W = 512;
+  const H = 120;
+  const cv = canvas(W, H);
+  const c = cv.getContext('2d')!;
+  const r = mulberry32(name.length * 31 + len.length);
+  const g = c.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, '#ede8dd');
+  g.addColorStop(1, '#d9d2c4');
+  c.fillStyle = g;
+  c.fillRect(0, 0, W, H);
+  // Maserung
+  c.strokeStyle = 'rgba(120,110,95,0.12)';
+  c.lineWidth = 1.2;
+  for (let i = 0; i < 9; i++) {
+    let x = r() * W;
+    let y = 0;
+    c.beginPath(); c.moveTo(x, y);
+    while (y < H) { x += (r() - 0.5) * 30; y += 10 + r() * 14; c.lineTo(x, y); }
+    c.stroke();
+  }
+  c.strokeStyle = 'rgba(70,60,48,0.55)';
+  c.lineWidth = 4;
+  c.strokeRect(8, 8, W - 16, H - 16);
+  const SERIF = 'Georgia, "Times New Roman", "Iowan Old Style", serif';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  let fs = 46;
+  c.font = `700 ${fs}px ${SERIF}`;
+  while (c.measureText(name).width > W - 60 && fs > 16) { fs -= 2; c.font = `700 ${fs}px ${SERIF}`; }
+  // eingemeißelt: dunkle Schrift mit heller Kante darunter
+  c.fillStyle = 'rgba(255,255,255,0.6)';
+  c.fillText(name, W / 2 + 1, 46 + 2);
+  c.fillStyle = '#3b3328';
+  c.fillText(name, W / 2, 46);
+  c.font = `600 26px ${SERIF}`;
+  c.fillStyle = '#5a4f40';
+  c.fillText(len, W / 2, 90);
+  return cv;
+}
+
+// ------------------------------------------------------------------ Landschaft (pro Bildpunkt)
+
+/**
+ * Rauschen in drei Kanälen (nahtlos, verschiedene Körnung): R grob, G mittel, B fein. Bricht in den Shadern
+ * von Landschaft und Bergen die Übergänge (Waldrand, Fels, Schnee) organisch auf.
+ */
+export function noiseTex(): HTMLCanvasElement {
+  const S = 256;
+  const cv = canvas(S, S);
+  const c = cv.getContext('2d')!;
+  const r = mulberry32(61);
+  const grid = (n: number) => { const g = new Float32Array(n * n); for (let i = 0; i < g.length; i++) g[i] = r(); return g; };
+  const sample = (g: Float32Array, n: number, x: number, y: number) => {
+    const fx = (x / S) * n;
+    const fy = (y / S) * n;
+    const xi = Math.floor(fx);
+    const yi = Math.floor(fy);
+    let u = fx - xi;
+    let v = fy - yi;
+    u = u * u * (3 - 2 * u);
+    v = v * v * (3 - 2 * v);
+    const at = (i: number, j: number) => g[((j % n + n) % n) * n + ((i % n + n) % n)];
+    const a = at(xi, yi), b = at(xi + 1, yi), cc = at(xi, yi + 1), d = at(xi + 1, yi + 1);
+    return a + (b - a) * u + (cc - a) * v + (a - b - cc + d) * u * v;
+  };
+  const oct = [4, 8, 16, 32, 64].map((n) => ({ n, g: grid(n) }));
+  const fbm = (x: number, y: number, from: number, k: number) => {
+    let s = 0;
+    let a = 0.5;
+    let norm = 0;
+    for (let o = from; o < Math.min(oct.length, from + k); o++) { s += sample(oct[o].g, oct[o].n, x, y) * a; norm += a; a *= 0.55; }
+    return s / norm;
+  };
+  const img = c.createImageData(S, S);
+  const d = img.data;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const i = (y * S + x) * 4;
+      // Kontrast etwas strecken (Rauschen sammelt sich sonst um 0,5)
+      const st = (v: number) => Math.max(0, Math.min(255, Math.round((0.5 + (v - 0.5) * 1.7) * 255)));
+      d[i] = st(fbm(x, y, 0, 3));
+      d[i + 1] = st(fbm(x, y, 1, 3));
+      d[i + 2] = st(fbm(x, y, 2, 3));
+      d[i + 3] = 255;
+    }
+  }
+  c.putImageData(img, 0, 0);
+  return cv;
+}
+
+/**
+ * Kronendach eines geschlossenen Walds von oben (Graustufen, wird grün getönt): dicht an dicht runde Kronen,
+ * oben links im Licht, unten rechts im Schatten, dazwischen dunkle Lücken. Nahtlos.
+ */
+export function canopyTex(): HTMLCanvasElement {
+  const S = 256;
+  const cv = canvas(S, S);
+  const c = cv.getContext('2d')!;
+  const r = mulberry32(62);
+  c.fillStyle = '#3a3a3a';
+  c.fillRect(0, 0, S, S);
+  const crowns: [number, number, number, number][] = [];
+  for (let i = 0; i < 230; i++) crowns.push([r() * S, r() * S, 8 + r() * 9, 0.78 + r() * 0.3]);
+  // kleine zuerst, große darüber: wirkt wie unterschiedlich hohe Bäume
+  crowns.sort((a, b) => a[2] - b[2]);
+  for (const [x, y, rad, lum] of crowns) {
+    wrapDraw(S, x, y, (px, py) => {
+      // Schlagschatten nach unten rechts
+      c.fillStyle = 'rgba(0,0,0,0.32)';
+      c.beginPath(); c.arc(px + rad * 0.35, py + rad * 0.4, rad, 0, Math.PI * 2); c.fill();
+      const g = c.createRadialGradient(px - rad * 0.35, py - rad * 0.35, rad * 0.1, px, py, rad);
+      const hi = Math.round(255 * lum);
+      const lo = Math.round(120 * lum);
+      g.addColorStop(0, `rgb(${hi},${hi},${hi})`);
+      g.addColorStop(0.65, `rgb(${Math.round((hi + lo) / 2)},${Math.round((hi + lo) / 2)},${Math.round((hi + lo) / 2)})`);
+      g.addColorStop(1, `rgb(${lo},${lo},${lo})`);
+      c.fillStyle = g;
+      c.beginPath(); c.arc(px, py, rad, 0, Math.PI * 2); c.fill();
+    });
+  }
+  grain(c, S, r, 18);
+  return cv;
+}
+
+/** Wasserfall: senkrechte, unruhige Streifen aus Gischt (Alpha), zu den Rändern hin auslaufend. Läuft in v nahtlos. */
+export function fallTex(): HTMLCanvasElement {
+  const W = 64;
+  const H = 256;
+  const cv = canvas(W, H);
+  const c = cv.getContext('2d')!;
+  const r = mulberry32(71);
+  // durchgehender Schleier, darüber Streifen
+  c.fillStyle = 'rgba(255,255,255,0.5)';
+  c.fillRect(0, 0, W, H);
+  for (let i = 0; i < 110; i++) {
+    const x = 6 + r() * (W - 12);
+    const y = r() * H;
+    const len = 30 + r() * 120;
+    const w = 1.5 + r() * 4;
+    const a = 0.25 + r() * 0.55;
+    const g = c.createLinearGradient(0, y, 0, y + len);
+    g.addColorStop(0, 'rgba(255,255,255,0)');
+    g.addColorStop(0.3, `rgba(255,255,255,${a.toFixed(2)})`);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    for (const dy of [-H, 0, H]) c.fillRect(x - w / 2, y + dy, w, len);
+  }
+  // Ränder weich
+  const img = c.getImageData(0, 0, W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const e = Math.min(x, W - 1 - x) / (W * 0.22);
+      const i = (y * W + x) * 4;
+      img.data[i + 3] = Math.round(img.data[i + 3] * Math.min(1, e));
+      img.data[i] = 235; img.data[i + 1] = 244; img.data[i + 2] = 250;
+    }
+  }
+  c.putImageData(img, 0, 0);
+  return cv;
+}

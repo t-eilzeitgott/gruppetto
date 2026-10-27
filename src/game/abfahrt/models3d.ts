@@ -31,6 +31,27 @@ export class GB {
     this.vert(b[0], b[1], b[2], col, ub?.[0], ub?.[1]);
     this.vert(c[0], c[1], c[2], col, uc?.[0], uc?.[1]);
   }
+  /** Dreieck mit je eigener Eckfarbe */
+  triC(a: number[], b: number[], c: number[], ca: RGBf, cb: RGBf, cc: RGBf) {
+    this.vert(a[0], a[1], a[2], ca);
+    this.vert(b[0], b[1], b[2], cb);
+    this.vert(c[0], c[1], c[2], cc);
+  }
+  /** fertige Geometrie mit Farbe je Ecke (aus Lage und Normale, beides nach der Transformation) */
+  addFn(g: THREE.BufferGeometry, m: THREE.Matrix4, fn: (p: THREE.Vector3, n: THREE.Vector3) => RGBf) {
+    const src = g.index ? g.toNonIndexed() : g;
+    src.computeVertexNormals();
+    const pos = src.getAttribute('position');
+    const nrm = src.getAttribute('normal');
+    const nm = new THREE.Matrix3().getNormalMatrix(m);
+    const v = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(m);
+      n.fromBufferAttribute(nrm, i).applyMatrix3(nm).normalize();
+      this.vert(v.x, v.y, v.z, fn(v, n));
+    }
+  }
   /** Viereck a-b-c-d (gegen den Uhrzeigersinn von vorn gesehen) */
   quad(a: number[], b: number[], c: number[], d: number[], col: RGBf, uvs?: number[][]) {
     this.tri(a, b, c, col, uvs?.[0], uvs?.[1], uvs?.[2]);
@@ -45,6 +66,37 @@ export class GB {
       v.fromBufferAttribute(pos, i).applyMatrix4(m);
       this.vert(v.x, v.y, v.z, col);
     }
+  }
+  /**
+   * Wie build(), aber mit weichen Normalen (gleiche Lage = gemittelte Normale). Alle Dreiecke werden so
+   * gewendet, dass sie zur Seite von hint zeigen – gemittelt wird dann nur Gleichgerichtetes.
+   */
+  buildSmooth(hint: THREE.Vector3): THREE.BufferGeometry {
+    const p = this.p;
+    const swap = (a: number[], i: number, j: number, n: number) => { for (let k = 0; k < n; k++) { const t = a[i * n + k]; a[i * n + k] = a[j * n + k]; a[j * n + k] = t; } };
+    const e1 = new THREE.Vector3();
+    const e2 = new THREE.Vector3();
+    const fn = new THREE.Vector3();
+    const acc = new Map<string, number[]>();
+    const keys: string[] = [];
+    const key = (i: number) => `${Math.round(p[i * 3] * 8)},${Math.round(p[i * 3 + 1] * 8)},${Math.round(p[i * 3 + 2] * 8)}`;
+    for (let t = 0; t < p.length / 9; t++) {
+      const a = t * 3;
+      e1.set(p[(a + 1) * 3] - p[a * 3], p[(a + 1) * 3 + 1] - p[a * 3 + 1], p[(a + 1) * 3 + 2] - p[a * 3 + 2]);
+      e2.set(p[(a + 2) * 3] - p[a * 3], p[(a + 2) * 3 + 1] - p[a * 3 + 1], p[(a + 2) * 3 + 2] - p[a * 3 + 2]);
+      fn.crossVectors(e1, e2);
+      if (fn.dot(hint) < 0) { swap(p, a + 1, a + 2, 3); swap(this.c, a + 1, a + 2, 3); swap(this.u, a + 1, a + 2, 2); fn.negate(); }
+      for (let k = 0; k < 3; k++) {
+        const kk = key(a + k);
+        keys.push(kk);
+        const v = acc.get(kk);
+        if (v) { v[0] += fn.x; v[1] += fn.y; v[2] += fn.z; } else acc.set(kk, [fn.x, fn.y, fn.z]);
+      }
+    }
+    const g = this.build();
+    const nrm = g.getAttribute('normal') as THREE.BufferAttribute;
+    keys.forEach((kk, i) => { const v = acc.get(kk)!; const l = Math.hypot(v[0], v[1], v[2]) || 1; nrm.setXYZ(i, v[0] / l, v[1] / l, v[2] / l); });
+    return g;
   }
   build(): THREE.BufferGeometry {
     const g = new THREE.BufferGeometry();
@@ -65,78 +117,103 @@ const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) 
 
 const TRUNK = lin('#5a3d27');
 
-/** gezackter Kegel: Randpunkte unregelmäßig, leicht hängende Spitzen – wirkt wie Nadelzweige */
-function jagCone(r: number, h: number, seg: number, seed: number, droop = 0.18): THREE.BufferGeometry {
-  const g = new THREE.ConeGeometry(r, h, seg, 1, false);
-  const pos = g.getAttribute('position');
-  const v = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    if (v.y < 0 && Math.hypot(v.x, v.z) > 0.01) {
-      const a = Math.atan2(v.z, v.x);
-      const k = 0.78 + 0.34 * Math.abs(Math.sin(a * 2.5 + seed * 1.7)) + 0.12 * Math.sin(a * 7 + seed);
-      v.x *= k;
-      v.z *= k;
-      v.y -= droop * h * (0.6 + 0.4 * Math.sin(a * 3 + seed));
-      pos.setXYZ(i, v.x, v.y, v.z);
+
+
+const mixC = (a: RGBf, b: RGBf, t: number): RGBf => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const mulC = (a: RGBf, f: number): RGBf => [a[0] * f, a[1] * f, a[2] * f];
+
+/**
+ * Fichte/Tanne: Stamm und viele sternförmige Astetagen. Jede Etage hat Astspitzen mit unterschiedlicher Länge,
+ * die nach außen hängen, dazwischen Kerben; innen am Stamm dunkel, an den Spitzen hell (frische Triebe),
+ * die Unterseite im Schatten. Mit snow liegt Schnee auf den Oberseiten.
+ */
+function spruce(o: { h: number; w: number; tiers: number; spikes: number; dark: string; light: string; seed: number; snow?: boolean; droop?: number; sparse?: number; low?: boolean }): THREE.BufferGeometry {
+  const b = new GB();
+  let rs = o.seed * 9301 + 49297;
+  const rnd = () => { rs = (rs * 9301 + 49297) % 233280; return rs / 233280; };
+  const trunk = lin('#4e3524');
+  b.addFn(new THREE.CylinderGeometry(0.1, 0.2, o.h * 0.55, o.low ? 4 : 7), M(0, o.h * 0.275), (p) => mulC(trunk, 0.75 + 0.35 * Math.min(1, p.y / 3)));
+  const dark = lin(o.dark);
+  const light = lin(o.light);
+  const snowC = lin('#eef3f8');
+  const base = 1.05;
+  const droop = o.droop ?? 0.24;
+  for (let t = 0; t < o.tiers; t++) {
+    const k = t / (o.tiers - 1);
+    const th = ((o.h - base) / o.tiers) * 2.1;
+    const y = base + k * (o.h - base - th * 0.75);
+    const r = o.w * Math.pow(1 - k, 0.85) * (0.88 + rnd() * 0.24) + 0.18;
+    const n = Math.max(5, Math.round(o.spikes * (1 - k * 0.35)));
+    const apex = [0, y + th, 0];
+    const under = [0, y + th * 0.18, 0];
+    const rot = rnd() * Math.PI * 2;
+    const rim: number[][] = [];
+    const notch: number[][] = [];
+    for (let i = 0; i < n; i++) {
+      const a = rot + ((i + (rnd() - 0.5) * 0.35) / n) * Math.PI * 2;
+      const ri = r * (0.78 + rnd() * 0.4) * (o.sparse && rnd() < o.sparse ? 0.55 : 1);
+      rim.push([Math.cos(a) * ri, y - droop * ri * (0.7 + rnd() * 0.5), Math.sin(a) * ri]);
+      const an = a + Math.PI / n;
+      notch.push([Math.cos(an) * ri * 0.74, y - droop * ri * 0.45 + th * 0.1, Math.sin(an) * ri * 0.74]);
+    }
+    const shade = 0.82 + 0.3 * k;
+    const cIn = mulC(dark, 0.7);
+    for (let i = 0; i < n; i++) {
+      const R = rim[i];
+      const Nb = notch[i];
+      const Na = notch[(i + n - 1) % n];
+      const tip = mulC(mixC(dark, light, 0.55 + rnd() * 0.45), shade);
+      const mid = mulC(mixC(dark, light, 0.25), shade);
+      const top = o.snow && t < o.tiers - 1 ? mixC(tip, snowC, 0.85) : tip;
+      const midT = o.snow && t < o.tiers - 1 ? mixC(mid, snowC, 0.6) : mid;
+      // Oberseite: von der Spitze der Etage zu Kerbe – Astspitze – nächste Kerbe
+      b.triC(apex, Na, R, cIn, midT, top);
+      b.triC(apex, R, Nb, cIn, top, midT);
+      // Unterseite im Schatten
+      if (o.low) continue;
+      b.triC(under, R, Na, mulC(dark, 0.45), mulC(tip, 0.55), mulC(dark, 0.5));
+      b.triC(under, Nb, R, mulC(dark, 0.45), mulC(dark, 0.5), mulC(tip, 0.55));
     }
   }
-  return g;
-}
-
-function pine(tiers: number, h: number, w: number, dark: string, light: string, snow: boolean): THREE.BufferGeometry {
-  const b = new GB();
-  b.add(new THREE.CylinderGeometry(0.1, 0.22, 2.4, 6), M(0, 1.2), TRUNK);
-  const c0 = lin(dark);
-  const c1 = lin(light);
-  for (let t = 0; t < tiers; t++) {
-    const k = t / (tiers - 1);
-    const r = w * (1 - k * 0.8) * (0.92 + 0.12 * Math.sin(t * 2.1));
-    const th = ((h - 1.6) / tiers) * 1.75;
-    const y = 1.6 + k * (h - 1.6 - th * 0.6) + th / 2;
-    const col: RGBf = [c0[0] + (c1[0] - c0[0]) * k, c0[1] + (c1[1] - c0[1]) * k, c0[2] + (c1[2] - c0[2]) * k];
-    b.add(jagCone(r, th, 8, t * 3.1), M(0, y, 0, 1, 1, 1, t * 0.9), col);
-    if (snow && t % 2 === 0) b.add(jagCone(r * 0.6, th * 0.42, 8, t * 3.1 + 1), M(0, y + th * 0.3, 0, 1, 1, 1, t * 0.9), lin('#f2f6fb'));
-  }
+  // Wipfel
+  if (!o.low) b.addFn(new THREE.ConeGeometry(0.16, 1.1, 5), M(0, o.h + 0.25), () => mixC(dark, light, 0.6));
   return b.build();
 }
 
-/** Laubbaum: mehrere unregelmäßige Blätterkugeln, innen dunkler */
-function blobTree(crowns: [number, number, number, number][], trunkH: number, greens: string[]): THREE.BufferGeometry {
+/** Laubbaum: viele unregelmäßige Blätterballen, oben im Licht hell, unten und innen dunkel, dazu Äste */
+function leafTree(crowns: [number, number, number, number][], trunkH: number, dark: string, light: string, branches = 3): THREE.BufferGeometry {
   const b = new GB();
-  b.add(new THREE.CylinderGeometry(0.13, 0.26, trunkH, 6), M(0, trunkH / 2), TRUNK);
-  b.add(new THREE.CylinderGeometry(0.06, 0.1, 1.6, 5), M(0.5, trunkH + 0.2, 0, 1, 1, 1, 0, 0, -0.7), TRUNK);
+  const trunk = lin('#5a4030');
+  b.addFn(new THREE.CylinderGeometry(0.12, 0.27, trunkH + 0.6, 7), M(0, (trunkH + 0.6) / 2), (p) => mulC(trunk, 0.8 + 0.25 * Math.min(1, p.y / trunkH)));
+  for (let i = 0; i < branches; i++) {
+    const a = (i / branches) * Math.PI * 2 + 0.4;
+    b.add(new THREE.CylinderGeometry(0.05, 0.1, 1.9, 5), M(Math.cos(a) * 0.55, trunkH + 0.55, Math.sin(a) * 0.55, 1, 1, 1, 0, Math.sin(a) * 0.75, -Math.cos(a) * 0.75), trunk);
+  }
+  const D = lin(dark);
+  const Lc = lin(light);
+  const top = Math.max(...crowns.map(([, y, , r]) => y + r));
+  const bot = Math.min(...crowns.map(([, y, , r]) => y - r));
   crowns.forEach(([x, y, z, r], i) => {
     const g = new THREE.IcosahedronGeometry(r, 1);
     const pos = g.getAttribute('position');
     const v = new THREE.Vector3();
     for (let q = 0; q < pos.count; q++) {
       v.fromBufferAttribute(pos, q);
-      const k = 0.86 + 0.2 * Math.abs(Math.sin(v.x * 3.1 + v.y * 2.3 + i) * Math.cos(v.z * 2.7 - i));
-      pos.setXYZ(q, v.x * k, v.y * k * 0.88, v.z * k);
+      const k = 0.84 + 0.24 * Math.abs(Math.sin(v.x * 3.1 + v.y * 2.3 + i) * Math.cos(v.z * 2.7 - i));
+      pos.setXYZ(q, v.x * k, v.y * k * 0.86, v.z * k);
     }
-    b.add(g, M(x, y, z, 1, 1, 1, i * 1.3), lin(greens[i % greens.length]));
+    b.addFn(g, M(x, y, z, 1, 1, 1, i * 1.3), (p, n) => {
+      const hgt = (p.y - bot) / Math.max(0.1, top - bot);
+      const lit = 0.5 + 0.5 * n.y;
+      return mulC(mixC(D, Lc, Math.min(1, hgt * 0.55 + lit * 0.5)), 0.78 + 0.3 * hgt);
+    });
   });
   return b.build();
 }
 
+
 /** einfache Fassungen der Bäume für weiter entfernte Landschaftskacheln (gleiche Umrisse, weniger Dreiecke) */
 export function treeGeometriesLow(): Partial<Record<Prop3D, THREE.BufferGeometry>> {
-  const lowPine = (h: number, w: number, dark: string, light: string, snow: boolean) => {
-    const b = new GB();
-    b.add(new THREE.CylinderGeometry(0.12, 0.22, 2.4, 4), M(0, 1.2), TRUNK);
-    const c0 = lin(dark);
-    const c1 = lin(light);
-    for (let t = 0; t < 3; t++) {
-      const k = t / 2;
-      const th = ((h - 1.6) / 3) * 1.6;
-      const y = 1.6 + k * (h - 1.6 - th * 0.6) + th / 2;
-      const col: RGBf = [c0[0] + (c1[0] - c0[0]) * k, c0[1] + (c1[1] - c0[1]) * k, c0[2] + (c1[2] - c0[2]) * k];
-      b.add(jagCone(w * (1 - k * 0.75), th, 6, t * 3.1), M(0, y, 0, 1, 1, 1, t * 0.9), col);
-      if (snow && t === 0) b.add(jagCone(w * 0.6, th * 0.42, 6, 1), M(0, y + th * 0.3), lin('#f2f6fb'));
-    }
-    return b.build();
-  };
   const lowBlob = (crowns: [number, number, number, number][], trunkH: number, greens: string[]) => {
     const b = new GB();
     b.add(new THREE.CylinderGeometry(0.13, 0.26, trunkH, 4), M(0, trunkH / 2), TRUNK);
@@ -146,9 +223,9 @@ export function treeGeometriesLow(): Partial<Record<Prop3D, THREE.BufferGeometry
   const cypress = new GB();
   cypress.add(new THREE.IcosahedronGeometry(1, 0), M(0, 4.6, 0, 0.72, 4.3, 0.72), lin('#2b4d27'));
   return {
-    pine: lowPine(11, 2.6, '#1b4026', '#3a6f3a', false),
-    pineSnow: lowPine(11, 2.6, '#1f4430', '#3d6b45', true),
-    larch: lowPine(10.5, 2.1, '#557f2c', '#8fb54c', false),
+    pine: spruce({ h: 12, w: 2.8, tiers: 5, spikes: 7, dark: '#16391f', light: '#4f8448', seed: 3, low: true }),
+    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 5, spikes: 7, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true, low: true }),
+    larch: spruce({ h: 11, w: 2.3, tiers: 5, spikes: 7, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, low: true }),
     tree: lowBlob([[0, 5.3, 0, 2.5], [1.2, 4.5, 0.5, 1.8], [-1.1, 4.7, -0.5, 1.9]], 3.6, ['#4c8532', '#5f9a3d', '#3f752b']),
     treeRound: lowBlob([[0, 3.8, 0, 1.8]], 2.6, ['#5a983a']),
     cypress: cypress.build(),
@@ -200,11 +277,11 @@ export function propGeometries(): Record<Prop3D, THREE.BufferGeometry> {
   bush.add(new THREE.IcosahedronGeometry(0.75, 0), M(0, 0.45, 0, 1.2, 0.75, 1), lin('#456f2e'));
   bush.add(new THREE.IcosahedronGeometry(0.55, 0), M(0.5, 0.55, 0.2, 1, 0.8, 1), lin('#5b8a3c'));
   return {
-    pine: pine(6, 11, 2.6, '#1b4026', '#3a6f3a', false),
-    pineSnow: pine(6, 11, 2.6, '#1f4430', '#3d6b45', true),
-    larch: pine(6, 10.5, 2.1, '#557f2c', '#8fb54c', false),
-    tree: blobTree([[0, 5.3, 0, 2.2], [1.3, 4.5, 0.6, 1.6], [-1.2, 4.7, -0.5, 1.7], [0.2, 6.4, -0.3, 1.4]], 3.6, ['#4c8532', '#5f9a3d', '#3f752b', '#6aa646']),
-    treeRound: blobTree([[0, 3.7, 0, 1.6], [0.6, 4.4, 0.3, 1.0]], 2.6, ['#5a983a', '#6aa846']),
+    pine: spruce({ h: 12, w: 2.8, tiers: 10, spikes: 11, dark: '#16391f', light: '#4f8448', seed: 3 }),
+    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 10, spikes: 11, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true }),
+    larch: spruce({ h: 11, w: 2.3, tiers: 9, spikes: 10, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, sparse: 0.25 }),
+    tree: leafTree([[0, 5.4, 0, 2.1], [1.4, 4.7, 0.5, 1.6], [-1.3, 4.8, -0.4, 1.7], [0.3, 6.5, -0.2, 1.5], [-0.5, 5.9, 1.2, 1.3], [0.8, 5.6, -1.2, 1.35], [-0.9, 4.2, 0.9, 1.1]], 3.6, '#2f5e22', '#7fb64e'),
+    treeRound: leafTree([[0, 3.8, 0, 1.55], [0.7, 4.4, 0.3, 1.05], [-0.6, 4.3, -0.4, 1.0], [0.1, 3.3, 0.8, 0.95]], 2.6, '#3a6e28', '#8cc256', 2),
     cypress: cypress.build(),
     olive: olive.build(),
     bush: bush.build(),

@@ -202,6 +202,8 @@ async function checkPage(context, theme, vpName, [name, url, action, storage]) {
     localStorage.clear();
     // ohne App-Intro prüfen (es liegt sonst die ersten 1–2 s über allem)
     localStorage.setItem('gruppetto.nointro', '1');
+    // ohne Grafikchip: die 3D-Welt nicht im Hintergrund vorbereiten (blockiert sonst die Seiten)
+    localStorage.setItem('gruppetto.nowarm', '1');
     if (s?.tour) localStorage.setItem('gruppetto.tour', s.tour);
     if (s?.adminTour) localStorage.setItem('gruppetto.adminTour', s.adminTour);
   }, storage ?? null);
