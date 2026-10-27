@@ -66,6 +66,8 @@ html = html
   .replace('<!--CSS-->', css ? `<link rel="stylesheet" href="${rel(css)}">` : '')
   .replace('<!--JS-->', `<script type="module" src="${rel(js)}"></script>`)
   .replace('<!--BOOT-->', boot)
+  // dezente Versionsnummer im Intro: „v56“ (Lauf-Nummer im Deploy), lokal Datum und Uhrzeit
+  .replace('<!--VERSION-->', /^\d+$/.test(buildId) ? `v${buildId}` : buildId)
   .replace('/*LIVE*/false', url ? 'true' : 'false');
 await writeFile(`${outdir}/index.html`, html);
 await cp('public', outdir, { recursive: true });

@@ -39,6 +39,7 @@
   <!-- App-Intro: aus „g." (wie das App-Symbol) rollt der Punkt das Wort aus; danach fliegt die Wortmarke in den Kopf der Startseite. Nur angemeldet. -->
   <div id="intro" class="intro" aria-hidden="true">
     <div class="intro__bg"></div>
+    <div class="intro__ver"><!--VERSION--></div>
     <div class="intro__mark"><span class="intro__word">gruppetto</span><span class="intro__roll"><span class="intro__cover"></span><span class="intro__dot"><span class="intro__dotin">.</span><span class="intro__ping"></span></span></span></div>
   </div>
   <script>
@@ -52,7 +53,7 @@
       var calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
       var q = function (s) { return el.querySelector(s); };
       var mark = q('.intro__mark'), word = q('.intro__word'), roll = q('.intro__roll'), cover = q('.intro__cover');
-      var dot = q('.intro__dot'), dotin = q('.intro__dotin'), ping = q('.intro__ping'), bg = q('.intro__bg');
+      var dot = q('.intro__dot'), dotin = q('.intro__dotin'), ping = q('.intro__ping'), bg = q('.intro__bg'), ver = q('.intro__ver');
       var t0 = performance.now();
       var SEQ = calm ? 250 : 1150;
       // Animationen der Sequenz (ohne den Endlos-Ring) – beim Abschluss werden sie beschleunigt statt abgebrochen
@@ -175,12 +176,14 @@
               { duration: 520, easing: 'cubic-bezier(.4,0,.1,1)', fill: 'forwards' });
             ping.getAnimations().forEach(function (x) { x.cancel(); });
             bg.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 420, delay: 60, easing: 'ease', fill: 'forwards' });
+            if (ver) ver.animate([{ opacity: 0 }], { duration: 200, easing: 'ease', fill: 'forwards' });
             // gelandet: im selben Bild die echte Wortmarke zeigen und das Intro entfernen
             var land = function () { d.classList.remove('intro-fly'); el.remove(); };
             fly.onfinish = land;
             setTimeout(land, 900);
           } else {
             mark.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.96)' }], { duration: 260, easing: 'ease', fill: 'forwards' });
+            if (ver) ver.animate([{ opacity: 0 }], { duration: 200, easing: 'ease', fill: 'forwards' });
             bg.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 420, easing: 'ease', fill: 'forwards' }).onfinish = function () { el.remove(); };
           }
         });
