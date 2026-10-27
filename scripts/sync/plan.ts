@@ -31,7 +31,9 @@ export interface SyncStage {
   departure: string | null;
   arrival: string | null;
   results_published: boolean;
-  info?: { pcs_path?: string } | null;
+  /** pcs_path: abweichende PCS-Seite; publish_at: feste Uhrzeit (deutsche Zeit, „15:00“) statt der echten Zielankunft –
+   *  für Testrunden mit vergangenen Rennen: Ergebnis ist schon endgültig, also auch ohne Stabilitätsprüfung */
+  info?: { pcs_path?: string; publish_at?: string } | null;
 }
 
 export interface StageSyncRow {
@@ -152,6 +154,13 @@ export interface StartedStageInput {
   options?: Partial<SyncOptions>;
 }
 
+/** feste Übernahmezeit aus stage.info.publish_at („15:00“, deutsche Zeit) am Tag der Etappe, sonst null */
+export function fixedPublishTime(stage: SyncStage, stageDate = berlinDate(new Date(stage.starts_at))): Date | null {
+  const at = stage.info?.publish_at;
+  if (typeof at !== 'string' || !/^([01]?\d|2[0-3]):[0-5]\d$/.test(at.trim())) return null;
+  return berlinToDate(stageDate, at.trim().padStart(5, '0'));
+}
+
 /** Etappe ist gestartet: Ergebnis, Wertungen und Ausstiege übernehmen, sobald sie fertig und stabil sind. */
 export function planStartedStage(input: StartedStageInput): StagePlan {
   const { now, tour, stage, riders, pcs } = input;
@@ -225,14 +234,16 @@ export function planStartedStage(input: StartedStageInput): StagePlan {
   const start = pcs.startTime ? berlinToDate(stageDate, pcs.startTime) : new Date(stage.starts_at);
   const isTimeTrial = pcs.type === 'ITT' || stage.kind === 'itt';
   const winner = parseDuration(classified[0].time);
-  const notBefore = winner
+  const fixed = fixedPublishTime(stage, stageDate);
+  const notBefore = fixed ?? (winner
     ? new Date(start.getTime() + Math.max(winner * 1000, isTimeTrial ? hours(3.5) : 0) + minutes(5))
-    : new Date(new Date(stage.starts_at).getTime() + hours(isTimeTrial ? 4 : 2));
+    : new Date(new Date(stage.starts_at).getTime() + hours(isTimeTrial ? 4 : 2)));
   if (!opts.force && now < notBefore) {
-    c.act(`Ergebnis gelesen – Übernahme ab etwa ${fmtWhen(notBefore, now)} (Zielankunft)`);
-    return done(`wartet auf die Zielankunft (${fmtWhen(notBefore, now)})`);
+    c.act(`Ergebnis gelesen – Übernahme ${fixed ? 'um' : 'ab etwa'} ${fmtWhen(notBefore, now)} (${fixed ? 'feste Uhrzeit' : 'Zielankunft'})`);
+    return done(`wartet auf ${fixed ? 'die feste Uhrzeit' : 'die Zielankunft'} (${fmtWhen(notBefore, now)})`);
   }
-  const stableAt = new Date(candidateAt.getTime() + minutes(opts.stableMinutes));
+  // feste Uhrzeit (vergangenes Rennen): Ergebnis ist endgültig, keine Stabilitätsprüfung nötig
+  const stableAt = fixed ? now : new Date(candidateAt.getTime() + minutes(opts.stableMinutes));
   if (!opts.force && now < stableAt) {
     c.act(`Ergebnis gelesen – wird übernommen, wenn es bis ${fmtWhen(stableAt, now)} gleich bleibt`);
     return done(`Ergebnis gelesen, Prüfung bis ${fmtWhen(stableAt, now)}`);

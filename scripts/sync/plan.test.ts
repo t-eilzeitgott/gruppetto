@@ -85,6 +85,23 @@ test('„sofort“ überspringt Zielankunft und Stabilität', () => {
   assert.equal(plan.payload.publish, true);
 });
 
+test('Feste Uhrzeit (Testrunde): wartet bis 15 Uhr, dann sofort ohne Stabilitätsprüfung', () => {
+  const fixedStage = stage({ info: { publish_at: '15:00' } });
+  const before = planStartedStage(base({ now: at('14:58'), stage: fixedStage }));
+  assert.equal(before.payload.results, undefined);
+  assert.match(before.payload.state.status, /feste Uhrzeit \(15:00\)/);
+
+  // ein einziger Lauf nach 15 Uhr genügt – auch ohne vorher gelesenen Kandidaten und vor der echten Zielankunft
+  const after = planStartedStage(base({ now: at('15:02'), stage: fixedStage }));
+  assert.equal(after.payload.publish, true);
+  assert.equal(after.payload.results?.length, 10);
+
+  // ungültige Angabe → normale Zielankunft
+  const broken = planStartedStage(base({ now: at('15:02'), stage: stage({ info: { publish_at: '15 Uhr' } }) }));
+  assert.equal(broken.payload.results, undefined);
+  assert.match(broken.payload.state.status, /Zielankunft/);
+});
+
 test('Gespeichertes, gleiches Ergebnis bleibt unberührt', () => {
   const first = planStartedStage(base({ options: { force: true, completeness: 0 } }));
   const results = first.payload.results!.map((r) => ({ stage_id: 19, ...r }));
