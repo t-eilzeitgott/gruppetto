@@ -102,7 +102,10 @@
           { transform: 'scale(1)' }, { transform: 'scale(1.32,.72)' }, { transform: 'scale(.9,1.14)' }, { transform: 'scale(1)' }
         ], { duration: 420, delay: 930, easing: 'ease-out', fill: 'both' });
         // ein leiser Ring um den Punkt, solange die App noch lädt
-        ping.animate([{ opacity: 0.55, transform: 'scale(.4)' }, { opacity: 0, transform: 'scale(2.6)' }], { duration: 1100, delay: 950, iterations: Infinity, easing: 'cubic-bezier(.2,.6,.3,1)' });
+        // (startet mit der Sequenz-Uhr, sobald der Punkt aufgesetzt hat – siehe unten)
+        var startPing = function () {
+          ping.animate([{ opacity: 0.55, transform: 'scale(.4)' }, { opacity: 0, transform: 'scale(2.6)' }], { duration: 1100, iterations: Infinity, easing: 'cubic-bezier(.2,.6,.3,1)' });
+        };
       }
       // Kasten nur um die Buchstaben (Textknoten), ohne Abdeckung und Ring
       var textBox = function (root) {
@@ -119,29 +122,35 @@
         if (box) { box.width = box.right - box.left; box.height = box.bottom - box.top; }
         return box;
       };
-      // Restzeit der Sequenz – gemessen an den Animationen selbst (sie starten erst mit dem ersten gezeichneten Bild)
-      var restOf = function () {
-        var rest = 0;
-        seq.forEach(function (x) {
-          var t = x.effect.getComputedTiming();
-          var cur = x.currentTime == null ? 0 : x.currentTime;
-          rest = Math.max(rest, (t.endTime - cur) / Math.abs(x.playbackRate || 1));
-        });
-        return rest;
+      // Eigene Uhr für die Sequenz: läuft nur mit gezeichneten Bildern weiter (höchstens 2 Bilder pro Schritt).
+      // Ist der Browser beim App-Start kurz beschäftigt (iOS zeichnet dann nichts), pausiert das Intro, statt
+      // anschließend ans Ende zu springen.
+      var END = 0, clock = 0, rate = 1, last = null, waiters = [], pinged = false;
+      seq.forEach(function (x) { x.pause(); x.currentTime = 0; END = Math.max(END, x.effect.getComputedTiming().endTime); });
+      var settle = function () {
+        var w = waiters; waiters = [];
+        w.forEach(function (f) { f(); });
       };
+      var step = function (ts) {
+        var dt = last == null ? 0 : Math.min(ts - last, 34);
+        last = ts;
+        clock = Math.min(END, clock + dt * rate);
+        seq.forEach(function (x) { x.currentTime = clock; });
+        if (!pinged && clock >= 950 && startPing) { pinged = true; if (!done) startPing(); }
+        if (clock < END) requestAnimationFrame(step); else settle();
+      };
+      if (seq.length) requestAnimationFrame(step);
       // Sequenz zu Ende spielen: was noch fehlt, läuft in höchstens MAXREST ms (schneller, aber vollständig)
       var MAXREST = 420;
       var playOut = function (then) {
-        var rest = restOf();
+        var rest = (END - clock) / rate;
         if (!seq.length || rest <= 0) { then(); return; }
-        if (rest > MAXREST) {
-          var rate = rest / MAXREST;
-          seq.forEach(function (x) { if (x.updatePlaybackRate) x.updatePlaybackRate(rate); else x.playbackRate = rate; });
-        }
+        if (rest > MAXREST) rate = (END - clock) / MAXREST;
         var fired = false;
         var go = function () { if (!fired) { fired = true; then(); } };
-        Promise.all(seq.map(function (x) { return x.finished; })).then(go, go);
-        setTimeout(go, MAXREST + 400);
+        waiters.push(go);
+        // Notbremse, falls gar keine Bilder mehr kommen (z. B. App im Hintergrund)
+        setTimeout(function () { if (!fired) { clock = END; seq.forEach(function (x) { x.currentTime = END; }); go(); } }, 2500);
       };
       var done = false;
       // Abschluss: Wortmarke fliegt an ihren Platz im Kopf der App (target), der Hintergrund blendet aus
