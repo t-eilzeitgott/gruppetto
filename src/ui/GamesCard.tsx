@@ -1,6 +1,6 @@
 /**
  * Startseite: alle Minispiele in einer Karte. Wischen nach links/rechts wechselt das Spiel,
- * jedes zeigt seine eigene Bestenliste. Das zur heutigen Etappe passende Spiel steht vorn.
+ * jedes zeigt seine eigene Bestenliste. Das selbst meistgespielte Spiel steht vorn, bei Gleichstand das zur Etappe passende.
  * Darüber der Eingang zur Radgarage.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -10,7 +10,8 @@ import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import type { Stage, StageKind } from '../lib/types';
-import { gameOrder, type GameInfo } from '../game/games';
+import { GAMES, gameOrderByPlays, type GameInfo } from '../game/games';
+import type { GameId } from '../data/source';
 import { Track } from '../game/abfahrt/track';
 import { overtaken, type Seen } from '../lib/overtaken';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
@@ -48,10 +49,18 @@ function useOvertaken(game: string, board: string, rows: GameBest[], meId: strin
   return { alert, ack };
 }
 
-const order = gameOrder;
-
 export function GamesCard({ stageKind = null, tourName = null, stages = null }: { stageKind?: StageKind | null; tourName?: string | null; stages?: Stage[] | null }) {
-  const games = useMemo(() => order(stageKind), [stageKind]);
+  const { me } = useApp();
+  // eigene Läufe je Spiel (Saison) – gleiche Abfragen wie die Bestenlisten der Karten, also kein Mehraufwand
+  const boards = GAMES.map((g) => useQuery<GameBest[]>(`game:${g.id}:season`, () => source.gameLeaderboard(g.id))); // eslint-disable-line react-hooks/rules-of-hooks
+  const loaded = boards.every((q) => q.data);
+  const runsKey = loaded ? boards.map((q) => q.data!.find((b) => b.user_id === me.id)?.runs ?? 0).join(',') : '';
+  const games = useMemo(() => {
+    if (!runsKey) return gameOrderByPlays(stageKind, null);
+    const n = runsKey.split(',').map(Number);
+    const runs = Object.fromEntries(GAMES.map((g, i) => [g.id, n[i]])) as Partial<Record<GameId, number>>;
+    return gameOrderByPlays(stageKind, runs);
+  }, [stageKind, runsKey]);
   const scroller = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState(0);
   // Spiele, in denen man gerade überholt wurde (Punkt unten pulsiert)

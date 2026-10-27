@@ -27,3 +27,16 @@ export function gameOrder(kind: StageKind | null): GameInfo[] {
   const rank: Record<string, number> = kind === 'flat' || kind === 'hilly' ? { sprint: 0, berg: 1, abfahrt: 2 } : { berg: 0, sprint: 1, abfahrt: 2 };
   return [...GAMES].sort((a, b) => (rank[a.id] ?? 9) - (rank[b.id] ?? 9));
 }
+
+/**
+ * Reihenfolge auf der Startseite: das Spiel, das man selbst am häufigsten gespielt hat, zuerst.
+ * Bei Gleichstand (auch ganz ohne Läufe) bleibt die Reihenfolge von gameOrder.
+ */
+export function gameOrderByPlays(kind: StageKind | null, runs: Partial<Record<GameId, number>> | null): GameInfo[] {
+  const base = gameOrder(kind);
+  if (!runs) return base;
+  return base
+    .map((g, i) => ({ g, i, n: runs[g.id] ?? 0 }))
+    .sort((a, b) => b.n - a.n || a.i - b.i)
+    .map((x) => x.g);
+}
