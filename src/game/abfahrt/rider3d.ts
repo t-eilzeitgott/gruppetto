@@ -342,7 +342,9 @@ function blurDisc(r: number): THREE.Mesh {
 let shadowGeo: THREE.PlaneGeometry | null = null;
 const SHADOW_GEO = () => (shadowGeo ??= new THREE.PlaneGeometry(1.1, 2.2));
 
-interface Limbs { thigh: THREE.BufferGeometry; shin: THREE.BufferGeometry; upper: THREE.BufferGeometry; foreL: THREE.BufferGeometry; foreR: THREE.BufferGeometry; elbow: THREE.BufferGeometry; knee: THREE.BufferGeometry }
+interface Limbs { thigh: THREE.BufferGeometry; shin: THREE.BufferGeometry; upper: THREE.BufferGeometry; foreL: THREE.BufferGeometry; foreR: THREE.BufferGeometry }
+const elbowCap = (skin: RGBf) => { const mb = new MB(); mb.add(new THREE.SphereGeometry(0.042, 10, 8), new THREE.Matrix4(), skin); return mb.build(); };
+const kneeCap = (skin: RGBf) => { const mb = new MB(); mb.add(new THREE.SphereGeometry(0.05, 12, 8), new THREE.Matrix4().makeScale(1, 1, 1.08), skin); return mb.build(); };
 const geoCache = new Map<string, unknown>();
 function cached<T>(key: string, make: () => T): T {
   let v = geoCache.get(key) as T | undefined;
@@ -351,6 +353,27 @@ function cached<T>(key: string, make: () => T): T {
 }
 
 /** Arme und Beine (geteilt je Farbkombination) */
+/** zwei Geometrien zu einer (gleiche Eigenschaften, Indizes versetzt) – spart einen Zeichenaufruf */
+function mergeGeo(a: THREE.BufferGeometry, b: THREE.BufferGeometry): THREE.BufferGeometry {
+  const g = new THREE.BufferGeometry();
+  const na = a.getAttribute('position').count;
+  const nb = b.getAttribute('position').count;
+  for (const name of Object.keys(a.attributes)) {
+    const A = a.getAttribute(name) as THREE.BufferAttribute;
+    const B = b.getAttribute(name) as THREE.BufferAttribute | undefined;
+    if (!B || B.itemSize !== A.itemSize) continue;
+    const arr = new Float32Array((na + nb) * A.itemSize);
+    arr.set(A.array as Float32Array, 0);
+    arr.set(B.array as Float32Array, na * A.itemSize);
+    g.setAttribute(name, new THREE.BufferAttribute(arr, A.itemSize));
+  }
+  const ia = a.index ? Array.from(a.index.array) : [...Array(na).keys()];
+  const ib = b.index ? Array.from(b.index.array, (i) => i + na) : [...Array(nb).keys()].map((i) => i + na);
+  g.setIndex([...ia, ...ib]);
+  g.computeBoundingSphere();
+  return g;
+}
+
 function limbGeos(kit: Kit): Limbs {
   return cached(`limbs|${kit.skin}|${kit.shorts}|${kit.jersey}|${kit.side}`, () => {
     const skin = lin(kit.skin);
@@ -365,15 +388,13 @@ function limbGeos(kit: Kit): Limbs {
     return {
       thigh: muscle(THIGH, [[0, 0.084, 0.086, 0, shorts], [0.18, 0.083, 0.088, 0.006, shorts], [0.45, 0.074, 0.08, 0.008, shorts], [0.66, 0.062, 0.066, 0.006, shorts],
         [0.72, 0.059, 0.062, 0.004, shorts], [0.725, 0.06, 0.063, 0.004, side], [0.745, 0.058, 0.061, 0.004, side], [0.75, 0.056, 0.058, 0.003, skin], [0.88, 0.05, 0.053, 0.004, skin], [1, 0.047, 0.05, 0.004, skin]]),
-      shin: muscle(SHIN, [[0, 0.047, 0.049, 0, skin], [0.1, 0.05, 0.056, -0.006, skin], [0.26, 0.054, 0.066, -0.014, skin], [0.4, 0.05, 0.058, -0.01, skin], [0.56, 0.041, 0.044, -0.003, skin],
-        [0.68, 0.034, 0.034, 0, skin], [0.685, 0.035, 0.035, 0, sock], [0.92, 0.031, 0.033, 0.002, sock], [1, 0.033, 0.036, 0.004, sock]]),
+      shin: mergeGeo(muscle(SHIN, [[0, 0.047, 0.049, 0, skin], [0.1, 0.05, 0.056, -0.006, skin], [0.26, 0.054, 0.066, -0.014, skin], [0.4, 0.05, 0.058, -0.01, skin], [0.56, 0.041, 0.044, -0.003, skin],
+        [0.68, 0.034, 0.034, 0, skin], [0.685, 0.035, 0.035, 0, sock], [0.92, 0.031, 0.033, 0.002, sock], [1, 0.033, 0.036, 0.004, sock]]), kneeCap(skin)),
       upper: muscle(UPPER, [[0, 0.062, 0.06, 0, jersey], [0.12, 0.064, 0.062, 0, jersey], [0.3, 0.054, 0.056, 0, jersey], [0.46, 0.05, 0.053, 0, jersey], [0.465, 0.05, 0.053, 0, side],
         [0.52, 0.049, 0.052, 0, side], [0.525, 0.047, 0.05, 0, skin], [0.68, 0.046, 0.05, 0.004, skin], [0.86, 0.04, 0.042, 0.002, skin], [1, 0.039, 0.039, 0, skin]]),
-      foreL: foreGeo(skin, glove, -1),
-      foreR: foreGeo(skin, glove, 1),
-      // Gelenke: runde Kappen, damit Ober- und Unterteil ohne Knick ineinander übergehen
-      elbow: (() => { const mb = new MB(); mb.add(new THREE.SphereGeometry(0.042, 10, 8), new THREE.Matrix4(), skin); return mb.build(); })(),
-      knee: (() => { const mb = new MB(); mb.add(new THREE.SphereGeometry(0.05, 12, 8), new THREE.Matrix4().makeScale(1, 1, 1.08), skin); return mb.build(); })(),
+      // Gelenke: runde Kappen am Anfang von Unterarm und Wade (eine Geometrie, ein Zeichenaufruf weniger)
+      foreL: mergeGeo(foreGeo(skin, glove, -1), elbowCap(skin)),
+      foreR: mergeGeo(foreGeo(skin, glove, 1), elbowCap(skin)),
     };
   });
 }
@@ -398,8 +419,6 @@ export class RiderModel {
   private uppers: THREE.Mesh[] = [];
   private fores: THREE.Mesh[] = [];
   private shoes: THREE.Mesh[] = [];
-  private elbows: THREE.Mesh[] = [];
-  private knees: THREE.Mesh[] = [];
   private wheelF: THREE.Mesh;
   private wheelR: THREE.Mesh;
   /** Speichen und ihre Unschärfe-Scheiben (vorn, hinten) */
@@ -475,12 +494,8 @@ export class RiderModel {
       this.uppers.push(u);
       this.fores.push(f);
       this.shoes.push(sh);
-      const el = new THREE.Mesh(g.elbow, smooth);
-      const kn = new THREE.Mesh(g.knee, smooth);
-      this.elbows.push(el);
-      this.knees.push(kn);
-      this.body.add(t, c, u, f, sh, el, kn);
-      this.minor.push(sh, el, kn);
+      this.body.add(t, c, u, f, sh);
+      this.minor.push(sh);
     }
     this.torso = new THREE.Mesh(cached('torso', () => torsoGeo()), torsoMat(kit));
     // manche Räder bringen ihren eigenen Helm mit (Weltmeisterweiß, Gold)
@@ -668,8 +683,6 @@ export class RiderModel {
       ik(hip, ankle, THIGH, SHIN, this.pole, knee, ankle);
       bone(this.thighs[s], hip, knee);
       bone(this.shins[s], knee, ankle);
-      this.knees[s].position.copy(knee);
-      this.knees[s].quaternion.copy(this.shins[s].quaternion);
     }
 
     // Arme: Schulter → Hand; Ellbogen leicht nach außen, auf dem Zeitfahrrad nach unten auf die Polster
@@ -683,7 +696,6 @@ export class RiderModel {
       ik(shoulder, h, UPPER, FORE, this.pole, elbow, h);
       bone(this.uppers[s], shoulder, elbow);
       bone(this.fores[s], elbow, h);
-      this.elbows[s].position.copy(elbow);
     }
     (this.lamp.material as THREE.MeshLambertMaterial).emissiveIntensity = 0.4 + p.light * 1.6;
   }

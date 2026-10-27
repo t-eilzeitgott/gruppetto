@@ -81,10 +81,11 @@ function conifer(o: { h: number; w: number; tiers: number; br: number; dark: str
       const und = mulC(dark, 0.4);
       b.triC(B, T, L, und, mulC(tip, 0.5), und);
       b.triC(B, Rr, T, und, und, mulC(tip, 0.5));
-      if (o.hd) {
-        // feine Triebe an den Flanken: zackige Ränder wie echte Zweige
-        for (let q = 0; q < 4; q++) {
-          const f = 0.3 + q * 0.17 + (r() - 0.5) * 0.06;
+      {
+        // feine Triebe an den Flanken: zackige Ränder wie echte Zweige (nahe 3D-Bäume: die Hälfte, nur oben)
+        const nt = o.hd ? 4 : 2;
+        for (let q = 0; q < nt; q++) {
+          const f = (o.hd ? 0.3 + q * 0.17 : 0.42 + q * 0.26) + (r() - 0.5) * 0.06;
           const sg = q % 2 ? 1 : -1;
           const cx = ca * len * f;
           const cz = sa * len * f;
@@ -95,8 +96,8 @@ function conifer(o: { h: number; w: number; tiers: number; br: number; dark: str
           const P2 = [cx + ca * len * 0.16, cy - 0.06 - dl * len * 0.08, cz + sa * len * 0.16];
           const tc0 = mulC(mixC(dark, light, 0.6 + r() * 0.4), shade);
           const tc = snowy && r() < 0.45 ? mixC(tc0, snowC, 0.65) : tc0;
-          if (sg > 0) { b.triC(P0, P1, P2, mid, tc, mid); b.triC(P0, P2, P1, und, und, mulC(tc0, 0.55)); }
-          else { b.triC(P0, P2, P1, mid, mid, tc); b.triC(P0, P1, P2, und, mulC(tc0, 0.55), und); }
+          if (sg > 0) { b.triC(P0, P1, P2, mid, tc, mid); if (o.hd) b.triC(P0, P2, P1, und, und, mulC(tc0, 0.55)); }
+          else { b.triC(P0, P2, P1, mid, mid, tc); if (o.hd) b.triC(P0, P1, P2, und, mulC(tc0, 0.55), und); }
         }
       }
     }

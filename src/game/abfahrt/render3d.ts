@@ -695,8 +695,8 @@ export class Renderer3D {
     const rect = this.gl.domElement.getBoundingClientRect();
     const W = Math.max(100, Math.round(rect.width));
     const H = Math.max(100, Math.round(rect.height));
-    // höchstens 1,5-fache Pixeldichte: mit Kantenglättung auf Retina kaum sichtbar, spart aber viel Füllrate
-    const dpr = Math.min(1.5, window.devicePixelRatio || 1) * this.quality;
+    // höchstens 1,4-fache Pixeldichte: mit Kantenglättung auf Retina kaum sichtbar, spart aber viel Füllrate
+    const dpr = Math.min(1.4, window.devicePixelRatio || 1) * this.quality;
     this.W = W;
     this.H = H;
     this.gl.setPixelRatio(dpr);
