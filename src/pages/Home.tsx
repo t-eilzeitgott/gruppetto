@@ -221,9 +221,9 @@ function BonusRow({ count, deadline, now }: { count: number; deadline: Date | st
 function RunningCard({ stage, data, me, more }: { stage: Stage; data: TourData; me: Profile; more: number }) {
   const myTip = data.tips.find((t) => t.stage_id === stage.id && t.user_id === me.id);
   return (
-    <Link to={`/etappe/${stage.id}`} className="card card--row">
+    <Link to={`/etappe/${stage.id}`} className="card card--row card--live">
       <div className="card__main">
-        <span className="eyebrow">Etappe&nbsp;{stage.number} · Ergebnis folgt</span>
+        <span className="eyebrow status-eyebrow"><Icon name="clock" size={13} />Etappe&nbsp;{stage.number} · Ergebnis folgt</span>
         <strong>Tipps sind aufgedeckt</strong>
         <span className="muted">{myTip ? `Dein Tipp: ${riderName(data, myTip.rider_id)}` : 'Du hast nicht getippt'}</span>
         {more > 0 ? <span className="muted small">{more === 1 ? 'Eine weitere Etappe wartet' : `${more} weitere Etappen warten`} auf das Ergebnis.</span> : null}
@@ -233,14 +233,28 @@ function RunningCard({ stage, data, me, more }: { stage: Stage; data: TourData; 
   );
 }
 
+// Neues Ergebnis: beim ersten App-Start danach grün hervorgehoben (für die ganze Sitzung), danach normal
+const RESULT_SEEN = 'gruppetto.resultSeen';
+const freshResults = new Set<number>();
+function isFreshResult(stageId: number): boolean {
+  if (freshResults.has(stageId)) return true;
+  let seen: string | null = null;
+  try { seen = localStorage.getItem(RESULT_SEEN); } catch { return false; }
+  if (seen === String(stageId)) return false;
+  freshResults.add(stageId);
+  try { localStorage.setItem(RESULT_SEEN, String(stageId)); } catch { /* egal */ }
+  return true;
+}
+
 function LastResultCard({ stage, data, me }: { stage: Stage; data: TourData; me: Profile }) {
   const scores = scoreStage(stage, data.tips, data.results, data.scale);
   const mine = scores.find((s) => s.userId === me.id);
   const winner = data.results.find((r) => r.stage_id === stage.id && r.position === 1);
+  const fresh = useMemo(() => isFreshResult(stage.id), [stage.id]);
   return (
-    <Link to={`/etappe/${stage.id}`} className="card card--row">
+    <Link to={`/etappe/${stage.id}`} className={cx('card card--row', fresh && 'card--done')}>
       <div className="card__main">
-        <span className="eyebrow">Zuletzt · Etappe&nbsp;{stage.number}</span>
+        <span className={cx('eyebrow', fresh && 'status-eyebrow')}>{fresh ? <Icon name="check" size={13} /> : null}{fresh ? 'Neu' : 'Zuletzt'} · Etappe&nbsp;{stage.number}</span>
         <strong>{winner ? `${lastName(riderName(data, winner.rider_id))} gewinnt` : 'Ergebnis veröffentlicht'}</strong>
         <span className="muted">
           {mine ? `Dein Tipp: ${lastName(riderName(data, mine.riderId))} · ${mine.position ? `${mine.position}. Platz` : 'nicht in den Top 10'}` : 'Kein Tipp abgegeben'}
