@@ -55,6 +55,8 @@
       var dot = q('.intro__dot'), dotin = q('.intro__dotin'), ping = q('.intro__ping'), bg = q('.intro__bg');
       var t0 = performance.now();
       var SEQ = calm ? 250 : 1150;
+      // Animationen der Sequenz (ohne den Endlos-Ring) – beim Abschluss werden sie beschleunigt statt abgebrochen
+      var seq = [];
       // Ring genau um den Punkt (Tinte des „."-Zeichens aus der Schrift vermessen)
       try {
         var cs = getComputedStyle(mark);
@@ -81,21 +83,22 @@
         var shift = hidden / 2;
         var roll1 = 'cubic-bezier(.6,0,.3,1)';
         // 1) „g." erscheint mittig (wie das App-Symbol), 2) rückt mit dem ausgerollten Wort in die Mitte
-        mark.animate([
+        var A = function (n, k, o) { var x = n.animate(k, o); seq.push(x); return x; };
+        A(mark, [
           { offset: 0, opacity: 0, transform: 'translateX(' + shift + 'px) scale(.84)', easing: 'cubic-bezier(.2,.9,.3,1.12)' },
           { offset: 0.3, opacity: 1, transform: 'translateX(' + shift + 'px) scale(1)', easing: roll1 },
           { offset: 1, opacity: 1, transform: 'translateX(0) scale(1)' }
         ], { duration: 950, fill: 'both' });
         // 2) der Punkt rollt nach rechts, dahinter erscheint das Wort (Abdeckung wandert mit)
         var move = [{ transform: 'translateX(' + (-hidden) + 'px)' }, { transform: 'translateX(0)' }];
-        roll.animate(move, { duration: 650, delay: 300, easing: roll1, fill: 'both' });
-        cover.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, delay: 950, fill: 'both' });
+        A(roll, move, { duration: 650, delay: 300, easing: roll1, fill: 'both' });
+        A(cover, [{ opacity: 1 }, { opacity: 0 }], { duration: 120, delay: 950, fill: 'both' });
         // kleine Hüpfer beim Rollen, dann ein weiches Aufsetzen
-        dot.animate([
+        A(dot, [
           { transform: 'translateY(0)' }, { transform: 'translateY(-.13em)' }, { transform: 'translateY(0)' },
           { transform: 'translateY(-.08em)' }, { transform: 'translateY(0)' }, { transform: 'translateY(-.035em)' }, { transform: 'translateY(0)' }
         ], { duration: 650, delay: 300, easing: 'ease-in-out', fill: 'both' });
-        dotin.animate([
+        A(dotin, [
           { transform: 'scale(1)' }, { transform: 'scale(1.32,.72)' }, { transform: 'scale(.9,1.14)' }, { transform: 'scale(1)' }
         ], { duration: 420, delay: 930, easing: 'ease-out', fill: 'both' });
         // ein leiser Ring um den Punkt, solange die App noch lädt
@@ -116,12 +119,37 @@
         if (box) { box.width = box.right - box.left; box.height = box.bottom - box.top; }
         return box;
       };
+      // Restzeit der Sequenz – gemessen an den Animationen selbst (sie starten erst mit dem ersten gezeichneten Bild)
+      var restOf = function () {
+        var rest = 0;
+        seq.forEach(function (x) {
+          var t = x.effect.getComputedTiming();
+          var cur = x.currentTime == null ? 0 : x.currentTime;
+          rest = Math.max(rest, (t.endTime - cur) / Math.abs(x.playbackRate || 1));
+        });
+        return rest;
+      };
+      // Sequenz zu Ende spielen: was noch fehlt, läuft in höchstens MAXREST ms (schneller, aber vollständig)
+      var MAXREST = 420;
+      var playOut = function (then) {
+        var rest = restOf();
+        if (!seq.length || rest <= 0) { then(); return; }
+        if (rest > MAXREST) {
+          var rate = rest / MAXREST;
+          seq.forEach(function (x) { if (x.updatePlaybackRate) x.updatePlaybackRate(rate); else x.playbackRate = rate; });
+        }
+        var fired = false;
+        var go = function () { if (!fired) { fired = true; then(); } };
+        Promise.all(seq.map(function (x) { return x.finished; })).then(go, go);
+        setTimeout(go, MAXREST + 400);
+      };
       var done = false;
       // Abschluss: Wortmarke fliegt an ihren Platz im Kopf der App (target), der Hintergrund blendet aus
       var finish = function (target) {
         if (done) return;
         done = true;
-        setTimeout(function () {
+        var wait = function (fn) { if (calm) setTimeout(fn, Math.max(0, t0 + SEQ - performance.now())); else playOut(fn); };
+        wait(function () {
           el.style.pointerEvents = 'none';
           var a = textBox(mark);
           var b = target && !calm ? textBox(target) : null;
@@ -146,7 +174,7 @@
             mark.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.96)' }], { duration: 260, easing: 'ease', fill: 'forwards' });
             bg.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 420, easing: 'ease', fill: 'forwards' }).onfinish = function () { el.remove(); };
           }
-        }, Math.max(0, t0 + SEQ - performance.now()));
+        });
       };
       window.__intro = { finish: finish };
       // falls die App nicht Bescheid gibt: spätestens nach 3,5 s
