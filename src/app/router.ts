@@ -37,12 +37,56 @@ function transition(update: () => void) {
   }
 }
 
+// Verlauf: Tab-Seiten (Heute, Etappen, Bonus, Rangliste, Profil) liegen immer ganz unten (Tiefe 0), nur
+// Unterseiten kommen obendrauf. So geht die Wischgeste „zurück“ nur von einer Unterseite zu ihrem Tab –
+// zwischen den Tabs gibt es nichts, wohin man zurückwischen könnte.
+const TAB_ROOTS = ['/', '/etappen', '/bonus', '/rangliste', '/profil'];
+type HistState = { inApp?: boolean; d?: number } | null;
+
+function depth(): number {
+  const d = (window.history.state as HistState)?.d;
+  return typeof d === 'number' && d > 0 ? d : 0;
+}
+
+function urlFor(path: string) {
+  return `${window.location.pathname}${window.location.search}#${path}`;
+}
+
+/** Zurück über den eigenen Pfeil (dann mit weichem Übergang) */
+let ownBack = false;
+/** Tab-Wechsel von einer Unterseite: erst den Verlauf bis zum Tab abbauen, dann ersetzen */
+let pendingRoot: string | null = null;
+
+function show(animate: boolean) {
+  const update = () => {
+    emit();
+    window.scrollTo(0, 0);
+  };
+  if (animate) transition(update);
+  else flushSync(update);
+}
+
 /** Zurück/Vor im Browser oder Hash-Änderung von außen */
 function onExternal() {
+  if (pendingRoot !== null) {
+    // Verlauf ist bis zur Tiefe 0 abgebaut: dort den neuen Tab eintragen (Zwischenseite nie zeichnen)
+    if (depth() > 0) return;
+    const path = pendingRoot;
+    pendingRoot = null;
+    window.history.replaceState({ inApp: true, d: 0 }, '', urlFor(path));
+    shown = current();
+    show(true);
+    return;
+  }
   // popstate und hashchange kommen oft beide: nur einmal wechseln
   if (current() === shown) return;
   shown = current();
-  transition(emit);
+  // Wischgeste (oder Zurück im Browser): iOS hat den Wechsel schon selbst animiert – ohne zweiten
+  // Übergang sofort die neue Seite zeigen, sonst blitzt die alte noch einmal auf
+  const animate = ownBack;
+  ownBack = false;
+  if (animate) transition(emit);
+  else flushSync(emit);
 }
 
 function subscribe(cb: () => void) {
@@ -50,6 +94,10 @@ function subscribe(cb: () => void) {
     bound = true;
     window.addEventListener('hashchange', onExternal);
     window.addEventListener('popstate', onExternal);
+    // Einstieg: Tiefe merken (Tab-Seite oder direkt geöffnete Unterseite = ganz unten)
+    if (typeof (window.history.state as HistState)?.d !== 'number') {
+      window.history.replaceState({ ...(window.history.state ?? {}), d: 0 }, '', window.location.href);
+    }
   }
   listeners.add(cb);
   return () => {
@@ -71,19 +119,36 @@ export function useRoute(): Route {
 
 export function navigate(path: string, opts: { replace?: boolean } = {}) {
   if (current() === path && !opts.replace) return;
-  const url = `${window.location.pathname}${window.location.search}#${path}`;
-  if (opts.replace) window.history.replaceState(window.history.state, '', url);
-  else window.history.pushState({ inApp: true }, '', url);
+  // Tab-Seite: Verlauf bis zum Tab abbauen und ersetzen (kein Zurückwischen zwischen Tabs)
+  if (TAB_ROOTS.includes(path)) {
+    const d = depth();
+    if (d > 0) {
+      pendingRoot = path;
+      window.history.go(-d);
+      // Notbremse, falls der Browser nicht zurückspringt
+      window.setTimeout(() => {
+        if (pendingRoot !== path) return;
+        pendingRoot = null;
+        window.history.replaceState({ inApp: true, d: depth() }, '', urlFor(path));
+        shown = current();
+        show(true);
+      }, 800);
+      return;
+    }
+    window.history.replaceState({ inApp: true, d: 0 }, '', urlFor(path));
+  } else if (opts.replace) {
+    window.history.replaceState({ inApp: true, d: depth() }, '', urlFor(path));
+  } else {
+    window.history.pushState({ inApp: true, d: depth() + 1 }, '', urlFor(path));
+  }
   shown = current();
-  transition(() => {
-    emit();
-    window.scrollTo(0, 0);
-  });
+  show(true);
 }
 
 /** Zurück innerhalb der App, sonst zur angegebenen Seite. */
 export function goBack(fallback: string) {
-  const state = window.history.state as { inApp?: boolean } | null;
-  if (state?.inApp) window.history.back();
-  else navigate(fallback, { replace: true });
+  if (depth() > 0) {
+    ownBack = true;
+    window.history.back();
+  } else navigate(fallback, { replace: true });
 }
