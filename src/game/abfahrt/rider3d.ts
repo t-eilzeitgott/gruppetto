@@ -37,9 +37,10 @@ const SHIN = 0.41;
 const UPPER = 0.3;
 const FORE = 0.3;
 const SPINE = 0.52;                            // Hüfte bis Schulterlinie
-/** im Wiegetritt: Becken aus dem Sattel nach vorn über das Tretlager; im Sprint tiefer und etwas weiter hinten */
-const PELVIS_UP = new THREE.Vector3(0, 1.06, 0.06);
-const PELVIS_SPRINT = new THREE.Vector3(0, 1.05, 0.05);
+/** im Wiegetritt: Becken aus dem Sattel nach vorn über das Tretlager; im Sprint tiefer und etwas weiter hinten
+ *  (relativ zum Kurbeldrehpunkt – beim Hochrad die Vorderradnabe) */
+const PELVIS_UP = new THREE.Vector3(0, 0.76, 0.04);
+const PELVIS_SPRINT = new THREE.Vector3(0, 0.75, 0.03);
 const ZAXIS = new THREE.Vector3(0, 0, 1);
 /** Knöchel relativ zur Pedalachse (Fußballen über dem Pedal) */
 const ANKLE = new THREE.Vector3(0, 0.075, 0.105);
@@ -395,7 +396,8 @@ export class RiderModel {
     this.wheelR = new THREE.Mesh(bike.wheelR, gloss);
     this.wheelR.position.copy(bike.fit.rear);
     this.crank = new THREE.Mesh(bike.crank, gloss);
-    this.crank.position.copy(BB);
+    // Hochrad: die Kurbel sitzt an der Vorderradnabe
+    this.crank.position.copy(bike.fit.bb ?? BB);
     this.body.add(frame, this.wheelF, this.wheelR, this.crank);
     if (bike.decal) {
       this.body.add(new THREE.Mesh(bike.decal.frame, bike.decal.mat));
@@ -525,21 +527,25 @@ export class RiderModel {
     const counter = -alpha * (0.62 + 0.18 * kind);
     if (p.roll !== undefined) {
       this.wheelF.rotation.x = -p.roll * (this.fit.spinF ?? 1);
-      this.wheelR.rotation.x = -p.roll;
+      this.wheelR.rotation.x = -p.roll * (this.fit.spinR ?? 1);
       for (const w of this.trailerWheels) w.rotation.x = -p.roll * this.trailerSpin;
     }
     if (this.trailer) this.followTrailer();
 
-    // Becken über dem Sattel, im Wiegetritt nach vorn über das Tretlager; es hebt und senkt sich mit jedem
-    // Tritt und bleibt über der Mitte, während das Rad pendelt
-    const pelvis = this.pelvis.copy(fit.pelvis).lerp(this.v3.copy(PELVIS_UP).lerp(PELVIS_SPRINT, kind), st);
+    // Becken über dem Sattel, im Wiegetritt nach vorn über das Tretlager (Hochrad: über der Nabe); es hebt und
+    // senkt sich mit jedem Tritt und bleibt über der Mitte, während das Rad pendelt
+    const bb = fit.bb ?? BB;
+    const pelvis = this.pelvis.copy(fit.pelvis).lerp(this.v3.copy(PELVIS_UP).lerp(PELVIS_SPRINT, kind).add(bb), st);
     pelvis.y += st * 0.016 * Math.cos(2 * th);
     pelvis.x += Math.sin(-counter) * pelvis.y * 0.85;
     // Zeitfahrrad: auf den Polstern liegen, außer beim Bremsen und im Wiegetritt
     const aero = fit.aero ? Math.max(0, 1 - brake * 1.6) * (1 - st) : 0;
     // rechte Hand: Griff → Unterlenker (geduckt) bzw. Auflieger
     const hand = this.hand.copy(fit.hood).lerp(fit.drop, Math.max(tuck, spr));
-    let beta = trunkAngle(pelvis, hand, 0.55 - 0.08 * tuck + 0.02 * dance - 0.08 * spr + 0.015 * brake, hand.x - 0.172);
+    // Hochrad: fester, aufrechter Oberkörper (Griffe tief neben der Hüfte)
+    let beta = fit.trunk !== undefined
+      ? fit.trunk - 0.16 * Math.max(tuck, spr)
+      : trunkAngle(pelvis, hand, 0.55 - 0.08 * tuck + 0.02 * dance - 0.08 * spr + 0.015 * brake, hand.x - 0.172);
     if (fit.aero && aero > 0) {
       // Schulter über dem Ellbogen auf dem Polster, Hand vorn am Auflieger
       this.elbowPad.copy(fit.aero.pad).add(new THREE.Vector3(0, 0.028, -0.016));
@@ -547,7 +553,8 @@ export class RiderModel {
       beta += (ba - beta) * aero;
       hand.lerp(fit.aero.hand, aero);
     }
-    beta = Math.max(0.12, Math.min(0.95, beta));
+    // aufrechte Räder (Hollandlenker, Hochrad, Hochlenker) erlauben einen steileren Oberkörper
+    beta = Math.max(0.12, Math.min(fit.upright ?? 0.95, beta));
     this.spine.set(0, Math.sin(beta), -Math.cos(beta));
     this.torso.position.copy(pelvis);
     this.torso.quaternion.setFromUnitVectors(UP, this.spine);
@@ -564,10 +571,12 @@ export class RiderModel {
     this.head.rotation.z = -counter * 0.4 + alpha * 0.25;
 
     // Beine: Hüfte → Knöchel über dem Pedal, Knie nach vorn
+    const crank = fit.crank ?? CRANK;
+    const qx = fit.pedalX ?? Q;
     for (let s = 0; s < 2; s++) {
       const sx = s === 0 ? -1 : 1;
       const a = s === 0 ? th + Math.PI : th;
-      const ped = this.v2.set(sx * Q, BB.y + Math.cos(a) * CRANK, BB.z - Math.sin(a) * CRANK);
+      const ped = this.v2.set(sx * qx, bb.y + Math.cos(a) * crank, bb.z - Math.sin(a) * crank);
       const pitch = -0.2 + 0.16 * Math.sin(a);
       const shoe = this.shoes[s];
       shoe.position.copy(ped);

@@ -21,12 +21,12 @@ export function bikeObject(id: string, kit: Kit): THREE.Group {
   const wr = new THREE.Mesh(b.wheelR, mat);
   wr.position.copy(b.fit.rear);
   const cr = new THREE.Mesh(b.crank, mat);
-  cr.position.copy(BIKE_BB);
+  cr.position.copy(b.fit.bb ?? BIKE_BB);
   // Pedale waagrecht an den Kurbelenden (Kurbel in Ruhelage: rechts oben, links unten)
   const ped = pedalBuild(b.spec.pedals);
   for (const sx of [-1, 1]) {
     const p = new THREE.Mesh(ped, mat);
-    p.position.set(sx * 0.128, sx * 0.17, 0);
+    p.position.set(sx * (b.fit.pedalX ?? 0.128), sx * (b.fit.crank ?? 0.17), 0);
     // bleiben waagrecht, auch wenn die Kurbel gedreht ist
     p.rotation.x = 0.55;
     cr.add(p);
@@ -57,8 +57,9 @@ export function bikeObject(id: string, kit: Kit): THREE.Group {
   g.position.set(0, 0, -(box.min.z + box.max.z) / 2);
   const holder = new THREE.Group();
   holder.add(g);
-  // halbe Länge (für den Bildausschnitt)
+  // halbe Länge und Höhe (für den Bildausschnitt; das Hochrad ist höher)
   holder.userData.half = Math.max(0.9, (box.max.z - box.min.z) / 2);
+  holder.userData.top = box.max.y;
   return holder;
 }
 
@@ -98,6 +99,8 @@ export class GarageView {
   private zoom = 0;
   /** halbe Länge des Rads (Gespann länger) – Kamera weiter weg */
   private half = 0.9;
+  /** Höhe über das übliche Maß hinaus (Hochrad) – Kamera weiter weg und etwas höher */
+  private tall = 0;
   private shadow: THREE.Mesh;
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -142,6 +145,7 @@ export class GarageView {
     this.bike = bikeObject(id, kit);
     this.turn.add(this.bike);
     this.half = this.bike.userData.half ?? 0.9;
+    this.tall = Math.max(0, (this.bike.userData.top ?? 1.1) - 1.2);
     this.shadow.scale.set(this.half / 0.9, 1, 1);
     // kleiner Schwung beim Wechsel
     this.vel = Math.max(this.vel, 1.6);
@@ -194,9 +198,9 @@ export class GarageView {
     const hf = 2 * Math.atan(Math.tan(vf / 2) * this.camera.aspect);
     // unten liegt das Namensschild: Rad etwas nach oben ins Bild rücken
     const k = this.half / 0.9;
-    const dist = Math.max((0.96 * k) / Math.tan(hf / 2), (0.78 * Math.min(1.25, k)) / Math.tan(vf / 2)) * (1 - this.zoom * 0.35) + 0.3;
-    this.camera.position.set(0, 0.5 + dist * 0.2, dist);
-    this.camera.lookAt(0, 0.3, 0);
+    const dist = Math.max((0.96 * k) / Math.tan(hf / 2), (0.78 * Math.min(1.25, k) + this.tall * 0.9) / Math.tan(vf / 2)) * (1 - this.zoom * 0.35) + 0.3;
+    this.camera.position.set(0, 0.5 + dist * 0.2 + this.tall * 0.5, dist);
+    this.camera.lookAt(0, 0.3 + this.tall * 0.55, 0);
     // Vorschaubilder: eins pro Bild
     const job = this.thumbQueue.shift();
     if (job) this.renderThumb(job);
@@ -213,6 +217,10 @@ export class GarageView {
     const obj = bikeObject(job.id, job.kit);
     this.turn.add(obj);
     const k = (obj.userData.half ?? 0.9) / 0.9;
+    // senkrecht vom Boden bis über die höchste Stelle (Hochrad, Rückenlehne, Wimpel, Zeitung auf der Posttasche)
+    const top: number = obj.userData.top ?? 0.97;
+    const cy = Math.max(0.5, top / 2 + 0.02);
+    const vHalf = Math.max(0.56 * Math.min(1.3, k), top / 2 + 0.06);
     // Seitenansicht: Antriebsseite, Vorderrad rechts, leicht schräg
     this.turn.rotation.y = -Math.PI / 2 + 0.22;
     const pr = this.gl.getPixelRatio();
@@ -225,9 +233,9 @@ export class GarageView {
     this.thumbCam.updateProjectionMatrix();
     const vf = (22 * Math.PI) / 180;
     const hf = 2 * Math.atan(Math.tan(vf / 2) * this.thumbCam.aspect);
-    const dist = Math.max((0.92 * k) / Math.tan(hf / 2), (0.56 * Math.min(1.3, k)) / Math.tan(vf / 2)) + 0.25;
-    this.thumbCam.position.set(0, 0.55 + dist * 0.1, dist);
-    this.thumbCam.lookAt(0, 0.5, 0);
+    const dist = Math.max((0.92 * k) / Math.tan(hf / 2), vHalf / Math.tan(vf / 2)) + 0.25;
+    this.thumbCam.position.set(0, cy + 0.05 + dist * 0.1, dist);
+    this.thumbCam.lookAt(0, cy, 0);
     // in die linke obere Ecke zeichnen und sofort herauskopieren
     this.gl.setScissorTest(true);
     this.gl.setScissor(0, (H - h) / pr, w / pr, h / pr);

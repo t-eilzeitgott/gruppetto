@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import type { BikeSpec } from '../bikes';
 import type { Kit } from './rider';
 import { Mesher, merge, rgb, type C3 } from './gloss';
-import { M4, X, Z, along, pathFrames, pipe, shape, strut, sweep } from './prim3d';
+import { M4, X, Z, along, pathFrames, pipe, revolve, shape, strut, sweep, type Warp } from './prim3d';
 
 type V = THREE.Vector3;
 const v3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -175,7 +175,9 @@ function buildHead(m: Mesher, hairM: Mesher, kit: Kit, q: 0 | 1, eyes: boolean, 
     phis.forEach((phi, j) => {
       const edge = hairY(phi) + (i === NH ? 0.0025 * Math.sin(j * 2.7) : 0);
       const y = hairTop + (edge - hairTop) * u;
-      const p = headPoint(y, phi, 0.0028 - 0.001 * u * u, false);
+      // Abstand zur Haut entlang der Kopfnormalen (oben auf dem Scheitel sonst zu dicht an der Haut)
+      const p = headPoint(y, phi, 0, false);
+      p.addScaledVector(p.clone().sub(v3(0, p.y * 0.4, 0)).normalize(), 0.0028 - 0.001 * u * u);
       hairM.v(p.x, p.y, p.z, i === NH ? mix(hair, skin, 0.25) : hair);
     });
     hairM.seams.push([start, start + N]);
@@ -187,7 +189,7 @@ function buildHead(m: Mesher, hairM: Mesher, kit: Kit, q: 0 | 1, eyes: boolean, 
     }
   }
   if (hairTop >= 0.1) {
-    const hc = hairM.v(0, 0.1045, 0.004, hair);
+    const hc = hairM.v(0, 0.108, 0.004, hair);
     for (let j = 0; j < N; j++) hairM.idx.push(hc, fh + j + 1, fh + j);
   }
   // Deckel oben (im Haar) und unten
@@ -401,8 +403,8 @@ function colorful(hex: string): boolean {
 type Head = BikeSpec['head'];
 
 /** verspiegelte Rundum-Brille mit Bügeln über den Ohren */
-function buildGlasses(lens: Mesher, frame: Mesher, kit: Kit, q: 0 | 1, wide: boolean) {
-  const tint = rgb(colorful(kit.side) ? kit.side : colorful(kit.jersey) ? kit.jersey : '#3d6bff');
+function buildGlasses(lens: Mesher, frame: Mesher, kit: Kit, q: 0 | 1, wide: boolean, tintHex?: string) {
+  const tint = rgb(tintHex ?? (colorful(kit.side) ? kit.side : colorful(kit.jersey) ? kit.jersey : '#3d6bff'));
   const NP = q ? 22 : 6;
   const NY = q ? 4 : 1;
   const span = wide ? 1.12 : 1.04;
@@ -602,6 +604,203 @@ function cap(m: Mesher, dark: Mesher, kit: Kit, q: 0 | 1) {
   }
 }
 
+
+// ------------------------------------------------------------------ Hüte und Mützen (Drehkörper um die Hochachse)
+
+/** Drehkörper um die Hochachse: Profil [Radius (1 = Ellipse ax/az), Höhe, Farbe], außen von unten nach oben */
+function upRevolve(m: Mesher, prof: [number, number, C3][], seg: number, ax: number, az: number, cz: number, closed: boolean, tilt = 0, warp?: Warp) {
+  // revolve dreht um x: x → Höhe (y), danach Ellipse und Neigung nach vorn
+  const mtx = new THREE.Matrix4().makeTranslation(0, 0, cz)
+    .multiply(new THREE.Matrix4().makeRotationX(-tilt))
+    .multiply(new THREE.Matrix4().makeScale(ax, 1, az))
+    .multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2));
+  revolve(m, prof, seg, v3(0, 0, 0), closed, mtx, warp);
+}
+
+/**
+ * Melone: runde, feste Krone aus Filz mit Ripsband und Schleife links, schmale Krempe, die an den Seiten
+ * nach oben rollt. Dazu ein Schnurrbart mit gezwirbelten Spitzen.
+ */
+function bowler(m: Mesher, band: Mesher, hairM: Mesher, kit: Kit, q: 0 | 1) {
+  const felt = rgb('#1c1a19');
+  const rib = rgb('#0d0d0e');
+  const seg = q ? 40 : 12;
+  const AX = 0.087;
+  const AZ = 0.106;
+  const CZ = 0.004;
+  // Krone (Radius relativ zur Hutband-Ellipse)
+  const crown: [number, number, C3][] = [[1.0, 0.032, felt], [1.0, 0.066, felt], [0.995, 0.098, felt], [0.96, 0.124, felt], [0.88, 0.146, felt], [0.74, 0.163, felt], [0.52, 0.175, felt], [0.26, 0.181, felt], [0.001, 0.183, felt]];
+  upRevolve(m, q ? crown : [crown[0], crown[2], crown[4], crown[6], crown[8]], seg, AX, AZ, CZ, false);
+  // Ripsband um den Kronenfuß
+  upRevolve(band, [[1.012, 0.031, rib], [1.016, 0.034, rib], [1.016, 0.058, rib], [1.008, 0.061, rib]], seg, AX, AZ, CZ, false);
+  if (q) {
+    // Schleife auf der linken Seite
+    const b = v3(-AX * 1.03, 0.046, CZ + 0.012);
+    band.add(new THREE.SphereGeometry(1, 10, 6), new THREE.Matrix4().compose(b, new THREE.Quaternion(), v3(0.004, 0.009, 0.007)), rib);
+    for (const dz of [-0.012, 0.012]) band.add(new THREE.SphereGeometry(1, 8, 6), new THREE.Matrix4().compose(b.clone().add(v3(0.001, 0, dz)), new THREE.Quaternion(), v3(0.003, 0.008, 0.01)), rib);
+  }
+  // Krempe: schmal, an den Seiten hochgerollt, vorn und hinten leicht gesenkt; Rand eingerollt
+  const r0 = 1.0;
+  const r1 = 1.52;
+  const t = 0.004;
+  const brim: [number, number, C3][] = [[r1, 0.028, felt], [r1 - 0.02, 0.03 + t, felt], [r0, 0.03 + t * 0.6, felt], [r0 - 0.004, 0.028, felt], [r0, 0.0255, felt], [r1 - 0.02, 0.0265, felt]];
+  const warp: Warp = (j, _k, [r, x, c]) => {
+    const a = (j / seg) * Math.PI * 2;
+    const side = Math.sin(a) ** 2;
+    const out = Math.max(0, (r - r0) / (r1 - r0));
+    // seitlich hochgerollt (stärker außen), vorn/hinten leicht gesenkt
+    return [r, x + 0.026 * side * out * out - 0.006 * (1 - side) * out, c];
+  };
+  upRevolve(m, brim, seg, AX, AZ, CZ, true, 0, warp);
+
+  // Schnurrbart: zwei Bögen unter der Nase, außen gezwirbelt nach oben
+  const hair = hairColor(kit);
+  const dark = mix(hair, rgb('#000000'), 0.25);
+  for (const sx of [-1, 1]) {
+    const way: [number, number][] = [[-0.0665, -0.05], [-0.0675, 0.12], [-0.0705, 0.32], [-0.0695, 0.5], [-0.062, 0.63], [-0.053, 0.67], [-0.047, 0.63]];
+    const pts = new THREE.CatmullRomCurve3(way.map(([y, ph]) => headPoint(y, sx * ph, 0.006 - 0.002 * Math.max(0, ph - 0.5) * 3, true)), false, 'centripetal').getPoints(q ? 16 : 5);
+    const n = pts.length - 1;
+    sweep(hairM, pts, pathFrames(pts, v3(0, 1, 0)), (i) => 0.013 * Math.max(0.12, 1 - Math.pow(i / n, 1.4)), (i) => 0.0085 * Math.max(0.15, 1 - Math.pow(i / n, 1.3)), (i) => mix(hair, dark, i / n), shape('round', q ? 8 : 5));
+  }
+}
+
+/** Dienstmütze: Band mit Biese, ausladender Deckel, schwarz glänzender Schirm, goldene Kordel und Abzeichen */
+function peaked(m: Mesher, visor: Mesher, trim: Mesher, q: 0 | 1) {
+  const navy = rgb('#1f2a43');
+  const band = rgb('#18213a');
+  const pipe2 = rgb('#e8b923');
+  const seg = q ? 40 : 12;
+  const AX = 0.086;
+  const AZ = 0.104;
+  const CZ = 0.004;
+  const tilt = 0.1;
+  // Band und Deckel als ein Profil (außen von unten nach oben)
+  const prof: [number, number, C3][] = [[1.0, 0.026, band], [1.005, 0.07, band], [1.012, 0.074, pipe2], [1.04, 0.079, navy], [1.17, 0.1, navy], [1.27, 0.114, navy], [1.29, 0.12, navy], [1.24, 0.127, navy], [0.9, 0.131, navy], [0.4, 0.133, navy], [0.001, 0.133, navy]];
+  upRevolve(m, q ? prof : [prof[0], prof[1], prof[4], prof[6], prof[8], prof[10]], seg, AX, AZ, CZ, false, tilt);
+  // Schirm vorn: abwärts geneigt, oben und unten Fläche, Rand
+  const K = q ? 14 : 5;
+  const top: V[] = [];
+  const bot: V[] = [];
+  for (let k = 0; k <= K; k++) {
+    const ph = -1.05 + (2.1 * k) / K;
+    const inner = v3(Math.sin(ph) * AX * 1.01, 0.028, CZ - Math.cos(ph) * AZ * 1.01);
+    const out = v3(Math.sin(ph), 0, -Math.cos(ph)).normalize();
+    const len = 0.058 * Math.cos(ph * 0.9) ** 0.7;
+    const tip = inner.clone().addScaledVector(out, len).add(v3(0, -len * 0.42, 0));
+    top.push(inner, tip);
+    bot.push(inner.clone().add(v3(0, -0.003, 0)), tip.clone().add(v3(0, -0.003, 0)));
+  }
+  const black = rgb('#0b0b0c');
+  const sT = visor.count;
+  for (const p of top) visor.v(p.x, p.y, p.z, black);
+  const sB = visor.count;
+  for (const p of bot) visor.v(p.x, p.y, p.z, black);
+  for (let k = 0; k < K; k++) {
+    const a = k * 2;
+    visor.quad(sT + a, sT + a + 1, sT + a + 3, sT + a + 2);
+    visor.quad(sB + a, sB + a + 2, sB + a + 3, sB + a + 1);
+    // Außenkante
+    visor.quad(sT + a + 1, sB + a + 1, sB + a + 3, sT + a + 3);
+  }
+  if (!q) return;
+  // Kordel über dem Schirm mit zwei Knöpfen, Abzeichen vorn am Deckel
+  const gold = rgb('#d4a72c');
+  const cord: V[] = [];
+  for (let k = 0; k <= 16; k++) {
+    const ph = -1.0 + (2.0 * k) / 16;
+    cord.push(v3(Math.sin(ph) * AX * 1.035, 0.04 + 0.006 * Math.cos(ph * 1.5), CZ - Math.cos(ph) * AZ * 1.035));
+  }
+  pipe(trim, cord, 0.0018, 6, gold);
+  for (const ph of [-1.02, 1.02]) trim.add(new THREE.SphereGeometry(0.0042, 10, 8), new THREE.Matrix4().makeTranslation(Math.sin(ph) * AX * 1.04, 0.04, CZ - Math.cos(ph) * AZ * 1.04), gold);
+  const badge = v3(0, 0.094, CZ - AZ * 1.13);
+  trim.add(new THREE.CylinderGeometry(0.011, 0.011, 0.003, 16), along(badge, v3(0, 0.28, -1)), gold);
+  trim.add(new THREE.CylinderGeometry(0.006, 0.006, 0.0036, 12), along(badge.clone().add(v3(0, 0, -0.0006)), v3(0, 0.28, -1)), rgb('#b5352c'));
+}
+
+/**
+ * Ring um den Kopf, der seiner Form folgt: Zeilen [Höhe, Abstand zur Haut, Farbe] von unten nach oben.
+ * Flächen zeigen nach außen (Drehsinn wird an der ersten Fläche geprüft).
+ */
+function headWrap(m: Mesher, rows: [number, number, C3][], n: number) {
+  const first = m.count;
+  const W = n + 1;
+  for (const [y, off, c] of rows) {
+    const start = m.count;
+    for (let j = 0; j <= n; j++) {
+      const p = headPoint(y, (j / n) * Math.PI * 2 - Math.PI, off, false);
+      m.v(p.x, p.y, p.z, c);
+    }
+    m.seams.push([start, start + n]);
+  }
+  // Drehsinn: Normale der ersten Fläche soll vom Kopf weg zeigen
+  const P = (i: number) => v3(m.pos[i * 3], m.pos[i * 3 + 1], m.pos[i * 3 + 2]);
+  const a0 = P(first), b0 = P(first + 1), c0 = P(first + W);
+  const nrm = b0.clone().sub(a0).cross(c0.clone().sub(a0));
+  const out = nrm.dot(a0.clone().setY(0)) > 0;
+  for (let i = 0; i < rows.length - 1; i++) {
+    for (let j = 0; j < n; j++) {
+      const a = first + i * W + j;
+      if (out) m.idx.push(a, a + 1, a + W, a + 1, a + W + 1, a + W);
+      else m.idx.push(a, a + W, a + 1, a + 1, a + W, a + W + 1);
+    }
+  }
+}
+
+/** Frottee-Stirnband (70er), zweifarbig gestreift, liegt auf den Haaren */
+function headband(m: Mesher, kit: Kit, q: 0 | 1) {
+  const c1 = rgb(kit.jersey);
+  const c2 = rgb('#f4f2ec');
+  headWrap(m, [[0.01, 0.003, c2], [0.014, 0.0075, c2], [0.022, 0.009, c2], [0.0225, 0.009, c1], [0.044, 0.009, c1], [0.0445, 0.009, c2], [0.053, 0.0085, c2], [0.058, 0.004, c2]], q ? 40 : 12);
+}
+
+/** Bandana: eng anliegendes Tuch über dem Kopf, weißer Saum, Knoten mit zwei Zipfeln im Nacken */
+function bandana(m: Mesher, dark: Mesher, q: 0 | 1) {
+  const red = rgb('#a3191c');
+  const hem = rgb('#f2ede4');
+  const C = v3(0, 0.01, 0.004);
+  shell(m, dark, {
+    C, A: 0, B: 0, Cf: 0, Cb: 0,
+    radius: (d) => headDist(C, d) + 0.0045,
+    psiF: (al) => -1.22 - 0.12 * (1 - Math.sin(al)),
+    psiB: (al) => 2.12 + 0.05 * Math.sin(al),
+    vents: [],
+    col: (_l, v) => (v < 0.035 ? hem : red),
+    vLines: [0.034, 0.036],
+    stepA: q ? 0.07 : 0.24,
+    stepV: q ? 0.05 : 0.2,
+    thick: 0.003,
+    depth: 0.003,
+    inner: mul(red, 0.6),
+    wall: red,
+  });
+  // Knoten hinten, zwei Zipfel nach unten
+  const k = headPoint(-0.03, Math.PI, 0.008, false);
+  m.add(new THREE.SphereGeometry(1, q ? 12 : 6, q ? 8 : 4), new THREE.Matrix4().compose(k, new THREE.Quaternion(), v3(0.016, 0.012, 0.012)), red);
+  for (const sx of [-1, 1]) {
+    const tail = [k.clone(), k.clone().add(v3(sx * 0.016, -0.03, 0.012)), k.clone().add(v3(sx * 0.024, -0.062, 0.016))];
+    sweep(m, tail, pathFrames(tail, v3(0, 0, 1)), (i) => [0.02, 0.024, 0.012][i], () => 0.004, () => red, shape('round', q ? 8 : 4));
+  }
+}
+
+/** Rennbrille der 50er auf der Mütze: zwei runde Gläser in Messingfassung, Lederband um den Kopf */
+function capGoggles(m: Mesher, strap: Mesher, q: 0 | 1) {
+  const brass = rgb('#b48a3c');
+  const glass = rgb('#3b4a3a');
+  const leather = rgb('#5b3a22');
+  for (const sx of [-1, 1]) {
+    const c = headPoint(0.07, sx * 0.34, 0.0062 + 0.011, false);
+    const nrm = c.clone().sub(v3(0, 0.07, 0.004)).setY(0.25).normalize();
+    m.add(new THREE.CylinderGeometry(0.0205, 0.0205, 0.016, q ? 18 : 8), along(c, nrm), brass, 0.9);
+    m.add(new THREE.CylinderGeometry(0.0165, 0.0165, 0.0168, q ? 18 : 8), along(c.clone().addScaledVector(nrm, 0.0004), nrm), glass, 0.95);
+  }
+  // Steg über der Nase
+  const b0 = headPoint(0.072, -0.14, 0.017, false);
+  const b1 = headPoint(0.072, 0.14, 0.017, false);
+  pipe(m, [b0, headPoint(0.076, 0, 0.019, false), b1], 0.0025, 6, brass);
+  // Lederband um den Kopf
+  skinRibbon(strap, [[0.074, 0.55], [0.07, 1.2], [0.062, 1.9], [0.058, 2.6], [0.056, Math.PI], [0.058, Math.PI * 2 - 2.6], [0.062, Math.PI * 2 - 1.9], [0.07, Math.PI * 2 - 1.2], [0.074, Math.PI * 2 - 0.55]], 0.0062 + 0.0035, 0.014, leather, q ? 20 : 6);
+}
+
 // ------------------------------------------------------------------ Zusammenbau Kopf
 
 const headCache = new Map<string, THREE.BufferGeometry>();
@@ -613,16 +812,26 @@ export function headBuild(kit: Kit, head: Head, q: 0 | 1): THREE.BufferGeometry 
   if (hit) return hit;
   const skin = new Mesher(0.07);
   const hair = new Mesher(0.12);
-  const shellM = new Mesher(head === 'cap' ? 0.04 : 0.48);
+  const cloth = head !== 'helmet' && head !== 'aero';
+  const shellM = new Mesher(cloth ? 0.04 : 0.48);
   const dark = new Mesher(0.0);
   const straps = new Mesher(0.08);
   const lens = new Mesher(1.0);
   const frame = new Mesher(0.4);
-  buildHead(skin, hair, kit, q, head === 'cap', head === 'cap' ? 0.1 : 0.05);
+  // Helme und Bandana mit Sonnenbrille, sonst sieht man die Augen
+  const glasses = head === 'helmet' || head === 'aero' || head === 'bandana';
+  buildHead(skin, hair, kit, q, !glasses, cloth ? 0.1 : 0.05);
   if (head === 'helmet') roadHelmet(shellM, dark, straps, kit, q);
   else if (head === 'aero') aeroHelmet(shellM, dark, straps, kit, q);
-  else cap(shellM, dark, kit, q);
-  if (head !== 'cap') buildGlasses(lens, frame, kit, q, head === 'aero');
+  else if (head === 'bowler') bowler(shellM, straps, hair, kit, q);
+  else if (head === 'peaked') peaked(shellM, frame, straps, q);
+  else if (head === 'band') headband(straps, kit, q);
+  else if (head === 'bandana') bandana(shellM, dark, q);
+  else {
+    cap(shellM, dark, kit, q);
+    if (head === 'capgoggles') capGoggles(frame, straps, q);
+  }
+  if (glasses) buildGlasses(lens, frame, kit, q, head === 'aero', head === 'bandana' ? '#141414' : undefined);
   const g = merge([skin, hair, shellM, dark, straps, lens, frame])!;
   headCache.set(key, g);
   return g;
@@ -632,6 +841,19 @@ export function headBuild(kit: Kit, head: Head, q: 0 | 1): THREE.BufferGeometry 
 
 /** Pedal (Ursprung = Mitte des Pedals auf der Achse); Haken und Riemen beim klassischen Pedal */
 function addPedal(metal: Mesher, satin: Mesher, matte: Mesher, kind: BikeSpec['pedals'], q: 0 | 1, shoe: boolean) {
+  if (kind === 'block') {
+    // Gummiklotzpedal: Käfig aus zwei Blechen, zwei geriffelte Gummiblöcke, Rückstrahler vorn und hinten
+    const sil = rgb('#c3c8ce');
+    const rub = rgb('#1d1d20');
+    metal.add(new THREE.CylinderGeometry(0.0085, 0.0085, 0.104, 8), M4(0, -0.003, 0, 0, 0, Math.PI / 2), sil);
+    for (const x of [-0.05, 0.05]) strut(metal, v3(x, -0.004, -0.042), v3(x, -0.004, 0.042), 0.004, 0.024, sil, X);
+    for (const z of [-0.025, 0.025]) {
+      satin.add(new THREE.BoxGeometry(0.092, 0.02, 0.026), M4(0, -0.003, z), rub);
+      if (q) for (const k of [-1, 0, 1]) matte.add(new THREE.BoxGeometry(0.094, 0.0035, 0.0042), M4(0, 0.0075, z + k * 0.0075), rgb('#0b0b0c'));
+    }
+    if (q) for (const z of [-0.0445, 0.0445]) satin.add(new THREE.BoxGeometry(0.052, 0.012, 0.004), M4(0, -0.004, z), rgb('#ff8a12'));
+    return;
+  }
   if (kind === 'clipless') {
     satin.add(new THREE.BoxGeometry(0.068, 0.012, 0.07), M4(0, -0.003, -0.002), rgb('#1c1d21'));
     if (q) metal.add(new THREE.BoxGeometry(0.05, 0.003, 0.05), M4(0, 0.0045, -0.006), rgb('#b9bfc6'));
@@ -665,7 +887,7 @@ export function shoeBuild(kit: Kit, pedals: BikeSpec['pedals'], q: 0 | 1): THREE
   const key = `${kit.shoes}|${kit.side}|${pedals}|${q}`;
   const hit = shoeCache.get(key);
   if (hit) return hit;
-  const retro = pedals === 'toeclip';
+  const retro = pedals === 'toeclip' || pedals === 'block';
   const upper = new Mesher(retro ? 0.32 : 0.36);
   const metal = new Mesher(0.95);
   const satin = new Mesher(0.22);

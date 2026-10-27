@@ -19,8 +19,9 @@ test('Räder: Läufe und Meter nur aus den eigenen Zeilen aller drei Spiele', ()
   assert.deepEqual(s, { runs: 8, meters: 21000 });
 });
 
-test('Räder: am Anfang 1 von 14, dann der Reihe nach erst Läufe, dann immer mehr Kilometer', () => {
-  assert.equal(BIKES.length, 14);
+test('Räder: am Anfang 1 von 20, dann der Reihe nach erst Läufe, dann immer mehr Kilometer', () => {
+  assert.equal(BIKES.length, 20);
+  assert.equal(new Set(BIKES.map((b) => b.id)).size, BIKES.length, 'jede Kennung einmal');
   const ids = (p: ReturnType<typeof bikeProgress>) => BIKES.filter((b) => p[b.id].done).map((b) => b.id);
   const none = bikeProgress(bikeStats({}, 'me'));
   assert.deepEqual(ids(none), ['allround'], 'am Anfang nur das Teamrad');
@@ -28,19 +29,24 @@ test('Räder: am Anfang 1 von 14, dann der Reihe nach erst Läufe, dann immer me
   // die ersten Räder nach etwa zehn Läufen
   assert.deepEqual(ids(bikeProgress({ runs: 2, meters: 4000 })), ['allround', 'lastesel']);
   assert.deepEqual(ids(bikeProgress({ runs: 10, meters: 24000 })), ['allround', 'lastesel', 'acciaio', 'pave', 'matsch']);
-  // danach Kilometer, jede Stufe weiter als die davor
-  const km = BIKES.slice(5).map((b) => (b.unlock.kind === 'km' ? b.unlock.n : 0));
+  assert.deepEqual(ids(bikeProgress({ runs: 14, meters: 30000 })), ['allround', 'lastesel', 'acciaio', 'pave', 'matsch', 'bonanza']);
+  // Läufe steigen, danach nur noch Kilometer, jede Stufe weiter als die davor
+  const runs = BIKES.slice(1, 6).map((b) => (b.unlock.kind === 'runs' ? b.unlock.n : 0));
+  assert.ok(runs.every((n, i) => n > 0 && (i === 0 || n > runs[i - 1])), 'Läufe steigen');
+  const km = BIKES.slice(6).map((b) => (b.unlock.kind === 'km' ? b.unlock.n : 0));
   assert.ok(km.every((n, i) => n > 0 && (i === 0 || n > km[i - 1])), 'Kilometer steigen');
   const mid = bikeProgress({ runs: 30, meters: 70000 });
-  assert.deepEqual(ids(mid), ['allround', 'lastesel', 'acciaio', 'pave', 'matsch', 'feder', 'aero']);
-  assert.equal(mid.fernweh.label, '70 / 85 km');
-  // der Wohnwagen kommt kurz vor Schluss
-  assert.equal(BIKES[BIKES.length - 2].id, 'wohnwagen');
+  assert.deepEqual(ids(mid), ['allround', 'lastesel', 'acciaio', 'pave', 'matsch', 'bonanza', 'feder', 'landpost', 'aero']);
+  assert.equal(mid.gregario.label, '70 / 72 km');
+  assert.equal(mid.fernweh.after, "Gregario '53");
+  // kurz vor Schluss Wohnwagen und Hochrad, zuletzt die Legende
+  assert.deepEqual(BIKES.slice(-3).map((b) => b.id), ['wohnwagen', 'hochrad', 'legende']);
   // der Reihe nach: viele Kilometer, aber zu wenige Läufe – Kilometerräder warten
-  const queued = bikeProgress({ runs: 9, meters: 400000 });
-  assert.ok(!queued.matsch.done && !queued.feder.done && !queued.legende.done);
-  assert.equal(queued.feder.after, 'Matschkönig');
-  assert.equal(queued.matsch.after, undefined);
+  const queued = bikeProgress({ runs: 12, meters: 400000 });
+  assert.ok(queued.matsch.done && !queued.bonanza.done && !queued.feder.done && !queued.legende.done);
+  assert.equal(queued.feder.after, "Hochlenker '72");
+  assert.equal(queued.bonanza.after, undefined);
+  assert.equal(queued.bonanza.label, '12 / 14 Läufe');
   const all = bikeProgress({ runs: 120, meters: 300000 });
   assert.ok(BIKES.every((b) => all[b.id].done), 'mit 300 km alles frei');
   assert.equal(nextBike(all), null);
@@ -108,9 +114,12 @@ test('Räder, Köpfe und Schuhe der Gegner bauen sauber (Normalen passen zu den 
   for (const b of BIKES) {
     const r = bikeBuild(b.id, kit, 0);
     for (const g of [r.frame, r.wheelF, r.wheelR, r.crank]) assert.ok(consistent(g) > 0.98, `${b.id}: Flächen und Normalen`);
-    assert.ok(r.fit.hood.y > 0.6 && r.fit.hood.z < (b.bar === 'city' ? -0.2 : -0.3), `${b.id}: Griff vorn oben`);
+    // Griff vor dem Becken: Rennlenker weit vorn, Hollandrad, Hochlenker und Lenkrad näher, Hochrad neben der Hüfte
+    const reach = r.fit.pelvis.z - r.fit.hood.z;
+    const min = b.bar === 'moustache' ? 0 : ['city', 'ape', 'wheel'].includes(b.bar) ? 0.4 : 0.6;
+    assert.ok(r.fit.hood.y > 0.6 && reach > min, `${b.id}: Griff vorn oben (${reach.toFixed(2)})`);
   }
-  for (const h of ['helmet', 'aero', 'cap'] as const) assert.ok(consistent(headBuild(kit, h, 0)) > 0.97, `Kopf ${h}`);
+  for (const h of new Set(BIKES.map((b) => b.head))) assert.ok(consistent(headBuild(kit, h, 0)) > 0.97, `Kopf ${h}`);
   // Reifen berühren den Boden (auch breite und mit Stollen)
   for (const b of BIKES) {
     const r = bikeBuild(b.id, kit, 0);
@@ -118,7 +127,7 @@ test('Räder, Köpfe und Schuhe der Gegner bauen sauber (Normalen passen zu den 
     // Außenradius (Segment 0 liegt genau waagrecht vorn) = Achshöhe
     assert.ok(Math.abs(r.wheelR.boundingBox!.max.z - r.fit.rear.y) < 0.004, `${b.id}: Hinterrad steht auf dem Boden`);
   }
-  assert.ok(consistent(shoeBuild(kit, 'toeclip', 0)) > 0.97, 'Schuh');
+  for (const p of ['toeclip', 'block'] as const) assert.ok(consistent(shoeBuild(kit, p, 0)) > 0.97, `Schuh ${p}`);
 });
 
 test('volle Detailstufe (Garage): Stollen, Schlamm, Taschen und Speichenräder bauen sauber', () => {
@@ -126,7 +135,7 @@ test('volle Detailstufe (Garage): Stollen, Schlamm, Taschen und Speichenräder b
   const ctx = new Proxy({}, { get: (_t, k) => (k === 'measureText' ? () => ({ width: 100 }) : () => undefined), set: () => true });
   (globalThis as { document?: unknown }).document = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx }) };
   const kit = { jersey: '#e6007e', side: '#1b1b1b', helmet: '#ffffff', shorts: '#111111', skin: '#e2b48f', shoes: '#ffffff', number: '12' };
-  for (const id of ['matsch', 'fernweh', 'bahn', 'regenbogen', 'lastesel', 'wohnwagen']) {
+  for (const id of ['matsch', 'fernweh', 'bahn', 'regenbogen', 'lastesel', 'wohnwagen', 'bonanza', 'landpost', 'gregario', 'bambus', 'lowrider', 'hochrad']) {
     const r = bikeBuild(id, kit, 1);
     for (const g of [r.frame, r.wheelF, r.wheelR, r.crank]) assert.ok(consistent(g) > 0.97, `${id}: Flächen und Normalen`);
     if (r.trailer) assert.ok(consistent(r.trailer.body) > 0.97 && consistent(r.trailer.wheel) > 0.97, `${id}: Anhänger`);
@@ -138,6 +147,13 @@ test('volle Detailstufe (Garage): Stollen, Schlamm, Taschen und Speichenräder b
   // Lastenrad: kleines Vorderrad weit vorn, dreht schneller
   const cargo = bikeBuild('lastesel', kit, 1);
   assert.ok(cargo.fit.front.z < -1.4 && (cargo.fit.spinF ?? 1) > 1.2);
+  // Hochrad: Kurbel an der Vorderradnabe, das große Rad dreht langsamer, das kleine schneller
+  const ord = bikeBuild('hochrad', kit, 1).fit;
+  assert.ok(ord.bb && ord.bb.distanceTo(ord.front) < 1e-6 && (ord.spinF ?? 1) < 0.6 && (ord.spinR ?? 1) > 1.5);
+  // Bonanzarad: kleines Vorderrad dreht schneller als das Hinterrad; Postrad: Rücklicht hinten am Gepäckträger
+  const bon = bikeBuild('bonanza', kit, 1).fit;
+  assert.ok((bon.spinF ?? 1) > (bon.spinR ?? 1) && (bon.spinR ?? 1) > 1);
+  assert.ok(bikeBuild('landpost', kit, 1).fit.lamp.z > 0.6);
   // Wohnwagen: Räder stehen auf dem Boden (Kupplung auf Achshöhe des Rads)
   const ww = bikeBuild('wohnwagen', kit, 1).trailer!;
   ww.wheel.computeBoundingBox();
