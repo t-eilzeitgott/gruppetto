@@ -3,6 +3,73 @@ import * as THREE from 'three';
 
 export type RGBf = [number, number, number];
 
+/**
+ * Textur mit Durchsichtigkeit aus einer Zeichenfläche, aber über die Bilddaten statt direkt: Auf manchen Handys
+ * entsteht beim direkten Hochladen in fast durchsichtigen Rändern buntes Rauschen (Verläufe sind gedithert, beim
+ * Zurückrechnen der Farbe wird das riesig). Hier bekommen die Ränder eine ruhige Farbe: fest (rgb), das Mittel der
+ * deckenden Teile oder ('bleed') die Farbe der nächsten deckenden Nachbarn.
+ */
+export function alphaTex(cv: HTMLCanvasElement, fill?: [number, number, number] | 'bleed'): THREE.DataTexture {
+  const w = cv.width;
+  const h = cv.height;
+  const img = cv.getContext('2d')?.getImageData?.(0, 0, w, h);
+  // ohne Bilddaten (Testumgebung): wie gewohnt direkt aus der Zeichenfläche
+  if (!img?.data) return Object.assign(new THREE.CanvasTexture(cv), { colorSpace: THREE.SRGBColorSpace }) as unknown as THREE.DataTexture;
+  const src = img.data;
+  const d = new Uint8ClampedArray(src);
+  if (fill === 'bleed') {
+    // in mehreren Durchgängen die Farbe deckender Nachbarn nach außen tragen
+    const solid = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) solid[i] = d[i * 4 + 3] >= 128 ? 1 : 0;
+    for (let pass = 0; pass < 2; pass++) {
+      const add: number[] = [];
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x;
+          if (solid[i]) continue;
+          let r = 0, g = 0, b = 0, n = 0;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+            const j = yy * w + xx;
+            if (!solid[j]) continue;
+            r += d[j * 4]; g += d[j * 4 + 1]; b += d[j * 4 + 2]; n++;
+          }
+          if (n) { d[i * 4] = r / n; d[i * 4 + 1] = g / n; d[i * 4 + 2] = b / n; add.push(i); }
+        }
+      }
+      for (const i of add) solid[i] = 1;
+    }
+  } else {
+    let fr = 0, fg = 0, fb = 0;
+    if (fill) [fr, fg, fb] = fill;
+    else {
+      let n = 0;
+      for (let i = 0; i < w * h; i++) if (d[i * 4 + 3] > 200) { fr += d[i * 4]; fg += d[i * 4 + 1]; fb += d[i * 4 + 2]; n++; }
+      if (n) { fr /= n; fg /= n; fb /= n; }
+    }
+    for (let i = 0; i < w * h; i++) {
+      const a = d[i * 4 + 3];
+      const k = Math.max(0, Math.min(1, (a - 40) / 120));
+      d[i * 4] = fr + (d[i * 4] - fr) * k;
+      d[i * 4 + 1] = fg + (d[i * 4 + 1] - fg) * k;
+      d[i * 4 + 2] = fb + (d[i * 4 + 2] - fb) * k;
+    }
+  }
+  // Zeilen umdrehen (Zeichenfläche oben = Textur v = 1)
+  const out = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) out.set(d.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4);
+  const t = new THREE.DataTexture(out, w, h, THREE.RGBAFormat);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
+
+
+
 const tmpColor = new THREE.Color();
 /** sRGB-Hex → lineare Farbe für Vertexfarben */
 export function lin(hex: string | number): RGBf {
@@ -52,6 +119,15 @@ export class GB {
       this.vert(v.x, v.y, v.z, fn(v, n));
     }
   }
+  /** Viereck mit Farbe je Ecke */
+  quadC(a: number[], b: number[], c: number[], d: number[], ca: RGBf, cb: RGBf, cc: RGBf, cd: RGBf, uvs: number[][]) {
+    this.vert(a[0], a[1], a[2], ca, uvs[0][0], uvs[0][1]);
+    this.vert(b[0], b[1], b[2], cb, uvs[1][0], uvs[1][1]);
+    this.vert(c[0], c[1], c[2], cc, uvs[2][0], uvs[2][1]);
+    this.vert(a[0], a[1], a[2], ca, uvs[0][0], uvs[0][1]);
+    this.vert(c[0], c[1], c[2], cc, uvs[2][0], uvs[2][1]);
+    this.vert(d[0], d[1], d[2], cd, uvs[3][0], uvs[3][1]);
+  }
   /** Viereck a-b-c-d (gegen den Uhrzeigersinn von vorn gesehen) */
   quad(a: number[], b: number[], c: number[], d: number[], col: RGBf, uvs?: number[][]) {
     this.tri(a, b, c, col, uvs?.[0], uvs?.[1], uvs?.[2]);
@@ -71,7 +147,7 @@ export class GB {
    * Wie build(), aber mit weichen Normalen (gleiche Lage = gemittelte Normale). Alle Dreiecke werden so
    * gewendet, dass sie zur Seite von hint zeigen – gemittelt wird dann nur Gleichgerichtetes.
    */
-  buildSmooth(hint: THREE.Vector3): THREE.BufferGeometry {
+  buildSmooth(hint: THREE.Vector3 | null): THREE.BufferGeometry {
     const p = this.p;
     const swap = (a: number[], i: number, j: number, n: number) => { for (let k = 0; k < n; k++) { const t = a[i * n + k]; a[i * n + k] = a[j * n + k]; a[j * n + k] = t; } };
     const e1 = new THREE.Vector3();
@@ -85,7 +161,7 @@ export class GB {
       e1.set(p[(a + 1) * 3] - p[a * 3], p[(a + 1) * 3 + 1] - p[a * 3 + 1], p[(a + 1) * 3 + 2] - p[a * 3 + 2]);
       e2.set(p[(a + 2) * 3] - p[a * 3], p[(a + 2) * 3 + 1] - p[a * 3 + 1], p[(a + 2) * 3 + 2] - p[a * 3 + 2]);
       fn.crossVectors(e1, e2);
-      if (fn.dot(hint) < 0) { swap(p, a + 1, a + 2, 3); swap(this.c, a + 1, a + 2, 3); swap(this.u, a + 1, a + 2, 2); fn.negate(); }
+      if (hint && fn.dot(hint) < 0) { swap(p, a + 1, a + 2, 3); swap(this.c, a + 1, a + 2, 3); swap(this.u, a + 1, a + 2, 2); fn.negate(); }
       for (let k = 0; k < 3; k++) {
         const kk = key(a + k);
         keys.push(kk);
@@ -118,6 +194,27 @@ const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) 
 const TRUNK = lin('#5a3d27');
 
 
+
+/**
+ * Weiche Normalen für Bäume: zum Großteil vom Stamm nach außen (wie eine Kugel um die Krone), ein wenig von der
+ * Fläche selbst. So wirken Kronen rund und belaubt statt facettiert, ohne ein Dreieck mehr.
+ */
+function softNormals(g: THREE.BufferGeometry, yc: number, k: number, keep = 0.3): THREE.BufferGeometry {
+  const pos = g.getAttribute('position');
+  const nrm = g.getAttribute('normal') as THREE.BufferAttribute;
+  const v = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const sp = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    n.fromBufferAttribute(nrm, i);
+    sp.set(v.x, (v.y - yc) * k + 0.25, v.z).normalize();
+    n.multiplyScalar(keep).addScaledVector(sp, 1 - keep).normalize();
+    nrm.setXYZ(i, n.x, n.y, n.z);
+  }
+  nrm.needsUpdate = true;
+  return g;
+}
 
 const mixC = (a: RGBf, b: RGBf, t: number): RGBf => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 const mulC = (a: RGBf, f: number): RGBf => [a[0] * f, a[1] * f, a[2] * f];
@@ -177,14 +274,14 @@ function spruce(o: { h: number; w: number; tiers: number; spikes: number; dark: 
   }
   // Wipfel
   if (!o.low) b.addFn(new THREE.ConeGeometry(0.16, 1.1, 5), M(0, o.h + 0.25), () => mixC(dark, light, 0.6));
-  return b.build();
+  return softNormals(b.build(), o.h * 0.42, 0.45);
 }
 
 /** Laubbaum: viele unregelmäßige Blätterballen, oben im Licht hell, unten und innen dunkel, dazu Äste */
-function leafTree(crowns: [number, number, number, number][], trunkH: number, dark: string, light: string, branches = 3): THREE.BufferGeometry {
+function leafTree(crowns: [number, number, number, number][], trunkH: number, dark: string, light: string, branches = 3, detail = 1): THREE.BufferGeometry {
   const b = new GB();
   const trunk = lin('#5a4030');
-  b.addFn(new THREE.CylinderGeometry(0.12, 0.27, trunkH + 0.6, 7), M(0, (trunkH + 0.6) / 2), (p) => mulC(trunk, 0.8 + 0.25 * Math.min(1, p.y / trunkH)));
+  b.addFn(new THREE.CylinderGeometry(0.12, 0.27, trunkH + 0.6, detail ? 7 : 4), M(0, (trunkH + 0.6) / 2), (p) => mulC(trunk, 0.8 + 0.25 * Math.min(1, p.y / trunkH)));
   for (let i = 0; i < branches; i++) {
     const a = (i / branches) * Math.PI * 2 + 0.4;
     b.add(new THREE.CylinderGeometry(0.05, 0.1, 1.9, 5), M(Math.cos(a) * 0.55, trunkH + 0.55, Math.sin(a) * 0.55, 1, 1, 1, 0, Math.sin(a) * 0.75, -Math.cos(a) * 0.75), trunk);
@@ -194,7 +291,7 @@ function leafTree(crowns: [number, number, number, number][], trunkH: number, da
   const top = Math.max(...crowns.map(([, y, , r]) => y + r));
   const bot = Math.min(...crowns.map(([, y, , r]) => y - r));
   crowns.forEach(([x, y, z, r], i) => {
-    const g = new THREE.IcosahedronGeometry(r, 1);
+    const g = new THREE.IcosahedronGeometry(r, detail);
     const pos = g.getAttribute('position');
     const v = new THREE.Vector3();
     for (let q = 0; q < pos.count; q++) {
@@ -208,27 +305,32 @@ function leafTree(crowns: [number, number, number, number][], trunkH: number, da
       return mulC(mixC(D, Lc, Math.min(1, hgt * 0.55 + lit * 0.5)), 0.78 + 0.3 * hgt);
     });
   });
-  return b.build();
+  return softNormals(b.build(), (top + bot) / 2, 0.8, 0.25);
 }
 
 
 /** einfache Fassungen der Bäume für weiter entfernte Landschaftskacheln (gleiche Umrisse, weniger Dreiecke) */
 export function treeGeometriesLow(): Partial<Record<Prop3D, THREE.BufferGeometry>> {
-  const lowBlob = (crowns: [number, number, number, number][], trunkH: number, greens: string[]) => {
-    const b = new GB();
-    b.add(new THREE.CylinderGeometry(0.13, 0.26, trunkH, 4), M(0, trunkH / 2), TRUNK);
-    crowns.forEach(([x, y, z, r], i) => b.add(new THREE.IcosahedronGeometry(r, 0), M(x, y, z, 1, 0.88, 1, i * 1.3), lin(greens[i % greens.length])));
-    return b.build();
-  };
   const cypress = new GB();
   cypress.add(new THREE.IcosahedronGeometry(1, 0), M(0, 4.6, 0, 0.72, 4.3, 0.72), lin('#2b4d27'));
   return {
-    pine: spruce({ h: 12, w: 2.8, tiers: 5, spikes: 7, dark: '#16391f', light: '#4f8448', seed: 3, low: true }),
-    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 5, spikes: 7, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true, low: true }),
-    larch: spruce({ h: 11, w: 2.3, tiers: 5, spikes: 7, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, low: true }),
-    tree: lowBlob([[0, 5.3, 0, 2.5], [1.2, 4.5, 0.5, 1.8], [-1.1, 4.7, -0.5, 1.9]], 3.6, ['#4c8532', '#5f9a3d', '#3f752b']),
-    treeRound: lowBlob([[0, 3.8, 0, 1.8]], 2.6, ['#5a983a']),
-    cypress: cypress.build(),
+    pine: spruce({ h: 12, w: 2.8, tiers: 7, spikes: 8, dark: '#16391f', light: '#4f8448', seed: 3, low: true }),
+    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 7, spikes: 8, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true, low: true }),
+    larch: spruce({ h: 11, w: 2.3, tiers: 7, spikes: 8, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, low: true }),
+    tree: leafTree([[0, 5.4, 0, 2.3], [1.4, 4.7, 0.5, 1.7], [-1.3, 4.8, -0.4, 1.8], [0.3, 6.4, -0.2, 1.5]], 3.6, '#2f5e22', '#7fb64e', 0, 0),
+    treeRound: leafTree([[0, 3.8, 0, 1.7], [0.6, 4.3, 0.3, 1.1]], 2.6, '#3a6e28', '#8cc256', 0, 0),
+    cypress: softNormals(cypress.build(), 4.6, 0.25),
+  };
+}
+
+/** ganz einfache Fassungen für Bäume jenseits von gut 130 m: dort sind sie nur noch wenige Pixel hoch */
+export function treeGeometriesFar(): Partial<Record<Prop3D, THREE.BufferGeometry>> {
+  return {
+    pine: spruce({ h: 12, w: 2.8, tiers: 4, spikes: 6, dark: '#16391f', light: '#4f8448', seed: 3, low: true }),
+    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 4, spikes: 6, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true, low: true }),
+    larch: spruce({ h: 11, w: 2.3, tiers: 4, spikes: 6, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, low: true }),
+    tree: leafTree([[0, 5.3, 0, 2.6], [0.9, 4.6, 0.4, 1.9]], 3.6, '#2f5e22', '#7fb64e', 0, 0),
+    treeRound: leafTree([[0, 3.9, 0, 1.9]], 2.6, '#3a6e28', '#8cc256', 0, 0),
   };
 }
 
@@ -277,13 +379,13 @@ export function propGeometries(): Record<Prop3D, THREE.BufferGeometry> {
   bush.add(new THREE.IcosahedronGeometry(0.75, 0), M(0, 0.45, 0, 1.2, 0.75, 1), lin('#456f2e'));
   bush.add(new THREE.IcosahedronGeometry(0.55, 0), M(0.5, 0.55, 0.2, 1, 0.8, 1), lin('#5b8a3c'));
   return {
-    pine: spruce({ h: 12, w: 2.8, tiers: 10, spikes: 11, dark: '#16391f', light: '#4f8448', seed: 3 }),
-    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 10, spikes: 11, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true }),
-    larch: spruce({ h: 11, w: 2.3, tiers: 9, spikes: 10, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, sparse: 0.25 }),
+    pine: spruce({ h: 12, w: 2.8, tiers: 9, spikes: 10, dark: '#16391f', light: '#4f8448', seed: 3 }),
+    pineSnow: spruce({ h: 11.5, w: 2.7, tiers: 9, spikes: 10, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true }),
+    larch: spruce({ h: 11, w: 2.3, tiers: 8, spikes: 9, dark: '#4d7428', light: '#a8c65c', seed: 7, droop: 0.34, sparse: 0.25 }),
     tree: leafTree([[0, 5.4, 0, 2.1], [1.4, 4.7, 0.5, 1.6], [-1.3, 4.8, -0.4, 1.7], [0.3, 6.5, -0.2, 1.5], [-0.5, 5.9, 1.2, 1.3], [0.8, 5.6, -1.2, 1.35], [-0.9, 4.2, 0.9, 1.1]], 3.6, '#2f5e22', '#7fb64e'),
     treeRound: leafTree([[0, 3.8, 0, 1.55], [0.7, 4.4, 0.3, 1.05], [-0.6, 4.3, -0.4, 1.0], [0.1, 3.3, 0.8, 0.95]], 2.6, '#3a6e28', '#8cc256', 2),
-    cypress: cypress.build(),
-    olive: olive.build(),
+    cypress: softNormals(cypress.build(), 4.6, 0.25),
+    olive: softNormals(olive.build(), 2.8, 0.8),
     bush: bush.build(),
     rock: rock.build(),
     boulder: boulder.build(),

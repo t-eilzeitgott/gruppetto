@@ -94,6 +94,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       let frames = 0;
       let idleT = 0;
       let lostT = 0;
+      let fpsT = 0;
+      let fpsN = 0;
       let rebuilt = false;
       let drawn = false;
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGen((x) => x + 1); } };
@@ -126,11 +128,15 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         if (idle) { frames += 1; raf = requestAnimationFrame(loop); return; }
         acc += dt;
         frames += 1;
-        if (acc > 2.5) {
-          const fps = frames / acc;
+        // nur echte Fahrt zählt (nicht Startkarte, Pause oder Bilder, in denen gerade Landschaft entsteht)
+        if (uiRef.current === 'playing' && !renderer.busy) { fpsT += dt; fpsN += 1; }
+        if (fpsT > 2.5) {
+          const fps = fpsN / fpsT;
           if (!low && fps < 48 && renderer.quality > 0.45) { renderer.quality = Math.max(0.45, renderer.quality - 0.15); renderer.resize(); }
-          acc = 0;
-          frames = 0;
+          // läuft es wieder flüssig: Schärfe schrittweise zurück
+          else if (!low && fps > 57 && renderer.quality < 1) { renderer.quality = Math.min(1, renderer.quality + 0.1); renderer.resize(); }
+          fpsT = 0;
+          fpsN = 0;
         }
         raf = requestAnimationFrame(loop);
       };

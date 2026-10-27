@@ -20,6 +20,8 @@ export function bikeObject(id: string, kit: Kit): THREE.Group {
   wf.position.copy(b.fit.front);
   const wr = new THREE.Mesh(b.wheelR, mat);
   wr.position.copy(b.fit.rear);
+  if (b.spokes.f) wf.add(new THREE.Mesh(b.spokes.f, mat));
+  if (b.spokes.r) wr.add(new THREE.Mesh(b.spokes.r, mat));
   const cr = new THREE.Mesh(b.crank, mat);
   cr.position.copy(b.fit.bb ?? BIKE_BB);
   // Pedale waagrecht an den Kurbelenden (Kurbel in Ruhelage: rechts oben, links unten)

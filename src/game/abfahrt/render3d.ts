@@ -9,13 +9,13 @@ import * as THREE from 'three';
 import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
 import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
-import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, canopyTex, fallTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
+import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, canopyTex, fallTex, glowTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
 import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
 import { buildPeaks, peakLight, setPeakOpacity } from './peaks3d';
 import { FAC_B, FAC_H, FAC_W, TB, portalFacade, tunnelMaterial, tunnelName, tunnelRing, tunnelUniforms, type TunnelUniforms } from './tunnel3d';
 import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
-import { GB, lin, lin255, propGeometries, treeGeometriesLow, type Prop3D, type RGBf } from './models3d';
+import { GB, alphaTex, lin, lin255, propGeometries, treeGeometriesLow, treeGeometriesFar, type Prop3D, type RGBf } from './models3d';
 import { RiderModel, riderKitKey } from './rider3d';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
@@ -23,6 +23,14 @@ import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry,
 import { mulberry32 } from './rng';
 import './grade';
 import { setGlossEnv } from './gloss';
+
+/** Bäume schrumpfen zwischen TREE_FADE und TREE_GONE weg; das Kronendach hebt sich ab CAN_NEAR bis CAN_FULL */
+const TREE_FADE = 185;
+const TREE_GONE = 245;
+const CAN_NEAR = 235;
+const CAN_FULL = 420;
+
+const TREES = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'palm']);
 
 const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
 
@@ -110,6 +118,7 @@ export class Renderer3D {
   private region: Region | null = null;
   private tiles = new Map<string, Tile>();
   private treesLo: Partial<Record<Prop3D, THREE.BufferGeometry>> = {};
+  private treesFar: Partial<Record<Prop3D, THREE.BufferGeometry>> = {};
   private terrMats: THREE.MeshLambertMaterial[] = [];
   private waterMats: THREE.MeshPhongMaterial[] = [];
   /** Gebiet, das eine Stufe vollständig abdeckt (dort wird die nächstgröbere abgesenkt) */
@@ -126,11 +135,13 @@ export class Renderer3D {
     verge: THREE.MeshLambertMaterial; marks: THREE.MeshLambertMaterial; terrain: THREE.MeshLambertMaterial; portal: THREE.MeshLambertMaterial; barrier: THREE.MeshLambertMaterial;
     water: THREE.MeshPhongMaterial; facade: THREE.MeshLambertMaterial; roof: THREE.MeshLambertMaterial;
     tunWall: THREE.MeshBasicMaterial; tunRoad: THREE.MeshBasicMaterial; tunMarks: THREE.MeshBasicMaterial; tunSign: THREE.MeshBasicMaterial; masonry: THREE.MeshLambertMaterial;
-    tunGlow: THREE.MeshBasicMaterial;
+
     tiles: THREE.MeshLambertMaterial; sign: THREE.MeshLambertMaterial; bulb: THREE.PointsMaterial; lantern: THREE.PointsMaterial;
     props: THREE.MeshLambertMaterial; ads: THREE.MeshLambertMaterial; billboard: THREE.MeshLambertMaterial; glow: THREE.PointsMaterial; lampGlow: THREE.MeshBasicMaterial;
   };
   private props!: Record<Prop3D, THREE.BufferGeometry>;
+  private treeMat!: THREE.MeshLambertMaterial;
+  private treeMatFade!: THREE.MeshLambertMaterial;
   private markGeo!: Record<Landmark, THREE.BufferGeometry>;
   private markMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
   /** Wasserfälle: fließende Gischt (Textur läuft nach unten) */
@@ -244,7 +255,7 @@ export class Renderer3D {
     this.scene.add(this.valley);
 
     // Wolken
-    const cTex = [cloud(1), cloud(2), cloud(3)].map((c) => { const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; });
+    const cTex = [cloud(1), cloud(2), cloud(3)].map((c) => alphaTex(c));
     for (let i = 0; i < 9; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: cTex[i % 3], fog: false, transparent: true, depthWrite: false, opacity: 0.85 }));
       s.scale.set(900 + hash(i) * 700, 350 + hash(i + 9) * 200, 1);
@@ -256,7 +267,7 @@ export class Renderer3D {
     const pg = new THREE.BufferGeometry();
     pg.setAttribute('position', new THREE.BufferAttribute(this.partPos, 3));
     pg.setAttribute('color', new THREE.BufferAttribute(this.partCol, 3));
-    const pt = new THREE.CanvasTexture(roundTex('rgba(255,255,255,1)', 'rgba(255,255,255,0)'));
+    const pt = alphaTex(roundTex('rgba(255,255,255,1)', 'rgba(255,255,255,0)'), [255, 255, 255]);
     this.parts = new THREE.Points(pg, new THREE.PointsMaterial({ size: 0.35, map: pt, vertexColors: true, transparent: true, depthWrite: false, sizeAttenuation: true }));
     this.parts.frustumCulled = false;
     this.scene.add(this.parts);
@@ -280,15 +291,18 @@ export class Renderer3D {
     return t;
   }
 
+  private noiseMap!: THREE.CanvasTexture;
+
   private initMaterials() {
+    this.noiseMap = this.dataTex(noiseTex(), 1);
     const L = (opts: THREE.MeshLambertMaterialParameters) => new THREE.MeshLambertMaterial(opts);
     const fa = facadeAtlas();
     const facade = this.tex(fa.day, false);
     const facadeLit = this.tex(fa.night, false);
     const signs = this.tex(signAtlas(), false);
     const detail = this.tex(detailTex());
-    this.shadowTex = new THREE.CanvasTexture(roundTex('rgba(0,0,0,0.75)', 'rgba(0,0,0,0)', 64));
-    const glowTex = new THREE.CanvasTexture(roundTex('rgba(255,210,140,1)', 'rgba(255,170,80,0)', 64));
+    this.shadowTex = alphaTex(roundTex('rgba(0,0,0,0.75)', 'rgba(0,0,0,0)', 64), [0, 0, 0]);
+    const glowMap = new THREE.CanvasTexture(glowTex(255, 205, 135));
     this.mats = {
       asphalt: L({ map: this.tex(asphaltTex(false)) }),
       fresh: L({ map: this.tex(asphaltTex(true)) }),
@@ -296,7 +310,7 @@ export class Renderer3D {
       gravel: L({ map: this.tex(gravelTex()) }),
       verge: L({ map: this.tex(vergeTex()) }),
       marks: L({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
-      terrain: L({ vertexColors: true, flatShading: true, map: detail }),
+      terrain: L({ vertexColors: true, map: detail }),
       portal: L({ vertexColors: true, side: THREE.DoubleSide }),
       barrier: L({ vertexColors: true, side: THREE.DoubleSide }),
       water: new THREE.MeshPhongMaterial({ color: 0x2f7fb5, shininess: 90, specular: 0x88aacc, transparent: true, opacity: 0.92, flatShading: true }),
@@ -305,24 +319,54 @@ export class Renderer3D {
       tunMarks: tunnelMaterial(null, this.tunU, 'marks', true),
       tunSign: new THREE.MeshBasicMaterial({ map: this.tex(tunnelSignTex(), false), color: new THREE.Color(1.15, 1.15, 1.15) }),
       masonry: L({ vertexColors: true, map: this.tex(masonryTex()), side: THREE.DoubleSide }),
-      // Tageslicht im Portal, von innen gesehen: weicher Schein über den Rand der Öffnung hinaus
-      tunGlow: new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(roundTex('rgba(255,255,255,1)', 'rgba(255,255,255,0)', 128)), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0, side: THREE.DoubleSide, fog: false }),
-      facade: L({ map: facade, emissiveMap: facadeLit, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0 }),
+      facade: L({ map: facade, emissiveMap: facadeLit, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0, vertexColors: true }),
       // Dächer, Giebel, Kamine, Fahnen: beidseitig (Dachüberstände sieht man von unten)
       roof: L({ vertexColors: true, flatShading: true, side: THREE.DoubleSide }),
       tiles: L({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, map: this.tex(roofTex()) }),
       sign: L({ map: signs, emissiveMap: signs, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0 }),
-      bulb: new THREE.PointsMaterial({ size: 0.55, map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
-      lantern: new THREE.PointsMaterial({ size: 1.7, map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
+      bulb: new THREE.PointsMaterial({ size: 0.55, map: glowMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
+      lantern: new THREE.PointsMaterial({ size: 1.7, map: glowMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
       props: L({ vertexColors: true, flatShading: true }),
       ads: L({ vertexColors: true, side: THREE.DoubleSide }),
       billboard: L({ alphaTest: 0.5, side: THREE.DoubleSide }),
-      glow: new THREE.PointsMaterial({ size: 3.2, map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
-      lampGlow: new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }),
+      glow: new THREE.PointsMaterial({ size: 3.2, map: glowMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
+      lampGlow: new THREE.MeshBasicMaterial({ map: glowMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }),
     };
+    // Straßenbeläge und Bankett: großflächige Flecken (Flickstellen, Abrieb, Staub) brechen das Kachelmuster auf,
+    // in der Ferne geht die Textur in ihre Mittelfarbe über – kein Flimmern, keine Linien beim Fahren
+    const roadU = { uNoise: { value: this.noiseMap } };
+    const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number) => {
+      m.onBeforeCompile = (sh) => {
+        Object.assign(sh.uniforms, roadU);
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vWP;')
+          .replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', '#include <common>\nuniform sampler2D uNoise;\nvarying vec3 vWP;')
+          .replace('#include <map_fragment>', `
+            #ifdef USE_MAP
+              vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+              // Mittelfarbe der Textur (kleinste Mipmap-Stufe)
+              vec3 avgC = textureLod(map, vMapUv, 12.0).rgb;
+              float rd = distance(vWP, cameraPosition);
+              sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, avgC, smoothstep(28.0, 95.0, rd) * 0.8);
+              vec3 mn = texture2D(uNoise, vWP.xz / 26.0).rgb;
+              sampledDiffuseColor.rgb *= 1.0 + ${patch.toFixed(2)} * ((mn.r * 0.6 + mn.g * 0.4) - 0.5);
+              sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);
+              diffuseColor *= sampledDiffuseColor;
+            #endif`);
+      };
+      m.customProgramCacheKey = () => `road-${key}`;
+    };
+    roadify(this.mats.asphalt, 'a', 0.34);
+    roadify(this.mats.fresh, 'f', 0.18);
+    roadify(this.mats.cobble, 'c', 0.36);
+    roadify(this.mats.gravel, 'g', 0.4);
+    roadify(this.mats.verge, 'v', 0.45);
     this.props = propGeometries();
     this.markGeo = landmarkGeometries();
     this.treesLo = treeGeometriesLow();
+    this.treesFar = treeGeometriesFar();
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
     // Weltkoordinaten statt UV – waagrechte Lagen laufen so über alle Flächen hinweg
     const rockMap = this.tex(rockTex());
@@ -349,8 +393,10 @@ export class Renderer3D {
             float steep = (1.0 - smoothstep(0.5, 0.8, abs(fn.y))) * (1.0 - smoothstep(60.0, 180.0, distance(vRockP, cameraPosition)));
             vec2 tu = vec2(-fn.z, fn.x) / max(1e-4, length(fn.xz));
             vec2 ruv = vec2(dot(vRockP.xz, tu), vRockP.y) / 11.0;
-            vec4 rockC = texture2D(uRock, ruv);
-            sampledDiffuseColor = mix(sampledDiffuseColor, rockC, steep);
+            vec2 rux = dFdx(ruv);
+            vec2 ruy = dFdy(ruv);
+            // nur lesen, wo Fels sichtbar ist (Ableitungen vorher, damit die Mipmap stimmt)
+            if (steep > 0.003) sampledDiffuseColor = mix(sampledDiffuseColor, textureGrad(uRock, ruv, rux, ruy), steep);
           }
           diffuseColor *= sampledDiffuseColor;`);
     };
@@ -362,79 +408,68 @@ export class Renderer3D {
     // aufgebrochen mit Rauschen – statt verwaschener Eckpunktfarben
     const splatU = {
       // ohne anisotrope Filterung: großflächig, fein genug ohne – und auf schwachen Grafikchips teuer
-      uNoise: { value: this.dataTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canopyTex(), 2) },
+      uNoise: { value: this.noiseMap }, uCanopy: { value: this.dataTex(canopyTex(), 2) },
       uForA: { value: new THREE.Color().setRGB(...lin255(30, 60, 34)) }, uForB: { value: new THREE.Color().setRGB(...lin255(56, 88, 46)) },
       uSnow: { value: new THREE.Color().setRGB(...lin255(240, 245, 250)) },
     };
     const splat = (sh: THREE.WebGLProgramParametersWithUniforms) => {
       Object.assign(sh.uniforms, splatU);
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec3 aMat;\nattribute vec3 aRock;\nvarying vec3 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;')
+        .replace('#include <common>', '#include <common>\nattribute vec4 aMat;\nattribute vec3 aRock;\nattribute float aCan;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;')
+        // Kronendach: nah flach (dort stehen echte Bäume), weiter weg angehoben – stetig mit dem Abstand zur Kamera
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\n{ vec3 cw = (modelMatrix * vec4(transformed, 1.0)).xyz; transformed.y += aCan * smoothstep(${CAN_NEAR.toFixed(1)}, ${CAN_FULL.toFixed(1)}, distance(cw.xz, cameraPosition.xz)); }`)
         .replace('#include <project_vertex>', '#include <project_vertex>\nvMat = aMat;\nvRk = aRock;\nvTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec3 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;')
         .replace('#include <color_fragment>', `
-          // Relief für die Beleuchtung (m): Rinnen im Fels, Kronen im Wald, Buckel in der Wiese
-          float tBump = 0.0;
           #ifdef USE_COLOR
             // Normale in Weltkoordinaten (weich zwischen den Ecken – keine Dreiecke im Schnee)
             vec3 fnT = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
             float camD = distance(vTW, cameraPosition);
-            vec3 nz = texture2D(uNoise, vTW.xz / 170.0).rgb;
-            vec3 nz2 = texture2D(uNoise, vTW.xz / 33.0).rgb;
-            vec3 tCol = vColor.rgb;
+            // ein Rauschzugriff (drei Körnungen in den Kanälen) und großflächiges Rauschen je Ecke (vMat.w)
+            vec3 nz = texture2D(uNoise, vTW.xz / 120.0).rgb;
+            float big = vMat.w;
+            // Wiesen: Flecken heller/dunkler, mal saftiger, mal trockener (gelblicher)
+            vec3 tCol = vColor.rgb * (0.9 + 0.2 * nz.g);
+            tCol = mix(tCol, tCol * vec3(1.1, 1.02, 0.78), smoothstep(0.55, 0.85, big) * 0.6);
             // Fels: Gewicht, Rauschen und die Steilheit dieser Fläche
-            float rk = smoothstep(0.42, 0.64, vMat.y + (nz.g - 0.5) * 0.45 + (nz2.b - 0.5) * 0.22 + (1.0 - fnT.y) * 0.45);
-            // Felswände: senkrechte Rinnen (Erosion) und waagrechte Bänder (Schichten) entlang der Wand
-            // zwei senkrechte Projektionen (x–y und z–y), nach Ausrichtung der Wand gemischt: keine Sprünge
-            float wxz = abs(fnT.x) / (abs(fnT.x) + abs(fnT.z) + 1e-4);
-            float gul = mix(texture2D(uNoise, vec2(vTW.z / 120.0, vTW.y / 190.0)).g, texture2D(uNoise, vec2(vTW.x / 120.0, vTW.y / 190.0)).g, 1.0 - wxz);
-            // feine Rinnen aus dem mittleren Rauschen (spart eigene Texturzugriffe)
-            float gul2 = nz2.b;
-            float strat = 0.5;
-            float far = smoothstep(60.0, 220.0, camD);
-            // feine Muster nur bis in mittlere Entfernung (weiter weg flimmern sie als Treppen)
-            float hiF = 1.0 - smoothstep(450.0, 1300.0, camD);
-            // Rinnen und Schichten nur an steilen Flächen (auf flachen würden die Projektionen zu Streifen)
+            float rk = smoothstep(0.42, 0.64, vMat.y + (big - 0.5) * 0.35 + (nz.r - 0.5) * 0.3 + (1.0 - fnT.y) * 0.45);
             float wallW = 1.0 - smoothstep(0.55, 0.85, fnT.y);
-            gul = mix(0.5, gul, wallW);
-            gul2 = mix(0.5, gul2, hiF * wallW);
-            strat = mix(0.5, strat, hiF * wallW);
-            vec3 rc = vRk * (0.8 + 0.42 * nz2.r) * mix(1.0, (0.84 + 0.26 * mix(gul, gul2, 0.4)) * (0.93 + 0.14 * strat), far);
+            // Rinnen an steilen Felswänden (zwei senkrechte Projektionen) – nur gelesen, wo Fels ist
+            vec2 gA = vec2(vTW.z / 120.0, vTW.y / 190.0);
+            vec2 gB = vec2(vTW.x / 120.0, vTW.y / 190.0);
+            vec2 gAx = dFdx(gA);
+            vec2 gAy = dFdy(gA);
+            vec2 gBx = dFdx(gB);
+            vec2 gBy = dFdy(gB);
+            float gul = 0.5;
+            if (rk * wallW > 0.01) {
+              float wxz = abs(fnT.x) / (abs(fnT.x) + abs(fnT.z) + 1e-4);
+              gul = mix(textureGrad(uNoise, gA, gAx, gAy).g, textureGrad(uNoise, gB, gBx, gBy).g, 1.0 - wxz);
+              gul = mix(0.5, gul, wallW);
+            }
+            float far = smoothstep(60.0, 220.0, camD);
+            vec3 rc = vRk * (0.82 + 0.36 * nz.g) * mix(1.0, 0.8 + 0.4 * gul, far);
             // auf Absätzen (weniger steil) Gras und Geröll
-            rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, nz.g) * 0.6);
-            tBump += rk * far * ((gul - 0.5) * 18.0 + (gul2 - 0.5) * 3.5 * hiF);
+            rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, nz.b) * 0.6);
             // Wald: Rand aus Rauschen; aus der Nähe Waldboden (dort stehen echte Bäume), weiter weg das Kronendach
-            float fo = smoothstep(0.46, 0.58, vMat.x + (nz.r - 0.5) * 0.6 + (nz2.g - 0.5) * 0.28) * (1.0 - rk);
-            float crown = texture2D(uCanopy, vTW.xz / 10.0).r;
-            vec3 fc = mix(uForA, uForB, nz2.r) * (0.42 + crown * 0.72);
+            float fo = smoothstep(0.46, 0.58, vMat.x + (big - 0.5) * 0.3 + (nz.r - 0.5) * 0.45 + (nz.g - 0.5) * 0.2) * (1.0 - rk);
+            vec2 cuv = vTW.xz / 10.0;
+            vec2 cux = dFdx(cuv);
+            vec2 cuy = dFdy(cuv);
+            float crown = 0.55;
+            if (fo > 0.01) crown = textureGrad(uCanopy, cuv, cux, cuy).r;
+            vec3 fc = mix(uForA, uForB, nz.b) * (0.42 + crown * 0.72);
             fc = mix(fc, uForA * vec3(0.62, 0.6, 0.5), smoothstep(0.78, 0.45, fnT.y));
-            float canopy = smoothstep(110.0, 240.0, camD);
+            float canopy = smoothstep(${(TREE_GONE - 70).toFixed(1)}, ${TREE_GONE.toFixed(1)}, camD);
             fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, canopy);
-            tBump += fo * canopy * crown * 2.2;
             tCol = mix(tCol, fc, fo);
             tCol = mix(tCol, rc, rk);
             // Schnee: bleibt in den Rinnen länger liegen
-            float sn = smoothstep(0.42, 0.6, vMat.z + (nz.b - 0.5) * 0.55 + (nz2.g - 0.5) * 0.25 + rk * (0.5 - gul) * 0.5) * smoothstep(0.38, 0.7, fnT.y + (nz2.r - 0.5) * 0.3 + (0.5 - gul) * 0.25);
-            tCol = mix(tCol, uSnow * (0.9 + 0.12 * nz2.b), sn);
-            tBump += (1.0 - rk) * (1.0 - fo) * far * (nz2.g - 0.5) * 3.0;
-            // Schnee glättet das Relief
-            tBump *= 1.0 - 0.7 * sn;
+            float sn = smoothstep(0.42, 0.6, vMat.z + (big - 0.5) * 0.35 + (nz.b - 0.5) * 0.35 + rk * (0.5 - gul) * 0.5) * smoothstep(0.38, 0.7, fnT.y + (nz.g - 0.5) * 0.3 + (0.5 - gul) * 0.25);
+            tCol = mix(tCol, uSnow * (0.9 + 0.1 * nz.b), sn);
             diffuseColor.rgb *= tCol;
-          #endif`)
-        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-          {
-            // Relief als Höhenfeld: Normale über die Ableitungen im Bild verbiegen (wie eine Bump-Map)
-            vec3 sPos = -vViewPosition;
-            vec3 sX = dFdx(sPos);
-            vec3 sY = dFdy(sPos);
-            vec3 r1 = cross(sY, normal);
-            vec3 r2 = cross(normal, sX);
-            float det = dot(sX, r1) * faceDirection;
-            vec2 dH = vec2(dFdx(tBump), dFdy(tBump));
-            vec3 grad = sign(det) * (dH.x * r1 + dH.y * r2);
-            normal = normalize(abs(det) * normal - grad);
-          }`);
+          #endif`);
     };
     // Landschaftsmaterialien: gröbere Stufen sinken dort ab, wo die feinere liegt
     const lower = <M extends THREE.Material>(m: M, lv: number, drop: number, key: string, rock: boolean): M => {
@@ -481,6 +516,32 @@ export class Renderer3D {
           #endif`);
     };
     this.mats.props.customProgramCacheKey = () => 'props-wind';
+    // Bäume: weich schattiert (runde Kronen statt Facetten), Wind; die der Landschaft schrumpfen in der Ferne
+    // stetig weg (dort übernimmt das Kronendach) – kein Aufploppen, wenn neue Kacheln entstehen
+    const treeMat = (fade: boolean) => {
+      const m = new THREE.MeshLambertMaterial({ vertexColors: true });
+      m.onBeforeCompile = (sh) => {
+        sh.uniforms.uTime = windT;
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nuniform float uTime;')
+          .replace('#include <begin_vertex>', `#include <begin_vertex>
+            #ifdef USE_INSTANCING
+            {
+              vec3 ip = instanceMatrix[3].xyz;
+              ${fade ? `transformed *= 1.0 - smoothstep(${TREE_FADE.toFixed(1)}, ${TREE_GONE.toFixed(1)}, distance(ip.xz, cameraPosition.xz));` : ''}
+              float sw = max(0.0, position.y - 2.0);
+              float ph = uTime * 1.1 + ip.x * 0.11 + ip.z * 0.07;
+              float g = sin(ph) * 0.6 + sin(ph * 2.3 + 1.7) * 0.4;
+              transformed.x += g * sw * sw * 0.0016;
+              transformed.z += cos(ph * 0.8) * sw * sw * 0.0011;
+            }
+            #endif`);
+      };
+      m.customProgramCacheKey = () => (fade ? 'trees-fade' : 'trees');
+      return m;
+    };
+    this.treeMat = treeMat(false);
+    this.treeMatFade = treeMat(true);
     // Billboards: Bild-Atlas mit Animationsrahmen
     this.buildAtlas();
     const timeRef = this.time;
@@ -538,8 +599,9 @@ export class Renderer3D {
         w: it.w, h: it.h, du: it.frames.length > 1 ? (fw + 4) / AW : 0,
       });
     }
-    const t = this.tex(cv, false);
-    t.premultiplyAlpha = false;
+    // Farbe in die durchsichtigen Ränder ausdehnen (sonst mischt die Filterung dort Zufallsfarben hinein)
+    const t = alphaTex(cv, 'bleed');
+    t.anisotropy = Math.min(8, this.gl.capabilities.getMaxAnisotropy());
     this.mats.billboard.map = t;
   }
 
@@ -573,8 +635,16 @@ export class Renderer3D {
 
   private lastDt = 0.016;
 
+  /** Startkarte oder Countdown: Zeit, die Landschaft vollständig aufzubauen (niemand fährt) */
+  private idleBuild = false;
+  /** Rechenzeit für Landschaft und Abschnitte im letzten Bild (ms) */
+  private work = 0;
+  /** Entsteht gerade Landschaft? (dann zählt das Bild nicht für die Qualitätsregelung) */
+  get busy(): boolean { return this.work > 3 || !!this.pending || !this.boxSet.every(Boolean); }
+
   draw(g: RaceView, dt: number) {
     this.lastDt = dt;
+    this.idleBuild = g.phase === 'ready' || g.phase === 'countdown';
     this.time.value += dt;
     if (this.track !== g.track) {
       // gleiche Tagesstrecke (neuer Lauf, nachgeladene Namen): Landschaft behalten – sie ist identisch,
@@ -617,6 +687,7 @@ export class Renderer3D {
         }
       }
     }
+    const w0 = performance.now();
     this.updateChunks(g);
     this.updateCamera(g, dt);
     if (this.debugCam) {
@@ -626,6 +697,7 @@ export class Renderer3D {
     }
     this.updateEnvironment(biome, dt);
     this.updateTerrain(g);
+    this.work = performance.now() - w0;
     this.updateTreeLod();
     this.updateRiders(g);
     this.updateSky(g, biome, dt);
@@ -709,7 +781,8 @@ export class Renderer3D {
     // Aufbau verteilt auf viele Bilder (kein langes Einfrieren beim Laden), beim Start etwas großzügiger.
     // Der Nahbereich (feine und mittlere Stufe) entsteht aber sofort vollständig: sonst schneidet die
     // grobe Stufe (ohne Straßenklemmen) durch Straße und Zuschauer
-    const budget = startup ? 12 : 4;
+    // auf der Startkarte großzügig: dort soll die Welt komplett stehen, bevor es losgeht
+    const budget = this.idleBuild ? 30 : startup ? 12 : 4;
     if (fresh) {
       this.pending = null;
       for (const lv of [0, 1]) {
@@ -822,10 +895,15 @@ export class Renderer3D {
       if (!t.trees.length) continue;
       const [x0, z0, x1, z1] = t.box;
       const d = Math.hypot(Math.max(x0 - cp.x, 0, cp.x - x1), Math.max(z0 - cp.z, 0, cp.z - z1));
-      const far = d > 150;
+      const far = d > 55;
+      const vfar = d > 130;
+      // ganz weggeschrumpft: gar nicht erst zeichnen
+      const gone = d > TREE_GONE + 4;
       for (const tr of t.trees) {
-        const geo = far ? this.treesLo[tr.kind] ?? this.props[tr.kind] : this.props[tr.kind];
+        const hi = this.props[tr.kind];
+        const geo = vfar ? this.treesFar[tr.kind] ?? this.treesLo[tr.kind] ?? hi : far ? this.treesLo[tr.kind] ?? hi : hi;
         if (tr.im.geometry !== geo) tr.im.geometry = geo;
+        if (t.objs[0]?.visible !== false) tr.im.visible = !gone;
       }
     }
   }
@@ -864,7 +942,7 @@ export class Renderer3D {
       for (const [kind, list] of by) {
         const geo = this.props[kind as Prop3D];
         if (!geo) continue;
-        const im = new THREE.InstancedMesh(geo, this.mats.props, list.length);
+        const im = new THREE.InstancedMesh(geo, TREES.has(kind) ? this.treeMatFade : this.mats.props, list.length);
         im.castShadow = false;
         im.receiveShadow = true;
         trees.push({ im, kind: kind as Prop3D });
@@ -872,7 +950,9 @@ export class Renderer3D {
           q.setFromAxisAngle(up, t.rot);
           m.compose(v.set(t.x, t.y, t.z), q, sc.set(t.s, t.s * (0.92 + (t.tint - 0.82) * 0.4), t.s));
           im.setMatrixAt(k, m);
-          im.setColorAt(k, c.setRGB(t.tint, t.tint * (0.97 + (t.rot % 0.06)), t.tint));
+          // jeder Baum etwas anders: heller/dunkler, gelblicher oder bläulicher
+          const hv = ((t.rot * 7.3) % 1) * 2 - 1;
+          im.setColorAt(k, c.setRGB(t.tint * (1 + 0.1 * hv), t.tint * (0.98 + 0.05 * Math.abs(hv)), t.tint * (1 - 0.13 * hv)));
         });
         im.instanceMatrix.needsUpdate = true;
         if (im.instanceColor) im.instanceColor.needsUpdate = true;
@@ -882,7 +962,8 @@ export class Renderer3D {
     }
     if (d.falls) {
       if (!this.fallMat) {
-        const t = this.tex(fallTex());
+        const t = alphaTex(fallTex(), [235, 244, 250]);
+        t.wrapS = t.wrapT = THREE.RepeatWrapping;
         this.fallMat = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(0.95, 0.97, 1) });
       }
       geos.push(d.falls);
@@ -995,7 +1076,7 @@ export class Renderer3D {
     const dusk = Math.max(0, Math.min(1, (L.lights - 0.08) / 0.4));
     this.mats.bulb.opacity = dusk;
     this.mats.lantern.opacity = dusk * 0.85;
-    this.mats.glow.opacity = Math.max(0, L.lights - 0.2) * 1.1 + this.tunnelDim * 0.4;
+    this.mats.glow.opacity = Math.max(0, L.lights - 0.2) * 1.1;
     if (!this.holeMode) this.valleyMat.color.copy(fogC);
     // Berge am Horizont: dasselbe Licht wie die Landschaft (Lambert: Lichtfarbe · Stärke / π)
     {
@@ -1017,8 +1098,7 @@ export class Renderer3D {
     this.tunU.uDay.value.copy(fogC).multiplyScalar((0.9 + Math.min(2.7, this.sun.intensity / Math.max(0.2, dim)) * 0.32) / adapt);
     this.tunU.uLamp.value.setRGB(1.0, 0.82, 0.58).multiplyScalar(15 / adapt);
     this.tunU.uAmb.value = 0.06 / adapt;
-    this.mats.tunGlow.color.copy(fogC).lerp(new THREE.Color(1, 1, 1), 0.5);
-    this.mats.tunGlow.opacity = this.tunnelDim * 0.55;
+
     const water = pal.water;
     this.mats.water.color.setRGB(water[0] / 255, water[1] / 255, water[2] / 255, THREE.SRGBColorSpace);
     for (const m of this.waterMats) m.color.copy(this.mats.water.color);
@@ -1096,7 +1176,7 @@ export class Renderer3D {
     if (biome !== this.mtnBiome) {
       if (this.mtnOld) { this.scene.remove(this.mtnOld); this.mtnOld.geometry.dispose(); (this.mtnOld.material as THREE.Material).dispose(); }
       this.mtnOld = this.mtn;
-      this.peakU.uNoise.value ??= this.dataTex(noiseTex(), 1);
+      this.peakU.uNoise.value ??= this.noiseMap;
       this.mtn = buildPeaks(biome, this.peakU);
       this.scene.add(this.mtn);
       this.mtnFade = this.mtnOld ? 0 : 1;
@@ -1135,7 +1215,7 @@ export class Renderer3D {
     }
     // beim Start alles auf einmal, danach höchstens einer pro Bild (nächste zuerst) – verteilt die Arbeit,
     // damit kein Bild ruckelt
-    let budget = this.chunks.size === 0 ? 99 : 1;
+    let budget = this.chunks.size === 0 ? 99 : this.idleBuild ? 4 : 1;
     for (let k = from; k <= to && budget > 0; k++) {
       if (this.chunks.has(k)) continue;
       const c = this.buildChunk(g, k);
@@ -1177,6 +1257,8 @@ export class Renderer3D {
     const tunWall = new TB();
     const tunRoad = new TB();
     const tunMarks = new TB();
+    // Strecke in der Röhre ab einem Vielfachen des Leuchtenabstands kurz vor dem Abschnitt (kleine Zahlen)
+    tunWall.base = tunRoad.base = tunMarks.base = Math.floor((i0 * SEG) / 60) * 60;
     const tunSigns = new GB();
     tunSigns.uv = true;
     const mas = new GB();
@@ -1210,14 +1292,19 @@ export class Renderer3D {
       // --- Fahrbahn
       if (!s.tunnel) {
         const tl = s.surface === 'cobble' ? 2.2 : 5;
+        // Texturkoordinaten ab einem ganzzahligen Versatz je Abschnitt: kleine Zahlen bleiben auf Handys genau
+        const vo = Math.floor((i0 * SEG) / tl);
+        const va = za / tl - vo;
+        const vb = zb / tl - vo;
         surf[s.surface].quad(P(a, -ROAD_HALF, 0), P(a, ROAD_HALF, 0), P(b, ROAD_HALF, 0), P(b, -ROAD_HALF, 0), [1, 1, 1],
-          [[-ROAD_HALF / tl, za / tl], [ROAD_HALF / tl, za / tl], [ROAD_HALF / tl, zb / tl], [-ROAD_HALF / tl, zb / tl]]);
+          [[-ROAD_HALF / tl, va], [ROAD_HALF / tl, va], [ROAD_HALF / tl, vb], [-ROAD_HALF / tl, vb]]);
         for (const sg of [-1, 1]) {
           const x0 = sg * ROAD_HALF;
           const x1 = sg * EDGE;
           const q = sg < 0 ? [P(a, x1, -0.04), P(a, x0, 0), P(b, x0, 0), P(b, x1, -0.04)] : [P(a, x0, 0), P(a, x1, -0.04), P(b, x1, -0.04), P(b, x0, 0)];
           const ul = sg < 0 ? [x1, x0] : [x0, x1];
-          verge.quad(q[0], q[1], q[2], q[3], [1, 1, 1], [[ul[0] / 3, za / 3], [ul[1] / 3, za / 3], [ul[1] / 3, zb / 3], [ul[0] / 3, zb / 3]]);
+          const vv = Math.floor((i0 * SEG) / 3);
+          verge.quad(q[0], q[1], q[2], q[3], [1, 1, 1], [[ul[0] / 3, za / 3 - vv], [ul[1] / 3, za / 3 - vv], [ul[1] / 3, zb / 3 - vv], [ul[0] / 3, zb / 3 - vv]]);
         }
         // Markierungen
         const lines = s.surface === 'asphalt' || s.surface === 'fresh';
@@ -1239,7 +1326,7 @@ export class Renderer3D {
         const ze = (t1 + 1) * SEG;
         tunnelRing(tunWall, tunRoad, tunMarks, tunSigns, a, b, P, {
           za, zb, dpa: Math.min(za - zs, ze - za), dpb: Math.min(zb - zs, ze - zb), lamp: s.lamp, len,
-        }, glows);
+        });
       }
       // --- Begrenzungen
       this.barriers(bar, ads, a, b, P);
@@ -1286,7 +1373,14 @@ export class Renderer3D {
     add(surf.gravel, this.mats.gravel);
     add(verge, this.mats.verge);
     add(marks, this.mats.marks, 1);
-    add(terr, this.mats.terrain);
+    // Gelände neben der Straße weich schattiert (keine harten Kanten zwischen den Bändern)
+    if (!terr.empty) {
+      const geo = terr.buildSmooth(null);
+      disp.push(geo);
+      const mesh = new THREE.Mesh(geo, this.mats.terrain);
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
     add(portal, this.mats.portal, 0, true);
     add(bar, this.mats.barrier, 0, true);
     add(water, this.mats.water, 2);
@@ -1310,7 +1404,7 @@ export class Renderer3D {
       group.add(new THREE.Mesh(geo, this.mats.billboard));
     }
     for (const [kind, list] of inst) {
-      const im = new THREE.InstancedMesh(this.props[kind], this.mats.props, list.m.length);
+      const im = new THREE.InstancedMesh(this.props[kind], TREES.has(kind) ? this.treeMat : this.mats.props, list.m.length);
       im.castShadow = true;
       im.receiveShadow = true;
       list.m.forEach((m, i) => { im.setMatrixAt(i, m); im.setColorAt(i, list.c[i]); });
@@ -1749,18 +1843,6 @@ export class Renderer3D {
       group.add(rm);
     }
     void outer;
-    // Schein des Tageslichts in der Öffnung (nur von innen zu sehen, siehe tunGlow)
-    {
-      const at = (l: number, h: number) => { const q = P(a, l, h); return [q[0] + fx * 0.4 * dir, q[1], q[2] + fz * 0.4 * dir]; };
-      const gg = new GB();
-      gg.uv = true;
-      gg.quad(at(-8, -2.6), at(8, -2.6), at(8, 9.4), at(-8, 9.4), [1, 1, 1], [[0, 0], [1, 0], [1, 1], [0, 1]]);
-      const g2 = gg.build();
-      disp.push(g2);
-      const m = new THREE.Mesh(g2, this.mats.tunGlow);
-      m.renderOrder = 6;
-      group.add(m);
-    }
     void gb; void x;
   }
 
@@ -1800,6 +1882,15 @@ export class Renderer3D {
     const signPiece = frontPieces >= 3 ? 1 : 0;
     const signOk = b.sign >= 0 && L - signPiece * 4 >= 3.99;
 
+    // Tönung des Hauses (etwas wärmer oder kühler, heller oder dunkler) und Verlauf über die Höhe
+    const wTint = 0.9 + hs(31) * 0.14;
+    const warm = (hs(37) - 0.5) * 0.1;
+    const ageC = (h: number, k: number): RGBf => {
+      let f = h < 0 ? 0.62 : h < 1.4 ? 0.78 + 0.22 * (h / 1.4) : 1;
+      if (h > H - 0.9) f *= 0.86;
+      f *= wTint * (0.95 + hash(b.seed * 13 + k * 7) * 0.08);
+      return [f * (1 + warm), f, f * (1 - warm * 1.2)];
+    };
     /** Wand von A nach B (von außen gesehen links → rechts) als Streifen je Geschoss */
     const wall = (A: [number, number], B: [number, number], variant: (k: number, upper: boolean) => number, onPiece?: (k: number, s0: number, s1: number) => void) => {
       const Lw = Math.hypot(B[0] - A[0], B[1] - A[1]);
@@ -1813,7 +1904,10 @@ export class Renderer3D {
           const [vb, vt] = facV(st, part);
           const u0 = facU(v, 0);
           const u1 = facU(v, s1 - s0);
-          T.facade.quad(at(p0[0], p0[1], h0), at(p1[0], p1[1], h0), at(p1[0], p1[1], h1), at(p0[0], p0[1], h1), [1, 1, 1], [[u0, vb], [u1, vb], [u1, vt], [u0, vt]]);
+          // Alter und Schmutz: unten Spritzwasser, unter dem Dach Schatten, jedes Stück und Haus etwas anders
+          const c0 = ageC(h0, k);
+          const c1 = ageC(h1, k);
+          T.facade.quadC(at(p0[0], p0[1], h0), at(p1[0], p1[1], h0), at(p1[0], p1[1], h1), at(p0[0], p0[1], h1), c0, c0, c1, c1, [[u0, vb], [u1, vb], [u1, vt], [u0, vt]]);
         };
         const vg = variant(k, false);
         const vu = variant(k, true);
@@ -2092,7 +2186,8 @@ export class Renderer3D {
       let list = inst.get(kind);
       if (!list) { list = { m: [], c: [] }; inst.set(kind, list); }
       list.m.push(m);
-      list.c.push(new THREE.Color(v, v * (0.95 + hash(s.i) * 0.1), v));
+      const hv = TREES.has(kind) ? hash(s.i * 7 + sp.v) * 2 - 1 : 0;
+      list.c.push(new THREE.Color(v * (1 + 0.1 * hv), v * (0.95 + hash(s.i) * 0.1), v * (1 - 0.13 * hv)));
       if (kind === 'lamp') {
         const ax = Math.sin(rot) * -0.62;
         const az = Math.cos(rot) * -0.62;

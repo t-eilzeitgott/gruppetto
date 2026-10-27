@@ -30,13 +30,16 @@ export function peakLight(): PeakLight {
 
 const VERT = /* glsl */ `
 attribute float aR;
+attribute vec3 aN1;
 varying vec3 vP;
 varying vec3 vN;
 varying float vR;
+varying vec3 vN1;
 void main() {
   vP = position;
   vN = normal;
   vR = aR;
+  vN1 = aN1;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
@@ -49,23 +52,31 @@ uniform float uR0; uniform float uR1;
 varying vec3 vP;
 varying vec3 vN;
 varying float vR;
+varying vec3 vN1;
 void main() {
   vec3 N = normalize(vN);
   float r = length(vP.xz);
   float h = vP.y;
-  vec3 n1 = texture2D(uNoise, vP.xz / 3100.0).rgb;
+  // großflächiges Rauschen je Ecke, mittleres pro Bildpunkt
+  vec3 n1 = vN1;
   vec3 n2 = texture2D(uNoise, vP.xz / 820.0).rgb;
-  // Rinnen den Hang hinunter (Rauschen entlang der Wand gestreckt), Schichten quer dazu
-  float wxz = abs(N.x) / (abs(N.x) + abs(N.z) + 1e-4);
-  float gul = mix(texture2D(uNoise, vec2(vP.z / 520.0, h / 800.0)).g, texture2D(uNoise, vec2(vP.x / 520.0, h / 800.0)).g, 1.0 - wxz);
-  float strat = texture2D(uNoise, vec2((vP.x + vP.z) / 2000.0, h / 90.0)).r;
+  // Rinnen den Hang hinunter – nur an steilen Flanken gelesen
   float wallW = 1.0 - smoothstep(0.55, 0.85, N.y);
-  gul = mix(0.5, gul, wallW);
-  strat = mix(0.5, strat, wallW);
+  vec2 gA = vec2(vP.z / 520.0, h / 800.0);
+  vec2 gB = vec2(vP.x / 520.0, h / 800.0);
+  vec2 gAx = dFdx(gA);
+  vec2 gAy = dFdy(gA);
+  vec2 gBx = dFdx(gB);
+  vec2 gBy = dFdy(gB);
+  float gul = 0.5;
+  if (wallW > 0.01) {
+    float wxz = abs(N.x) / (abs(N.x) + abs(N.z) + 1e-4);
+    gul = mix(0.5, mix(textureGrad(uNoise, gA, gAx, gAy).g, textureGrad(uNoise, gB, gBx, gBy).g, 1.0 - wxz), wallW);
+  }
   float rel = (h + 120.0) / uAmp;
   float steep = 1.0 - smoothstep(0.5, 0.85, N.y);
   vec3 c = mix(uRock, uRockD, clamp(steep * 0.55 + (0.5 - gul) * 0.35 + (n2.r - 0.5) * 0.5, 0.0, 1.0));
-  c *= 0.86 + 0.24 * strat;
+  c *= 0.9 + 0.2 * n1.g;
   // Grate hell, Rinnen und Mulden dazwischen dunkel – gibt den Flanken Struktur, egal woher das Licht kommt
   float ao = 0.55 + 0.6 * smoothstep(0.05, 0.75, vR);
   // Wald und Matten unten, Grenze mit Rauschen
@@ -92,7 +103,8 @@ void main() {
 
 const lin = (c: RGB) => new THREE.Color().setRGB(c[0] / 255, c[1] / 255, c[2] / 255, THREE.SRGBColorSpace);
 
-export const PEAK_R0 = 4600;
+/** Ring beginnt knapp hinter der gröbsten Landschaftsstufe (dazwischen sähe man sonst Löcher) */
+export const PEAK_R0 = 3000;
 export const PEAK_R1 = 15000;
 
 /** Bergring für eine Landschaft (Größe und Charakter je Tal) */
@@ -145,6 +157,7 @@ export function buildPeaks(biome: BiomeId, L: PeakLight): THREE.Mesh {
   const NR = 34;
   const pos: number[] = [];
   const rid: number[] = [];
+  const nz1: number[] = [];
   for (let i = 0; i < NR; i++) {
     const t = i / (NR - 1);
     const r = PEAK_R0 * Math.pow(PEAK_R1 / PEAK_R0, t);
@@ -163,6 +176,7 @@ export function buildPeaks(biome: BiomeId, L: PeakLight): THREE.Mesh {
       const hgt = -420 + c.amp * 1.5 * env * massif * (0.1 + Math.pow(ridge, c.sharp) * 1.3);
       pos.push(x, hgt, z);
       rid.push(Math.min(1, ridge));
+      nz1.push(noise(x / 3100 + 1.7, z / 3100 - 2.2), noise(x / 3100 - 5.1, z / 3100 + 0.4), noise(x / 3100 + 3.3, z / 3100 + 6.1));
     }
   }
   const idx: number[] = [];
@@ -177,6 +191,7 @@ export function buildPeaks(biome: BiomeId, L: PeakLight): THREE.Mesh {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('aR', new THREE.Float32BufferAttribute(rid, 1));
+  geo.setAttribute('aN1', new THREE.Float32BufferAttribute(nz1, 3));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   const own = {

@@ -60,30 +60,82 @@ export function asphaltTex(fresh = false): HTMLCanvasElement {
   return cv;
 }
 
+/**
+ * Kopfsteinpflaster: Reihen unterschiedlicher Höhe, Steine verschieden breit, leicht schief und unregelmäßig
+ * gerundet, Farben von Granitgrau über Beige bis Rostbraun; Fugen mit Sand statt schwarzer Linien. So entsteht
+ * kein strenges Raster, das beim Fahren flimmert. Nahtlos.
+ */
 export function cobbleTex(): HTMLCanvasElement {
   const S = 512;
   const cv = canvas(S, S);
   const c = cv.getContext('2d')!;
   const r = mulberry32(43);
-  c.fillStyle = '#5b544c';
+  c.fillStyle = '#6a6156';
   c.fillRect(0, 0, S, S);
-  const rows = 16;
-  const rh = S / rows;
-  for (let row = 0; row < rows; row++) {
-    const off = (row % 2) * rh * 0.55;
-    for (let x = -rh + off; x < S; x += rh * 1.1) {
-      const w = rh * (0.92 + r() * 0.2);
-      const h = rh * (0.82 + r() * 0.1);
-      const base = 120 + r() * 50;
-      const tint = r();
-      const col = tint < 0.3 ? `rgb(${base + 15},${base - 5},${base - 18})` : tint < 0.6 ? `rgb(${base},${base - 6},${base - 8})` : `rgb(${base - 10},${base - 12},${base - 4})`;
-      wrapDraw(S, x, row * rh, (px, py) => {
+  // Sand in den Fugen
+  for (let i = 0; i < 2600; i++) {
+    c.fillStyle = r() < 0.5 ? 'rgba(150,135,110,0.35)' : 'rgba(60,52,44,0.3)';
+    c.fillRect(r() * S, r() * S, 1.5, 1.5);
+  }
+  const rows: number[] = [];
+  let sum = 0;
+  while (sum < S - 40) { const h = 26 + Math.floor(r() * 14); rows.push(h); sum += h; }
+  rows.push(S - sum);
+  const tones: [number, number, number][] = [[128, 126, 122], [146, 138, 124], [118, 112, 108], [150, 128, 108], [104, 104, 108], [136, 132, 126], [158, 148, 132]];
+  let y = 0;
+  for (const h of rows) {
+    let x = -r() * 30;
+    const x0 = x;
+    while (x < x0 + S) {
+      const w = h * (0.85 + r() * 0.75);
+      const t = tones[Math.floor(r() * tones.length)];
+      const v = 0.85 + r() * 0.28;
+      const col = `rgb(${Math.round(t[0] * v)},${Math.round(t[1] * v)},${Math.round(t[2] * v)})`;
+      // unregelmäßige Ecken
+      const g = 2 + r() * 1.5;
+      const jx = () => (r() - 0.5) * 3.5;
+      const pts: [number, number][] = [[g + jx(), g + jx()], [w - g + jx(), g + jx()], [w - g + jx(), h - g + jx()], [g + jx(), h - g + jx()]];
+      const rad = 4 + r() * 6;
+      const tilt = (r() - 0.5) * 0.06;
+      const draw = (px: number) => {
+        c.save();
+        c.translate(px + w / 2, y + h / 2);
+        c.rotate(tilt);
+        c.translate(-w / 2, -h / 2);
+        c.beginPath();
+        for (let i = 0; i < 4; i++) {
+          const [ax, ay] = pts[i];
+          const [bx, by] = pts[(i + 1) % 4];
+          const mx = (ax + bx) / 2;
+          const my = (ay + by) / 2;
+          if (i === 0) c.moveTo(mx, my);
+          c.arcTo(bx, by, (bx + pts[(i + 2) % 4][0]) / 2, (by + pts[(i + 2) % 4][1]) / 2, rad);
+        }
+        c.closePath();
         c.fillStyle = col;
-        c.beginPath(); c.roundRect(px + 1.5, py + 1.5, w - 3, h - 2, rh * 0.3); c.fill();
-        c.fillStyle = 'rgba(255,255,255,0.16)';
-        c.beginPath(); c.roundRect(px + 3, py + 3, w * 0.55, h * 0.35, rh * 0.2); c.fill();
-      });
+        c.fill();
+        // gewölbte Oberfläche: oben links Licht, unten rechts Schatten
+        const lg = c.createLinearGradient(0, 0, w, h);
+        lg.addColorStop(0, 'rgba(255,255,255,0.16)');
+        lg.addColorStop(0.5, 'rgba(255,255,255,0)');
+        lg.addColorStop(1, 'rgba(0,0,0,0.2)');
+        c.fillStyle = lg;
+        c.fill();
+        // Abrieb, Flecken
+        for (let k = 0; k < 4; k++) {
+          c.fillStyle = r() < 0.5 ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
+          c.beginPath();
+          c.ellipse(r() * w, r() * h, 2 + r() * 6, 1.5 + r() * 4, r() * 3, 0, Math.PI * 2);
+          c.fill();
+        }
+        c.restore();
+      };
+      draw(x);
+      if (x + w > S) draw(x - S);
+      if (x < 0) draw(x + S);
+      x += w;
     }
+    y += h;
   }
   grain(c, S, r, 14);
   return cv;
@@ -717,5 +769,23 @@ export function fallTex(): HTMLCanvasElement {
     }
   }
   c.putImageData(img, 0, 0);
+  return cv;
+}
+
+/**
+ * Lichtschein für additive Darstellung: Farbe in der Mitte, zum Rand schwarz – ganz ohne Durchsichtigkeit.
+ * (Verläufe ins Durchsichtige bekommen auf manchen Handys beim Hochladen farbiges Rauschen in den Rand.)
+ */
+export function glowTex(r: number, g: number, b: number, size = 64): HTMLCanvasElement {
+  const cv = canvas(size, size);
+  const c = cv.getContext('2d')!;
+  c.fillStyle = '#000';
+  c.fillRect(0, 0, size, size);
+  const gr = c.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gr.addColorStop(0, `rgb(${r},${g},${b})`);
+  gr.addColorStop(0.35, `rgb(${Math.round(r * 0.45)},${Math.round(g * 0.42)},${Math.round(b * 0.38)})`);
+  gr.addColorStop(1, '#000');
+  c.fillStyle = gr;
+  c.fillRect(0, 0, size, size);
   return cv;
 }

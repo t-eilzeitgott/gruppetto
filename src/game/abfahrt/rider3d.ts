@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 import type { Kit } from './rider';
-import { lin, type RGBf } from './models3d';
+import { alphaTex, lin, type RGBf } from './models3d';
 import { BIKE_BB, bikeBuild, type BikeFit } from './bike3d';
 import { glossMat } from './gloss';
 import { headBuild, shoeBuild } from './gear3d';
@@ -300,6 +300,45 @@ function lampParts() {
   });
 }
 
+/**
+ * Drehende Speichen: im Tempo verschwimmen sie zu einem feinen Schleier (wie auf jedem Foto). Statt die dünnen
+ * Speichen flimmern zu lassen, zeigt das Rad dann eine halbdurchsichtige Scheibe mit Schlieren.
+ */
+let blur: { mat: THREE.MeshLambertMaterial; geos: Map<number, THREE.BufferGeometry> } | null = null;
+function blurParts() {
+  if (blur) return blur;
+  const S = 128;
+  const cv = document.createElement('canvas');
+  cv.width = S;
+  cv.height = S;
+  const c = cv.getContext('2d')!;
+  const g = c.createRadialGradient(S / 2, S / 2, S * 0.06, S / 2, S / 2, S / 2);
+  g.addColorStop(0, 'rgba(40,40,44,0.5)');
+  g.addColorStop(0.12, 'rgba(40,40,44,0.16)');
+  g.addColorStop(0.85, 'rgba(40,40,44,0.2)');
+  g.addColorStop(1, 'rgba(40,40,44,0.3)');
+  c.fillStyle = g;
+  c.beginPath(); c.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = 'rgba(70,72,78,0.12)';
+  c.lineWidth = 1;
+  for (let i = 0; i < 28; i++) {
+    const a = (i / 28) * Math.PI * 2;
+    c.beginPath(); c.moveTo(S / 2, S / 2); c.lineTo(S / 2 + Math.cos(a) * S / 2, S / 2 + Math.sin(a) * S / 2); c.stroke();
+  }
+  blur = { mat: new THREE.MeshLambertMaterial({ map: alphaTex(cv, [40, 40, 44]), transparent: true, depthWrite: false, side: THREE.DoubleSide }), geos: new Map() };
+  return blur;
+}
+function blurDisc(r: number): THREE.Mesh {
+  const b = blurParts();
+  const key = Math.round(r * 1000);
+  let geo = b.geos.get(key);
+  if (!geo) { geo = new THREE.CircleGeometry(r, 28).rotateY(Math.PI / 2); b.geos.set(key, geo); }
+  const m = new THREE.Mesh(geo, b.mat);
+  m.renderOrder = 2;
+  m.visible = false;
+  return m;
+}
+
 let shadowGeo: THREE.PlaneGeometry | null = null;
 const SHADOW_GEO = () => (shadowGeo ??= new THREE.PlaneGeometry(1.1, 2.2));
 
@@ -363,6 +402,11 @@ export class RiderModel {
   private knees: THREE.Mesh[] = [];
   private wheelF: THREE.Mesh;
   private wheelR: THREE.Mesh;
+  /** Speichen und ihre Unschärfe-Scheiben (vorn, hinten) */
+  private spokes: THREE.Mesh[] = [];
+  private blurs: THREE.Mesh[] = [];
+  private lastRoll = 0;
+  private blurOn = false;
   private crank: THREE.Mesh;
   readonly shadow: THREE.Mesh;
   readonly lamp: THREE.Mesh;
@@ -399,6 +443,14 @@ export class RiderModel {
     // Hochrad: die Kurbel sitzt an der Vorderradnabe
     this.crank.position.copy(bike.fit.bb ?? BB);
     this.body.add(frame, this.wheelF, this.wheelR, this.crank);
+    for (const [w, geo, r] of [[this.wheelF, bike.spokes.f, bike.spokes.rF], [this.wheelR, bike.spokes.r, bike.spokes.rR]] as const) {
+      if (!geo) continue;
+      const sp = new THREE.Mesh(geo, gloss);
+      const bd = blurDisc(r);
+      w.add(sp, bd);
+      this.spokes.push(sp);
+      this.blurs.push(bd);
+    }
     if (bike.decal) {
       this.body.add(new THREE.Mesh(bike.decal.frame, bike.decal.mat));
       if (bike.decal.rimF) this.wheelF.add(new THREE.Mesh(bike.decal.rimF, bike.decal.rimMat));
@@ -526,6 +578,15 @@ export class RiderModel {
     this.body.rotation.z = -p.lean + alpha;
     const counter = -alpha * (0.62 + 0.18 * kind);
     if (p.roll !== undefined) {
+      // schnell gedreht (mehr als ~0,25 rad je Bild): Speichen verschwimmen
+      const dr = Math.abs(p.roll - this.lastRoll);
+      this.lastRoll = p.roll;
+      const on = this.blurOn ? dr > 0.16 : dr > 0.26;
+      if (on !== this.blurOn && dr < 3) {
+        this.blurOn = on;
+        for (const m of this.spokes) m.visible = !on;
+        for (const m of this.blurs) m.visible = on;
+      }
       this.wheelF.rotation.x = -p.roll * (this.fit.spinF ?? 1);
       this.wheelR.rotation.x = -p.roll * (this.fit.spinR ?? 1);
       for (const w of this.trailerWheels) w.rotation.x = -p.roll * this.trailerSpin;

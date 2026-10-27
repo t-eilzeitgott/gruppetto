@@ -43,25 +43,42 @@ export function vault(t: number, grow = 0): [number, number] {
 
 interface Corner { p: number[]; u: number; v: number; lat: number; h: number; z: number; dp: number }
 
-/** wie GB, dazu je Ecke die Lage in der Röhre (aT = seitlich, Höhe, Strecke, Abstand zum Portal) und die Art (aK) */
+/**
+ * wie GB, dazu je Ecke die Lage in der Röhre (aT = seitlich, Höhe, Strecke ab base, Abstand zum Portal), die
+ * Flächennormale in denselben Koordinaten (aN) und die Art (aK). Die Strecke zählt ab base (ein Vielfaches des
+ * Leuchtenabstands nahe am Abschnitt): kleine Zahlen bleiben auf Handy-Grafikchips genau – große flimmern.
+ */
 export class TB {
   p: number[] = [];
   c: number[] = [];
   u: number[] = [];
   t: number[] = [];
+  n: number[] = [];
   k: number[] = [];
+  base = 0;
   get empty() { return this.p.length === 0; }
-  private v(q: Corner, col: RGBf, k: number) {
+  private v(q: Corner, col: RGBf, k: number, n: number[]) {
     this.p.push(q.p[0], q.p[1], q.p[2]);
     this.c.push(col[0], col[1], col[2]);
     this.u.push(q.u, q.v);
-    this.t.push(q.lat, q.h, q.z, q.dp);
+    this.t.push(q.lat, q.h, q.z - this.base, q.dp);
+    this.n.push(n[0], n[1], n[2]);
     this.k.push(k);
+  }
+  private tri(a: Corner, b: Corner, c: Corner, col: RGBf, k: number) {
+    // Normale aus der Lage in der Röhre (Seite ist egal: das Licht nimmt den Betrag)
+    const ux = b.lat - a.lat, uy = b.h - a.h, uz = b.z - a.z;
+    const vx = c.lat - a.lat, vy = c.h - a.h, vz = c.z - a.z;
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    nx /= l; ny /= l; nz /= l;
+    const n = [nx, ny, nz];
+    this.v(a, col, k, n); this.v(b, col, k, n); this.v(c, col, k, n);
   }
   /** k: 0 schlicht, 1 mit Textur (Bruchteile mischen), 2 leuchtend (ohne Licht) */
   quad(a: Corner, b: Corner, c: Corner, d: Corner, col: RGBf, k: number) {
-    this.v(a, col, k); this.v(b, col, k); this.v(c, col, k);
-    this.v(a, col, k); this.v(c, col, k); this.v(d, col, k);
+    this.tri(a, b, c, col, k);
+    this.tri(a, c, d, col, k);
   }
   build(): THREE.BufferGeometry {
     const g = new THREE.BufferGeometry();
@@ -69,6 +86,7 @@ export class TB {
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.u, 2));
     g.setAttribute('aT', new THREE.Float32BufferAttribute(this.t, 4));
+    g.setAttribute('aN', new THREE.Float32BufferAttribute(this.n, 3));
     g.setAttribute('aK', new THREE.Float32BufferAttribute(this.k, 1));
     g.computeBoundingSphere();
     return g;
@@ -92,12 +110,13 @@ uniform vec3 uLamp;
 uniform vec3 uDay;
 uniform float uAmb;
 varying vec4 vT;
+varying vec3 vTN;
 varying float vK;
 vec3 tunnelLight() {
   if (vK > 1.5) return vec3(1.0);
-  // Flächennormale aus der Lage in der Röhre (seitlich, Höhe, Strecke)
+  // Lage und Flächennormale in der Röhre (seitlich, Höhe, Strecke)
   vec3 P = vT.xyz;
-  vec3 N = normalize(cross(dFdx(P), dFdy(P)));
+  vec3 N = vTN;
   float n = floor(P.z / ${LAMP_EVERY.toFixed(1)} + 0.5) * ${LAMP_EVERY.toFixed(1)};
   float s = 0.0;
   for (int i = -1; i <= 1; i++) {
@@ -125,8 +144,8 @@ export function tunnelMaterial(map: THREE.Texture | null, U: TunnelUniforms, key
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 aT;\nattribute float aK;\nvarying vec4 vT;\nvarying float vK;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvT = aT;\nvK = aK;');
+      .replace('#include <common>', '#include <common>\nattribute vec4 aT;\nattribute vec3 aN;\nattribute float aK;\nvarying vec4 vT;\nvarying vec3 vTN;\nvarying float vK;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvT = aT;\nvTN = aN;\nvK = aK;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + LIGHT_GLSL)
       .replace('#include <map_fragment>', `
@@ -174,13 +193,15 @@ export interface RingInfo {
  * Ein Stück Röhre zwischen zwei Querschnitten a und b: Wände und Gewölbe (wall), Fahrbahn (road), Markierungen
  * (marks), Schilder (signs, GB mit UV im Schilderatlas). glows: Lichtpunkte (Halos) der Leuchten.
  */
-export function tunnelRing(wall: TB, road: TB, marks: TB, signs: GB, a: TRow, b: TRow, P: Pfn, info: RingInfo, glows: number[]) {
+export function tunnelRing(wall: TB, road: TB, marks: TB, signs: GB, a: TRow, b: TRow, P: Pfn, info: RingInfo) {
   const { za, zb, dpa, dpb } = info;
   const cA = (lat: number, h: number, u: number, v: number): Corner => ({ p: P(a, lat, h), u, v, lat, h, z: za, dp: dpa });
   const cB = (lat: number, h: number, u: number, v: number): Corner => ({ p: P(b, lat, h), u, v, lat, h, z: zb, dp: dpb });
   // Fahrbahn
   const tl = 5;
-  road.quad(cA(-2.8, 0, -2.8 / tl, za / tl), cA(2.8, 0, 2.8 / tl, za / tl), cB(2.8, 0, 2.8 / tl, zb / tl), cB(-2.8, 0, -2.8 / tl, zb / tl), [1, 1, 1], 1);
+  // Textur ab einem ganzzahligen Versatz (kleine Werte, sonst ungenau auf dem Handy)
+  const vo = Math.floor(road.base / tl);
+  road.quad(cA(-2.8, 0, -2.8 / tl, za / tl - vo), cA(2.8, 0, 2.8 / tl, za / tl - vo), cB(2.8, 0, 2.8 / tl, zb / tl - vo), cB(-2.8, 0, -2.8 / tl, zb / tl - vo), [1, 1, 1], 1);
   // Markierungen: Randlinien, Mittellinie gestrichelt
   const H = 0.012;
   const strip = (x0: number, x1: number) => marks.quad(cA(x0, H, 0, 0), cA(x1, H, 0, 0), cB(x1, H, 0, 0), cB(x0, H, 0, 0), C.white, 0);
@@ -210,7 +231,8 @@ export function tunnelRing(wall: TB, road: TB, marks: TB, signs: GB, a: TRow, b:
       const [x1, h1] = prof[q + 1];
       const u0 = sArc[q] / TS;
       const u1 = sArc[q + 1] / TS;
-      wall.quad(cA(sg * x0, h0, u0, za / TS), cA(sg * x1, h1, u1, za / TS), cB(sg * x1, h1, u1, zb / TS), cB(sg * x0, h0, u0, zb / TS), col, k);
+      const wo = Math.floor(wall.base / TS);
+      wall.quad(cA(sg * x0, h0, u0, za / TS - wo), cA(sg * x1, h1, u1, za / TS - wo), cB(sg * x1, h1, u1, zb / TS - wo), cB(sg * x0, h0, u0, zb / TS - wo), col, k);
     }
   }
 
@@ -248,8 +270,7 @@ export function tunnelRing(wall: TB, road: TB, marks: TB, signs: GB, a: TRow, b:
       box(lx - 0.13, lx + 0.13, LAMP_H, LAMP_H + 0.12, -0.75, 0.75, C.housing, 0, LAMP_LIGHT);
       // Halter zum Gewölbe
       box(lx - 0.03, lx + 0.03, LAMP_H + 0.13, LAMP_H + 0.42, -0.04, 0.04, C.housing, 0);
-      const g = at(lx, LAMP_H - 0.2, 0).p;
-      glows.push(g[0], g[1], g[2]);
+      // (keine Lichtpunkte mehr: die Unterseite leuchtet selbst, Halos flimmerten auf dem Handy)
     }
   }
   // Rückstrahler an den Gehwegkanten (bernsteinfarben), versetzt zu den Leuchten

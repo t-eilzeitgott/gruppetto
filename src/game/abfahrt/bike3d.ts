@@ -23,6 +23,7 @@ import { buildPostKit } from './post3d';
 import { CRUISER, buildCruiser, type CruiserOut } from './cruiser3d';
 import { bambooTube, hempWrap } from './bamboo3d';
 import { barBottles, rodShifter, spareTubular, wingnut } from './vintage3d';
+import { alphaTex } from './models3d';
 import { M4, X, Z, along, cross2, lerpArr, norm2, pathFrames, pipe, prism, revolve, shape, shapeAt, strut, sweep, toothed, tube, type Frame3, type Kind, type Warp } from './prim3d';
 
 // ------------------------------------------------------------------ Maße
@@ -1082,7 +1083,7 @@ function spokes(m: Mesher, N: number, cross: number, flL: number, flR: number, f
   }
 }
 
-interface WheelOut { geo: THREE.BufferGeometry; rimR: number; deep: number; width: number }
+interface WheelOut { geo: THREE.BufferGeometry; rimR: number; deep: number; width: number; spokes: THREE.BufferGeometry | null }
 
 /** halber Reifenquerschnitt */
 function tireR(spec: BikeSpec): number {
@@ -1096,7 +1097,7 @@ function rimFor(spec: BikeSpec, r: number): number {
   return r - tireR(spec) * 1.72 - (spec.tire?.knobs ?? 0) - 0.0005;
 }
 
-function buildWheel(x: Ctx, front: boolean, rRim: number): WheelOut {
+function buildWheel(x: Ctx, front: boolean, rRim: number, split = true): WheelOut {
   const { q, spec } = x;
   const W = set4(PAINT);
   const o = v3(0, 0, 0);
@@ -1112,6 +1113,7 @@ function buildWheel(x: Ctx, front: boolean, rRim: number): WheelOut {
   const rimM = alu ? (blackRim ? W.satin : W.metal) : W.paint;
   const rIn = rRim - deep;
   const disc = tt && !front;
+  let spokeGeo: THREE.BufferGeometry | null = null;
   if (!disc) {
     // Felge im Schnitt (auf der +x-Seite nach innen)
     const prof: [number, number, C3][] = alu
@@ -1211,7 +1213,10 @@ function buildWheel(x: Ctx, front: boolean, rRim: number): WheelOut {
   } else {
     const N = q ? (kind === 'spoke144' ? 144 : kind === 'box36' ? 36 : kind === 'box32' ? 32 : front ? 20 : 24) : 8;
     const cross = alu ? 3 : front ? 0 : 2;
-    spokes(W.metal, N, q ? cross : 0, flL, flR, flangeR, rIn + 0.003, alu ? x.silver : rgb('#1d1e21'), !alu);
+    // Speichen als eigenes Teil: im Tempo werden sie unscharf (statt zu flimmern)
+    const S = split ? set4(PAINT) : W;
+    spokes(S.metal, N, q ? cross : 0, flL, flR, flangeR, rIn + 0.003, alu ? x.silver : rgb('#1d1e21'), !alu);
+    if (split) spokeGeo = merge([S.metal]);
   }
   // Bremsscheibe links (dreht mit)
   if (spec.brakes === 'disc') {
@@ -1222,7 +1227,7 @@ function buildWheel(x: Ctx, front: boolean, rRim: number): WheelOut {
       strut(W.satin, v3(-0.05, Math.sin(a) * 0.018, Math.cos(a) * 0.018), v3(-0.052, Math.sin(a + 0.28) * r, Math.cos(a + 0.28) * r), 0.003, 0.009, x.dark);
     }
   }
-  return { geo: merge([W.paint, W.metal, W.satin, W.matte])!, rimR: rRim, deep, width };
+  return { geo: merge([W.paint, W.metal, W.satin, W.matte])!, rimR: rRim, deep, width, spokes: spokeGeo };
 }
 
 // ------------------------------------------------------------------ Schriftzüge (erfunden)
@@ -1246,8 +1251,8 @@ function decalMat(spec: BikeSpec, color: string): THREE.MeshPhongMaterial {
   c.font = font(size);
   while (c.measureText(spec.wordmark).width > 480 && size > 18) { size -= 2; c.font = font(size); }
   c.fillText(spec.wordmark, 256, 35);
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
+  // über die Bilddaten (ruhige Randfarbe statt Rauschen auf manchen Handys)
+  const tex = alphaTex(cv);
   tex.anisotropy = 4;
   const m = new THREE.MeshPhongMaterial({ map: tex, transparent: true, alphaTest: 0.3, shininess: 60, specular: new THREE.Color(0x2a2a2a), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
   decalCache.set(key, m);
@@ -1366,6 +1371,8 @@ export interface BikeBuild {
   frame: THREE.BufferGeometry;
   wheelF: THREE.BufferGeometry;
   wheelR: THREE.BufferGeometry;
+  /** Drahtspeichen je Rad (sonst null) und der Innenradius der Felge (für die Unschärfe-Scheibe) */
+  spokes: { f: THREE.BufferGeometry | null; r: THREE.BufferGeometry | null; rF: number; rR: number };
   /** dreht um das Tretlager (Ursprung = Tretlager) */
   crank: THREE.BufferGeometry;
   /** nur in der hohen Stufe */
@@ -1395,7 +1402,7 @@ const buildCache = new Map<string, BikeBuild>();
 export function releaseBikes(keep?: string) {
   for (const [k, b] of buildCache) {
     if (!k.endsWith('|1') || (keep && k.startsWith(`${keep}|`))) continue;
-    for (const g of [b.frame, b.wheelF, b.wheelR, b.crank, b.decal?.frame, b.decal?.rimF, b.decal?.rimR, b.trailer?.body, b.trailer?.wheel, b.trailer?.plate?.geo]) g?.dispose();
+    for (const g of [b.frame, b.wheelF, b.wheelR, b.spokes.f, b.spokes.r, b.crank, b.decal?.frame, b.decal?.rimF, b.decal?.rimR, b.trailer?.body, b.trailer?.wheel, b.trailer?.plate?.geo]) g?.dispose();
     buildCache.delete(k);
   }
 }
@@ -1413,7 +1420,7 @@ export function bikeBuild(id: string | undefined, kit: Kit, q: 0 | 1): BikeBuild
   if (spec.frame === 'ordinary') {
     // Hochrad: eigener Bau (keine Kette, Kurbel an der Vorderradnabe)
     const o = buildOrdinary(x);
-    const ord: BikeBuild = { frame: merge([x.f.paint, x.f.metal, x.f.satin, x.f.matte])!, wheelF: o.wheelF, wheelR: o.wheelR, crank: o.crank, decal: null, fit: o.fit, spec, trailer: null };
+    const ord: BikeBuild = { frame: merge([x.f.paint, x.f.metal, x.f.satin, x.f.matte])!, wheelF: o.wheelF, wheelR: o.wheelR, spokes: { f: null, r: null, rF: 0, rR: 0 }, crank: o.crank, decal: null, fit: o.fit, spec, trailer: null };
     buildCache.set(key, ord);
     return ord;
   }
@@ -1477,7 +1484,7 @@ export function bikeBuild(id: string | undefined, kit: Kit, q: 0 | 1): BikeBuild
   if (spec.trailer === 'caravan') {
     const C = CARAVAN;
     const cb = buildCaravan(q, x.pc(v3(0, 0.6, 0)));
-    const tw = buildWheel(x, true, rimFor(spec, C.wheelR));
+    const tw = buildWheel(x, true, rimFor(spec, C.wheelR), false);
     const wy = C.wheelR - C.hitch.y;
     trailer = {
       body: cb.geo, wheel: tw.geo, plate: cb.plate, hitch: C.hitch.clone(),
@@ -1491,6 +1498,7 @@ export function bikeBuild(id: string | undefined, kit: Kit, q: 0 | 1): BikeBuild
     frame: merge([x.f.paint, x.f.metal, x.f.satin, x.f.matte])!,
     wheelF: wf.geo,
     wheelR: wr.geo,
+    spokes: { f: wf.spokes, r: wr.spokes, rF: wf.rimR - wf.deep, rR: wr.rimR - wr.deep },
     crank: merge([crank.paint, crank.metal, crank.satin, crank.matte])!,
     decal: q ? {
       frame: boxDecal ?? (cro ? (cro as CruiserOut).decal : downTubeDecal(D, out)),

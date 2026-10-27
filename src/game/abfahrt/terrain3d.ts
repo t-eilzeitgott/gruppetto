@@ -771,19 +771,19 @@ export class Terrain {
       if (j % 6 === 5) yield;
     }
     const cols = this.colorsFor(lv);
-    // Kronendach: Wald ragt auf den gröberen Stufen als Fläche über den Boden (dort stehen keine einzelnen
-    // Bäume) – mit leicht welliger Höhe. Nicht in Straßennähe, nicht an Seen und Tunnelportalen.
-    if (lv >= 1) {
-      const H0 = H.slice();
-      for (let j = 1; j < G - 1; j++) {
-        for (let i = 1; i < G - 1; i++) {
-          const k = j * G + i;
-          if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < 45) continue;
-          const x = x0 + (i - 1) * cell;
-          const z = z0 + (j - 1) * cell;
-          const f = this.forestAt(x, z, H0[k] - FL[k], (H0[k + 1] - H0[k - 1]) / (2 * cell), (H0[k + G] - H0[k - G]) / (2 * cell), cols[BI[k]]);
-          if (f > 0) H[k] = H0[k] + f * CANOPY * (0.8 + 0.4 * vnoise(x / 37, z / 37)) * sstep(45, 90, DR[k]);
-        }
+    // Kronendach: In der Ferne ragt der Wald als Fläche über den Boden (statt einzelner Bäume) – mit leicht welliger
+    // Höhe. Die Höhe steht je Ecke bereit; angehoben wird im Shader nach Abstand zur Kamera (nah flach, dort stehen
+    // echte Bäume, weiter weg voll) – so wächst das Dach beim Näherkommen unmerklich weg statt zu springen.
+    // Nicht in Straßennähe, nicht an Seen und Tunnelportalen.
+    const CAN = new Float32Array(G * G);
+    for (let j = 1; j < G - 1; j++) {
+      for (let i = 1; i < G - 1; i++) {
+        const k = j * G + i;
+        if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < 45) continue;
+        const x = x0 + (i - 1) * cell;
+        const z = z0 + (j - 1) * cell;
+        const f = this.forestAt(x, z, H[k] - FL[k], (H[k + 1] - H[k - 1]) / (2 * cell), (H[k + G] - H[k - G]) / (2 * cell), cols[BI[k]]);
+        if (f > 0) CAN[k] = f * CANOPY * (0.8 + 0.4 * vnoise(x / 37, z / 37)) * sstep(45, 90, DR[k]);
       }
     }
     // Normalen aus dem Gitter (Rand macht sie über Kachelgrenzen hinweg gleich)
@@ -792,8 +792,9 @@ export class Terrain {
     const nor = new Float32Array(pos.length);
     const col = new Float32Array(pos.length);
     // je Ecke: Gewichte für Wald, Fels, Schnee (der Shader mischt pro Bildpunkt mit Rauschen) und die Felsfarbe
-    const mat = new Float32Array(pos.length);
+    const mat = new Float32Array((pos.length / 3) * 4);
     const rck = new Float32Array(pos.length);
+    const can = new Float32Array(pos.length / 3);
     const uvs = new Float32Array((pos.length / 3) * 2);
     let minY = Infinity;
     let maxY = -Infinity;
@@ -816,6 +817,7 @@ export class Terrain {
         const v = j * V + i;
         pos[v * 3] = x; pos[v * 3 + 1] = y; pos[v * 3 + 2] = z;
         nor[v * 3] = nx; nor[v * 3 + 1] = ny; nor[v * 3 + 2] = nz;
+        can[v] = CAN[k];
         // Höhe mit einrechnen: an steilen Hängen keine langgezogenen Streifen
         uvs[v * 2] = (x + y * 0.7) / 9; uvs[v * 2 + 1] = (z - y * 0.7) / 9;
         if (y < minY) minY = y;
@@ -828,6 +830,8 @@ export class Terrain {
         const n1 = fbm(x / 230, z / 230, 3);
         const n2 = vnoise(x / 31, z / 31);
         const wet = W[k];
+        // großflächiges Rauschen für den Shader (Flecken in Wiese, Waldrand, Fels, Schnee)
+        mat[v * 4 + 3] = Math.max(0, Math.min(1, 0.5 + (fbm(x / 150 + 9.1, z / 150 - 3.3, 2) - 0.5) * 1.9));
         let c: RGBf;
         const rc = mix(C.rock, C.rockDark, n2 * 0.8 + steep * 0.3, [0, 0, 0]);
         rck[v * 3] = rc[0]; rck[v * 3 + 1] = rc[1]; rck[v * 3 + 2] = rc[2];
@@ -841,7 +845,7 @@ export class Terrain {
           const forest = sstep(C.forestThr, C.forestThr + 0.08, n1 + (n2 - 0.5) * 0.12) * sstep(C.treeLine + 25, C.treeLine - 15, above) * (1 - steep);
           const rocky = Math.max(steep, sstep(C.rockLine - 20, C.rockLine + 60, above + (n1 - 0.5) * 40) * 0.85);
           const snow = sstep(C.snowLine - 25, C.snowLine + 15, above + (n2 - 0.5) * 50 + (n1 - 0.5) * 60) * sstep(0.5, 0.74, ny);
-          mat[v * 3] = forest; mat[v * 3 + 1] = rocky; mat[v * 3 + 2] = snow;
+          mat[v * 4] = forest; mat[v * 4 + 1] = rocky; mat[v * 4 + 2] = snow;
         }
         const shadeV = 0.94 + (n2 - 0.5) * 0.1;
         col[v * 3] = c[0] * shadeV; col[v * 3 + 1] = c[1] * shadeV; col[v * 3 + 2] = c[2] * shadeV;
@@ -869,7 +873,9 @@ export class Terrain {
       pos[vn * 3] = pos[vIdx * 3]; pos[vn * 3 + 1] = Math.max(pos[vIdx * 3 + 1] - L.skirt, SF[this.gridK(vIdx, V, G)]); pos[vn * 3 + 2] = pos[vIdx * 3 + 2];
       nor[vn * 3] = nor[vIdx * 3]; nor[vn * 3 + 1] = nor[vIdx * 3 + 1]; nor[vn * 3 + 2] = nor[vIdx * 3 + 2];
       col[vn * 3] = col[vIdx * 3] * 0.8; col[vn * 3 + 1] = col[vIdx * 3 + 1] * 0.8; col[vn * 3 + 2] = col[vIdx * 3 + 2] * 0.8;
-      for (let q = 0; q < 3; q++) { mat[vn * 3 + q] = mat[vIdx * 3 + q]; rck[vn * 3 + q] = rck[vIdx * 3 + q] * 0.8; }
+      for (let q = 0; q < 3; q++) rck[vn * 3 + q] = rck[vIdx * 3 + q] * 0.8;
+      for (let q = 0; q < 4; q++) mat[vn * 4 + q] = mat[vIdx * 4 + q];
+      can[vn] = can[vIdx];
       uvs[vn * 2] = uvs[vIdx * 2]; uvs[vn * 2 + 1] = uvs[vIdx * 2 + 1] + 0.5;
       return vn++;
     };
@@ -897,11 +903,15 @@ export class Terrain {
     geo.setAttribute('normal', new THREE.BufferAttribute(nor.subarray(0, vn * 3), 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col.subarray(0, vn * 3), 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uvs.subarray(0, vn * 2), 2));
-    geo.setAttribute('aMat', new THREE.BufferAttribute(mat.subarray(0, vn * 3), 3));
+    geo.setAttribute('aMat', new THREE.BufferAttribute(mat.subarray(0, vn * 4), 4));
+    geo.setAttribute('aCan', new THREE.BufferAttribute(can.subarray(0, vn), 1));
     geo.setAttribute('aRock', new THREE.BufferAttribute(rck.subarray(0, vn * 3), 3));
     geo.setIndex(idx);
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
+    // Kronendach wird im Shader angehoben: Grenzen entsprechend weiter (sonst fehlt am Kachelrand mal ein Stück)
+    geo.boundingSphere!.radius += CANOPY * 1.3;
+    geo.boundingBox!.max.y += CANOPY * 1.3;
 
     // Seen: eigene Wasserfläche auf fester Höhe
     let water: THREE.BufferGeometry | null = null;
