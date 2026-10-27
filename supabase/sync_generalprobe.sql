@@ -40,7 +40,12 @@ update public.stages set info = coalesce(info, '{}'::jsonb) || '{"publish_at":"1
 --      select vault.create_secret('github_pat_…', 'github_dispatch_token', 'Startet den Workflow Ergebnisse');
 --    Neuen Token später eintragen:
 --      select vault.update_secret(id, 'github_pat_…') from vault.secrets where name = 'github_dispatch_token';
-create extension if not exists pg_net;
+do $$
+begin
+  if exists (select 1 from pg_available_extensions where name = 'pg_net') then
+    create extension if not exists pg_net;
+  end if;
+end $$;
 
 create or replace function public.dispatch_ergebnisse(p_tour text default null)
 returns bigint
@@ -80,8 +85,10 @@ revoke all on function public.dispatch_ergebnisse(text) from public, anon, authe
 
 do $$
 begin
-  perform cron.unschedule(jobid) from cron.job where jobname = 'giro2026-15uhr';
-  perform cron.schedule('giro2026-15uhr', '1,21 13,14 * * *', $job$select public.dispatch_ergebnisse('giro-2026')$job$);
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.unschedule(jobid) from cron.job where jobname = 'giro2026-15uhr';
+    perform cron.schedule('giro2026-15uhr', '1,21 13,14 * * *', $job$select public.dispatch_ergebnisse('giro-2026')$job$);
+  end if;
 end $$;
 
 -- 5. Kontrolle
