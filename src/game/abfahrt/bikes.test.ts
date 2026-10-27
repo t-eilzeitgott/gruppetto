@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { BIKES, bikeProgress, bikeStats } from '../bikes';
+import { BIKES, bikeProgress, bikeStats, nextBike } from '../bikes';
 import type { GameBest } from '../../data/source';
 import { Mesher } from './gloss';
 import { revolve, toothed, tube } from './prim3d';
@@ -10,30 +10,38 @@ import { headBuild, shoeBuild } from './gear3d';
 
 const row = (user_id: string, best: number, runs: number, total_m: number, best_m = 0): GameBest => ({ user_id, best, best_m, runs, total_m, last_at: '' });
 
-test('Räder: Werte nur aus den eigenen Zeilen aller drei Spiele', () => {
+test('Räder: Läufe und Meter nur aus den eigenen Zeilen aller drei Spiele', () => {
   const s = bikeStats({
     abfahrt: [row('a', 9000, 4, 12000, 4200), row('me', 7000, 3, 9000, 5100)],
     sprint: [row('me', 820, 5, 12000)],
     berg: undefined,
   }, 'me');
-  assert.equal(s.runs, 8);
-  assert.equal(s.meters, 21000);
-  assert.equal(s.best.sprint, 820);
-  assert.equal(s.best.berg, 0);
-  assert.equal(s.bestM, 5100);
+  assert.deepEqual(s, { runs: 8, meters: 21000 });
 });
 
-test('Räder: Freischaltungen nach Rennen, Kilometern, Punkten, Abfahrtslänge und Sieg', () => {
+test('Räder: am Anfang 1 von 12, dann der Reihe nach erst Läufe, dann immer mehr Kilometer', () => {
+  assert.equal(BIKES.length, 12);
+  const ids = (p: ReturnType<typeof bikeProgress>) => BIKES.filter((b) => p[b.id].done).map((b) => b.id);
   const none = bikeProgress(bikeStats({}, 'me'));
-  assert.deepEqual(BIKES.filter((b) => none[b.id].done).map((b) => b.id), ['allround'], 'am Anfang nur das Teamrad');
-  const p = bikeProgress({ runs: 3, meters: 25000, best: { abfahrt: 0, sprint: 800, berg: 799 }, bestM: 5000 });
-  assert.ok(p.acciaio.done && p.pave.done && p.aero.done && p.titan.done);
-  assert.ok(!p.feder.done, '799 von 800 Punkten reicht nicht');
-  assert.ok(!p.zeit.done && !p.legende.done);
-  assert.equal(p.legende.label, '5 / 7 Räder');
-  const all = bikeProgress({ runs: 10, meters: 99000, best: { abfahrt: 0, sprint: 1200, berg: 900 }, bestM: 8000 });
-  assert.ok(BIKES.every((b) => all[b.id].done), 'mit allem freigeschaltet auch die Legende');
-  assert.match(p.pave.label, /25 \/ 25 km/);
+  assert.deepEqual(ids(none), ['allround'], 'am Anfang nur das Teamrad');
+  assert.equal(nextBike(none)?.id, 'acciaio');
+  // die ersten vier Räder nach etwa zehn Läufen
+  assert.deepEqual(ids(bikeProgress({ runs: 3, meters: 6000 })), ['allround', 'acciaio']);
+  assert.deepEqual(ids(bikeProgress({ runs: 10, meters: 24000 })), ['allround', 'acciaio', 'pave', 'matsch']);
+  // danach Kilometer, jede Stufe weiter als die davor
+  const km = BIKES.slice(4).map((b) => (b.unlock.kind === 'km' ? b.unlock.n : 0));
+  assert.ok(km.every((n, i) => n > 0 && (i === 0 || n > km[i - 1])), 'Kilometer steigen');
+  const mid = bikeProgress({ runs: 30, meters: 70000 });
+  assert.deepEqual(ids(mid), ['allround', 'acciaio', 'pave', 'matsch', 'feder', 'aero']);
+  assert.equal(mid.fernweh.label, '70 / 85 km');
+  // der Reihe nach: viele Kilometer, aber zu wenige Läufe – Kilometerräder warten
+  const queued = bikeProgress({ runs: 9, meters: 400000 });
+  assert.ok(!queued.matsch.done && !queued.feder.done && !queued.legende.done);
+  assert.equal(queued.feder.after, 'Matschkönig');
+  assert.equal(queued.matsch.after, undefined);
+  const all = bikeProgress({ runs: 120, meters: 300000 });
+  assert.ok(BIKES.every((b) => all[b.id].done), 'mit 300 km alles frei');
+  assert.equal(nextBike(all), null);
 });
 
 /** zeigen die Flächen eines Teils nach außen (weg von der Achse)? Anteil der Dreiecke */
@@ -101,5 +109,28 @@ test('Räder, Köpfe und Schuhe der Gegner bauen sauber (Normalen passen zu den 
     assert.ok(r.fit.hood.y > 0.6 && r.fit.hood.z < -0.3, `${b.id}: Griff vorn oben`);
   }
   for (const h of ['helmet', 'aero', 'cap'] as const) assert.ok(consistent(headBuild(kit, h, 0)) > 0.97, `Kopf ${h}`);
+  // Reifen berühren den Boden (auch breite und mit Stollen)
+  for (const b of BIKES) {
+    const r = bikeBuild(b.id, kit, 0);
+    r.wheelR.computeBoundingBox();
+    // Außenradius (Segment 0 liegt genau waagrecht vorn) = Achshöhe
+    assert.ok(Math.abs(r.wheelR.boundingBox!.max.z - r.fit.rear.y) < 0.004, `${b.id}: Hinterrad steht auf dem Boden`);
+  }
   assert.ok(consistent(shoeBuild(kit, 'toeclip', 0)) > 0.97, 'Schuh');
+});
+
+test('volle Detailstufe (Garage): Stollen, Schlamm, Taschen und Speichenräder bauen sauber', () => {
+  // Schriftzüge brauchen eine Leinwand – hier nur eine Attrappe
+  const ctx = new Proxy({}, { get: (_t, k) => (k === 'measureText' ? () => ({ width: 100 }) : () => undefined), set: () => true });
+  (globalThis as { document?: unknown }).document = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx }) };
+  const kit = { jersey: '#e6007e', side: '#1b1b1b', helmet: '#ffffff', shorts: '#111111', skin: '#e2b48f', shoes: '#ffffff', number: '12' };
+  for (const id of ['matsch', 'fernweh', 'bahn', 'regenbogen']) {
+    const r = bikeBuild(id, kit, 1);
+    for (const g of [r.frame, r.wheelF, r.wheelR, r.crank]) assert.ok(consistent(g) > 0.97, `${id}: Flächen und Normalen`);
+    r.wheelF.computeBoundingBox();
+    assert.ok(Math.abs(r.wheelF.boundingBox!.max.z - r.fit.front.y) < 0.004, `${id}: Vorderrad auf dem Boden`);
+  }
+  // Bikepacking: Rücklicht hinten an der Satteltasche
+  assert.ok(bikeBuild('fernweh', kit, 1).fit.lamp.z > 0.4);
+  delete (globalThis as { document?: unknown }).document;
 });

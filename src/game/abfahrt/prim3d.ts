@@ -168,11 +168,15 @@ export function strut(m: Mesher, a: V, b: V, w: number, d: number, col: C3, side
   sweep(m, [a, b], [{ s, c }, { s, c }], (i) => (i ? w1 : w), (i) => (i ? d1 : d), () => col, [[1, 1], [-1, 1], [-1, -1], [1, -1]]);
 }
 
+/** Profilpunkt je Segment verändern (Stollen, Schmutz): bekommt Segment j, Profilpunkt k und den Punkt */
+export type Warp = (j: number, k: number, p: [number, number, C3]) => [number, number, C3];
+
 /**
  * Drehkörper um die x-Achse. Profil [Radius, x, Farbe], so laufend, dass die +x-Seite nach innen
- * (kleinerer Radius) durchlaufen wird – dann zeigen alle Flächen nach außen. Optional verschoben/gedreht.
+ * (kleinerer Radius) durchlaufen wird – dann zeigen alle Flächen nach außen. Optional verschoben/gedreht
+ * und je Segment verformt (warp; das letzte Segment schließt an das erste an).
  */
-export function revolve(m: Mesher, prof: [number, number, C3][], seg: number, center: V, closed = true, mtx?: THREE.Matrix4) {
+export function revolve(m: Mesher, prof: [number, number, C3][], seg: number, center: V, closed = true, mtx?: THREE.Matrix4, warp?: Warp) {
   const first = m.count;
   const P = prof.length;
   const t = new THREE.Vector3();
@@ -180,7 +184,8 @@ export function revolve(m: Mesher, prof: [number, number, C3][], seg: number, ce
     const a = (j / seg) * Math.PI * 2;
     const ca = Math.cos(a);
     const sa = Math.sin(a);
-    for (const [r, x, c] of prof) {
+    for (let k = 0; k < P; k++) {
+      const [r, x, c] = warp ? warp(j % seg, k, prof[k]) : prof[k];
       t.set(center.x + x, center.y + r * sa, center.z + r * ca);
       if (mtx) t.applyMatrix4(mtx);
       m.v(t.x, t.y, t.z, c);

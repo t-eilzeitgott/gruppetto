@@ -141,8 +141,9 @@ export function GaragePage() {
                 <span>{chosen ? 'Damit fährst du' : 'Dieses Rad fahren'}</span>
               </button>
             ) : (
-              <div className="garage__unlock">
+              <div className={cx('garage__unlock', prog?.after && 'is-queued')}>
                 <p className="garage__task"><Icon name="lock" size={15} /><span>{prog?.text}</span></p>
+                {prog?.after ? <p className="garage__after">Zählt erst, wenn {prog.after} freigeschaltet ist</p> : null}
                 <div className="garage__bar" role="progressbar" aria-valuemin={0} aria-valuemax={prog?.target ?? 1} aria-valuenow={prog?.value ?? 0} aria-label="Fortschritt">
                   <span style={{ width: `${Math.round(Math.min(1, (prog?.value ?? 0) / (prog?.target || 1)) * 100)}%` }} />
                 </div>

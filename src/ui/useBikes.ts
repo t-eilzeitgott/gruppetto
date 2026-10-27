@@ -1,14 +1,15 @@
 /**
- * Räder: Freischalt-Stand aus den eigenen Ergebnissen aller drei Minispiele (geteilter Cache mit den
- * Bestenlisten der Spiele, also keine zusätzlichen Abfragen), gewähltes Rad (auf dem Gerät gespeichert)
- * und die neu freigeschalteten Räder, die in der Garage noch nicht angesehen wurden.
+ * Räder: Freischalt-Stand aus den eigenen Läufen aller drei Minispiele seit Eröffnung der Garage,
+ * gewähltes Rad (auf dem Gerät gespeichert) und die neu freigeschalteten Räder, die in der Garage noch
+ * nicht angesehen wurden. Nach jedem gespeicherten Lauf werden die Listen der Spiele neu geladen
+ * (invalidate('game:…') trifft auch diese Abfragen).
  */
 import { useCallback, useMemo, useState } from 'react';
 import { useApp } from '../app/context';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
-import { BIKES, bikeProgress, bikeStats, markBikesSeen, seenBikes, selectBike, selectedBike, type BikeStats, type Progress } from '../game/bikes';
+import { BIKES, GARAGE_START, bikeProgress, bikeStats, markBikesSeen, nextBike, seenBikes, selectBike, selectedBike, type BikeSpec, type BikeStats, type Progress } from '../game/bikes';
 
 export interface Bikes {
   /** alle drei Bestenlisten geladen */
@@ -21,14 +22,16 @@ export interface Bikes {
   unlocked: string[];
   /** freigeschaltet, aber noch nicht in der Garage angesehen */
   fresh: string[];
+  /** das nächste Rad zum Erfahren */
+  next: BikeSpec | null;
   markSeen: () => void;
 }
 
 export function useBikes(): Bikes {
   const { me } = useApp();
-  const a = useQuery<GameBest[]>('game:abfahrt:season', () => source.gameLeaderboard('abfahrt'));
-  const s = useQuery<GameBest[]>('game:sprint:season', () => source.gameLeaderboard('sprint'));
-  const b = useQuery<GameBest[]>('game:berg:season', () => source.gameLeaderboard('berg'));
+  const a = useQuery<GameBest[]>('game:abfahrt:garage', () => source.gameLeaderboard('abfahrt', GARAGE_START));
+  const s = useQuery<GameBest[]>('game:sprint:garage', () => source.gameLeaderboard('sprint', GARAGE_START));
+  const b = useQuery<GameBest[]>('game:berg:garage', () => source.gameLeaderboard('berg', GARAGE_START));
   const loaded = !!(a.data && s.data && b.data);
   const stats = useMemo(() => bikeStats({ abfahrt: a.data, sprint: s.data, berg: b.data }, me.id), [a.data, s.data, b.data, me.id]);
   const progress = useMemo(() => bikeProgress(stats), [stats]);
@@ -45,5 +48,6 @@ export function useBikes(): Bikes {
   const markSeen = useCallback(() => { markBikesSeen(unlocked); setSeenTick((t) => t + 1); }, [unlocked]);
   // solange die Listen laden, das gewählte Rad annehmen; danach nur, wenn es freigeschaltet ist
   const current = !loaded || progress[sel]?.done ? sel : 'allround';
-  return { loaded, stats, progress, current, select, unlocked, fresh, markSeen };
+  const next = useMemo(() => nextBike(progress), [progress]);
+  return { loaded, stats, progress, current, select, unlocked, fresh, next, markSeen };
 }

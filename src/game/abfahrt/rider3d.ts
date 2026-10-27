@@ -390,7 +390,8 @@ export class RiderModel {
       this.body.add(t, c, u, f, sh);
     }
     this.torso = new THREE.Mesh(cached('torso', () => torsoGeo()), torsoMat(kit));
-    this.head = new THREE.Mesh(headBuild(kit, bike.spec.head, q), gloss);
+    // manche Räder bringen ihren eigenen Helm mit (Weltmeisterweiß, Gold)
+    this.head = new THREE.Mesh(headBuild(bike.spec.helmet ? { ...kit, helmet: bike.spec.helmet } : kit, bike.spec.head, q), gloss);
     this.body.add(this.torso, this.head);
 
     const lamp = lampParts();

@@ -20,7 +20,3 @@ export function gameInfo(id: GameId): GameInfo {
   return GAMES.find((g) => g.id === id) ?? GAMES[0];
 }
 
-/** als neu hervorgehoben (Leuchten und „Neu“) – bleibt dauerhaft an */
-export function isNewGame(g: GameInfo): boolean {
-  return !!g.newUntilPlayed;
-}

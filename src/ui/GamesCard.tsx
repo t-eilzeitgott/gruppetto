@@ -1,6 +1,7 @@
 /**
  * Startseite: alle Minispiele in einer Karte. Wischen nach links/rechts wechselt das Spiel,
  * jedes zeigt seine eigene Bestenliste. Das zur heutigen Etappe passende Spiel steht vorn.
+ * Darüber der Eingang zur Radgarage.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../app/context';
@@ -9,7 +10,7 @@ import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import type { Stage, StageKind } from '../lib/types';
-import { GAMES, isNewGame, type GameInfo } from '../game/games';
+import { GAMES, type GameInfo } from '../game/games';
 import { Track } from '../game/abfahrt/track';
 import { overtaken, type Seen } from '../lib/overtaken';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
@@ -61,7 +62,6 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
   const onAlert = (id: string, on: boolean) => setAlerts((a) => (a[id] === on ? a : { ...a, [id]: on }));
   // Hinweis „rechts gibt es mehr“, bis man einmal gewischt hat
   const [swiped, setSwiped] = useState(() => { try { return localStorage.getItem(SWIPED) === '1'; } catch { return false; } });
-  const anyNew = useMemo(() => games.some(isNewGame), [games]);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -79,44 +79,52 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
     if (el && slide) el.scrollTo({ left: slide.offsetLeft - (el.firstElementChild as HTMLElement).offsetLeft, behavior: 'smooth' });
   };
   return (
-    <section className={cx('card games-card', anyNew && 'is-new', games.length > 1 && active < games.length - 1 && 'has-more', !swiped && games.length > 1 && 'nudge')} aria-label="Minispiele">
-      <div className="games-scroller" ref={scroller} onScroll={onScroll}>
-        {games.map((g) => <GameSlide key={g.id} game={g} tourName={tourName} stages={stages} onAlert={onAlert} />)}
-      </div>
-      {games.length > 1 ? (
-        <div className="games-dots" role="tablist" aria-label="Spiel wählen">
-          {games.map((g, i) => (
-            <button
-              key={g.id}
-              type="button"
-              role="tab"
-              aria-selected={i === active}
-              aria-label={g.name}
-              className={cx('games-dots__dot', i === active && 'is-on', i === active + 1 && 'is-next', alerts[g.id] && i !== active && 'is-alert')}
-              onClick={() => go(i)}
-            />
-          ))}
+    <>
+      <GarageTeaser />
+      <section className={cx('card games-card', games.length > 1 && active < games.length - 1 && 'has-more', !swiped && games.length > 1 && 'nudge')} aria-label="Minispiele">
+        <div className="games-scroller" ref={scroller} onScroll={onScroll}>
+          {games.map((g) => <GameSlide key={g.id} game={g} tourName={tourName} stages={stages} onAlert={onAlert} />)}
         </div>
-      ) : null}
-      <GarageRow />
-    </section>
+        {games.length > 1 ? (
+          <div className="games-dots" role="tablist" aria-label="Spiel wählen">
+            {games.map((g, i) => (
+              <button
+                key={g.id}
+                type="button"
+                role="tab"
+                aria-selected={i === active}
+                aria-label={g.name}
+                className={cx('games-dots__dot', i === active && 'is-on', i === active + 1 && 'is-next', alerts[g.id] && i !== active && 'is-alert')}
+                onClick={() => go(i)}
+              />
+            ))}
+          </div>
+        ) : null}
+      </section>
+    </>
   );
 }
 
-/** Eingang zur Radgarage: Stand der Freischaltungen, „Neu“ bei frisch freigeschalteten Rädern */
-function GarageRow() {
+/**
+ * Eingang zur Radgarage über den Spielen: leuchtet, solange es noch Räder freizuschalten gibt;
+ * unten eine feine Linie bis zum nächsten Rad.
+ */
+function GarageTeaser() {
   const bikes = useBikes();
   const n = bikes.unlocked.length;
-  const fresh = bikes.fresh.length;
+  const fresh = bikes.fresh.length > 0;
+  const next = bikes.next;
+  const p = next ? bikes.progress[next.id] : null;
+  const frac = p ? Math.min(1, p.value / (p.target || 1)) : 1;
+  const all = bikes.loaded && !next;
+  const label = fresh ? 'Neues Rad freigeschaltet' : all ? 'Radgarage' : 'Räder freischalten';
   return (
-    <Link to="/spiel/garage" className={cx('games-garage', fresh > 0 && 'is-fresh')} ariaLabel={`Radgarage öffnen – ${n} von ${BIKES.length} Rädern freigeschaltet${fresh ? ', neues Rad' : ''}`}>
-      <span className="games-garage__icon" aria-hidden="true"><Icon name="bike" size={20} /></span>
-      <span className="games-garage__text">
-        <strong>Radgarage</strong>
-        <span className="muted">{bikes.loaded ? (fresh ? (fresh === 1 ? 'Neues Rad freigeschaltet' : `${fresh} neue Räder freigeschaltet`) : `${n} von ${BIKES.length} Rädern freigeschaltet`) : 'Räder zum Freischalten'}</span>
-      </span>
-      {fresh > 0 ? <span className="game-new">Neu</span> : null}
+    <Link to="/spiel/garage" className={cx('card garage-teaser', !all && 'is-glow', fresh && 'is-fresh')} ariaLabel={`Radgarage – ${n} von ${BIKES.length} Rädern freigeschaltet${fresh ? ', neues Rad' : ''}`}>
+      <span className="garage-teaser__icon" aria-hidden="true"><Icon name="bike" size={22} /></span>
+      <strong className="garage-teaser__title">{label}</strong>
+      {bikes.loaded ? <span className="garage-teaser__count">{n}/{BIKES.length}</span> : null}
       <Icon name="chevron" className="muted" size={18} />
+      {bikes.loaded && !all ? <span className="garage-teaser__bar" aria-hidden="true"><i style={{ width: `${Math.round(frac * 100)}%` }} /></span> : null}
     </Link>
   );
 }
@@ -157,10 +165,7 @@ function GameSlide({ game, tourName, stages, onAlert }: { game: GameInfo; tourNa
       <span className="game-card__head">
         <GameBadge game={game.id} size={48} />
         <span className="game-card__main">
-          <span className="game-card__titlerow">
-            <strong className="game-card__title">{game.name}</strong>
-            {isNewGame(game) ? <span className="game-new">Neu</span> : null}
-          </span>
+          <strong className="game-card__title">{game.name}</strong>
           <span className="muted game-card__route">{sub}</span>
           {alert ? (
             <span className="game-alert" role="status">
