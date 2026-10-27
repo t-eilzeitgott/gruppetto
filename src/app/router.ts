@@ -13,9 +13,29 @@ const listeners = new Set<() => void>();
 let shown = typeof window === 'undefined' ? '/' : current();
 let bound = false;
 
+/** zuletzt gezeichnete Seite */
+let onScreen = shown;
+
 function emit() {
   shown = current();
   listeners.forEach((cb) => cb());
+  onScreen = shown;
+}
+
+/** Minispiele (mit 3D-Leinwand) */
+const isGame = (p: string) => p.split('?')[0].startsWith('/spiel');
+
+/**
+ * In ein Minispiel hinein oder heraus: kein View Transition – iOS zeigt beim Abbau des Übergangs mit der
+ * 3D-Leinwand für ein Bild einen Zwischenstand (Karte halb durchsichtig, altes Bild, Tableiste). Stattdessen
+ * die neue Seite sofort zeichnen und kurz einblenden.
+ */
+function fadeIn(update: () => void) {
+  flushSync(update);
+  const el = document.getElementById('root');
+  try {
+    el?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'cubic-bezier(0.2, 0, 0.2, 1)' });
+  } catch { /* egal */ }
 }
 
 type VTDocument = Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void>; ready?: Promise<void> } };
@@ -27,6 +47,10 @@ function transition(update: () => void) {
   const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   if (!d.startViewTransition || calm || document.hidden) {
     update();
+    return;
+  }
+  if (isGame(onScreen) || isGame(current())) {
+    fadeIn(update);
     return;
   }
   const root = document.documentElement;

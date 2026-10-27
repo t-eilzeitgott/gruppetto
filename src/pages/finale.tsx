@@ -263,7 +263,10 @@ export function placeIn(list: GameBest[], meId: string, score: number): number {
 
 export interface TypeInfo { label: string; bonus: number }
 
-/** Fahrer wählen: eigener Tipp, je Typ der passendste Fahrer – kompakt, damit Start ohne Scrollen geht */
+/**
+ * Fahrer wählen – der wichtigste Teil der Startkarte: kurze Zeilen (Name, Typ, Punkte-Faktor) und darunter
+ * die Stärken des gewählten Fahrers als drei beschriftete Balken, die beim Wechsel sichtbar umspringen.
+ */
 export function RiderPicker({ options, chosen, onChoose, info, bars }: {
   options: RiderOption[];
   chosen: RiderOption;
@@ -271,14 +274,17 @@ export function RiderPicker({ options, chosen, onChoose, info, bars }: {
   info: (t: RiderType) => TypeInfo;
   bars: (t: RiderType) => [string, number][];
 }) {
-  const legend = bars(options[0]?.type ?? 'sprinter').map(([l]) => l);
+  const factor = (b: number) => `×${b.toFixed(2).replace(/0$/, '').replace('.', ',')}`;
+  // „J. Vingegaard“: Nachname ganz, Vorname als Initiale – passt in eine Zeile
+  const short = (n: string) => {
+    const w = n.trim().split(/\s+/);
+    return w.length > 1 ? `${w[0][0]}. ${w.slice(1).join(' ')}` : n;
+  };
   return (
     <section className="spr-pick" aria-label="Fahrer auswählen">
       <div className="spr-pick__head">
-        <h2 className="abf-eyebrow">Dein Fahrer</h2>
-        <span className="spr-legend" aria-hidden="true">
-          {legend.map((l, i) => <span key={l}><i className={`is-${i}`} />{l}</span>)}
-        </span>
+        <h2 className="spr-pick__title">Wähle deinen Fahrer</h2>
+        <span className="spr-pick__hint">Jeder fährt anders</span>
       </div>
       <div className="spr-pick__list" role="radiogroup" aria-label="Fahrer">
         {options.map((o) => {
@@ -291,25 +297,27 @@ export function RiderPicker({ options, chosen, onChoose, info, bars }: {
               type="button"
               role="radio"
               aria-checked={on}
-              aria-label={`${o.id === null ? s.label : o.name}, ${s.label}: ${rows.map(([l, v]) => `${l} ${Math.round(v * 10)} von 10`).join(', ')}`}
+              aria-label={`${o.id === null ? s.label : o.name}, ${s.label}, Punkte ${factor(s.bonus)}: ${rows.map(([l, v]) => `${l} ${Math.round(v * 10)} von 10`).join(', ')}`}
               title={o.why || undefined}
               className={cx('spr-rider', on && 'is-on')}
               onClick={() => onChoose(o)}
             >
-              <span className="spr-rider__main">
-                <span className="spr-rider__name">{o.id === null ? s.label : o.name}</span>
-                <span className="spr-rider__sub">
-                  <span>{s.label}</span>
-                  {o.tip ? <span className="spr-rider__tip">Dein Tipp</span> : null}
-                  {s.bonus > 1 ? <span>Punkte ×{s.bonus.toFixed(2).replace(/0$/, '').replace('.', ',')}</span> : null}
-                </span>
-              </span>
-              <span className="spr-mini" aria-hidden="true">
-                {rows.map(([l, v], i) => <i key={l} className={`is-${i}`}><b style={{ width: `${Math.round(12 + Math.max(0, Math.min(1, v)) * 88)}%` }} /></i>)}
-              </span>
+              <span className="spr-rider__dot" aria-hidden="true" />
+              <span className="spr-rider__name">{o.id === null ? s.label : short(o.name)}</span>
+              {o.tip ? <span className="spr-rider__tip">Tipp</span> : null}
+              <span className="spr-rider__type">{s.label}</span>
+              <span className={cx('spr-rider__x', s.bonus > 1 && 'is-up')}>{factor(s.bonus)}</span>
             </button>
           );
         })}
+      </div>
+      <div className="spr-stats" aria-hidden="true">
+        {bars(chosen.type).map(([l, v]) => (
+          <span key={l} className="spr-stat">
+            <span className="spr-stat__label">{l}</span>
+            <i><b style={{ width: `${Math.round(12 + Math.max(0, Math.min(1, v)) * 88)}%` }} /></i>
+          </span>
+        ))}
       </div>
     </section>
   );
@@ -345,7 +353,7 @@ export function FinaleMini({ rows, label, members, meId, onOpen, empty }: {
             return (
               <li key={r.user_id} className={cx(r.user_id === meId && 'is-me')}>
                 <span className="abf-top__rank">{i + 1}</span>
-                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={24} />
+                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={22} />
                 <span className="abf-top__name">{r.user_id === meId ? 'Du' : m?.display_name ?? 'Jemand'}</span>
                 <strong>{nf(r.best)}</strong>
               </li>

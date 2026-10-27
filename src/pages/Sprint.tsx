@@ -294,7 +294,7 @@ export function SprintPage() {
                   </div>
                 </div>
                 <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => TYPE_STATS[t]} bars={sprintBars} />
-                <HowTo items={[['↔', 'Hinterrad wechseln'], ['↑', 'Antreten'], ['↓', 'Tempo raus']]} />
+                <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Antreten'], ['↓', 'Tempo raus']]} />
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
                 <BikeChip bikes={bikes} />
                 <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch keine Sprints – hol dir den ersten Tagessieg!" />

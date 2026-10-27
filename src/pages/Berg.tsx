@@ -319,7 +319,7 @@ export function BergPage() {
                 </div>
                 <BergProfile track={track} />
                 <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => BERG_STATS[t]} bars={bars} />
-                <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Angreifen · bergab ducken'], ['↓', 'Erholen · bremsen'], ['⇄', 'Führung mit dem Helfer tauschen']]} />
+                <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Angreifen'], ['↓', 'Erholen'], ['⇄', 'Helfer']]} />
                 <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
                 <BikeChip bikes={bikes} />
                 <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch niemand am Berg – hol dir den ersten Tagessieg!" />
