@@ -240,15 +240,36 @@ void armPose(float act, float t, float e, out vec4 A, out vec4 B, out vec4 legs,
   } else if (act < 4.5) {     // filmt mit dem Handy
     B = vec4(0.0, 1.42 + 0.03 * sin(t * 1.3), 0.42, 0.28);
     A = vec4(0.0, 1.2, 1.05, 0.45);
-  } else if (act < 5.5) {     // Fahne schwenken
+  } else if (act < 5.5) {     // Fahne schwenken (Takte passen in 2 Zeiteinheiten: Schleife ohne Sprung)
     B = vec4(2.62 + (0.2 + 0.12 * e) * sin(t * TAU * 0.5), 0.1, 0.12, 0.0);
-    float pump = 0.5 + 0.5 * sin(t * TAU * 1.3);
+    float pump = 0.5 + 0.5 * sin(t * TAU * 1.5);
     A = mix(idleA, vec4(2.4, 0.2, 0.35 + 0.8 * pump, 0.0), ex);
   } else if (act < 6.5) {     // anfeuern: zeigen und rufen
     vec4 pt = vec4(0.1, 1.7 + 0.16 * sin(t * TAU * 1.0), 0.12, 0.1);
     B = mix(idleB, pt, 0.35 + 0.65 * ex);
     A = mix(idleA, vec4(0.0, 1.45, 2.35, 1.1), 0.35 + 0.65 * ex);
     body.z = 0.1 * ex * sin(t * TAU * 1.0);
+  } else if (act > 14.5 && act < 15.5) {   // springt mit beiden Armen in der Luft
+    float hop = max(0.0, sin(t * TAU * 1.25));
+    float land = max(0.0, -sin(t * TAU * 1.25));
+    vec4 up = vec4(2.45 + 0.3 * hop, 0.35, 0.2 + 0.5 * land, 0.0);
+    A = up; B = up;
+    body.x = hop * 0.32;
+    legs = vec4(0.25 * land, 0.15 + 0.9 * land, 0.25 * land, 0.15 + 0.9 * land);
+  } else if (act > 15.5 && act < 16.5) {   // La-Ola: Arme hoch, wenn die Welle vorbeikommt
+    float w = fract(t / 1.2);
+    float k = smoothstep(0.0, 0.12, w) * (1.0 - smoothstep(0.24, 0.42, w));
+    vec4 up = vec4(2.8, 0.15, 0.12, 0.0);
+    A = mix(idleA, up, k); B = mix(idleB, up, k);
+    body.x = k * 0.14;
+    legs = vec4(0.0, 0.35 * (1.0 - k) * smoothstep(0.5, 0.95, w), 0.0, 0.35 * (1.0 - k) * smoothstep(0.5, 0.95, w));
+  } else if (act > 16.5) {   // tanzt: Hüften schwingen, Arme über dem Kopf im Takt
+    float s1 = sin(t * TAU * 1.0);
+    A = vec4(2.2 + 0.35 * s1, 0.3, 0.5 + 0.3 * s1, 0.1);
+    B = vec4(2.2 - 0.35 * s1, 0.3, 0.5 - 0.3 * s1, 0.1);
+    body.x = abs(s1) * 0.06;
+    body.z = 0.08 * s1;
+    legs = vec4(0.12 * s1, 0.2 + 0.2 * max(0.0, s1), -0.12 * s1, 0.2 + 0.2 * max(0.0, -s1));
   } else if (act < 7.5) {     // hält ein Kind auf den Schultern
     A = vec4(0.0, 0.55, 1.75, 0.2); B = A;
   } else if (act < 9.5 || act > 12.5) {     // läuft (8/9) oder joggt (13/14) neben dem Fahrer her
@@ -282,10 +303,21 @@ const VERT_BEGIN = /* glsl */ `
   float act = aI1.z;
   float ph = aI1.w;
   // gemächlich: echte Zuschauer bewegen sich langsamer, als man denkt (Hüpfen und Jubeln halb so schnell)
+#ifdef CROWD_BAKE
+  // Vorrat an Bildern (2D-Zuschauer): Zeitpunkt direkt, feste Begeisterung, Blick geradeaus
+  float t = ph;
+#else
   float t = uTime * 0.31 * (0.9 + 0.25 * fract(ph * 7.0)) + ph * 37.0;
+  // La-Ola: alle im gleichen Takt, die Phase kommt vom Ort (die Welle läuft die Straße entlang)
+  if (act > 15.5 && act < 16.5) t = uTime * 0.31 + ph * 37.0;
+#endif
   vec2 toR = uRider.xz - aI0.xz;
   float dist = length(toR);
+#ifdef CROWD_BAKE
+  float e = aI2.x; // beim Vorrat: Begeisterung je Bild (statt Hautfarbe)
+#else
   float e = 1.0 - smoothstep(5.0, 48.0, dist);
+#endif
   float feat = floor(aI3.w / 16.0);
   vec4 A; vec4 B; vec4 legs; vec3 body;
   armPose(act, t, e, A, B, legs, body);
@@ -339,8 +371,14 @@ const VERT_BEGIN = /* glsl */ `
   float delta = target - base;
   delta = mod(delta + 3.14159, 6.28318) - 3.14159;
   float att = (act > 7.5 && act < 9.5) || act > 11.5 ? 0.0 : 1.0 - smoothstep(30.0, 150.0, dist);
+#ifdef CROWD_BAKE
+  att = 0.0;
+#endif
   float bodyTurn = clamp(delta, -1.05, 1.05) * 0.65 * att;
   float headTurn = clamp(delta - bodyTurn, -0.85, 0.85) * att + (1.0 - att) * 0.4 * sin(t * 0.33 + ph * 20.0);
+#ifdef CROWD_BAKE
+  headTurn = 0.0;
+#endif
   bool head = part > 4.5 && part < 10.5;
   if (head) {
     vec3 Nk = vec3(0.0, 1.5, 0.0);
@@ -406,10 +444,16 @@ export function crowdMaterial(u: CrowdUniforms): THREE.MeshLambertMaterial {
   return m;
 }
 
+/** Für die 2D-Zuschauer (crowdSprites): Farbtabellen und Shaderteile */
+export const CROWD_PAL = PAL;
+export const CROWD_FLAGS = FLAG_COLS;
+export const CROWD_NV = NV;
+export const CROWD_VERT = { head: VERT_HEAD, begin: VERT_BEGIN };
+
 // ------------------------------------------------------------------ Instanzen
 
 /** Was ein einzelner Zuschauer tut */
-export const Act = { idle: 0, clap: 1, wave: 2, cheer: 3, film: 4, flag: 5, shout: 6, hold: 7, run: 8, runFlag: 9, sit: 10, lean: 11, sign: 12, jog: 13, jogFlag: 14 } as const;
+export const Act = { idle: 0, clap: 1, wave: 2, cheer: 3, film: 4, flag: 5, shout: 6, hold: 7, run: 8, runFlag: 9, sit: 10, lean: 11, sign: 12, jog: 13, jogFlag: 14, jump: 15, ola: 16, dance: 17 } as const;
 
 export interface Person {
   x: number; y: number; z: number; yaw: number;
@@ -502,9 +546,9 @@ export function randomPerson(r: Rnd, zone: Zone, opts: { row: number; kid?: bool
   let act: number;
   if (opts.runner) act = r() < 0.45 ? Act.runFlag : Act.run;
   else if (kid) act = pickW(r, [[Act.cheer, 4], [Act.wave, 3], [Act.clap, 3]]);
-  else if (opts.row === 0) act = pickW(r, [[Act.lean, 26], [Act.clap, 18], [Act.film, 14], [Act.wave, 10], [Act.cheer, 10], [Act.shout, 8], [Act.flag, 3], [Act.idle, 9]]);
+  else if (opts.row === 0) act = pickW(r, [[Act.lean, 24], [Act.clap, 18], [Act.film, 12], [Act.wave, 10], [Act.cheer, 10], [Act.shout, 8], [Act.flag, 3], [Act.jump, 4], [Act.idle, 7]]);
   else if (r() < 0.07) act = Act.sign;
-  else act = pickW(r, [[Act.cheer, 18], [Act.flag, cold ? 9 : 6], [Act.clap, 18], [Act.wave, 14], [Act.film, 10], [Act.shout, 7], [Act.idle, 17]]);
+  else act = pickW(r, [[Act.cheer, 16], [Act.flag, cold ? 9 : 6], [Act.clap, 15], [Act.wave, 12], [Act.film, 8], [Act.shout, 7], [Act.jump, 8], [Act.dance, cold ? 2 : 6], [Act.idle, 12]]);
   if (opts.runner && r() < 0.35) top = skin; // ohne Hemd
   const flag = r() < 0.32 ? Math.floor(r() * 2) : Math.floor(r() * NFLAGS);
   return {

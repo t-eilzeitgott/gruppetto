@@ -1192,7 +1192,7 @@ export class Track {
         continue;
       }
       if (i >= next && marks[k] !== 1) {
-        if (place(i, rr() < 0.5 ? -1 : 1, 9)) next = i + 20 + Math.floor(rr() * 22);
+        if (place(i, rr() < 0.5 ? -1 : 1, 9)) next = i + 12 + Math.floor(rr() * 18);
         else next = i + 3;
       }
     }

@@ -68,15 +68,21 @@ void main() {
   vec2 gAy = dFdy(gA);
   vec2 gBx = dFdx(gB);
   vec2 gBy = dFdy(gB);
+  // Schichten quer zur Wand (gestreckt: Bänder alle gut 90 m)
+  vec2 sA = vec2((vP.x + vP.z) / 2000.0, h / 90.0);
+  vec2 sAx = dFdx(sA);
+  vec2 sAy = dFdy(sA);
   float gul = 0.5;
+  float strat = 0.5;
   if (wallW > 0.01) {
     float wxz = abs(N.x) / (abs(N.x) + abs(N.z) + 1e-4);
     gul = mix(0.5, mix(textureGrad(uNoise, gA, gAx, gAy).g, textureGrad(uNoise, gB, gBx, gBy).g, 1.0 - wxz), wallW);
+    strat = mix(0.5, textureGrad(uNoise, sA, sAx, sAy).r, wallW);
   }
   float rel = (h + 120.0) / uAmp;
   float steep = 1.0 - smoothstep(0.5, 0.85, N.y);
   vec3 c = mix(uRock, uRockD, clamp(steep * 0.55 + (0.5 - gul) * 0.35 + (n2.r - 0.5) * 0.5, 0.0, 1.0));
-  c *= 0.9 + 0.2 * n1.g;
+  c *= 0.86 + 0.24 * strat;
   // Grate hell, Rinnen und Mulden dazwischen dunkel – gibt den Flanken Struktur, egal woher das Licht kommt
   float ao = 0.55 + 0.6 * smoothstep(0.05, 0.75, vR);
   // Wald und Matten unten, Grenze mit Rauschen
@@ -103,8 +109,7 @@ void main() {
 
 const lin = (c: RGB) => new THREE.Color().setRGB(c[0] / 255, c[1] / 255, c[2] / 255, THREE.SRGBColorSpace);
 
-/** Ring beginnt knapp hinter der gröbsten Landschaftsstufe (dazwischen sähe man sonst Löcher) */
-export const PEAK_R0 = 3000;
+export const PEAK_R0 = 4600;
 export const PEAK_R1 = 15000;
 
 /** Bergring für eine Landschaft (Größe und Charakter je Tal) */

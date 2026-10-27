@@ -20,6 +20,7 @@ import { RiderModel, riderKitKey } from './rider3d';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
+import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
 import { mulberry32 } from './rng';
 import './grade';
 import { setGlossEnv } from './gloss';
@@ -63,7 +64,7 @@ const shadeF = (c: RGBf, f: number): RGBf => [c[0] * f, c[1] * f, c[2] * f];
 const rgbLin = (c: RGB): RGBf => lin255(c[0], c[1], c[2]);
 
 interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg }
-interface CrowdBatch { near: THREE.Mesh[]; far: THREE.Mesh[]; c: THREE.Vector3; r: number; lod: number }
+interface CrowdBatch { near: THREE.Mesh[]; spr: THREE.Mesh | null; c: THREE.Vector3; r: number; lod: number }
 interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[] }
 /** Bauteile der Häuser eines Abschnitts */
 interface Town { facade: GB; tiles: GB; plain: GB; signs: GB; lanterns: number[]; bulbs: number[] }
@@ -126,6 +127,10 @@ export class Renderer3D {
   /** Stufe einmal vollständig aufgebaut (danach bleibt die Abdeckung, bis der neue Ring fertig ist) */
   private boxSet = LEVELS.map(() => false);
   private lastTerrCam = new THREE.Vector3(1e9, 0, 0);
+  /** Blickrichtung (geglättet, waagrecht): die Kachelringe liegen nach vorn verschoben – vor der Kamera
+   *  reicht die feine Stufe weiter, hinter ihr (unsichtbar) weniger weit */
+  private terrFwd = new THREE.Vector3(0, 0, -1);
+  private terrDir = new THREE.Vector3();
   /** Kachel im Bau (wird über mehrere Bilder verteilt fertiggestellt) */
   private pending: { key: string; lv: number; gen: Generator<void, TileData, void>; ver: number } | null = null;
 
@@ -169,6 +174,9 @@ export class Renderer3D {
   // Zuschauer
   private crowdU = { uTime: this.time, uRider: { value: new THREE.Vector3() } };
   private crowdMat = crowdMaterial(this.crowdU);
+  /** Zuschauer in der Ferne: Bilder aus dem Vorrat (einmal aus den 3D-Figuren gezeichnet) */
+  private crowdAtlas!: CrowdAtlas;
+  private sprMat!: THREE.MeshLambertMaterial;
   private runners: Runner[] = [];
   private runBuf = new THREE.InstancedInterleavedBuffer(new Float32Array(6 * STRIDE), STRIDE, 1).setUsage(THREE.DynamicDrawUsage);
   private runMeshes: THREE.Mesh[] = [];
@@ -273,6 +281,8 @@ export class Renderer3D {
     this.scene.add(this.parts);
 
     this.initMaterials();
+    this.crowdAtlas = bakeCrowdAtlas(this.gl);
+    this.sprMat = spriteMaterial(this.crowdU, this.crowdAtlas);
     this.resize();
   }
 
@@ -292,6 +302,40 @@ export class Renderer3D {
   }
 
   private noiseMap!: THREE.CanvasTexture;
+
+  /**
+   * Relieftextur aus einer gemalten Rauschtextur: R = Kanal r, G = Höhe (Kanal ch), B/A = Steigung der Höhe
+   * je Texel in u und v (×4, um 0,5). Damit lässt sich Licht auf Rinnen und Buckeln ohne Bildschirm-Ableitungen
+   * rechnen; die Mipmaps glätten die Steigung in der Ferne (kein Flimmern).
+   */
+  private reliefTex(cv: HTMLCanvasElement, ch: number): THREE.DataTexture {
+    const w = cv.width;
+    const h = cv.height;
+    const img = cv.getContext('2d')?.getImageData?.(0, 0, w, h);
+    const out = new Uint8Array(w * h * 4).fill(128);
+    if (img?.data) {
+      const src = img.data;
+      const H = (x: number, y: number) => src[(((y + h) % h) * w + ((x + w) % w)) * 4 + ch] / 255;
+      const enc = (v: number) => Math.max(0, Math.min(255, Math.round(128 + v * 4 * 255)));
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          out[i] = src[i];
+          out[i + 1] = src[i + ch];
+          out[i + 2] = enc((H(x + 1, y) - H(x - 1, y)) / 2);
+          out[i + 3] = enc((H(x, y + 1) - H(x, y - 1)) / 2);
+        }
+      }
+    }
+    const t = new THREE.DataTexture(out, w, h, THREE.RGBAFormat);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.magFilter = THREE.LinearFilter;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.generateMipmaps = true;
+    t.colorSpace = THREE.NoColorSpace;
+    t.needsUpdate = true;
+    return t;
+  }
 
   private initMaterials() {
     this.noiseMap = this.dataTex(noiseTex(), 1);
@@ -408,7 +452,7 @@ export class Renderer3D {
     // aufgebrochen mit Rauschen – statt verwaschener Eckpunktfarben
     const splatU = {
       // ohne anisotrope Filterung: großflächig, fein genug ohne – und auf schwachen Grafikchips teuer
-      uNoise: { value: this.noiseMap }, uCanopy: { value: this.dataTex(canopyTex(), 2) },
+      uNoise: { value: this.noiseMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canopyTex(), 2) },
       uForA: { value: new THREE.Color().setRGB(...lin255(30, 60, 34)) }, uForB: { value: new THREE.Color().setRGB(...lin255(56, 88, 46)) },
       uSnow: { value: new THREE.Color().setRGB(...lin255(240, 245, 250)) },
     };
@@ -420,22 +464,32 @@ export class Renderer3D {
         .replace('#include <begin_vertex>', `#include <begin_vertex>\n{ vec3 cw = (modelMatrix * vec4(transformed, 1.0)).xyz; transformed.y += aCan * smoothstep(${CAN_NEAR.toFixed(1)}, ${CAN_FULL.toFixed(1)}, distance(cw.xz, cameraPosition.xz)); }`)
         .replace('#include <project_vertex>', '#include <project_vertex>\nvMat = aMat;\nvRk = aRock;\nvTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;')
         .replace('#include <color_fragment>', `
+          // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
+          // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen –
+          // die rauschten in 2×2-Blöcken und flimmerten an jeder Fels- und Waldkante.
+          vec3 tGrad = vec3(0.0);
           #ifdef USE_COLOR
             // Normale in Weltkoordinaten (weich zwischen den Ecken – keine Dreiecke im Schnee)
             vec3 fnT = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
             float camD = distance(vTW, cameraPosition);
-            // ein Rauschzugriff (drei Körnungen in den Kanälen) und großflächiges Rauschen je Ecke (vMat.w)
-            vec3 nz = texture2D(uNoise, vTW.xz / 120.0).rgb;
+            vec3 nz = texture2D(uNoise, vTW.xz / 170.0).rgb;
+            // mittleres Rauschen: r, Höhe g, Steigung von g in b/a (je Texel ×4)
+            vec4 nz2 = texture2D(uRelief, vTW.xz / 33.0);
             float big = vMat.w;
             // Wiesen: Flecken heller/dunkler, mal saftiger, mal trockener (gelblicher)
-            vec3 tCol = vColor.rgb * (0.9 + 0.2 * nz.g);
-            tCol = mix(tCol, tCol * vec3(1.1, 1.02, 0.78), smoothstep(0.55, 0.85, big) * 0.6);
+            vec3 tCol = vColor.rgb * (0.92 + 0.16 * nz.g);
+            tCol = mix(tCol, tCol * vec3(1.1, 1.02, 0.78), smoothstep(0.55, 0.85, big) * 0.5);
             // Fels: Gewicht, Rauschen und die Steilheit dieser Fläche
-            float rk = smoothstep(0.42, 0.64, vMat.y + (big - 0.5) * 0.35 + (nz.r - 0.5) * 0.3 + (1.0 - fnT.y) * 0.45);
+            float rk = smoothstep(0.42, 0.64, vMat.y + (nz.g - 0.5) * 0.45 + (nz2.r - 0.5) * 0.22 + (1.0 - fnT.y) * 0.45);
+            float far = smoothstep(60.0, 220.0, camD);
+            // feine Muster nur bis in mittlere Entfernung
+            float hiF = 1.0 - smoothstep(450.0, 1300.0, camD);
+            // Rinnen und Schichten nur an steilen Flächen (auf flachen würden die Projektionen zu Streifen)
             float wallW = 1.0 - smoothstep(0.55, 0.85, fnT.y);
-            // Rinnen an steilen Felswänden (zwei senkrechte Projektionen) – nur gelesen, wo Fels ist
+            // Felswände: senkrechte Rinnen (Erosion) entlang der Wand – zwei senkrechte Projektionen (z–y und x–y),
+            // nach Ausrichtung der Wand gemischt; gelesen nur, wo Fels ist (Ableitungen vorher: richtige Mipmap)
             vec2 gA = vec2(vTW.z / 120.0, vTW.y / 190.0);
             vec2 gB = vec2(vTW.x / 120.0, vTW.y / 190.0);
             vec2 gAx = dFdx(gA);
@@ -445,31 +499,48 @@ export class Renderer3D {
             float gul = 0.5;
             if (rk * wallW > 0.01) {
               float wxz = abs(fnT.x) / (abs(fnT.x) + abs(fnT.z) + 1e-4);
-              gul = mix(textureGrad(uNoise, gA, gAx, gAy).g, textureGrad(uNoise, gB, gBx, gBy).g, 1.0 - wxz);
-              gul = mix(0.5, gul, wallW);
+              vec4 ra = textureGrad(uRelief, gA, gAx, gAy);
+              vec4 rb = textureGrad(uRelief, gB, gBx, gBy);
+              gul = mix(0.5, mix(ra.g, rb.g, 1.0 - wxz), wallW);
+              // Steigung (Textur hat 256 Texel, Kodierung ×4): Höhe der Rinnen 18 m
+              vec2 sa = (ra.ba - 0.5) * 64.0 * 18.0;
+              vec2 sb = (rb.ba - 0.5) * 64.0 * 18.0;
+              vec3 ga = vec3(0.0, sa.y / 190.0, sa.x / 120.0);
+              vec3 gb = vec3(sb.x / 120.0, sb.y / 190.0, 0.0);
+              tGrad += mix(ga, gb, 1.0 - wxz) * (rk * far * wallW);
             }
-            float far = smoothstep(60.0, 220.0, camD);
-            vec3 rc = vRk * (0.82 + 0.36 * nz.g) * mix(1.0, 0.8 + 0.4 * gul, far);
+            float gul2 = mix(0.5, nz2.g, hiF * wallW);
+            vec3 rc = vRk * (0.8 + 0.42 * nz2.r) * mix(1.0, 0.84 + 0.26 * mix(gul, gul2, 0.4), far);
             // auf Absätzen (weniger steil) Gras und Geröll
-            rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, nz.b) * 0.6);
+            rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, nz.g) * 0.6);
             // Wald: Rand aus Rauschen; aus der Nähe Waldboden (dort stehen echte Bäume), weiter weg das Kronendach
-            float fo = smoothstep(0.46, 0.58, vMat.x + (big - 0.5) * 0.3 + (nz.r - 0.5) * 0.45 + (nz.g - 0.5) * 0.2) * (1.0 - rk);
+            float fo = smoothstep(0.46, 0.58, vMat.x + (big - 0.5) * 0.25 + (nz.r - 0.5) * 0.6 + (nz2.g - 0.5) * 0.28) * (1.0 - rk);
             vec2 cuv = vTW.xz / 10.0;
             vec2 cux = dFdx(cuv);
             vec2 cuy = dFdy(cuv);
             float crown = 0.55;
             if (fo > 0.01) crown = textureGrad(uCanopy, cuv, cux, cuy).r;
-            vec3 fc = mix(uForA, uForB, nz.b) * (0.42 + crown * 0.72);
+            vec3 fc = mix(uForA, uForB, nz2.r) * (0.42 + crown * 0.72);
             fc = mix(fc, uForA * vec3(0.62, 0.6, 0.5), smoothstep(0.78, 0.45, fnT.y));
             float canopy = smoothstep(${(TREE_GONE - 70).toFixed(1)}, ${TREE_GONE.toFixed(1)}, camD);
             fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, canopy);
             tCol = mix(tCol, fc, fo);
             tCol = mix(tCol, rc, rk);
             // Schnee: bleibt in den Rinnen länger liegen
-            float sn = smoothstep(0.42, 0.6, vMat.z + (big - 0.5) * 0.35 + (nz.b - 0.5) * 0.35 + rk * (0.5 - gul) * 0.5) * smoothstep(0.38, 0.7, fnT.y + (nz.g - 0.5) * 0.3 + (0.5 - gul) * 0.25);
-            tCol = mix(tCol, uSnow * (0.9 + 0.1 * nz.b), sn);
+            float sn = smoothstep(0.42, 0.6, vMat.z + (nz.b - 0.5) * 0.55 + (nz2.g - 0.5) * 0.25 + rk * (0.5 - gul) * 0.5) * smoothstep(0.38, 0.7, fnT.y + (nz2.r - 0.5) * 0.3 + (0.5 - gul) * 0.25);
+            tCol = mix(tCol, uSnow * (0.9 + 0.12 * nz2.g), sn);
+            // Buckel in Wiese und Wald (3 m auf 33 m)
+            tGrad.xz += (nz2.ba - 0.5) * 64.0 * 3.0 / 33.0 * ((1.0 - rk) * far);
+            // Schnee glättet das Relief
+            tGrad *= 1.0 - 0.7 * sn;
             diffuseColor.rgb *= tCol;
-          #endif`);
+          #endif`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          {
+            // Relief: Normale gegen die Steigung kippen (nur den Anteil entlang der Fläche)
+            vec3 gV = (viewMatrix * vec4(tGrad, 0.0)).xyz;
+            normal = normalize(normal - (gV - dot(gV, normal) * normal));
+          }`);
     };
     // Landschaftsmaterialien: gröbere Stufen sinken dort ab, wo die feinere liegt
     const lower = <M extends THREE.Material>(m: M, lv: number, drop: number, key: string, rock: boolean): M => {
@@ -773,6 +844,17 @@ export class Renderer3D {
     // großer Sprung (neuer Lauf): wie beim Start schrittweise neu aufbauen
     const jump = this.lastTerrCam.distanceTo(cp) > 250;
     this.lastTerrCam.copy(cp);
+    this.camera.getWorldDirection(this.terrDir);
+    this.terrDir.y = 0;
+    if (this.terrDir.lengthSq() > 1e-6) {
+      this.terrDir.normalize();
+      // beim Aufbau und nach Sprüngen sofort, sonst langsam nachziehen (Kehren lösen keinen Sturm von Neubauten aus)
+      if (jump || this.tiles.size === 0) this.terrFwd.copy(this.terrDir);
+      else this.terrFwd.lerp(this.terrDir, 0.03).normalize();
+    }
+    const fw = this.terrFwd;
+    // Mittelpunkt je Stufe: ein Stück voraus (die gröbste Stufe bleibt mittig – ihr Neubau ist teuer)
+    const mid = LEVELS.map((Lv, lv) => { const k = lv === 0 ? 0.75 : lv === 1 ? 0.5 : 0; return [cp.x + fw.x * Lv.size * k, cp.z + fw.z * Lv.size * k]; });
     // nach einem Sprung passen die alten Kacheln nicht mehr zur Strecke (sie stünden als Berge im Bild):
     // weg damit und wie beim Start neu aufbauen
     if (jump && this.tiles.size) this.clearTiles();
@@ -787,8 +869,8 @@ export class Renderer3D {
       this.pending = null;
       for (const lv of [0, 1]) {
         const Lv = LEVELS[lv];
-        const cx = Math.floor(cp.x / Lv.size);
-        const cz = Math.floor(cp.z / Lv.size);
+        const cx = Math.floor(mid[lv][0] / Lv.size);
+        const cz = Math.floor(mid[lv][1] / Lv.size);
         for (let j = cz - 1; j <= cz + 1; j++) {
           for (let i = cx - 1; i <= cx + 1; i++) if (!this.tiles.has(`${lv}:${i}:${j}`)) this.buildTile(T, lv, i, j, t0, Infinity);
         }
@@ -803,7 +885,7 @@ export class Renderer3D {
       const r = this.pending.gen.next();
       if (r.done) { this.putTile(this.pending.key, this.tileObjects(r.value, this.pending.lv, this.pending.key)); this.pending = null; }
     }
-    const centers = LEVELS.map((Lv) => [Math.floor(cp.x / Lv.size), Math.floor(cp.z / Lv.size)]);
+    const centers = LEVELS.map((Lv, lv) => [Math.floor(mid[lv][0] / Lv.size), Math.floor(mid[lv][1] / Lv.size)]);
     const ringOf = (lv: number, key: string) => {
       const [, i, j] = key.split(':').map(Number);
       return Math.max(Math.abs(i - centers[lv][0]), Math.abs(j - centers[lv][1]));
@@ -1415,6 +1497,7 @@ export class Renderer3D {
     }
     const crowd: CrowdBatch[] = [];
     const crowdGeos: THREE.BufferGeometry[] = [];
+    const sprGeos: THREE.BufferGeometry[] = [];
     for (const list of people) {
       if (!list.length) continue;
       const c = new THREE.Vector3();
@@ -1423,23 +1506,30 @@ export class Renderer3D {
       let rad = 0;
       for (const pp of list) rad = Math.max(rad, Math.hypot(pp.x - c.x, pp.y - c.y, pp.z - c.z));
       const sphere = new THREE.Sphere(c, rad + 4);
-      const batch: CrowdBatch = { near: [], far: [], c, r: rad, lod: -1 };
+      const batch: CrowdBatch = { near: [], spr: null, c, r: rad, lod: -1 };
+      // nah: echte 3D-Menschen
       for (const kind of KINDS) {
         const sub = list.filter((pp) => needs(pp, kind));
         if (!sub.length) continue;
         const data = new Float32Array(sub.length * STRIDE);
         sub.forEach((pp, k) => packPerson(pp, data, k));
-        for (const lod of [0, 1] as const) {
-          const geo = crowdGeometry(kind, lod, data, sub.length);
-          if (!geo) continue;
-          geo.boundingSphere = sphere.clone();
-          crowdGeos.push(geo);
-          const m = new THREE.Mesh(geo, this.crowdMat);
-          m.visible = false;
-          group.add(m);
-          (lod ? batch.far : batch.near).push(m);
-        }
+        const geo = crowdGeometry(kind, 0, data, sub.length);
+        if (!geo) continue;
+        geo.boundingSphere = sphere.clone();
+        crowdGeos.push(geo);
+        const m = new THREE.Mesh(geo, this.crowdMat);
+        m.visible = false;
+        group.add(m);
+        batch.near.push(m);
       }
+      // weiter weg: alle als Bilder in einem Zeichenaufruf
+      const sg = spriteGeometry(list);
+      sg.boundingSphere = sphere.clone();
+      sprGeos.push(sg);
+      const sm = new THREE.Mesh(sg, this.sprMat);
+      sm.visible = false;
+      group.add(sm);
+      batch.spr = sm;
       crowd.push(batch);
     }
     let glow: THREE.Points | null = null;
@@ -1465,6 +1555,7 @@ export class Renderer3D {
       dispose: () => {
         for (const d of disp) d.dispose();
         for (const geo of crowdGeos) disposeCrowdGeometry(geo);
+        for (const geo of sprGeos) disposeSpriteGeometry(geo);
         group.traverse((o) => { if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose(); });
       },
     };
@@ -2331,8 +2422,11 @@ export class Renderer3D {
     const zone: Zone = biome === 'pass' ? 'pass' : biome === 'village' ? 'village' : 'tifosi';
     const r = mulberry32(s.i * 7919 + (sg > 0 ? 104729 : 0));
     const group = v === 9;
-    const rows = group ? [dx0]
-      : v === 8 ? [0.45, 1.2] : zone === 'village' ? [0.32, 1.02] : [0.38, 1.12, 1.86];
+    // dichter als früher: in der Ferne sind es Bilder (zwei Dreiecke je Mensch)
+    const rows = group ? (r() < 0.55 ? [dx0, dx0 + 0.78] : [dx0])
+      : v === 8 ? [0.45, 1.2, 1.95] : zone === 'village' ? [0.32, 1.02, 1.7] : [0.38, 1.1, 1.82, 2.55];
+    // La-Ola: in manchen Fanzonen läuft eine Welle die Absperrung entlang (alle 40 m ein Wellenberg)
+    const ola = zone === 'tifosi' && s.crowd && !group && hash(Math.floor(s.i / 30) * 31 + 7) < 0.3;
     const side = sg < 0 ? s.L : s.R;
     const w = this.w2;
     const pr = this.profile(side, s, sg, lim);
@@ -2357,11 +2451,11 @@ export class Renderer3D {
       p.yaw = Math.atan2(rx + bx * k, rz + bz * k) + j;
     };
     for (let ri = 0; ri < rows.length; ri++) {
-      if (zone === 'tifosi' && ri === 2 && r() < 0.45) continue;
+      if (zone === 'tifosi' && ri === 3 && r() < 0.35) continue;
       // Abstände so, dass sich niemand überschneidet – auch nicht mit dem Nachbarabschnitt (alle 4 m)
       let u = group ? r() * 1.2 : 0.3 + r() * 0.2;
-      const step = group ? [0.62, 0.5] : ri === 0 ? [0.72, 0.24] : ri === 1 ? [0.8, 0.3] : [0.9, 0.4];
-      const end = group ? 1.4 + r() * 2.6 : 3.7;
+      const step = group ? [0.6, 0.45] : ri === 0 ? [0.66, 0.2] : ri === 1 ? [0.72, 0.26] : ri === 2 ? [0.8, 0.32] : [0.86, 0.38];
+      const end = group ? 1.8 + r() * 3.4 : 3.7;
       while (u < end) {
         let dx = rows[ri] + (r() - 0.5) * (ri ? 0.2 : 0.06);
         if (EDGE + dx > lim - 0.45) break;
@@ -2370,6 +2464,11 @@ export class Renderer3D {
         const p = randomPerson(r, zone, { row: ri, kid });
         if (!s.crowd && p.act === Act.lean) p.act = Act.idle; // ohne Absperrung lehnt sich niemand an
         if (group && r() < 0.12) p.act = Act.sign;
+        if (ola && p.act !== Act.sign && p.act !== Act.flag && r() < 0.85) {
+          p.act = Act.ola;
+          // Phase aus dem Ort: die Welle läuft der Straße entlang den Fahrern entgegen
+          p.phase = ((s.i * SEG + u) * 0.03) / 37;
+        }
         place(p, u, dx);
         out.push(p);
         if (p.act === Act.sign) this.signBoard(p, r);
@@ -2421,17 +2520,15 @@ export class Renderer3D {
     const cp = this.camera.position;
     for (const ch of this.chunks.values()) {
       for (const b of ch.crowd) {
-        // nah: volle Figuren; weit: vereinfacht; ganz weit (nur noch Pünktchen): aus
-        // feste Grenzen mit etwas Spiel (kein Hin- und Herspringen an der Grenze, nicht von der Qualität abhängig)
+        // nah: echte 3D-Menschen; ab gut 30 m Bilder (dort ist ein Bild nicht größer als im Vorrat gezeichnet)
+        // feste Grenze mit etwas Spiel (kein Hin- und Herspringen, nicht von der Qualität abhängig)
         const d = cp.distanceTo(b.c) - b.r;
-        const h = b.lod < 0 ? 0 : 6;
-        const near = 60 + (b.lod === 0 ? h : -h);
-        const far = 320 + (b.lod === 2 ? -h : h);
-        const lod = d < near ? 0 : d < far ? 1 : 2;
+        const h = b.lod < 0 ? 0 : 3;
+        const lod = d < 30 + (b.lod === 0 ? h : -h) ? 0 : 1;
         if (lod === b.lod) continue;
         b.lod = lod;
         for (const m of b.near) m.visible = lod === 0;
-        for (const m of b.far) m.visible = lod === 1;
+        if (b.spr) b.spr.visible = lod === 1;
       }
     }
     // Läufer: warten jubelnd am Rand, laufen los, wenn der Fahrer kommt, und lassen sich dann zurückfallen
@@ -2939,7 +3036,7 @@ export class Renderer3D {
   }
 
   dispose() {
-    try { this.clearChunks(); this.skyLife.dispose(); } catch { /* Kontext evtl. schon weg */ }
+    try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); } catch { /* Kontext evtl. schon weg */ }
     try { this.gl.dispose(); } catch { /* egal */ }
     // Kontext sofort freigeben: iOS erlaubt nur wenige gleichzeitig – sonst bleibt ein späteres Spiel schwarz
     try { this.gl.forceContextLoss(); } catch { /* egal */ }
