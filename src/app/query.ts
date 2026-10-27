@@ -32,9 +32,11 @@ function load(key: string, fn: () => Promise<unknown>) {
     .then((data) => {
       entry.data = data;
       entry.error = undefined;
+      if (persist?.match.test(key)) scheduleSave();
     })
     .catch((err) => {
-      entry.error = err;
+      // vorhandene (auch zwischengespeicherte) Daten bleiben stehen, z. B. ohne Netz
+      if (entry.data === undefined) entry.error = err;
     })
     .finally(() => {
       entry.loading = false;
@@ -74,6 +76,12 @@ export function useQuery<T>(key: string | null, fn: () => Promise<T>): QueryResu
   };
 }
 
+/** aktueller Stand eines Eintrags (für Tests) */
+export function peekQuery(key: string): { data: unknown; stale: boolean } | undefined {
+  const e = entries.get(key);
+  return e ? { data: e.data, stale: e.stale } : undefined;
+}
+
 /** Markiert Einträge als veraltet (Präfix-Treffer) – sichtbare Komponenten laden neu. */
 export function invalidate(prefix = '') {
   for (const [key, entry] of entries) {
@@ -85,7 +93,58 @@ export function invalidate(prefix = '') {
 /** Alles verwerfen, z. B. beim Abmelden. */
 export function resetCache() {
   entries.clear();
+  if (persist) {
+    window.clearTimeout(saveT);
+    try { localStorage.removeItem(persist.key); } catch { /* egal */ }
+  }
   notify();
+}
+
+// ------------------------------------------------------------ Zwischenspeicher auf dem Gerät
+
+/**
+ * Zuletzt geladene Daten (passende Schlüssel) auf dem Gerät halten: Beim nächsten Start steht die Seite sofort
+ * mit diesem Stand da und lädt im Hintergrund neu („stale-while-revalidate“) – kein Laden, kein Springen.
+ * Der Speicher gilt nur für diese App-Version (neue Version: einmal frisch laden).
+ */
+let persist: { key: string; match: RegExp } | null = null;
+let saveT = 0;
+
+export function persistQueries(key: string, match: RegExp, maxAgeMs = 14 * 864e5) {
+  persist = { key, match };
+  try {
+    // alte Stände anderer Versionen wegräumen
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k !== key && k.startsWith('gruppetto.cache.')) localStorage.removeItem(k);
+    }
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as { at: number; data: Record<string, unknown> };
+    if (!saved?.data || Date.now() - saved.at > maxAgeMs) return;
+    for (const [k, data] of Object.entries(saved.data)) {
+      if (!entries.has(k) && match.test(k)) entries.set(k, { data, loading: false, stale: true });
+    }
+  } catch {
+    /* kaputter Speicher: einfach frisch laden */
+  }
+}
+
+function scheduleSave() {
+  window.clearTimeout(saveT);
+  saveT = window.setTimeout(save, 700);
+}
+
+function save() {
+  if (!persist) return;
+  const data: Record<string, unknown> = {};
+  for (const [k, e] of entries) if (persist.match.test(k) && e.data !== undefined) data[k] = e.data;
+  try {
+    localStorage.setItem(persist.key, JSON.stringify({ at: Date.now(), data }));
+  } catch {
+    // Speicher voll: lieber nichts als einen halben Stand
+    try { localStorage.removeItem(persist.key); } catch { /* egal */ }
+  }
 }
 
 let focusBound = false;

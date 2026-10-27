@@ -17,17 +17,25 @@
   <title>gruppetto</title>
   <script>
     (function () {
+      var d = document.documentElement;
       try {
         var p = localStorage.getItem('gruppetto.theme');
         var dark = p ? p === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        d.dataset.theme = dark ? 'dark' : 'light';
+        // zuletzt gesehene Farbe der Rundfahrt, damit der Start nicht umfärbt
+        d.dataset.tour = localStorage.getItem('gruppetto.tourTheme') || 'neutral';
+        // Startansicht passend zur Seite (siehe <div id="root">): Startseite, andere Seite, Spiel – oder nichts (Anmeldung)
+        var h = location.hash.replace(/^#/, '');
+        var seite = h.indexOf('/spiel/garage') === 0 ? 'garage' : h.indexOf('/spiel') === 0 ? 'full' : h && h !== '/' ? 'page' : 'home';
+        if (/*LIVE*/false && !localStorage.getItem('gruppetto.session')) seite = 'none';
+        d.dataset.boot = seite;
       } catch (e) {}
     })();
   </script>
   <!--CSS-->
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root"><!--BOOT--></div>
   <noscript>gruppetto braucht JavaScript.</noscript>
   <!--JS-->
 </body>

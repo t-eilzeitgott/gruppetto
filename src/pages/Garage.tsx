@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { afterPaint } from '../lib/afterPaint';
 import { goBack } from '../app/router';
 import { BIKES, bikeById } from '../game/bikes';
 import { GarageView } from '../game/abfahrt/garage3d';
@@ -23,6 +24,9 @@ export function GaragePage() {
   const [hint, setHint] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewRef = useRef<GarageView | null>(null);
+  // gewähltes Rad auch für den verzögerten Aufbau der 3D-Ansicht
+  const viewRef2 = useRef(view);
+  viewRef2.current = view;
   const kit = useMemo(playerKit, []);
   // „Neu“: beim ersten vollständigen Laden merken, dann als gesehen speichern
   const [fresh, setFresh] = useState<Set<string> | null>(null);
@@ -37,28 +41,39 @@ export function GaragePage() {
     const canvas = canvasRef.current;
     // Testmodus ohne 3D (?nogl): nur die Oberfläche – für schnelle automatische Layout-Checks
     if (!canvas || /[?&]nogl\b/.test(window.location.search)) return undefined;
-    let v: GarageView;
-    try {
-      v = new GarageView(canvas);
-    } catch {
-      setGlError(true);
-      return undefined;
-    }
-    viewRef.current = v;
-    v.setBike(view, kit);
-    for (const b of BIKES) v.thumb(b.id, kit, 360, 220, (url) => setThumbs((t) => ({ ...t, [b.id]: url })));
-    v.start();
-    const onResize = () => v.resize();
-    window.addEventListener('resize', onResize);
-    const onVis = () => (document.hidden ? v.stop() : v.start());
-    document.addEventListener('visibilitychange', onVis);
+    // 3D erst nach dem ersten Bild: die Garage steht sofort, das Rad blendet ein
+    const start = () => {
+      let v: GarageView;
+      try {
+        v = new GarageView(canvas);
+      } catch {
+        setGlError(true);
+        return undefined;
+      }
+      viewRef.current = v;
+      v.setBike(viewRef2.current, kit);
+      for (const b of BIKES) v.thumb(b.id, kit, 360, 220, (url) => setThumbs((t) => ({ ...t, [b.id]: url })));
+      v.start();
+      const shown = afterPaint(() => canvas.classList.add('is-drawn'));
+      const onResize = () => v.resize();
+      window.addEventListener('resize', onResize);
+      const onVis = () => (document.hidden ? v.stop() : v.start());
+      document.addEventListener('visibilitychange', onVis);
+      return () => {
+        shown();
+        window.removeEventListener('resize', onResize);
+        document.removeEventListener('visibilitychange', onVis);
+        v.dispose(bikes.current);
+        viewRef.current = null;
+      };
+    };
+    let stop: (() => void) | undefined;
+    const cancel = afterPaint(() => { stop = start(); });
     const t = window.setTimeout(() => setHint(false), 3200);
     return () => {
       window.clearTimeout(t);
-      window.removeEventListener('resize', onResize);
-      document.removeEventListener('visibilitychange', onVis);
-      v.dispose(bikes.current);
-      viewRef.current = null;
+      cancel();
+      stop?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

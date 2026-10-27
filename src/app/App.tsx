@@ -1,15 +1,15 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo } from 'react';
 import { useAuthUser, useMe, useSelectedTour } from './hooks';
 import { refreshOnFocus, resetCache } from './query';
 import { useRoute } from './router';
 import { AppContext } from './context';
 import { setTourTheme } from './theme';
-import { source } from './config';
+import { LIVE_CONFIGURED, source } from './config';
 import { Shell } from '../ui/Shell';
-import { Button, Empty, ErrorBox, Loading, ToastHost } from '../ui/kit';
+import { Button, Empty, ErrorBox, ToastHost } from '../ui/kit';
 import { Login } from '../pages/Login';
 import { Join } from '../pages/Join';
-import { Home } from '../pages/Home';
+import { Home, HomeHead } from '../pages/Home';
 import { Stages } from '../pages/Stages';
 import { StageDetail } from '../pages/StageDetail';
 import { TipPicker } from '../pages/TipPicker';
@@ -19,13 +19,11 @@ import { Player } from '../pages/Player';
 import { RiderPage } from '../pages/Rider';
 import { RidersPage } from '../pages/Riders';
 import { ClimbsPage } from '../pages/Climbs';
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
+import { BergPage, GamePage, GaragePage, SprintPage } from './pages';
+import { AppSkeleton, RouteSkeleton } from '../ui/skeleton';
+import { DemoBanner } from '../ui/Shell';
 
-// Das Spiel (mit 3D-Grafik) wird erst beim Öffnen geladen
-const GamePage = lazy(() => import('../pages/Game').then((m) => ({ default: m.GamePage })));
-const SprintPage = lazy(() => import('../pages/Sprint').then((m) => ({ default: m.SprintPage })));
-const BergPage = lazy(() => import('../pages/Berg').then((m) => ({ default: m.BergPage })));
-const GaragePage = lazy(() => import('../pages/Garage').then((m) => ({ default: m.GaragePage })));
 import { Profile } from '../pages/Profile';
 import { Datenschutz, Impressum } from '../pages/Legal';
 import { AdminHome } from '../pages/admin/AdminHome';
@@ -69,7 +67,7 @@ export function App() {
         <Button variant="secondary" onClick={() => source.signOut()}>Abmelden</Button>
       </div>
     );
-  } else if (me.loading) content = <div className="auth"><Loading /></div>;
+  } else if (me.loading) content = <AppSkeleton parts={route.parts} banner={source.mode === 'demo' ? <DemoBanner live={LIVE_CONFIGURED} /> : null} />;
   else if (!me.data || !me.data.is_member || !me.data.display_name) content = <Join />;
   else content = <MemberApp me={me.data} />;
 
@@ -86,16 +84,17 @@ function MemberApp({ me }: { me: ProfileT }) {
   const route = useRoute();
   const [first, second] = route.parts;
 
-  useEffect(() => {
-    setTourTheme(tour?.theme ?? null);
-  }, [tour?.theme]);
+  // Farbe der Rundfahrt vor dem Zeichnen setzen (kein Farbwechsel nach dem ersten Bild)
+  useLayoutEffect(() => {
+    if (!loading) setTourTheme(tour?.theme ?? null);
+  }, [tour?.theme, loading]);
 
   const ctx = useMemo(() => ({ me, tour, tours }), [me, tour, tours]);
   const fullScreen = first === 'tipp' || first === 'spiel' || (first === 'bonus' && !!second);
 
   let page;
   if (error) page = <ErrorBox error={error} />;
-  else if (loading) page = <Loading />;
+  else if (loading) page = <RouteSkeleton parts={route.parts} head={first === undefined ? <HomeHead me={me} /> : undefined} />;
   else {
     switch (first) {
       case undefined:
@@ -128,7 +127,7 @@ function MemberApp({ me }: { me: ProfileT }) {
         page = <ClimbsPage />;
         break;
       case 'spiel':
-        page = <Suspense fallback={<Loading />}>{second === 'sprint' ? <SprintPage /> : second === 'berg' ? <BergPage /> : second === 'garage' ? <GaragePage /> : <GamePage />}</Suspense>;
+        page = <Suspense fallback={<RouteSkeleton parts={route.parts} />}>{second === 'sprint' ? <SprintPage /> : second === 'berg' ? <BergPage /> : second === 'garage' ? <GaragePage /> : <GamePage />}</Suspense>;
         break;
       case 'profil':
         page = <Profile />;

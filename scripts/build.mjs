@@ -45,10 +45,28 @@ const js = outputs.find((f) => f.endsWith('.js') && result.metafile.outputs[f].e
 const css = outputs.find((f) => f.endsWith('.css') && f.includes('app-'));
 const rel = (p) => p.replace(`${outdir}/`, '');
 
+// Startansicht: dieselben Platzhalter wie in der App, statisch in index.html (sichtbar, bevor das Skript läuft)
+await esbuild.build({
+  entryPoints: ['scripts/boot.tsx'],
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  outfile: `${outdir}/.boot.mjs`,
+  packages: 'external',
+  jsx: 'automatic',
+  logLevel: 'warning',
+  define: { 'process.env.NODE_ENV': '"production"', __SUPABASE_URL__: JSON.stringify(url), __SUPABASE_KEY__: JSON.stringify(key), __BUILD_ID__: JSON.stringify(buildId) },
+});
+const { bootHtml } = await import(`../${outdir}/.boot.mjs?${Date.now()}`);
+const boot = bootHtml(!url);
+await rm(`${outdir}/.boot.mjs`, { force: true });
+
 let html = await readFile('index.html', 'utf8');
 html = html
   .replace('<!--CSS-->', css ? `<link rel="stylesheet" href="${rel(css)}">` : '')
-  .replace('<!--JS-->', `<script type="module" src="${rel(js)}"></script>`);
+  .replace('<!--JS-->', `<script type="module" src="${rel(js)}"></script>`)
+  .replace('<!--BOOT-->', boot)
+  .replace('/*LIVE*/false', url ? 'true' : 'false');
 await writeFile(`${outdir}/index.html`, html);
 await cp('public', outdir, { recursive: true });
 

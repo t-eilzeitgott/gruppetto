@@ -56,6 +56,11 @@ export function useThemePref(): ThemePref {
   );
 }
 
+const TOUR_THEME = 'gruppetto.tourTheme';
+
+/** Farbe der Rundfahrt; gemerkt, damit der nächste Start gleich in dieser Farbe beginnt (index.html) */
 export function setTourTheme(theme: TourTheme | null) {
-  document.documentElement.dataset.tour = theme ?? 'neutral';
+  const t = theme ?? 'neutral';
+  document.documentElement.dataset.tour = t;
+  try { localStorage.setItem(TOUR_THEME, t); } catch { /* egal */ }
 }

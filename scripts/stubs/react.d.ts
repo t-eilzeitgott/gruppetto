@@ -31,6 +31,18 @@ declare module 'react' {
   export function lazy(load: () => Promise<{ default: (...args: never[]) => ReactElement | null }>): () => ReactElement | null;
   export const Suspense: (props: { children?: ReactNode; fallback?: ReactNode }) => ReactElement | null;
   export const StrictMode: (props: { children?: ReactNode }) => ReactElement;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  export type ComponentType<P = any> = (props: P) => ReactElement | null;
+  export function createElement<P>(type: ComponentType<P> | string, props?: P | null, ...children: ReactNode[]): ReactElement;
+}
+
+declare module 'react-dom' {
+  export function flushSync<R>(fn: () => R): R;
+}
+
+declare module 'react-dom/server' {
+  import type { ReactNode } from 'react';
+  export function renderToStaticMarkup(node: ReactNode): string;
 }
 
 declare module 'react-dom/client' {

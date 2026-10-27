@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode, type MouseEvent } from 'react';
 import { goBack, navigate } from '../app/router';
 import { Icon, type IconName } from './Icon';
+import { PageSkeleton } from './skeleton';
 import { categoryTile, CATEGORY_INFO } from '../lib/categories';
 import type { BonusCategory, TourTheme } from '../lib/types';
 import { errorText } from '../data/source';
@@ -163,13 +164,9 @@ export function Segmented<T extends string>({ options, value, onChange, label }:
   );
 }
 
+/** Laden: graue Platzhalter in Kartenform statt Ladekreis (siehe skeleton.tsx) */
 export function Loading({ label = 'Lädt …' }: { label?: string }) {
-  return (
-    <div className="loading" role="status">
-      <span className="spinner" aria-hidden="true" />
-      <span>{label}</span>
-    </div>
-  );
+  return <PageSkeleton label={label} />;
 }
 
 export function ErrorBox({ error, onRetry }: { error: unknown; onRetry?: () => void }) {

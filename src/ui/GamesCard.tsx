@@ -20,6 +20,7 @@ import { Icon } from './Icon';
 import { GameBadge } from './GameIcon';
 import { useBikes } from './useBikes';
 import { BIKES } from '../game/bikes';
+import { BoardSkeleton, SkelText } from './skeleton';
 
 const SWIPED = 'gruppetto.games.swiped';
 
@@ -118,11 +119,12 @@ function GarageTeaser() {
   const frac = p ? Math.min(1, p.value / (p.target || 1)) : 1;
   const all = bikes.loaded && !next;
   const label = fresh ? 'Neues Rad freigeschaltet' : all ? 'Radgarage' : 'Räder freischalten';
+  // bis die Läufe geladen sind: Zahl als Platzhalter (gleiche Breite), kein Leuchten
   return (
-    <Link to="/spiel/garage" className={cx('card garage-teaser', !all && 'is-glow', fresh && 'is-fresh')} ariaLabel={`Radgarage – ${n} von ${BIKES.length} Rädern freigeschaltet${fresh ? ', neues Rad' : ''}`}>
+    <Link to="/spiel/garage" className={cx('card garage-teaser', bikes.loaded && !all && 'is-glow', fresh && 'is-fresh')} ariaLabel={`Radgarage – ${n} von ${BIKES.length} Rädern freigeschaltet${fresh ? ', neues Rad' : ''}`}>
       <span className="garage-teaser__icon" aria-hidden="true"><Icon name="bike" size={22} /></span>
       <strong className="garage-teaser__title">{label}</strong>
-      {bikes.loaded ? <span className="garage-teaser__count">{n}/{BIKES.length}</span> : null}
+      {bikes.loaded ? <span className="garage-teaser__count">{n}/{BIKES.length}</span> : <SkelText w={34} size={14} />}
       <Icon name="chevron" className="muted" size={18} />
       {bikes.loaded && !all ? <span className="garage-teaser__bar" aria-hidden="true"><i style={{ width: `${Math.round(frac * 100)}%` }} /></span> : null}
     </Link>
@@ -177,7 +179,9 @@ function GameSlide({ game, tourName, stages, onAlert }: { game: GameInfo; tourNa
         </span>
         <Icon name="chevron" className="muted" />
       </span>
-      {shown.length ? (
+      {!season.data || !today.data ? (
+        season.error || today.error ? <span className="game-card__meta">Bestenliste gerade nicht erreichbar</span> : <BoardSkeleton />
+      ) : shown.length ? (
         <span className="game-board" role="list" aria-label={useToday ? 'Bestenliste heute' : 'Bestenliste Saison'}>
           <span className="game-board__label">{useToday ? 'Heute' : 'Saison'}</span>
           {shown.map(({ r, i }) => {

@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
 import { bonusDeadline, fmtDay, lastPublishedStage, nextOpenStage, runningStages, tourPhase, dayDiff, fmtClock, fmtKm } from '../lib/time';
 import { BONUS_CATEGORIES, type Stage, type TourData } from '../lib/types';
-import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, Loading, cx, useTitle } from '../ui/kit';
+import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, cx, useTitle } from '../ui/kit';
+import { HomeSkeleton, Skel, firstContent } from '../ui/skeleton';
+import { prefetchGames } from '../app/pages';
 import { Icon } from '../ui/Icon';
 import { KindChip, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
 import { TourPicker, Wordmark } from '../ui/Shell';
@@ -15,13 +17,9 @@ import { stageOfDay } from '../game/abfahrt/sprintRiders';
 import { berlinDayKey } from '../game/abfahrt/rng';
 import type { Profile } from '../lib/types';
 
-export function Home() {
-  useTitle('Heute');
-  const { me, tour, tours, data, members, loading, error, reload } = useTourContext();
-  const now = useNow();
-  useRefreshAtStart(data?.stages, now);
-
-  const header = (
+/** Kopf der Startseite: Wortmarke und Profilbild */
+export function HomeHead({ me }: { me: Profile }) {
+  return (
     <header className="home-head">
       <Wordmark />
       <Link to="/profil" className="home-head__me" ariaLabel="Dein Profil">
@@ -29,6 +27,24 @@ export function Home() {
       </Link>
     </header>
   );
+}
+
+export function Home() {
+  useTitle('Heute');
+  const { me, tour, tours, data, members, loading, error, reload } = useTourContext();
+  const now = useNow();
+  useRefreshAtStart(data?.stages, now);
+  // Inhalt, der erst während dieses Besuchs kommt, weich einblenden (aus dem Zwischenspeicher: sofort da)
+  const waited = useRef(false);
+  if (loading) { waited.current = true; firstContent(); } else if (!waited.current && data && members && firstContent()) waited.current = true;
+  // Spiele und Garage im Leerlauf vorab laden: der Wechsel ins Minispiel ohne Ladepause
+  useEffect(() => {
+    const idle = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    const id = idle ? idle(() => prefetchGames(), { timeout: 2500 }) : window.setTimeout(prefetchGames, 1200);
+    return () => { if (!idle) window.clearTimeout(id); };
+  }, []);
+
+  const header = <HomeHead me={me} />;
 
   if (!tour) {
     return (
@@ -42,12 +58,12 @@ export function Home() {
     );
   }
   if (error) return <>{header}<ErrorBox error={error} onRetry={reload} /></>;
-  if (loading || !data || !members) return <>{header}<Loading /></>;
+  if (loading || !data || !members) return <>{header}<HomeSkeleton /></>;
 
   return (
     <>
       {header}
-      <div className="stack">
+      <div className={cx('stack', waited.current && 'reveal')}>
         <TourPicker tour={tour} tours={tours} />
         <HomeBody data={data} members={members} me={me} now={now} />
       </div>
@@ -155,7 +171,15 @@ function NextStageCard({ stage, data, me, members, now }: {
 /** Wer schon getippt hat: Avatare und „3/3“ – die Tipps selbst bleiben bis zum Start verdeckt */
 function TipCount({ stage, members }: { stage: Stage; members: Profile[] }) {
   const q = useQuery<string[]>(`tippers:${stage.id}`, () => source.stageTippers(stage.id));
-  if (q.loading || !q.data) return null;
+  if (q.loading || !q.data) {
+    // Platz freihalten, damit die Karte nicht wächst, wenn die Zahl kommt
+    return (
+      <span className="fact tip-count" aria-hidden="true">
+        <span className="avatar-stack avatar-stack--sm">{[0, 1, 2].map((i) => <Skel key={i} w={20} h={20} r="50%" />)}</span>
+        <span className="tip-count__skel">0/{members.length}</span>
+      </span>
+    );
+  }
   const ids = new Set(q.data);
   const tipped = members.filter((m) => ids.has(m.id));
   return (

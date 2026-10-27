@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { Profile, Rider, Stage, TourData } from '../lib/types';
 import { KIND_SHORT, fmtDay, stageState, fmtClock, fmtKm } from '../lib/time';
 import { Avatar, cx } from './kit';
+import { Skel, SkelText } from './skeleton';
 import { useQuery, invalidate } from '../app/query';
 import { source } from '../app/config';
 
@@ -39,7 +40,17 @@ export function Tippers({ stage, members, compact }: { stage: Stage; members: Pr
   const q = useQuery<string[]>(`tippers:${stage.id}`, () => source.stageTippers(stage.id));
   const ids = new Set(q.data ?? []);
   const tipped = members.filter((m) => ids.has(m.id));
-  if (q.loading) return <div className="tippers muted">Lädt …</div>;
+  if (q.loading) {
+    return (
+      <div className={cx('tippers', compact && 'tippers--compact')} aria-hidden="true">
+        <div className="avatar-stack">{[0, 1, 2].map((i) => <Skel key={i} w={30} h={30} r="50%" />)}</div>
+        <div className="tippers__text">
+          <SkelText w={120} size={14} />
+          <SkelText w={140} size={12.5} />
+        </div>
+      </div>
+    );
+  }
   const shown = tipped.slice(0, 4);
   const rest = tipped.length - shown.length;
   return (

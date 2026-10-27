@@ -334,6 +334,32 @@ a.card--row:hover, a.card:hover { background: var(--surface2); }
 
 .loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px 0; color: var(--muted); }
 
+/* ---------- Platzhalter beim Laden (statt Ladekreis) ---------- */
+/* graue Flächen in der Form des Inhalts, leise pulsierend; der Inhalt erscheint an derselben Stelle */
+:root { --skel: rgba(255, 255, 255, 0.075); }
+[data-theme=light] { --skel: rgba(0, 0, 0, 0.065); }
+.skel { display: block; flex: none; max-width: 100%; background: var(--skel); border-radius: 8px; animation: skel-pulse 1.8s ease-in-out infinite; }
+.skel-t { display: block; flex: none; max-width: 100%; height: 1.4em; position: relative; }
+.skel-t::before { content: ""; position: absolute; left: 0; right: 0; top: 0.3em; bottom: 0.3em; border-radius: 6px; background: var(--skel); animation: skel-pulse 1.8s ease-in-out infinite; }
+.skel-right { margin-left: auto; }
+.skel--dark { --skel: rgba(255, 255, 255, 0.09); }
+/* Zahl „0/3“ als Platzhalter: gleiche Breite, grau verdeckt */
+.tip-count__skel { position: relative; color: transparent; }
+.tip-count__skel::before { content: ""; position: absolute; inset: 0.25em 0; border-radius: 6px; background: var(--skel); animation: skel-pulse 1.8s ease-in-out infinite; }
+@keyframes skel-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+/* Startansicht in index.html (bis das Skript läuft): nur die zur Seite passende Variante */
+.boot { display: none; }
+[data-boot=home] .boot--home, [data-boot=page] .boot--page, [data-boot=full] .boot--full, [data-boot=garage] .boot--garage { display: contents; }
+/* Inhalt, der nach dem Laden an die Stelle der Platzhalter tritt: weich einblenden */
+.reveal { animation: reveal 0.3s ease-out both; }
+@keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
+/* Seitenwechsel: kurzer, weicher Übergang (wo der Browser View Transitions kann) */
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.22s; animation-timing-function: cubic-bezier(0.2, 0, 0.2, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .skel, .skel-t::before, .tip-count__skel::before { animation: none; }
+  .reveal { animation: none; }
+}
+
 .empty {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   padding: 48px 20px; text-align: center; color: var(--muted);
@@ -1091,7 +1117,8 @@ tr.is-me > * { background: var(--accent-soft); }
     linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 55%, rgba(0, 0, 0, 0.28));
   box-shadow: inset 0 0 0 1px var(--g-line);
 }
-.garage__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; cursor: grab; }
+.garage__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; cursor: grab; opacity: 0; transition: opacity 0.45s ease; }
+.garage__canvas.is-drawn { opacity: 1; }
 .garage__canvas:active { cursor: grabbing; }
 .garage__plate { position: absolute; left: 16px; right: 16px; bottom: 14px; pointer-events: none; }
 .garage__era { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--g-accent); }
@@ -1121,11 +1148,7 @@ tr.is-me > * { background: var(--accent-soft); }
 .garage__item.is-locked .garage__thumb img { filter: grayscale(0.55) brightness(0.74); }
 .garage__thumb { display: block; aspect-ratio: 360 / 220; border-radius: 10px; overflow: hidden; background: radial-gradient(80% 70% at 50% 42%, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0)); }
 .garage__thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.garage__skel {
-  display: block; width: 100%; height: 100%; background: linear-gradient(90deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03));
-  background-size: 200% 100%; animation: garage-skel 1.2s linear infinite;
-}
-@keyframes garage-skel { from { background-position: 200% 0; } to { background-position: 0 0; } }
+.garage__skel { display: block; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.06); animation: skel-pulse 1.8s ease-in-out infinite; }
 .garage__item-name { font-size: 13px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .garage__tag { position: absolute; top: 12px; right: 12px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 12, 18, 0.82); color: #fff; }
 .garage__tag.is-mine { background: var(--accent); color: var(--on-accent); }
@@ -1173,6 +1196,9 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   color: #fff;
 }
 .abf__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+/* 3D-Szene blendet ein, sobald das erste Bild gezeichnet ist (die Startkarte steht schon) */
+.abf__canvas { opacity: 0; transition: opacity 0.45s ease; }
+.abf__canvas.is-drawn { opacity: 1; }
 .abf__overlay {
   position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none;
   /* leichter Kamerafilter: Vignette und ein Hauch Wärme oben (liegt unter Popups und HUD) */

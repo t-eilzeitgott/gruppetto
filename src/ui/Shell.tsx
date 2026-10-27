@@ -1,24 +1,17 @@
 import type { ReactNode } from 'react';
-import { Icon, type IconName } from './Icon';
-import { Link, cx } from './kit';
+import { Icon } from './Icon';
+import { DemoBanner, ShellFrame, navFor } from './frame';
+
+export { DemoBanner, Wordmark } from './frame';
 import { useRoute } from '../app/router';
 import { source, LIVE_CONFIGURED } from '../app/config';
 import { setSelectedTour } from '../app/hooks';
 import type { Tour } from '../lib/types';
 import { fmtRange } from '../lib/time';
 
-const NAV: { to: string; label: string; icon: IconName; match: string[] }[] = [
-  { to: '/', label: 'Heute', icon: 'home', match: ['', 'spiel'] },
-  { to: '/etappen', label: 'Etappen', icon: 'flag', match: ['etappen', 'etappe', 'tipp', 'fahrer', 'anstiege'] },
-  { to: '/bonus', label: 'Bonus', icon: 'star', match: ['bonus'] },
-  { to: '/rangliste', label: 'Rangliste', icon: 'podium', match: ['rangliste', 'spieler'] },
-  { to: '/profil', label: 'Profil', icon: 'user', match: ['profil', 'admin', 'impressum', 'datenschutz'] },
-];
-
 function useActive(): string {
   const { parts } = useRoute();
-  const first = parts[0] ?? '';
-  return NAV.find((n) => n.match.includes(first))?.to ?? '/';
+  return navFor(parts[0] ?? '');
 }
 
 export function Shell({ children, hideTabBar, isAdmin }: { children: ReactNode; hideTabBar?: boolean; isAdmin?: boolean }) {
@@ -26,60 +19,13 @@ export function Shell({ children, hideTabBar, isAdmin }: { children: ReactNode; 
   const route = useRoute();
   const sideActive = isAdmin && route.parts[0] === 'admin' ? '/admin' : active;
   return (
-    <div className={cx('shell', hideTabBar && 'shell--no-tabbar')}>
-      {/* Hintergrund unter der Statusleiste (Uhr, Akku), damit gescrollter Inhalt nicht dahinter durchscheint */}
-      {hideTabBar ? null : <div className="status-shade" aria-hidden="true" />}
-      <aside className="sidebar" aria-label="Seitenleiste">
-        <div className="wordmark wordmark--lg">gruppetto<span>.</span></div>
-        <nav className="sidebar__nav" aria-label="Hauptnavigation">
-          {NAV.map((n) => (
-            <Link key={n.to} to={n.to} className={cx('sidebar__link', sideActive === n.to && 'is-active')} ariaCurrent={sideActive === n.to ? 'page' : undefined}>
-              <Icon name={n.icon} />
-              <span>{n.label}</span>
-            </Link>
-          ))}
-          {isAdmin ? (
-            <Link to="/admin" className={cx('sidebar__link', route.parts[0] === 'admin' && 'is-active')}>
-              <Icon name="settings" />
-              <span>Admin</span>
-            </Link>
-          ) : null}
-        </nav>
-      </aside>
-      <div className="shell__content">
-        <main className="main" id="main">
-          {children}
-          {source.mode === 'demo' ? <DemoBanner /> : null}
-        </main>
-      </div>
-      {hideTabBar ? null : (
-        <nav className="tabbar" aria-label="Hauptnavigation">
-          {NAV.map((n) => (
-            <Link key={n.to} to={n.to} className={cx('tabbar__item', active === n.to && 'is-active')} ariaCurrent={active === n.to ? 'page' : undefined}>
-              <Icon name={n.icon} size={24} />
-              <span>{n.label}</span>
-            </Link>
-          ))}
-        </nav>
-      )}
-    </div>
+    <ShellFrame active={active} sideActive={sideActive} adminActive={route.parts[0] === 'admin'} hideTabBar={hideTabBar} isAdmin={isAdmin} banner={source.mode === 'demo' ? <DemoBanner live={LIVE_CONFIGURED} /> : null}>
+      {children}
+    </ShellFrame>
   );
 }
 
-function DemoBanner() {
-  return (
-    <div className="demo-banner" role="note">
-      <Icon name="info" size={16} />
-      <span>
-        Demo-Modus mit Beispieldaten{LIVE_CONFIGURED ? '' : ' – Supabase ist noch nicht verbunden'}.
-      </span>
-    </div>
-  );
-}
 
-export function Wordmark() {
-  return <div className="wordmark">gruppetto<span>.</span></div>;
-}
 
 /** Auswahl der Rundfahrt als kompakter Chip (native Auswahlliste). */
 export function TourPicker({ tour, tours }: { tour: Tour; tours: Tour[] }) {

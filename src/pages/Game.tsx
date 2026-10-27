@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { afterPaint } from '../lib/afterPaint';
 import { useApp } from '../app/context';
 import { useMembers } from '../app/hooks';
 import { invalidate, useQuery } from '../app/query';
@@ -200,95 +201,103 @@ export function GamePage() {
       (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer: null };
       return () => cancelAnimationFrame(raf);
     }
-    let renderer: Renderer3D;
-    try {
-      renderer = new Renderer3D(canvas, overlay);
-    } catch {
-      setGlError(true);
-      return undefined;
-    }
-    renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
-    rendererRef.current = renderer;
-    // Testmodus (?lowgfx): winzige Auflösung, selten zeichnen – für schnelle automatische Layout-Checks
-    const low = /[?&]lowgfx\b/.test(window.location.search);
-    if (low) { renderer.quality = 0.25; renderer.resize(); }
-    renderer.warm();
-    // beim Neuaufbau läuft die Fahrt weiter
-    if (!engineRef.current || glGen === 0) engineRef.current = makeEngine(false);
-    let raf = 0;
-    let prev = performance.now();
-    let acc = 0;
-    let frames = 0;
-    let lostT = 0;
-    let rebuilt = false;
-    const rebuild = () => { if (!rebuilt) { rebuilt = true; setGlGen((x) => x + 1); } };
-    const loop = (now: number) => {
-      const dt = Math.min(0.05, (now - prev) / 1000);
-      prev = now;
-      const eng = engineRef.current!;
-      // Kontext verloren und nicht zurückgekommen: neue Leinwand statt schwarzem Bild
-      if (renderer.lost) {
-        lostT += dt;
-        if (lostT > 0.8) { rebuild(); return; }
+    // 3D erst nach dem ersten Bild aufbauen: Startkarte und Bühne stehen sofort, die Szene blendet ein
+    const start = (): (() => void) | undefined => {
+      let renderer: Renderer3D;
+      try {
+        renderer = new Renderer3D(canvas, overlay);
+      } catch {
+        setGlError(true);
+        return undefined;
+      }
+      renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
+      rendererRef.current = renderer;
+      // Testmodus (?lowgfx): winzige Auflösung, selten zeichnen – für schnelle automatische Layout-Checks
+      const low = /[?&]lowgfx\b/.test(window.location.search);
+      if (low) { renderer.quality = 0.25; renderer.resize(); }
+      renderer.warm();
+      // beim Neuaufbau läuft die Fahrt weiter
+      if (!engineRef.current || (glGen === 0 && uiRef.current === 'ready')) engineRef.current = makeEngine(false);
+      let raf = 0;
+      let prev = performance.now();
+      let acc = 0;
+      let frames = 0;
+      let lostT = 0;
+      let rebuilt = false;
+      let drawn = false;
+      const rebuild = () => { if (!rebuilt) { rebuilt = true; setGlGen((x) => x + 1); } };
+      const loop = (now: number) => {
+        const dt = Math.min(0.05, (now - prev) / 1000);
+        prev = now;
+        const eng = engineRef.current!;
+        // Kontext verloren und nicht zurückgekommen: neue Leinwand statt schwarzem Bild
+        if (renderer.lost) {
+          lostT += dt;
+          if (lostT > 0.8) { rebuild(); return; }
+          raf = requestAnimationFrame(loop);
+          return;
+        }
+        lostT = 0;
+        if (uiRef.current !== 'paused') eng.update(dt);
+        if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
+      if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
+        hudRef.current(eng, dt);
+        // Bildrate beobachten und notfalls die Qualität senken
+        acc += dt;
+        frames += 1;
+        if (acc > 2.5) {
+          const fps = frames / acc;
+          if (!low && fps < 48 && renderer.quality > 0.45) { renderer.quality = Math.max(0.45, renderer.quality - 0.15); renderer.resize(); }
+          acc = 0;
+          frames = 0;
+        }
         raf = requestAnimationFrame(loop);
-        return;
-      }
-      lostT = 0;
-      if (uiRef.current !== 'paused') eng.update(dt);
-      if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
-      hudRef.current(eng, dt);
-      // Bildrate beobachten und notfalls die Qualität senken
-      acc += dt;
-      frames += 1;
-      if (acc > 2.5) {
-        const fps = frames / acc;
-        if (!low && fps < 48 && renderer.quality > 0.45) { renderer.quality = Math.max(0.45, renderer.quality - 0.15); renderer.resize(); }
-        acc = 0;
-        frames = 0;
-      }
+      };
       raf = requestAnimationFrame(loop);
+      const onResize = () => { renderer.resize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
+      const onVis = () => {
+        if (document.hidden && uiRef.current === 'playing') setUi('paused');
+        if (!document.hidden && renderer.lost) rebuild();
+      };
+      const onLost = (e: Event) => { e.preventDefault(); };
+      const onRestored = () => rebuild();
+      canvas.addEventListener('webglcontextlost', onLost);
+      canvas.addEventListener('webglcontextrestored', onRestored);
+      const onTheme = () => window.setTimeout(() => renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark'), 30);
+      const obs = new MutationObserver(onTheme);
+      obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-tour'] });
+      window.addEventListener('resize', onResize);
+      // Homescreen-App auf iOS: 100vh ist dort zu kurz, darum die echte Bildschirmhöhe nehmen
+      const root = canvas.parentElement as HTMLElement | null;
+      const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+      const fit = () => {
+        if (!root || !standalone) return;
+        const portrait = window.innerHeight >= window.innerWidth;
+        const h = portrait ? Math.max(screen.height, screen.width) : Math.min(screen.height, screen.width);
+        root.style.height = `${Math.max(window.innerHeight, h)}px`;
+      };
+      fit();
+      window.addEventListener('orientationchange', fit);
+      // Größe zuverlässig verfolgen (iOS meldet nicht jede Änderung als resize)
+      const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+      ro?.observe(canvas);
+      document.addEventListener('visibilitychange', onVis);
+      (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer };
+      return () => {
+        cancelAnimationFrame(raf);
+        canvas.removeEventListener('webglcontextlost', onLost);
+        canvas.removeEventListener('webglcontextrestored', onRestored);
+        ro?.disconnect();
+        window.removeEventListener('orientationchange', fit);
+        renderer.dispose();
+        window.removeEventListener('resize', onResize);
+        document.removeEventListener('visibilitychange', onVis);
+        obs.disconnect();
+      };
     };
-    raf = requestAnimationFrame(loop);
-    const onResize = () => { renderer.resize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
-    const onVis = () => {
-      if (document.hidden && uiRef.current === 'playing') setUi('paused');
-      if (!document.hidden && renderer.lost) rebuild();
-    };
-    const onLost = (e: Event) => { e.preventDefault(); };
-    const onRestored = () => rebuild();
-    canvas.addEventListener('webglcontextlost', onLost);
-    canvas.addEventListener('webglcontextrestored', onRestored);
-    const onTheme = () => window.setTimeout(() => renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark'), 30);
-    const obs = new MutationObserver(onTheme);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-tour'] });
-    window.addEventListener('resize', onResize);
-    // Homescreen-App auf iOS: 100vh ist dort zu kurz, darum die echte Bildschirmhöhe nehmen
-    const root = canvas.parentElement as HTMLElement | null;
-    const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
-    const fit = () => {
-      if (!root || !standalone) return;
-      const portrait = window.innerHeight >= window.innerWidth;
-      const h = portrait ? Math.max(screen.height, screen.width) : Math.min(screen.height, screen.width);
-      root.style.height = `${Math.max(window.innerHeight, h)}px`;
-    };
-    fit();
-    window.addEventListener('orientationchange', fit);
-    // Größe zuverlässig verfolgen (iOS meldet nicht jede Änderung als resize)
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
-    ro?.observe(canvas);
-    document.addEventListener('visibilitychange', onVis);
-    (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer };
-    return () => {
-      cancelAnimationFrame(raf);
-      canvas.removeEventListener('webglcontextlost', onLost);
-      canvas.removeEventListener('webglcontextrestored', onRestored);
-      ro?.disconnect();
-      window.removeEventListener('orientationchange', fit);
-      renderer.dispose();
-      window.removeEventListener('resize', onResize);
-      document.removeEventListener('visibilitychange', onVis);
-      obs.disconnect();
-    };
+    let stop: (() => void) | undefined;
+    const cancel = afterPaint(() => { stop = start(); });
+    return () => { cancel(); stop?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [glGen]);
 
