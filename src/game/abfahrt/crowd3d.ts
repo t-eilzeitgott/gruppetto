@@ -190,7 +190,11 @@ function personGeometry(kind: Kind, lod: 0 | 1): THREE.BufferGeometry | null {
       }
     }
   }
-  return b.empty ? null : b.build();
+  if (b.empty) return null;
+  const g = b.build();
+  // Detailstufe der Grundform (der Shader blendet je Person zwischen den Stufen über)
+  g.setAttribute('aLod', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(lod), 1));
+  return g;
 }
 
 // ------------------------------------------------------------------ Shader
@@ -200,6 +204,9 @@ attribute vec4 aI0; // Position xyz, Grundrichtung
 attribute vec4 aI1; // Größe, Breite, Aktion, Phase
 attribute vec4 aI2; // Farben: Haut, Oberteil, Hose, Haare
 attribute vec4 aI3; // Farben: Hut, Hutform, Akzent, Fahne + 16*Merkmale
+attribute float aLod; // Detailstufe der Grundform
+varying float vXa;    // sichtbar, wo die Rasterschwelle in [vXa, vXb) liegt
+varying float vXb;
 uniform float uTime;
 uniform vec3 uRider;
 uniform vec3 uPal[${PAL.length}];
@@ -298,6 +305,21 @@ void armPose(float act, float t, float e, out vec4 A, out vec4 B, out vec4 legs,
 `;
 
 const VERT_BEGIN = /* glsl */ `
+#ifndef CROWD_BAKE
+  {
+    // Detailstufen je Person: fein bis ~14 m, einfach bis ~30 m, dahinter Bilder. Übergänge mit einem Raster
+    // je Bildpunkt: die Stufen teilen sich die Bildpunkte (nichts wird halb durchsichtig, nichts springt)
+    float dCam = distance(aI0.xz, cameraPosition.xz);
+    float f0 = 1.0 - smoothstep(12.0, 16.0, dCam);
+    float g0 = 1.0 - smoothstep(27.0, 32.0, dCam);
+  #ifdef CROWD_ALWAYS
+    vXa = 0.0; vXb = 1.0;
+  #else
+    if (aLod < 0.5) { vXa = 0.0; vXb = f0; } else { vXa = f0; vXb = g0; }
+  #endif
+    if (vXb <= vXa) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  }
+#endif
   vec3 transformed = vec3(position);
   float part = color.g;
   float act = aI1.z;
@@ -426,7 +448,8 @@ const VERT_COLOR = /* glsl */ `
 
 export interface CrowdUniforms { uTime: { value: number }; uRider: { value: THREE.Vector3 } }
 
-export function crowdMaterial(u: CrowdUniforms): THREE.MeshLambertMaterial {
+/** always: ohne Detailstufen (Läufer neben dem Fahrer – immer fein, immer sichtbar) */
+export function crowdMaterial(u: CrowdUniforms, always = false): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const pal = new Float32Array(PAL.flat());
   const flags = new Float32Array(FLAG_COLS.flat());
@@ -436,11 +459,15 @@ export function crowdMaterial(u: CrowdUniforms): THREE.MeshLambertMaterial {
     sh.uniforms.uPal = { value: pal };
     sh.uniforms.uFlag = { value: flags };
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', `#include <common>\n${VERT_HEAD}`)
+      .replace('#include <common>', `#include <common>\n${always ? '#define CROWD_ALWAYS\n' : ''}${VERT_HEAD}`)
       .replace('#include <color_vertex>', VERT_COLOR)
       .replace('#include <begin_vertex>', VERT_BEGIN);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vXa;\nvarying float vXb;')
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        { float dth = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); if (dth < vXa || dth >= vXb) discard; }`);
   };
-  m.customProgramCacheKey = () => 'crowd-1';
+  m.customProgramCacheKey = () => (always ? 'crowd-2a' : 'crowd-2');
   return m;
 }
 
@@ -503,7 +530,7 @@ export function crowdGeometry(kind: Kind, lod: 0 | 1, data: Float32Array | THREE
   if (!src) return null;
   const g = new THREE.InstancedBufferGeometry();
   g.setIndex(src.index);
-  for (const name of ['position', 'color', 'normal']) g.setAttribute(name, src.getAttribute(name));
+  for (const name of ['position', 'color', 'normal', 'aLod']) g.setAttribute(name, src.getAttribute(name));
   const buf = data instanceof THREE.InstancedInterleavedBuffer ? data : new THREE.InstancedInterleavedBuffer(data, STRIDE, 1);
   for (let k = 0; k < 4; k++) g.setAttribute(`aI${k}`, new THREE.InterleavedBufferAttribute(buf, 4, k * 4));
   g.instanceCount = count;
@@ -513,7 +540,7 @@ export function crowdGeometry(kind: Kind, lod: 0 | 1, data: Float32Array | THREE
 /** gibt nur die Zuschauerdaten frei – die geteilte Grundform bleibt auf der Grafikkarte */
 export function disposeCrowdGeometry(g: THREE.BufferGeometry) {
   g.setIndex(null);
-  for (const name of ['position', 'color', 'normal']) g.deleteAttribute(name);
+  for (const name of ['position', 'color', 'normal', 'aLod']) g.deleteAttribute(name);
   g.dispose();
 }
 

@@ -1,24 +1,22 @@
 /**
- * Bäume: in der Nähe echte 3D-Bäume, ab 30 m detailreiche Bilder (Impostors).
+ * Bäume als detailreiche Bilder (Impostors) – nah wie fern, ohne Wechsel der Darstellung.
  *
  * Beim Start wird jede Baumart einmal sehr fein modelliert (zigtausend Dreiecke: hängende Äste mit
  * feinen Trieben, Blätterwolken aus vielen Ballen) und in einen Bildvorrat gezeichnet – Farbe und
- * Normale je Bildpunkt. In der Welt steht dann je Baum ein Bild, das sich zur Kamera dreht; das Licht
- * wird mit den gespeicherten Normalen wie bei einer echten Fläche gerechnet (Sonne, Himmel, Tageszeit).
- * Ein Baum kostet so vier Dreiecke – egal wie fein er gezeichnet ist.
+ * Normale je Bildpunkt, in hoher Auflösung (auch nah noch scharf). In der Welt steht je Baum ein Bild,
+ * das sich zur Kamera dreht; das Licht wird mit den gespeicherten Normalen wie bei einer echten Fläche
+ * gerechnet (Sonne, Himmel, Tageszeit). Ein Baum kostet so vier Dreiecke.
  *
- * Nah (bis 30 m) wären die Bilder unscharf; dort stehen echte 3D-Bäume aus derselben Form (gröber
- * modelliert), die Grenze liegt dort, wo Bild und 3D-Baum gleich groß auf dem Schirm erscheinen.
+ * In der Ferne lösen sich die Bäume weich auf (Raster-Überblendung), während das Kronendach der
+ * Landschaft ansteigt – kein Aufploppen, kein Schrumpfen.
  */
 import * as THREE from 'three';
-import { GB, M, freezeTarget, lin, mixC, mulC, softNormals } from './models3d';
+import { GB, M, bakedTexture, lin, mixC, mulC, softNormals } from './models3d';
 import { mulberry32 } from './rng';
 
 export type TreeKind = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'palm';
 export const TREE_KINDS = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'palm']);
 
-/** bis hierhin (waagrechter Abstand zur Kamera) echte 3D-Bäume */
-export const TREE_NEAR = 30;
 
 // ------------------------------------------------------------------ Modelle
 
@@ -272,8 +270,11 @@ export function treeVariant(kind: string, h: number): number {
 
 const COLS = 8;
 const ROWS = 2;
-const CPX = 192;
-const RPX = 384;
+/** Farbe je Zelle (Pixel); die Normalen in halber Auflösung (Licht ändert sich weich) */
+const CPX = 384;
+const RPX = 768;
+const NPX = 192;
+const NRPX = 384;
 
 interface Cell {
   u0: number; v0: number; du: number; dv: number;
@@ -283,7 +284,7 @@ interface Cell {
   hw: [number, number, number];
 }
 
-export interface TreeAtlas { albedo: THREE.Texture; normal: THREE.Texture; cells: Cell[]; lod: THREE.BufferGeometry[]; dispose: () => void }
+export interface TreeAtlas { albedo: THREE.Texture; normal: THREE.Texture; cells: Cell[]; dispose: () => void }
 
 const BAKE_VERT = /* glsl */ `
 varying vec3 vCol;
@@ -296,15 +297,17 @@ void main() {
 
 /**
  * Vorrat zeichnen: fein modellierte Bäume von der Seite, Farbe (Wurzel – genauer in dunklen Grüns) und Normale
- * in zwei Bildern. Die Ränder sind mit der Abdeckung vormultipliziert (Kantenglättung beim Zeichnen).
+ * in zwei Bildern. Jede Zelle wird einzeln mit Kantenglättung gezeichnet (kleines Ziel, wenig Speicher) und in
+ * den großen Vorrat kopiert. Die Ränder sind mit der Abdeckung vormultipliziert.
  */
 export function bakeTreeAtlas(gl: THREE.WebGLRenderer): TreeAtlas {
-  const W = COLS * CPX;
-  const H = ROWS * RPX;
-  const scene = new THREE.Scene();
+  const AW = COLS * CPX;
+  const AH = ROWS * RPX;
+  const NW = COLS * NPX;
+  const NH = ROWS * NRPX;
+  const albedoPx = new Uint8Array(AW * AH * 4);
+  const normalPx = new Uint8Array(NW * NH * 4);
   const cells: Cell[] = [];
-  const geos: THREE.BufferGeometry[] = [];
-  const lod: THREE.BufferGeometry[] = [];
   const mkMat = (pass: number) => new THREE.ShaderMaterial({
     vertexColors: true,
     side: THREE.DoubleSide,
@@ -315,11 +318,28 @@ export function bakeTreeAtlas(gl: THREE.WebGLRenderer): TreeAtlas {
       : 'varying vec3 vCol; varying vec3 vN; void main() { vec3 n = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0); gl_FragColor = vec4(n * 0.5 + 0.5, 1.0); }',
   });
   const mats = [mkMat(0), mkMat(1)];
-  const meshes: THREE.Mesh[] = [];
+  const rt = (w: number, h: number) => {
+    const r = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: true, generateMipmaps: false });
+    r.texture.colorSpace = THREE.NoColorSpace;
+    return r;
+  };
+  const rtA = rt(CPX, RPX);
+  const rtN = rt(NPX, NRPX);
+  const bufA = new Uint8Array(CPX * RPX * 4);
+  const bufN = new Uint8Array(NPX * NRPX * 4);
+  // Zelle: 1 × 2 Einheiten, Fuß 0,05 über dem Zellboden
+  const cam = new THREE.OrthographicCamera(-0.5, 0.5, 1.95, -0.05, 0.1, 100);
+  cam.position.set(0, 0, 40);
+  const scene = new THREE.Scene();
+  const prevRT = gl.getRenderTarget();
+  const prevC = gl.getClearColor(new THREE.Color());
+  const prevA = gl.getClearAlpha();
+  gl.setClearColor(0x000000, 0);
+  const copy = (src: Uint8Array, w: number, h: number, dst: Uint8Array, dw: number, x0: number, y0: number) => {
+    for (let y = 0; y < h; y++) dst.set(src.subarray(y * w * 4, (y + 1) * w * 4), ((y0 + y) * dw + x0) * 4);
+  };
   VARIANTS.forEach((v, i) => {
     const g = v.make(true);
-    geos.push(g);
-    lod.push(v.make(false));
     const pos = g.getAttribute('position');
     let rad = 0.3;
     let top = 1;
@@ -327,16 +347,23 @@ export function bakeTreeAtlas(gl: THREE.WebGLRenderer): TreeAtlas {
       rad = Math.max(rad, Math.hypot(pos.getX(q), pos.getZ(q)));
       top = Math.max(top, pos.getY(q));
     }
-    // Zelle: 1 × 2 Einheiten; Baum passend verkleinert, Fuß knapp über dem Zellboden
     const k = Math.min(0.94 / (2 * rad), 1.9 / (top + 0.1));
     const col = i % COLS;
     const row = Math.floor(i / COLS);
     const m = new THREE.Mesh(g, mats[0]);
-    m.position.set(col + 0.5, row * 2 + 0.05, 0);
     m.scale.setScalar(k);
     m.frustumCulled = false;
-    meshes.push(m);
     scene.add(m);
+    for (let pass = 0; pass < 2; pass++) {
+      m.material = mats[pass];
+      const target = pass ? rtN : rtA;
+      gl.setRenderTarget(target);
+      gl.clear(true, true, false);
+      gl.render(scene, cam);
+      if (pass) { gl.readRenderTargetPixels(rtN, 0, 0, NPX, NRPX, bufN); copy(bufN, NPX, NRPX, normalPx, NW, col * NPX, row * NRPX); }
+      else { gl.readRenderTargetPixels(rtA, 0, 0, CPX, RPX, bufA); copy(bufA, CPX, RPX, albedoPx, AW, col * CPX, row * RPX); }
+    }
+    scene.remove(m);
     // Umriss (von vorn gesehen) für ein knappes Sechseck statt eines großen Vierecks: unten bis 45 % gerade,
     // darüber eine Gerade zur Spitze, die alle Ecken überdeckt (Nadelbäume: spitz, Laubbäume: fast rechteckig)
     const yAt = (y: number) => (0.05 + y * k) / 2;
@@ -356,38 +383,16 @@ export function bakeTreeAtlas(gl: THREE.WebGLRenderer): TreeAtlas {
     }
     const hw: [number, number, number] = [Math.min(0.5, low), Math.min(0.5, mid), Math.min(0.5, mid, topW)];
     cells.push({ u0: col / COLS, v0: row / ROWS, du: 1 / COLS, dv: 1 / ROWS, w: 1 / k, h: 2 / k, base: 0.05 / k, hw });
+    g.dispose();
   });
-  const cam = new THREE.OrthographicCamera(0, COLS, ROWS * 2, 0, 0.1, 100);
-  cam.position.set(0, 0, 40);
-  const rt = () => {
-    const r = new THREE.WebGLRenderTarget(W, H, {
-      samples: 4, type: THREE.UnsignedByteType, format: THREE.RGBAFormat,
-      generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true,
-    });
-    r.texture.colorSpace = THREE.NoColorSpace;
-    return r;
-  };
-  const rts = [rt(), rt()];
-  const prevRT = gl.getRenderTarget();
-  const prevC = gl.getClearColor(new THREE.Color());
-  const prevA = gl.getClearAlpha();
-  gl.setClearColor(0x000000, 0);
-  for (let pass = 0; pass < 2; pass++) {
-    for (const m of meshes) m.material = mats[pass];
-    gl.setRenderTarget(rts[pass]);
-    gl.clear(true, true, false);
-    gl.render(scene, cam);
-  }
   gl.setRenderTarget(prevRT);
   gl.setClearColor(prevC, prevA);
-  for (const g of geos) g.dispose();
+  rtA.dispose();
+  rtN.dispose();
   for (const m of mats) m.dispose();
-  const albedo = freezeTarget(gl, rts[0]);
-  const normal = freezeTarget(gl, rts[1]);
-  return {
-    albedo, normal, cells, lod,
-    dispose: () => { albedo.dispose(); normal.dispose(); for (const g of lod) g.dispose(); },
-  };
+  const albedo = bakedTexture(albedoPx, AW, AH);
+  const normal = bakedTexture(normalPx, NW, NH);
+  return { albedo, normal, cells, dispose: () => { albedo.dispose(); normal.dispose(); } };
 }
 
 // ------------------------------------------------------------------ Bilder in der Welt
@@ -461,14 +466,17 @@ export interface TreeLightU {
 
 /**
  * Bildbäume: drehen sich um die eigene Achse zur Kamera, von oben gesehen kippen sie etwas zurück;
- * Licht aus den gespeicherten Normalen (wie Lambert bei den 3D-Bäumen), Wind wiegt die Spitze.
- * Nah (unter TREE_NEAR) und ganz fern (über gone) fallen sie weg.
+ * Licht aus den gespeicherten Normalen (wie Lambert), Wind wiegt die Spitze. Zwischen fade[0] und fade[1]
+ * werden sie weich durchsichtig, danach nicht mehr gezeichnet.
+ * msaa: Durchsichtigkeit über die Kantenglättung (4 Stufen je Bildpunkt, dazwischen gerastert – wirkt wie echtes
+ * Überblenden); ohne Kantenglättung ein Raster je Bildpunkt.
  */
-export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: [number, number]): THREE.ShaderMaterial {
+export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: [number, number], msaa = true): THREE.ShaderMaterial {
   const m = new THREE.ShaderMaterial({
     fog: true,
+    defines: msaa ? { BB_A2C: '' } : {},
     uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
-      uA: { value: null }, uN: { value: null }, uTime: { value: 0 }, uNear: { value: TREE_NEAR },
+      uA: { value: null }, uN: { value: null }, uTime: { value: 0 },
       uSunDir: { value: new THREE.Vector3() }, uSunC: { value: new THREE.Color() }, uSkyC: { value: new THREE.Color() }, uGroundC: { value: new THREE.Color() },
       uFillDir: { value: new THREE.Vector3() }, uFillC: { value: new THREE.Color() },
     }]),
@@ -481,18 +489,19 @@ attribute vec4 aT2; // Zelle in Metern (Breite, Höhe, unter dem Fuß), Spiegeln
 attribute vec4 aT3; // Farbe
 attribute vec4 aT4; // Umriss: halbe Breiten
 uniform float uTime;
-uniform float uNear;
 varying vec2 vUv;
 varying vec3 vTint;
 varying vec3 vR;
 varying vec3 vU;
 varying vec3 vF;
+varying float vFade;
 void main() {
   vec3 P = aT0.xyz;
   vec2 toC = cameraPosition.xz - P.xz;
-  float d = length(toC);
-  float s = aT0.w * (1.0 - smoothstep(${fade[0].toFixed(1)}, ${fade[1].toFixed(1)}, d));
-  if (d < uNear || s < 0.01) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  float d = max(length(toC), 0.01);
+  vFade = 1.0 - smoothstep(${fade[0].toFixed(1)}, ${fade[1].toFixed(1)}, d);
+  float s = aT0.w;
+  if (vFade <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 dC = toC / d;
   vec3 F = vec3(dC.x, 0.0, dC.y);
   vec3 R = vec3(dC.y, 0.0, -dC.x);
@@ -536,7 +545,17 @@ varying vec3 vTint;
 varying vec3 vR;
 varying vec3 vU;
 varying vec3 vF;
+varying float vFade;
 void main() {
+  // weiches Auflösen in der Ferne (Schwellen gleichmäßig über die Bildpunkte verteilt)
+  float dth = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+#ifdef BB_A2C
+  float fq = min(floor(vFade * 4.0 + dth) * 0.25, 1.0);
+  if (fq <= 0.0) discard;
+#else
+  if (dth >= vFade) discard;
+  float fq = 1.0;
+#endif
   vec4 a = texture2D(uA, vUv);
   float cov = a.a;
   // Ränder scharf (auch in kleinen Mipmap-Stufen), weich über die Kantenglättung
@@ -548,7 +567,7 @@ void main() {
   vec3 nn = texture2D(uN, vUv).rgb * ic * 2.0 - 1.0;
   vec3 n = normalize(vR * nn.x + vU * nn.y + vF * nn.z);
   vec3 li = mix(uGroundC, uSkyC, 0.5 + 0.5 * n.y) + uSunC * max(dot(n, uSunDir), 0.0) + uFillC * max(dot(n, uFillDir), 0.0);
-  gl_FragColor = vec4(alb * vTint * li, clamp(aS, 0.0, 1.0));
+  gl_FragColor = vec4(alb * vTint * li, clamp(aS, 0.0, 1.0) * fq);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   #include <fog_fragment>
@@ -561,73 +580,4 @@ void main() {
   m.uniforms.uTime = time;
   for (const k of ['uSunDir', 'uSunC', 'uSkyC', 'uGroundC', 'uFillDir', 'uFillC'] as const) m.uniforms[k] = light[k];
   return m;
-}
-
-// ------------------------------------------------------------------ nahe 3D-Bäume
-
-/** Die nächsten Bäume als echte 3D-Modelle (je Variante ein Zeichenaufruf, Plätze werden jedes Bild neu verteilt) */
-export class NearTrees {
-  readonly group = new THREE.Group();
-  private meshes: THREE.InstancedMesh[];
-  private m = new THREE.Matrix4();
-  private q = new THREE.Quaternion();
-  private up = new THREE.Vector3(0, 1, 0);
-  private v = new THREE.Vector3();
-  private sc = new THREE.Vector3();
-  private c = new THREE.Color();
-  private n: number[];
-
-  constructor(atlas: TreeAtlas, mat: THREE.Material, cap = 160) {
-    this.meshes = atlas.lod.map((g) => {
-      const im = new THREE.InstancedMesh(g, mat, cap);
-      im.count = 0;
-      im.frustumCulled = false;
-      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      im.setColorAt(0, this.c.setRGB(1, 1, 1));
-      im.instanceColor!.setUsage(THREE.DynamicDrawUsage);
-      im.visible = false;
-      this.group.add(im);
-      return im;
-    });
-    this.n = this.meshes.map(() => 0);
-    this.group.matrixAutoUpdate = false;
-  }
-
-  update(cx: number, cz: number, sources: Iterable<TreeSource>) {
-    const n = this.n;
-    n.fill(0);
-    const R = TREE_NEAR;
-    for (const s of sources) {
-      if (!s.on) continue;
-      const [x0, z0, x1, z1] = s.box;
-      if (cx < x0 - R || cx > x1 + R || cz < z0 - R || cz > z1 + R) continue;
-      const r = s.rec;
-      for (let i = 0; i < s.n; i++) {
-        const o = i * TREC;
-        const dx = r[o] - cx;
-        const dz = r[o + 2] - cz;
-        if (dx * dx + dz * dz >= R * R) continue;
-        const vi = r[o + 8];
-        const im = this.meshes[vi];
-        const k = n[vi];
-        if (k >= im.instanceMatrix.count) continue;
-        this.q.setFromAxisAngle(this.up, r[o + 4]);
-        this.m.compose(this.v.set(r[o], r[o + 1], r[o + 2]), this.q, this.sc.setScalar(r[o + 3]));
-        im.setMatrixAt(k, this.m);
-        im.setColorAt(k, this.c.setRGB(r[o + 5], r[o + 6], r[o + 7]));
-        n[vi] = k + 1;
-      }
-    }
-    this.meshes.forEach((im, i) => {
-      const was = im.count;
-      im.count = n[i];
-      im.visible = n[i] > 0;
-      if (n[i] || was) {
-        im.instanceMatrix.needsUpdate = true;
-        im.instanceColor!.needsUpdate = true;
-      }
-    });
-  }
-
-  dispose() { for (const im of this.meshes) im.dispose(); }
 }

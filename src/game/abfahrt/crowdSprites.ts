@@ -270,11 +270,15 @@ uniform float uTime;
 varying vec2 vUvA;
 varying vec2 vUvB;
 varying float vMixF;
+varying float vXa;
 flat varying vec4 vCa;
 flat varying vec3 vCb;`)
       .replace('#include <beginnormal_vertex>', `
   vec3 sprP = aS0.xyz;
   vec2 toC = cameraPosition.xz - sprP.xz;
+  // Übergang von den 3D-Figuren (27–32 m): Bildpunkte, die dort noch die Figur zeigt, bleiben frei
+  vXa = 1.0 - smoothstep(27.0, 32.0, length(toC));
+  if (vXa >= 1.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 dC = toC / max(length(toC), 1e-3);
   // zur Kamera gewandt, etwas nach oben: bekommt Himmel und Sonne wie eine Figur
   vec3 objectNormal = normalize(vec3(dC.x, 0.55, dC.y));`)
@@ -311,9 +315,11 @@ uniform vec3 uCol[${CROWD_PAL.length + CROWD_FLAGS.length}];
 varying vec2 vUvA;
 varying vec2 vUvB;
 varying float vMixF;
+varying float vXa;
 flat varying vec4 vCa;
 flat varying vec3 vCb;`)
       .replace('#include <color_fragment>', `
+  if (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) < vXa) discard;
   {
     // zwei Bilder des Takts überblenden: flüssige Bewegung trotz weniger Bilder
     vec4 sA = mix(texture2D(uSprA, vUvA), texture2D(uSprA, vUvB), vMixF);
@@ -328,6 +334,6 @@ flat varying vec3 vCb;`)
     diffuseColor = vec4(sc / max(cov, 0.04) * 1.22, clamp(aS, 0.0, 1.0));
   }`);
   };
-  m.customProgramCacheKey = () => 'crowd-spr';
+  m.customProgramCacheKey = () => 'crowd-spr-2';
   return m;
 }

@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import type { Kit } from './rider';
 import { alphaTex, lin, type RGBf } from './models3d';
 import { BIKE_BB, bikeBuild, type BikeFit } from './bike3d';
-import { glossMat } from './gloss';
+import { FAR1, LambertFarMaterial, glossFarMat, glossMat } from './gloss';
 import { headBuild, shoeBuild } from './gear3d';
 
 /**
@@ -325,7 +325,7 @@ function blurParts() {
     const a = (i / 28) * Math.PI * 2;
     c.beginPath(); c.moveTo(S / 2, S / 2); c.lineTo(S / 2 + Math.cos(a) * S / 2, S / 2 + Math.sin(a) * S / 2); c.stroke();
   }
-  blur = { mat: new THREE.MeshLambertMaterial({ map: alphaTex(cv, [40, 40, 44]), transparent: true, depthWrite: false, side: THREE.DoubleSide }), geos: new Map() };
+  blur = { mat: new LambertFarMaterial({ map: alphaTex(cv, [40, 40, 44]), transparent: true, depthWrite: false, side: THREE.DoubleSide }), geos: new Map() };
   return blur;
 }
 function blurDisc(r: number): THREE.Mesh {
@@ -454,6 +454,8 @@ export class RiderModel {
     // ein neuer Fahrer im Bild kostet so kaum Rechenzeit (sonst ruckelt es, wenn Fahrer auftauchen)
     const smooth = baseMat();
     const gloss = glossMat();
+    // kleine Teile: lösen sich in der Ferne gerastert auf (kein Aufploppen)
+    const glossFar = glossFarMat();
     const bike = bikeBuild(kit.bike, kit, q);
     this.fit = bike.fit;
     const frame = new THREE.Mesh(bike.frame, gloss);
@@ -461,13 +463,13 @@ export class RiderModel {
     this.wheelF.position.copy(bike.fit.front);
     this.wheelR = new THREE.Mesh(bike.wheelR, gloss);
     this.wheelR.position.copy(bike.fit.rear);
-    this.crank = new THREE.Mesh(bike.crank, gloss);
+    this.crank = new THREE.Mesh(bike.crank, glossFar);
     // Hochrad: die Kurbel sitzt an der Vorderradnabe
     this.crank.position.copy(bike.fit.bb ?? BB);
     this.body.add(frame, this.wheelF, this.wheelR, this.crank);
     for (const [w, geo, r] of [[this.wheelF, bike.spokes.f, bike.spokes.rF], [this.wheelR, bike.spokes.r, bike.spokes.rR]] as const) {
       if (!geo) continue;
-      const sp = new THREE.Mesh(geo, gloss);
+      const sp = new THREE.Mesh(geo, glossFar);
       const bd = blurDisc(r);
       w.add(sp, bd);
       this.spokes.push(sp);
@@ -488,7 +490,7 @@ export class RiderModel {
       const c = new THREE.Mesh(g.shin, smooth);
       const u = new THREE.Mesh(g.upper, smooth);
       const f = new THREE.Mesh(s === 0 ? g.foreL : g.foreR, smooth);
-      const sh = new THREE.Mesh(shoe, gloss);
+      const sh = new THREE.Mesh(shoe, glossFar);
       this.thighs.push(t);
       this.shins.push(c);
       this.uppers.push(u);
@@ -540,8 +542,10 @@ export class RiderModel {
     this.kitKey = riderKitKey(kit);
   }
 
-  /** Detailstufe nach Abstand: weit weg die kleinen Teile weglassen (halb so viele Zeichenaufrufe) */
+  /** Detailstufe nach Abstand: weit weg die kleinen Teile weglassen (halb so viele Zeichenaufrufe).
+   *  Sie sind dort schon unsichtbar (aufgelöst bis FAR1) – das Weglassen selbst sieht man nicht */
   get isFar() { return this.far; }
+  static readonly FAR_HIDE = FAR1 + 1.5;
 
   setFar(far: boolean) {
     if (far === this.far) return;

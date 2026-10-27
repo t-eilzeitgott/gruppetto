@@ -79,13 +79,26 @@ const tmpColor = new THREE.Color();
 export function freezeTarget(gl: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget): THREE.DataTexture {
   const px = new Uint8Array(rt.width * rt.height * 4);
   gl.readRenderTargetPixels(rt, 0, 0, rt.width, rt.height, px);
-  const t = new THREE.DataTexture(px, rt.width, rt.height, THREE.RGBAFormat);
+  const t = bakedTexture(px, rt.width, rt.height);
+  rt.dispose();
+  return t;
+}
+
+/**
+ * Fertig gezeichneter Vorrat als Textur (mit Mipmaps). Die Bilddaten im Arbeitsspeicher werden nach dem
+ * Hochladen freigegeben – geht der Grafikkontext verloren, entsteht ohnehin alles neu.
+ */
+export function bakedTexture(px: Uint8Array, w: number, h: number): THREE.DataTexture {
+  const t = new THREE.DataTexture(px, w, h, THREE.RGBAFormat);
   t.colorSpace = THREE.NoColorSpace;
   t.generateMipmaps = true;
   t.minFilter = THREE.LinearMipmapLinearFilter;
   t.magFilter = THREE.LinearFilter;
   t.needsUpdate = true;
-  rt.dispose();
+  t.onUpdate = () => {
+    (t.image as { data: Uint8Array | null }).data = null;
+    t.onUpdate = null;
+  };
   return t;
 }
 

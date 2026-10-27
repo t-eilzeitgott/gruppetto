@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 import { bikeById, type BikeSpec } from '../bikes';
 import type { Kit } from './rider';
-import { Mesher, PAINT, merge, rgb, type C3 } from './gloss';
+import { Mesher, PAINT, PhongFarMaterial, merge, rgb, type C3 } from './gloss';
 import { BIKE_BB, hash3, headAxis, mix, set4, v3, type Axis, type BikeFit, type Ctx, type FrameDims, type FrameOut, type Set4, type V } from './bikebase';
 import { buildCargoBox } from './cargo3d';
 import { CARAVAN, buildCaravan } from './trailer3d';
@@ -1254,7 +1254,8 @@ function decalMat(spec: BikeSpec, color: string): THREE.MeshPhongMaterial {
   // über die Bilddaten (ruhige Randfarbe statt Rauschen auf manchen Handys)
   const tex = alphaTex(cv);
   tex.anisotropy = 4;
-  const m = new THREE.MeshPhongMaterial({ map: tex, transparent: true, alphaTest: 0.3, shininess: 60, specular: new THREE.Color(0x2a2a2a), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+  // löst sich in der Ferne auf (wie alle kleinen Teile des Fahrers)
+  const m = new PhongFarMaterial({ map: tex, transparent: true, alphaTest: 0.3, shininess: 60, specular: new THREE.Color(0x2a2a2a), depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
   decalCache.set(key, m);
   return m;
 }

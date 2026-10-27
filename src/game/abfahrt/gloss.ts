@@ -202,3 +202,45 @@ let shared: GlossMaterial | null = null;
 export function glossMat(): GlossMaterial {
   return (shared ??= new GlossMaterial());
 }
+
+/**
+ * Kleine Teile (Schuhe, Kurbel, Speichen, Schriftzüge) verschwinden in der Ferne nicht auf einmal, sondern
+ * lösen sich zwischen FAR0 und FAR1 m Abstand (des Teils zur Kamera) gerastert auf. Dahinter werden sie
+ * gar nicht mehr gezeichnet (RiderModel.setFar).
+ */
+export const FAR0 = 17;
+export const FAR1 = 25;
+export function farFade(sh: THREE.WebGLProgramParametersWithUniforms) {
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying float vFarK;')
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+\tvFarK = 1.0 - smoothstep( ${FAR0.toFixed(1)}, ${FAR1.toFixed(1)}, distance( modelMatrix[ 3 ].xyz, cameraPosition ) );`);
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying float vFarK;')
+    .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+\tif ( fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) ) >= vFarK ) discard;`);
+}
+
+/** Glanz-Material der kleinen Teile (mit Auflösen in der Ferne) */
+export class GlossFarMaterial extends GlossMaterial {
+  override onBeforeCompile(sh: THREE.WebGLProgramParametersWithUniforms) {
+    super.onBeforeCompile(sh);
+    farFade(sh);
+  }
+  override customProgramCacheKey() { return 'gloss-far-v1'; }
+}
+let sharedFar: GlossFarMaterial | null = null;
+export function glossFarMat(): GlossFarMaterial {
+  return (sharedFar ??= new GlossFarMaterial());
+}
+
+/** Phong (Schriftzüge) mit Auflösen in der Ferne */
+export class PhongFarMaterial extends THREE.MeshPhongMaterial {
+  override onBeforeCompile(sh: THREE.WebGLProgramParametersWithUniforms) { farFade(sh); }
+  override customProgramCacheKey() { return 'phong-far-v1'; }
+}
+/** Lambert (Speichen-Schleier) mit Auflösen in der Ferne */
+export class LambertFarMaterial extends THREE.MeshLambertMaterial {
+  override onBeforeCompile(sh: THREE.WebGLProgramParametersWithUniforms) { farFade(sh); }
+  override customProgramCacheKey() { return 'lambert-far-v1'; }
+}

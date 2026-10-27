@@ -21,20 +21,34 @@ import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
 import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
-import { NearTrees, TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
+import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
 import { mulberry32 } from './rng';
 import './grade';
 import { setGlossEnv } from './gloss';
 
-/** Bäume schrumpfen zwischen TREE_FADE und TREE_GONE weg; das Kronendach hebt sich ab CAN_NEAR bis CAN_FULL */
-const TREE_FADE = 185;
-const TREE_GONE = 245;
-const CAN_NEAR = 235;
-const CAN_FULL = 420;
+/**
+ * Bäume lösen sich zwischen TREE_FADE und TREE_GONE weich auf; das Kronendach der Landschaft hebt sich schon
+ * vorher (ab CAN_NEAR bis CAN_FULL) – die Wipfel ragen aus ihm heraus, bis nur noch das Dach bleibt
+ */
+const TREE_FADE = 195;
+const TREE_GONE = 250;
+const CAN_NEAR = 150;
+const CAN_FULL = 330;
 
 const TREES = TREE_KINDS;
 
 const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
+
+/** Mittelwert eines Kanals – so erscheint die Textur in der Ferne (kleinste Mipmap); sRGB-Bilder linear gemittelt */
+function texMean(cv: HTMLCanvasElement, srgb: boolean, ch = 0): number {
+  const d = cv.getContext('2d')!.getImageData(0, 0, cv.width, cv.height).data;
+  let s = 0;
+  for (let i = ch; i < d.length; i += 4) {
+    const v = d[i] / 255;
+    s += srgb ? (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4) : v;
+  }
+  return s / (d.length / 4);
+}
 
 const CH = 40;            // Segmente je Abschnitt (80 m)
 const AHEAD = 560;        // so weit voraus wird gebaut (m)
@@ -94,6 +108,8 @@ export class Renderer3D {
   /** sanftes Gegenlicht: Schattenseiten von Fels und Wänden saufen nicht ab */
   private fill = new THREE.DirectionalLight(0xbcd4ff, 0.5);
   private fog = new THREE.FogExp2(0xcfe0ea, 0.0024);
+  /** Bild mit Kantenglättung (mehrere Abtastpunkte je Bildpunkt) */
+  private msaa = true;
   private light: Light = lightAt(0);
   private night = 0;
   private tunnelDim = 0;
@@ -122,7 +138,6 @@ export class Renderer3D {
   /** Bäume: Bildvorrat, Bildbäume je Kachel/Abschnitt, nahe 3D-Bäume */
   private treeAtlas!: TreeAtlas;
   private bbMat!: THREE.ShaderMaterial;
-  private nearTrees!: NearTrees;
   private treeSrc = new Set<TreeSource>();
   /** beim Bau eines Abschnitts: dessen Bäume (TREC je Baum) */
   private cTrees: number[] | null = null;
@@ -151,7 +166,6 @@ export class Renderer3D {
     props: THREE.MeshLambertMaterial; ads: THREE.MeshLambertMaterial; billboard: THREE.MeshLambertMaterial; glow: THREE.PointsMaterial; lampGlow: THREE.MeshBasicMaterial;
   };
   private props!: Partial<Record<Prop3D, THREE.BufferGeometry>>;
-  private treeMat!: THREE.MeshLambertMaterial;
   private markGeo!: Record<Landmark, THREE.BufferGeometry>;
   private markMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
   /** Wasserfälle: fließende Gischt (Textur läuft nach unten) */
@@ -179,6 +193,8 @@ export class Renderer3D {
   // Zuschauer
   private crowdU = { uTime: this.time, uRider: { value: new THREE.Vector3() } };
   private crowdMat = crowdMaterial(this.crowdU);
+  /** Läufer neben dem Fahrer: immer fein (ohne Detailstufen) */
+  private runMat = crowdMaterial(this.crowdU, true);
   /** Zuschauer in der Ferne: Bilder aus dem Vorrat (einmal aus den 3D-Figuren gezeichnet) */
   private crowdAtlas!: CrowdAtlas;
   private sprMat!: THREE.MeshLambertMaterial;
@@ -212,6 +228,7 @@ export class Renderer3D {
   constructor(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement) {
     // Kantenglättung immer an (MSAA): auf Handy-GPUs günstig, Kanten und Linien werden weich
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false });
+    { const c = this.gl.getContext(); this.msaa = (c.getParameter(c.SAMPLES) as number) >= 2; }
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
     // sanfte Tonwertkurve (helle Sonne ohne ausgefressene Farben) plus leichter Filmlook (GRADE)
     this.gl.toneMapping = THREE.CustomToneMapping;
@@ -288,9 +305,8 @@ export class Renderer3D {
     this.initMaterials();
     this.crowdAtlas = bakeCrowdAtlas(this.gl);
     this.treeAtlas = bakeTreeAtlas(this.gl);
-    this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, [TREE_FADE, TREE_GONE]);
-    this.nearTrees = new NearTrees(this.treeAtlas, this.treeMat);
-    this.scene.add(this.nearTrees.group);
+    // mit Kantenglättung (Normalfall) blenden die Bäume über sie weich aus
+    this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, [TREE_FADE, TREE_GONE], this.msaa);
     this.sprMat = spriteMaterial(this.crowdU, this.crowdAtlas);
     this.resize();
   }
@@ -354,7 +370,10 @@ export class Renderer3D {
     const facade = this.tex(fa.day, false);
     const facadeLit = this.tex(fa.night, false);
     const signs = this.tex(signAtlas(), false);
-    const detail = this.tex(detailTex());
+    const detailCv = detailTex();
+    const detail = this.tex(detailCv);
+    // gröbere Landschaftsstufen haben keine Detailtextur: dort ihr Mittelwert (sonst wären sie heller – sichtbare Kante)
+    const detailMean = texMean(detailCv, true);
     this.shadowTex = alphaTex(roundTex('rgba(0,0,0,0.75)', 'rgba(0,0,0,0)', 64), [0, 0, 0]);
     const glowMap = new THREE.CanvasTexture(glowTex(255, 205, 135));
     this.mats = {
@@ -458,9 +477,11 @@ export class Renderer3D {
     }
     // Landschaft pro Bildpunkt: Wald (Kronendach, organischer Rand), Fels und Schnee aus Gewichten je Ecke,
     // aufgebrochen mit Rauschen – statt verwaschener Eckpunktfarben
+    const canCv = canopyTex();
+    const canMean = texMean(canCv, false);
     const splatU = {
       // ohne anisotrope Filterung: großflächig, fein genug ohne – und auf schwachen Grafikchips teuer
-      uRelief: { value: this.reliefTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canopyTex(), 2) },
+      uRelief: { value: this.reliefTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canCv, 2) },
       uForA: { value: new THREE.Color().setRGB(...lin255(30, 60, 34)) }, uForB: { value: new THREE.Color().setRGB(...lin255(56, 88, 46)) },
       uSnow: { value: new THREE.Color().setRGB(...lin255(240, 245, 250)) },
     };
@@ -499,19 +520,28 @@ export class Renderer3D {
             float hiF = 1.0 - smoothstep(450.0, 1300.0, camD);
             // Rinnen und Schichten nur an steilen Flächen
             float wallW = 1.0 - smoothstep(0.55, 0.85, fnT.y);
-            // Felswände: senkrechte Rinnen (Erosion) – eine Projektion entlang der Wand (waagrecht in Wandrichtung,
-            // senkrecht nach Höhe); gelesen nur, wo Fels ist (Ableitungen vorher: richtige Mipmap)
-            vec2 tw = vec2(-fnT.z, fnT.x) / max(1e-3, length(fnT.xz));
-            vec2 gU = vec2(dot(vTW.xz, tw) / 120.0, vTW.y / 190.0);
-            vec2 gUx = dFdx(gU);
-            vec2 gUy = dFdy(gU);
+            // Felswände: senkrechte Rinnen (Erosion) – zwei feste Projektionen (waagrecht entlang z bzw. x, senkrecht
+            // nach Höhe), gemischt nach der Wandrichtung. Das Muster hängt so nicht vom Netz ab: jede Landschaftsstufe
+            // zeigt dasselbe (eine Projektion entlang der Fläche wurde auf groben Stufen zum Zickzack – beim Wechsel
+            // der Stufe sichtbar). Gelesen nur, wo Fels ist (Ableitungen vorher: richtige Mipmap)
+            vec2 wxz = fnT.xz * fnT.xz;
+            wxz *= wxz;
+            wxz /= max(wxz.x + wxz.y, 1e-6);
+            vec2 gA = vec2(vTW.z / 120.0, vTW.y / 190.0);
+            vec2 gB = vec2(vTW.x / 120.0, vTW.y / 190.0);
+            vec2 gAx = dFdx(gA);
+            vec2 gAy = dFdy(gA);
+            vec2 gBx = dFdx(gB);
+            vec2 gBy = dFdy(gB);
             float gul = 0.5;
             if (rk * wallW > 0.01) {
-              vec4 ra = textureGrad(uRelief, gU, gUx, gUy);
-              gul = mix(0.5, ra.g, wallW);
+              vec4 ra = wxz.x > 0.02 ? textureGrad(uRelief, gA, gAx, gAy) : vec4(0.5);
+              vec4 rb = wxz.y > 0.02 ? textureGrad(uRelief, gB, gBx, gBy) : vec4(0.5);
+              gul = mix(0.5, ra.g * wxz.x + rb.g * wxz.y, wallW);
               // Steigung (Textur hat 256 Texel, Kodierung ×4): Rinnen 18 m tief
-              vec2 sa = (ra.ba - 0.5) * 64.0 * 18.0;
-              tGrad += (vec3(tw.x, 0.0, tw.y) * (sa.x / 120.0) + vec3(0.0, sa.y / 190.0, 0.0)) * (rk * far * wallW);
+              vec2 sa = (ra.ba - 0.5) * 64.0 * 18.0 * wxz.x;
+              vec2 sb = (rb.ba - 0.5) * 64.0 * 18.0 * wxz.y;
+              tGrad += vec3(sb.x / 120.0, (sa.y + sb.y) / 190.0, sa.x / 120.0) * (rk * far * wallW);
             }
             float gul2 = mix(0.5, nz2.g, hiF * wallW);
             vec3 rc = vRk * (0.8 + 0.42 * nz2.r) * mix(1.0, 0.84 + 0.26 * mix(gul, gul2, 0.4), far);
@@ -519,7 +549,8 @@ export class Renderer3D {
             rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, big) * 0.6);
             // Wald: Rand aus Rauschen; aus der Nähe Waldboden (dort stehen Bäume), weiter weg das Kronendach
             float fo = smoothstep(0.46, 0.58, vMat.x + (big - 0.5) * 0.25 + (vNz.x - 0.5) * 0.6 + (nz2.g - 0.5) * 0.28) * (1.0 - rk);
-            float crown = 0.55;
+            // Kronen: nah aus der Textur, auf den gröberen Stufen ihr Mittelwert (gleiche Helligkeit an der Grenze)
+            float crown = ${canMean.toFixed(4)};
             #if TLV == 0
               vec2 cuv = vTW.xz / 10.0;
               vec2 cux = dFdx(cuv);
@@ -528,7 +559,7 @@ export class Renderer3D {
             #endif
             vec3 fc = mix(uForA, uForB, nz2.r) * (0.42 + crown * 0.72);
             fc = mix(fc, uForA * vec3(0.62, 0.6, 0.5), smoothstep(0.78, 0.45, fnT.y));
-            float canopy = smoothstep(${(TREE_GONE - 70).toFixed(1)}, ${TREE_GONE.toFixed(1)}, camD);
+            float canopy = smoothstep(${CAN_NEAR.toFixed(1)}, ${(TREE_GONE - 10).toFixed(1)}, camD);
             fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, canopy);
             tCol = mix(tCol, fc, fo);
             tCol = mix(tCol, rc, rk);
@@ -542,6 +573,9 @@ export class Renderer3D {
             // Schnee glättet das Relief
             tGrad *= 1.0 - 0.7 * sn;
             diffuseColor.rgb *= tCol;
+            #if TLV > 0
+              diffuseColor.rgb *= ${detailMean.toFixed(4)};
+            #endif
           #endif`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
           {
@@ -596,31 +630,6 @@ export class Renderer3D {
           #endif`);
     };
     this.mats.props.customProgramCacheKey = () => 'props-wind';
-    // Bäume: weich schattiert (runde Kronen statt Facetten), Wind; die der Landschaft schrumpfen in der Ferne
-    // stetig weg (dort übernimmt das Kronendach) – kein Aufploppen, wenn neue Kacheln entstehen
-    const treeMat = (fade: boolean) => {
-      const m = new THREE.MeshLambertMaterial({ vertexColors: true });
-      m.onBeforeCompile = (sh) => {
-        sh.uniforms.uTime = windT;
-        sh.vertexShader = sh.vertexShader
-          .replace('#include <common>', '#include <common>\nuniform float uTime;')
-          .replace('#include <begin_vertex>', `#include <begin_vertex>
-            #ifdef USE_INSTANCING
-            {
-              vec3 ip = instanceMatrix[3].xyz;
-              ${fade ? `transformed *= 1.0 - smoothstep(${TREE_FADE.toFixed(1)}, ${TREE_GONE.toFixed(1)}, distance(ip.xz, cameraPosition.xz));` : ''}
-              float sw = max(0.0, position.y - 2.0);
-              float ph = uTime * 1.1 + ip.x * 0.11 + ip.z * 0.07;
-              float g = sin(ph) * 0.6 + sin(ph * 2.3 + 1.7) * 0.4;
-              transformed.x += g * sw * sw * 0.0016;
-              transformed.z += cos(ph * 0.8) * sw * sw * 0.0011;
-            }
-            #endif`);
-      };
-      m.customProgramCacheKey = () => (fade ? 'trees-fade' : 'trees');
-      return m;
-    };
-    this.treeMat = treeMat(false);
     // Billboards: Bild-Atlas mit Animationsrahmen
     this.buildAtlas();
     const timeRef = this.time;
@@ -784,8 +793,6 @@ export class Renderer3D {
     this.updateCrowd(g, dt);
     this.updateObjects(g);
     this.updateParticles(g);
-    // nahe Bäume als 3D (dieselbe Grenze wie im Bildbaum-Shader, dieselbe Kameraposition)
-    this.nearTrees.update(this.camera.position.x, this.camera.position.z, this.treeSrc);
     this.gl.render(this.scene, this.camera);
     this.drawOverlay(g);
   }
@@ -944,8 +951,18 @@ export class Renderer3D {
           if (t.tsrc) t.tsrc.on = vis;
         }
         if (rc === Lv.ring) this.boxSet[lv] = true;
-      } else if (rc === Lv.ring) {
-        this.lvBox[lv].set((cx - rc) * Lv.size, (cz - rc) * Lv.size, (cx + rc + 1) * Lv.size, (cz + rc + 1) * Lv.size);
+      } else {
+        if (rc === Lv.ring) this.lvBox[lv].set((cx - rc) * Lv.size, (cz - rc) * Lv.size, (cx + rc + 1) * Lv.size, (cz + rc + 1) * Lv.size);
+        // neue Kacheln erst zeigen, wenn ihr Ring vollständig ist – zusammen mit dem Absinken der gröberen Stufe
+        // (sonst stehen beide Stufen eine Weile ineinander und mischen sich fleckig)
+        const bx = this.lvBox[lv];
+        for (const t of this.tiles.values()) {
+          if (t.lv !== lv) continue;
+          const vis = t.box[0] >= bx.x - 1 && t.box[1] >= bx.y - 1 && t.box[2] <= bx.z + 1 && t.box[3] <= bx.w + 1;
+          if (t.objs[0].visible === vis) continue;
+          for (const o of t.objs) o.visible = vis;
+          if (t.tsrc) t.tsrc.on = vis;
+        }
       }
       // Ring vollständig: Überzähliges entfernen
       if (rc === Lv.ring) {
@@ -1003,7 +1020,7 @@ export class Renderer3D {
       objs.push(w);
     }
     if (d.trees.length) {
-      // alle Bäume der Kachel als Bilder in einem Zeichenaufruf; die nächsten zeigt NearTrees als 3D-Modelle
+      // alle Bäume der Kachel als Bilder in einem Zeichenaufruf
       const rec = new Float32Array(d.trees.length * TREC);
       d.trees.forEach((t, k) => {
         const o = k * TREC;
@@ -1539,7 +1556,7 @@ export class Renderer3D {
       disp.push(geo);
       group.add(new THREE.Mesh(geo, this.mats.billboard));
     }
-    // Bäume am Straßenrand: Bilder in einem Zeichenaufruf (die nächsten als 3D über NearTrees)
+    // Bäume am Straßenrand: Bilder in einem Zeichenaufruf
     const ct = this.cTrees;
     this.cTrees = null;
     let csrc: TreeSource | null = null;
@@ -2602,16 +2619,21 @@ export class Renderer3D {
     const cp = this.camera.position;
     for (const ch of this.chunks.values()) {
       for (const b of ch.crowd) {
-        // nah: echte 3D-Menschen; ab gut 30 m Bilder (dort ist ein Bild nicht größer als im Vorrat gezeichnet)
-        // feste Grenze mit etwas Spiel (kein Hin- und Herspringen, nicht von der Qualität abhängig)
-        const d = cp.distanceTo(b.c) - b.r;
-        const h = b.lod < 0 ? 0 : 2;
-        const lod = d < 12 + (b.lod === 0 ? h : -h) ? 0 : d < 30 + (b.lod <= 1 ? h : -h) ? 1 : 2;
+        // Welche Stufe ein Mensch zeigt, entscheidet der Shader je Person (fein bis ~14 m, einfach bis ~30 m,
+        // dahinter Bilder – mit weichen, gerasterten Übergängen). Hier nur: Gruppen weglassen, die gerade
+        // niemanden in dieser Stufe haben (waagrechter Abstand wie im Shader)
+        const d = Math.hypot(cp.x - b.c.x, cp.z - b.c.z);
+        const dn = d - b.r - 0.5;
+        const df = d + b.r + 0.5;
+        const near = dn < 16;
+        const mid = dn < 32 && df > 12;
+        const spr = df > 27;
+        const lod = (near ? 1 : 0) + (mid ? 2 : 0) + (spr ? 4 : 0);
         if (lod === b.lod) continue;
         b.lod = lod;
-        for (const m of b.near) m.visible = lod === 0;
-        for (const m of b.mid) m.visible = lod === 1;
-        if (b.spr) b.spr.visible = lod === 2;
+        for (const m of b.near) m.visible = near;
+        for (const m of b.mid) m.visible = mid;
+        if (b.spr) b.spr.visible = spr;
       }
     }
     // Läufer: warten jubelnd am Rand, laufen los, wenn der Fahrer kommt, und lassen sich dann zurückfallen
@@ -2663,11 +2685,13 @@ export class Renderer3D {
       p.yaw = ru.yaw;
       if (n < 6) packPerson(p, this.runBuf.array as Float32Array, n++);
     }
-    if (!this.runMeshes.length) {
+    // im ersten Bild ohne Läufer gezeichnet (0 Instanzen): der Shader entsteht beim Start, nicht mitten im Rennen
+    const first = !this.runMeshes.length;
+    if (first) {
       for (const kind of KINDS) {
         const geo = crowdGeometry(kind, 0, this.runBuf, 0);
         if (!geo) continue;
-        const m = new THREE.Mesh(geo, this.crowdMat);
+        const m = new THREE.Mesh(geo, this.runMat);
         m.frustumCulled = false;
         this.runMeshes.push(m);
         this.scene.add(m);
@@ -2675,7 +2699,7 @@ export class Renderer3D {
     }
     for (const m of this.runMeshes) {
       (m.geometry as THREE.InstancedBufferGeometry).instanceCount = n;
-      m.visible = n > 0;
+      m.visible = n > 0 || first;
     }
     if (n) this.runBuf.needsUpdate = true;
   }
@@ -2731,8 +2755,9 @@ export class Renderer3D {
       }
       m.group.visible = true;
       this.placeOpp(m, o, track);
-      // weit weg (Kamera): kleine Teile weglassen
-      m.setFar(this.camera.position.distanceToSquared(m.group.position) > (m.isFar ? 15 * 15 : 18 * 18));
+      // weit weg (Kamera): kleine Teile weglassen – erst, wenn sie sich im Shader schon aufgelöst haben
+      const fh = RiderModel.FAR_HIDE;
+      m.setFar(this.camera.position.distanceToSquared(m.group.position) > (m.isFar ? (fh - 1) ** 2 : fh * fh));
       const tag = g.tags?.find((t) => t.id === o.id);
       if (tag) {
         // über dem Kopf des Fahrers (this.w hält nach placeOpp seine Weltposition)
