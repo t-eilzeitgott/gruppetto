@@ -14,7 +14,9 @@ import * as THREE from 'three';
 import { bikeById, type BikeSpec } from '../bikes';
 import type { Kit } from './rider';
 import { CHROME, MATTE, Mesher, PAINT, SATIN, merge, rgb, type C3 } from './gloss';
-import { M4, X, Z, along, lerpArr, pathFrames, pipe, revolve, shape, shapeAt, strut, sweep, toothed, tube, type Frame3, type Kind, type Warp } from './prim3d';
+import { buildCargoBox } from './cargo3d';
+import { CARAVAN, buildCaravan } from './trailer3d';
+import { M4, X, Z, along, cross2, lerpArr, norm2, pathFrames, pipe, prism, revolve, shape, shapeAt, strut, sweep, toothed, tube, type Frame3, type Kind, type Warp } from './prim3d';
 
 type V = THREE.Vector3;
 const v3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -35,6 +37,8 @@ export interface BikeFit {
   pelvis: V;
   /** Rücklicht an der Sattelstütze */
   lamp: V;
+  /** kleineres Vorderrad dreht schneller (Verhältnis der Radien) */
+  spinF?: number;
 }
 
 /** Tretlager (wie beim Fahrer) */
@@ -70,6 +74,8 @@ function dims(f: BikeSpec['frame']): FrameDims {
     case 'gravel': return { ...base, htBot: 0.665, htTop: 0.86, seatLen: 0.48, tt: [0.0318, 0.0318, 0.0318, 0.0318], dt: [0.038, 0.038, 0.038, 0.038], st: [0.0286, 0.0286, 0.0286, 0.0286], ht: [0.044, 0.044], cs: [0.021, 0.012], ss: [0.0155, 0.011], fork: [0.03, 0.016], welds: true, flare: 1 };
     // Bahnrad: steiler Sitzwinkel, Profilrohre, Sitzstreben oben am Sitzrohr
     case 'track': return { ...base, htTop: 0.83, seatLen: 0.52, seatDir: v3(0, 0.97, 0.243).normalize(), tt: [0.026, 0.046, 0.022, 0.036], dt: [0.036, 0.072, 0.034, 0.062], st: [0.03, 0.06, 0.028, 0.052], ht: [0.04, 0.034], cs: [0.024, 0.016], ss: [0.016, 0.014], fork: [0.022, 0.017], kind: 'aero', flare: 1.12 };
+    // Lastenrad: Hollandrad hinten, 20-Zoll-Vorderrad vorn (Rahmen eigen gebaut)
+    case 'cargo': return { ...base, rF: 0.25, seatLen: 0.5, seatDir: v3(0, 0.94, 0.34).normalize(), st: [0.034, 0.034, 0.034, 0.034], ht: [0.046, 0.046], cs: [0.024, 0.013], ss: [0.017, 0.012], fork: [0.03, 0.017], welds: true, flare: 1 };
     case 'tt': return { ...base, rF: 0.305, htBot: 0.6, htTop: 0.72, seatLen: 0.52, seatDir: v3(0, 0.97, 0.243).normalize(), tt: [0.026, 0.04, 0.024, 0.036], dt: [0.032, 0.062, 0.03, 0.056], st: [0.028, 0.052, 0.026, 0.048], ht: [0.036, 0.03], cs: [0.022, 0.013], ss: [0.016, 0.012], fork: [0.022, 0.016], kind: 'aero', flare: 1.1 };
     default: return base;
   }
@@ -352,6 +358,163 @@ function buildFrame(x: Ctx, D: FrameDims, front: V, rear: V): FrameOut {
   return { H0, H1, S, ax, crown, ssTop, dtA, dtB, dtFrame, dtW: [D.dt[0], D.dt[2]], dtD: [D.dt[1], D.dt[3]], cableFront, cableTT, cableDT, cableTTEnd };
 }
 
+/**
+ * Lastenrad (Long John): Fahrerteil mit tiefem Durchstieg und geschwungenem Oberrohr, Lenkrohr hinter der
+ * Kiste, langer Ladeträger mit Querstreben unter der Kiste, vorn Steuerrohr mit Gabel fürs 20-Zoll-Rad,
+ * Lenkstange unter der Kiste, Doppelständer und Scheinwerfer.
+ */
+function buildCargoFrame(x: Ctx, D: FrameDims, front: V, rear: V): FrameOut {
+  const { q, n, pc } = x;
+  const { paint: P, metal: Mt } = x.f;
+  // Lenkachse des Fahrers (72°), unten im Knoten mit Unterrohr und Ladeträger
+  const ang = (72 * Math.PI) / 180;
+  const u = v3(0, Math.sin(ang), Math.cos(ang));
+  const p0 = v3(0, 0.62, -0.47);
+  const ax: Axis = { u, n: v3(0, -u.z, u.y), at: (y: number) => p0.clone().addScaledVector(u, (y - p0.y) / u.y) };
+  const H0 = ax.at(0.64);
+  const H1 = ax.at(0.9);
+  const J = ax.at(0.28);
+  const S = BB.clone().addScaledVector(D.seatDir, D.seatLen);
+  tube(P, H0.clone().addScaledVector(u, -0.01), H1.clone().addScaledVector(u, 0.01), { w0: D.ht[0], n, col: pc });
+  for (const [p, d] of [[H1, 1], [H0, -1]] as [V, number][]) tube(Mt, p.clone().addScaledVector(u, d * 0.006), p.clone().addScaledVector(u, d * 0.02), { w0: D.ht[0] * 1.12, n, col: () => x.silver });
+  tube(P, H0.clone(), J.clone(), { w0: 0.05, n, col: pc });
+  // tiefes Unterrohr (Durchstieg) und geschwungenes Oberrohr
+  const dtA = BB.clone().add(v3(0, 0.004, -0.018));
+  const dtFrame = tube(P, dtA, J.clone(), { w0: 0.05, d0: 0.044, n, col: pc });
+  const ttA = BB.clone().addScaledVector(D.seatDir, 0.33);
+  const ttB = H1.clone().addScaledVector(u, -0.075);
+  const ttPts = new THREE.CatmullRomCurve3([ttA, ttA.clone().lerp(ttB, 0.5).add(v3(0, -0.05, 0)), ttB], false, 'centripetal').getPoints(q ? 12 : 4);
+  sweep(P, ttPts, pathFrames(ttPts, X), () => 0.032, () => 0.032, (i) => pc(ttPts[i]), shape('round', n));
+  tube(P, BB.clone(), S, { w0: D.st[0], n, col: pc });
+  P.add(new THREE.CylinderGeometry(0.024, 0.024, 0.074, n), M4(BB.x, BB.y, BB.z, 0, 0, Math.PI / 2), pc(BB));
+  tube(Mt, S.clone().addScaledVector(D.seatDir, -0.012), S.clone().addScaledVector(D.seatDir, 0.012), { w0: D.st[0] * 1.16, n, col: () => x.silver });
+  // Hinterbau mit Bremsbrücke
+  const ssTop = S.clone().addScaledVector(D.seatDir, -0.035);
+  for (const sx of [-1, 1]) {
+    const dro = rear.clone().add(v3(sx * 0.064, 0, -0.004));
+    tube(P, BB.clone().add(v3(sx * 0.03, -0.004, 0.036)), dro, { w0: D.cs[0] * 0.8, d0: D.cs[0], w1: D.cs[1], n, col: pc });
+    tube(P, ssTop.clone().add(v3(sx * 0.019, 0, 0.012)), dro.clone().add(v3(0, 0.012, -0.004)), { w0: D.ss[0], w1: D.ss[1], n, col: pc });
+    strut(P, dro.clone().add(v3(0, -0.014, -0.016)), dro.clone().add(v3(0, 0.022, 0.012)), 0.006, 0.03, pc(dro));
+  }
+  const br = ssTop.clone().lerp(rear, 0.4);
+  strut(P, br.clone().add(v3(-0.024, 0, 0)), br.clone().add(v3(0.024, 0, 0)), 0.008, 0.008, pc(br), Z);
+
+  // Ladeträger: vom Knoten tief unter der Kiste nach vorn, vorn hinauf zum Steuerrohr
+  const fax = headAxis(front);
+  const F0 = fax.at(0.56);
+  const F1 = fax.at(0.71);
+  const beam = new THREE.CatmullRomCurve3([J.clone(), v3(0, 0.232, -0.7), v3(0, 0.232, -1.15), v3(0, 0.33, -1.33), F0.clone().addScaledVector(fax.u, 0.03)], false, 'centripetal').getSpacedPoints(q ? 26 : 8);
+  sweep(P, beam, pathFrames(beam, X), () => 0.054, () => 0.046, (i) => pc(beam[i]), shape('round', n));
+  // Querstreben und Seitenholme, auf denen die Kiste steht
+  for (const z of [-0.7, -0.95, -1.18]) strut(P, v3(-0.288, 0.255, z), v3(0.288, 0.255, z), 0.02, 0.016, pc(v3(0, 0.255, z)), Z);
+  for (const sx of [-1, 1]) strut(P, v3(sx * 0.285, 0.256, -0.68), v3(sx * 0.285, 0.256, -1.2), 0.018, 0.018, pc(v3(0, 0.256, -0.9)), X);
+  // vorderes Steuerrohr, Gabel
+  tube(P, F0.clone().addScaledVector(fax.u, -0.01), F1, { w0: 0.044, n, col: pc });
+  for (const [p, d] of [[F1, 1], [F0, -1]] as [V, number][]) tube(Mt, p.clone().addScaledVector(fax.u, d * 0.004), p.clone().addScaledVector(fax.u, d * 0.016), { w0: 0.05, n, col: () => x.silver });
+  const crown = F0.clone().addScaledVector(fax.u, -0.03);
+  P.add(new THREE.BoxGeometry(0.11, 0.026, 0.042), along(crown, fax.u), pc(crown));
+  for (const sx of [-1, 1]) {
+    const end = front.clone().add(v3(sx * 0.05, 0.006, 0));
+    tube(P, crown.clone().add(v3(sx * 0.045, -0.008, 0)), end, { w0: 0.028, d0: 0.03, w1: 0.016, n, col: pc });
+    strut(P, end.clone().add(v3(0, -0.012, 0.006)), end.clone().add(v3(0, 0.016, -0.004)), 0.005, 0.022, pc(end));
+  }
+  // Lenkstange unter der Kiste: Hebel am Lenkrohr → Hebel an der Gabel (links)
+  const l0 = J.clone().add(v3(-0.085, 0.02, -0.02));
+  const l1 = crown.clone().add(v3(-0.085, -0.02, 0.03));
+  strut(Mt, J.clone().add(v3(-0.02, 0.02, 0)), l0, 0.012, 0.01, x.silver);
+  strut(Mt, crown.clone().add(v3(-0.04, -0.02, 0)), l1, 0.012, 0.01, x.silver);
+  pipe(Mt, [l0, v3(-0.085, 0.206, -0.7), v3(-0.085, 0.206, -1.16), l1], 0.0055, q ? 6 : 4, x.silver);
+  if (q) for (const p of [l0, l1]) Mt.add(new THREE.SphereGeometry(0.011, 8, 6), M4(p.x, p.y, p.z), x.dark);
+  // Doppelständer, hochgeklappt unter der Kiste
+  const piv = v3(0, 0.205, -1.12);
+  for (const sx of [-1, 1]) pipe(Mt, [piv.clone().add(v3(sx * 0.03, 0, 0)), v3(sx * 0.12, 0.19, -0.86)], 0.009, q ? 8 : 4, x.silver);
+  pipe(Mt, [v3(-0.12, 0.19, -0.86), v3(0.12, 0.19, -0.86)], 0.008, q ? 8 : 4, x.silver);
+  Mt.add(new THREE.CylinderGeometry(0.014, 0.014, 0.08, 10), M4(piv.x, piv.y, piv.z, 0, 0, Math.PI / 2), x.dark);
+  // Scheinwerfer vorn am Steuerrohr
+  const fwd = fax.n.clone().negate();
+  const lamp = F1.clone().addScaledVector(fwd, 0.055).add(v3(0, -0.02, 0));
+  strut(Mt, F1.clone().addScaledVector(fwd, 0.02), lamp, 0.01, 0.006, x.silver);
+  Mt.add(new THREE.CylinderGeometry(0.034, 0.028, 0.05, q ? 16 : 8), along(lamp, fwd), x.silver);
+  x.f.paint.add(new THREE.CylinderGeometry(0.03, 0.03, 0.004, q ? 16 : 8), along(lamp.clone().addScaledVector(fwd, 0.026), fwd), rgb('#fff6d6'));
+  return {
+    H0, H1, S, ax, crown, ssTop, dtA, dtB: J, dtFrame, dtW: [0.05, 0.05], dtD: [0.044, 0.044],
+    cableFront: crown, cableTT: ttB, cableDT: dtA, cableTTEnd: ttA,
+  };
+}
+
+/** Hollandlenker: hoher Vorbau, nach hinten geschwungen, Ledergriffe, Hebel davor, Klingel links */
+function cityCockpit(x: Ctx, out: FrameOut, fit: BikeFit): V {
+  const { H1, ax } = out;
+  const { q, n, spec } = x;
+  const { metal: Mt, satin: St, matte: Ma } = x.f;
+  const steerTop = H1.clone().addScaledVector(ax.u, 0.085);
+  tube(Mt, H1.clone().addScaledVector(ax.u, 0.015), steerTop, { w0: 0.026, n, col: () => x.silver });
+  Mt.add(new THREE.SphereGeometry(0.016, n, 8), M4(steerTop.x, steerTop.y, steerTop.z), x.silver);
+  const clamp = steerTop.clone().add(v3(0, 0.035, -0.075));
+  tube(Mt, steerTop.clone(), clamp, { w0: 0.026, w1: 0.024, n, col: () => x.silver });
+  Mt.add(new THREE.CylinderGeometry(0.019, 0.019, 0.05, n), M4(clamp.x, clamp.y, clamp.z, 0, 0, Math.PI / 2), x.silver);
+  const grip = rgb(spec.tape);
+  const smooth = (ctrl: V[], k: number) => new THREE.CatmullRomCurve3(ctrl, false, 'centripetal').getSpacedPoints(k);
+  for (const sx of [-1, 1]) {
+    const L = (dx: number, dy: number, dz: number) => clamp.clone().add(v3(sx * dx, dy, dz));
+    const pts = smooth([L(0, 0, 0), L(0.09, 0.004, -0.002), L(0.17, 0.016, 0.026), L(0.235, 0.028, 0.08), L(0.272, 0.033, 0.13), L(0.302, 0.034, 0.18)], q ? 26 : 6);
+    let k = pts.findIndex((p) => Math.abs(p.x - clamp.x) > 0.246);
+    if (k < 1) k = pts.length - 2;
+    pipe(Mt, pts.slice(0, k + 1), 0.011, n, x.silver);
+    pipe(Ma, pts.slice(k), 0.0165, n, grip);
+    // Hebel vor dem Griff
+    const lev = pts.slice(k).map((p) => p.clone().add(v3(0, -0.01, -0.04)));
+    if (lev.length > 1) {
+      St.add(new THREE.BoxGeometry(0.03, 0.026, 0.034), M4(lev[0].x, lev[0].y + 0.01, lev[0].z + 0.018), x.dark);
+      pipe(Mt, lev, 0.005, q ? 6 : 4, x.silver);
+    }
+    if (sx < 0 && q) {
+      // Klingel
+      const b = L(0.12, 0.024, 0.012);
+      Mt.add(new THREE.SphereGeometry(0.026, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), M4(b.x, b.y + 0.004, b.z), x.silver);
+      Mt.add(new THREE.CylinderGeometry(0.004, 0.004, 0.012, 6), M4(b.x, b.y + 0.033, b.z), x.silver);
+      strut(St, b.clone().add(v3(0.01, 0.006, 0.02)), b.clone().add(v3(0.03, 0.012, 0.035)), 0.008, 0.004, x.dark);
+    }
+    if (sx > 0) {
+      fit.hood = L(0.287, 0.038, 0.155);
+      fit.drop = L(0.282, 0.032, 0.142);
+    }
+  }
+  return clamp;
+}
+
+/** Schutzbleche mit Streben (Lastenrad in Rahmenfarbe, sonst Alu blank) */
+function buildFenders(x: Ctx, front: V, rear: V, rOutF: number, rOutR: number) {
+  const { q, spec } = x;
+  const cargo = spec.frame === 'cargo';
+  const m = cargo ? x.f.paint : x.f.metal;
+  const alu = rgb('#d3d7dc');
+  const col = (p: V): C3 => (cargo ? x.pc(p) : alu);
+  const arc = (c: V, r: number, a0: number, a1: number, w: number) => {
+    const K = q ? 24 : 8;
+    const pts: V[] = [];
+    for (let k = 0; k <= K; k++) {
+      const a = a0 + ((a1 - a0) * k) / K;
+      pts.push(c.clone().add(v3(0, Math.sin(a) * r, Math.cos(a) * r)));
+    }
+    // Querschnitt flach; s seitlich, c nach außen (s × c = −t bei steigendem Winkel)
+    sweep(m, pts, pts.map((p) => ({ s: X.clone(), c: p.clone().sub(c).setX(0).normalize() })), () => w, () => 0.008, (i) => col(pts[i]), shape('round', q ? 10 : 6));
+    return (a: number, dx: number) => c.clone().add(v3(dx, Math.sin(a) * (r - 0.004), Math.cos(a) * (r - 0.004)));
+  };
+  const D2R = Math.PI / 180;
+  const R = arc(rear, rOutR + 0.018, -18 * D2R, 140 * D2R, 0.054);
+  const F = arc(front, rOutF + 0.012, 40 * D2R, 205 * D2R, 0.05);
+  // Streben zu den Achsenden
+  const stay = rgb('#c3c8ce');
+  for (const sx of [-1, 1]) {
+    for (const a of [8, 34]) pipe(x.f.metal, [R(a * D2R, sx * 0.024), rear.clone().add(v3(sx * 0.062, 0.004, 0.006))], 0.0022, 4, stay);
+    pipe(x.f.metal, [F(172 * D2R, sx * 0.022), front.clone().add(v3(sx * 0.052, 0.004, -0.004))], 0.0022, 4, stay);
+  }
+  // Rückstrahler hinten auf dem Blech
+  if (q) x.f.paint.add(new THREE.BoxGeometry(0.03, 0.04, 0.008), along(R(-6 * D2R, 0).add(v3(0, 0, 0.008)), v3(0, 1, 0)), rgb('#c8141b'));
+  return { rearAt: R };
+}
+
 function buildSeat(x: Ctx, S: V, seatDir: V, saddle: V) {
   const { q, n, spec } = x;
   const { metal: Mt, satin: St, matte: Ma } = x.f;
@@ -402,6 +565,7 @@ function buildSeat(x: Ctx, S: V, seatDir: V, saddle: V) {
 }
 
 function buildCockpit(x: Ctx, out: FrameOut, fit: BikeFit): V {
+  if (x.spec.bar === 'city') return cityCockpit(x, out, fit);
   const { H1, ax } = out;
   const { q, n, spec } = x;
   const { paint: P, metal: Mt, satin: St, matte: Ma } = x.f;
@@ -551,14 +715,16 @@ function buildDrive(x: Ctx, rear: V, seatDir: V): Set4 {
   const o = v3(0, 0, 0);
   // Antrieb: zwei Blätter mit Umwerfer, ein Blatt (Zeitfahren, Gravel) oder starrer Gang (Bahn)
   const drive = spec.drive ?? (spec.frame === 'tt' ? 'single' : 'double');
-  const fixed = drive === 'fixed';
+  const hub = drive === 'hub';
+  // starrer Gang und Nabe: ein Blatt, ein Ritzel, keine Schaltung
+  const fixed = drive === 'fixed' || hub;
   const double = drive === 'double';
   const cross = spec.frame === 'cross';
-  // großes Blatt (Außenradius) und seine Zähne: Bahn 58, Straße 53, Cross 46, Gravel 40
-  const [ringR, teeth] = fixed ? [0.118, 58] : cross ? [0.095, 46] : spec.frame === 'gravel' ? [0.085, 40] : [0.108, 53];
+  // großes Blatt (Außenradius) und seine Zähne: Bahn 58, Straße 53, Cross 46, Gravel 40, Lastenrad 38
+  const [ringR, teeth] = hub ? [0.083, 38] : fixed ? [0.118, 58] : cross ? [0.095, 46] : spec.frame === 'gravel' ? [0.085, 40] : [0.108, 53];
   const smallR = cross ? 0.075 : 0.08;
-  // Kettenblätter (Zähne nur in der hohen Stufe) mit Spider
-  toothed(ringM, o, 0.056, ringR, ringR - 0.02, q ? teeth : 0, 0.004, ringC, 28);
+  // Kettenblätter (Zähne nur in der hohen Stufe) mit Spider; im Kettenkasten unsichtbar
+  if (!hub) toothed(ringM, o, 0.056, ringR, ringR - 0.02, q ? teeth : 0, 0.004, ringC, 28);
   if (double) toothed(ringM, o, 0.048, smallR, smallR - 0.016, q ? (cross ? 36 : 39) : 0, 0.004, ringC, 24);
   const arms = classic ? 5 : 4;
   const armR = Math.min(0.092, ringR - 0.016);
@@ -579,7 +745,19 @@ function buildDrive(x: Ctx, rear: V, seatDir: V): Set4 {
   const gravel = spec.frame === 'gravel';
   const cogN = fixed ? 1 : spec.frame === 'steel' ? 6 : spec.frame === 'alu' ? 8 : spec.frame === 'tt' ? 7 : cross ? 10 : 12;
   const bigCog = gravel ? 0.07 : 0.056;
-  const rc = fixed ? 0.031 : 0.032;
+  const rc = hub ? 0.04 : fixed ? 0.031 : 0.032;
+  const R = ringR - 0.002;
+  if (hub) {
+    // Kettenkasten: umschließt Blatt, Kette und Ritzel
+    const ol: [number, number][] = [];
+    const K = q ? 14 : 5;
+    const rf = R + 0.024;
+    const rr = rc + 0.03;
+    for (let k = 0; k <= K; k++) { const a = Math.PI / 2 + (Math.PI * k) / K; ol.push([BB.z + Math.cos(a) * rf, BB.y + Math.sin(a) * rf]); }
+    for (let k = 0; k <= K; k++) { const a = -Math.PI / 2 + (Math.PI * k) / K; ol.push([rear.z + Math.cos(a) * rr, rear.y + Math.sin(a) * rr]); }
+    prism(x.f.satin, ol, 0.012, 0.005, rgb('#17181b'), x.f.satin, 0.052);
+    return cr;
+  }
   if (fixed) {
     toothed(Mt, rear, 0.054, rc + 0.003, 0.016, q ? 15 : 0, 0.003, x.silver, 24);
     if (q) toothed(x.f.satin, rear, 0.059, 0.022, 0.012, 0, 0.004, x.dark, 18);
@@ -593,7 +771,6 @@ function buildDrive(x: Ctx, rear: V, seatDir: V): Set4 {
   }
   // Kette: oben vom Blatt zum Ritzel, hinten um das Ritzel, (durch die Schaltröllchen,) unten zurück
   const cx = 0.054;
-  const R = ringR - 0.002;
   const P2 = (cy: number, cz: number, r: number, a: number) => v3(cx, cy + Math.sin(a) * r, cz - Math.cos(a) * r);
   // Schaltröllchen; beim Gravel langer Käfig unter der großen Kassette
   const ju = gravel ? v3(cx, rear.y - 0.084, rear.z + 0.026) : v3(cx, rear.y - 0.062, rear.z + 0.012);
@@ -738,71 +915,6 @@ function buildCanti(x: Ctx, out: FrameOut, front: V, rear: V, rF: number, rR: nu
   St.add(new THREE.BoxGeometry(0.012, 0.012, 0.02), M4(hangR.x, hangR.y, hangR.z), x.dark);
 }
 
-/** konvexes Teil: Umriss in der Rahmenebene (z, y), seitlich von −w bis +w, Kanten gepolstert (Taschen) */
-function prism(m: Mesher, outline: [number, number][], w: number, bevel: number, col: C3, flat: Mesher = m) {
-  // Umriss gegen den Uhrzeigersinn, von rechts (+x) gesehen: u = −z, v = y
-  let area = 0;
-  for (let i = 0; i < outline.length; i++) {
-    const [z0, y0] = outline[i];
-    const [z1, y1] = outline[(i + 1) % outline.length];
-    area += -z0 * y1 - -z1 * y0;
-  }
-  const ol = area < 0 ? [...outline].reverse() : outline;
-  const N = ol.length;
-  // nach innen versetzter Umriss (Gehrung)
-  const inset = ol.map((p, i) => {
-    const a = ol[(i + N - 1) % N];
-    const b = ol[(i + 1) % N];
-    const n1 = norm2([-(p[1] - a[1]), -(-p[0] - -a[0])]);
-    const n2 = norm2([-(b[1] - p[1]), -(-b[0] - -p[0])]);
-    // (u, v)-Normalen nach innen bei Gegenuhrzeigersinn: (−dv, du)
-    const k = bevel / (1 + n1[0] * n2[0] + n1[1] * n2[1]);
-    const du = (n1[0] + n2[0]) * k;
-    const dv = (n1[1] + n2[1]) * k;
-    return [p[0] - du, p[1] + dv] as [number, number];
-  });
-  let cz = 0;
-  let cy = 0;
-  for (const [z, y] of ol) { cz += z / N; cy += y / N; }
-  const center = v3(0, cy, cz);
-  const ringsDef: [number, [number, number][]][] = [[-w, inset], [-w + bevel, ol], [w - bevel, ol], [w, inset]];
-  const rings = ringsDef.map(([xx, o]) => o.map(([z, y]) => m.v(xx, y, z, col)));
-  const P = (i: number) => v3(m.pos[i * 3], m.pos[i * 3 + 1], m.pos[i * 3 + 2]);
-  const tri = (mm: Mesher, a: number, b: number, c: number) => {
-    const pa = v3(mm.pos[a * 3], mm.pos[a * 3 + 1], mm.pos[a * 3 + 2]);
-    const pb = v3(mm.pos[b * 3], mm.pos[b * 3 + 1], mm.pos[b * 3 + 2]);
-    const pc = v3(mm.pos[c * 3], mm.pos[c * 3 + 1], mm.pos[c * 3 + 2]);
-    const nrm = pb.clone().sub(pa).cross(pc.clone().sub(pa));
-    const mid = pa.add(pb).add(pc).multiplyScalar(1 / 3);
-    if (nrm.dot(mid.sub(center)) < 0) mm.tri(a, c, b); else mm.tri(a, b, c);
-  };
-  for (let r = 0; r < 3; r++) {
-    for (let i = 0; i < N; i++) {
-      const a = rings[r][i];
-      const b = rings[r][(i + 1) % N];
-      const c = rings[r + 1][(i + 1) % N];
-      const d = rings[r + 1][i];
-      tri(m, a, b, c);
-      tri(m, a, c, d);
-    }
-  }
-  // flache Seiten mit eigenen Ecken
-  for (const [xx] of [ringsDef[0], ringsDef[3]]) {
-    const ids = inset.map(([z, y]) => flat.v(xx, y, z, col));
-    const c0 = flat.v(xx, cy, cz, col);
-    for (let i = 0; i < N; i++) tri(flat, c0, ids[i], ids[(i + 1) % N]);
-  }
-  void P;
-}
-const norm2 = (v: [number, number]): [number, number] => { const l = Math.hypot(v[0], v[1]) || 1; return [v[0] / l, v[1] / l]; };
-
-/** Schnitt zweier Geraden (Punkt + Richtung) in (z, y) */
-function cross2(p: [number, number], d: [number, number], q: [number, number], e: [number, number]): [number, number] {
-  const den = d[0] * e[1] - d[1] * e[0];
-  const t = ((q[0] - p[0]) * e[1] - (q[1] - p[1]) * e[0]) / den;
-  return [p[0] + d[0] * t, p[1] + d[1] * t];
-}
-
 /**
  * Bikepacking: halbe Rahmentasche unter dem Oberrohr, Oberrohrtasche hinter dem Vorbau,
  * große Satteltasche und Lenkerrolle mit Riemen.
@@ -909,7 +1021,7 @@ function buildBags(x: Ctx, D: FrameDims, out: FrameOut, saddle: V, clamp: V, fit
 function buildBottles(x: Ctx, out: FrameOut) {
   const { q, spec } = x;
   // Crosser und Bahnrad fahren ohne Flaschen
-  if (spec.frame === 'cross' || spec.frame === 'track') return;
+  if (spec.frame === 'cross' || spec.frame === 'track' || spec.frame === 'cargo') return;
   const classic = spec.frame === 'steel';
   const bottleC = classic ? rgb('#c3c8ce') : rgb('#f1f2f4');
   const capC = classic ? rgb('#e8e1cf') : rgb('#18191c');
@@ -1018,7 +1130,9 @@ function buildWheel(x: Ctx, front: boolean, rRim: number): WheelOut {
   for (let k = 0; k < tn; k++) {
     const a = (k / tn) * Math.PI * 2;
     ang.push(a);
-    tp.push([tc + Math.cos(a) * rt, Math.sin(a) * rt * 0.98, Math.cos(a) > 0.42 ? x.rubber : wall]);
+    // Reflexstreifen: ein heller Ring auf der Flanke
+    const reflex = spec.tire?.reflex && q && Math.abs(Math.cos(a) - 0.1) < 0.15;
+    tp.push([tc + Math.cos(a) * rt, Math.sin(a) * rt * 0.98, reflex ? rgb('#c9ccd0') : Math.cos(a) > 0.42 ? x.rubber : wall]);
   }
   let warp: Warp | undefined;
   const tseg = knobs ? 200 : seg;
@@ -1056,6 +1170,14 @@ function buildWheel(x: Ctx, front: boolean, rRim: number): WheelOut {
     revolve(alu || spec.paint.metal !== 'black' ? W.metal : W.satin, q ? hub : [hub[0], hub[3], hub[6], hub[9], hub[12]], q ? 18 : 6, o, false);
   }
 
+  if (!front && spec.drive === 'hub') {
+    // Nabenschaltung: dicker Nabenkörper
+    revolve(W.metal, [[0.012, -0.03, x.silver], [0.036, -0.026, x.silver], [0.038, 0, x.silver], [0.036, 0.026, x.silver], [0.012, 0.03, x.silver]], q ? 18 : 8, o, false);
+  }
+  if (spec.frame === 'cargo') {
+    // Rollenbremse links (gerippte Trommel)
+    revolve(W.satin, [[0.014, -0.04, x.dark], [0.048, -0.042, x.dark], [0.05, -0.05, x.dark], [0.03, -0.056, x.dark], [0.014, -0.056, x.dark]], q ? 18 : 8, o, false);
+  }
   if (disc) {
     // Scheibenrad: gewölbt, mit Farbring
     const dc = x.carbon;
@@ -1240,6 +1362,21 @@ export interface BikeBuild {
   decal: { frame: THREE.BufferGeometry; rimF: THREE.BufferGeometry | null; rimR: THREE.BufferGeometry | null; mat: THREE.Material; rimMat: THREE.Material } | null;
   fit: BikeFit;
   spec: BikeSpec;
+  /** Anhänger: Kasten, ein Rad (zweimal gesetzt), Kennzeichen; Ursprung in der Kupplung */
+  trailer: {
+    body: THREE.BufferGeometry;
+    wheel: THREE.BufferGeometry;
+    plate: { geo: THREE.BufferGeometry; mat: THREE.Material } | null;
+    /** Kupplung in Radkoordinaten */
+    hitch: V;
+    /** Radmitten (Anhängerkoordinaten) */
+    wheels: V[];
+    wheelR: number;
+    /** Abstand Kupplung → Achse */
+    axle: number;
+    /** Achse seitlich zur Kupplung */
+    axleX: number;
+  } | null;
 }
 
 const buildCache = new Map<string, BikeBuild>();
@@ -1248,7 +1385,7 @@ const buildCache = new Map<string, BikeBuild>();
 export function releaseBikes(keep?: string) {
   for (const [k, b] of buildCache) {
     if (!k.endsWith('|1') || (keep && k.startsWith(`${keep}|`))) continue;
-    for (const g of [b.frame, b.wheelF, b.wheelR, b.crank, b.decal?.frame, b.decal?.rimF, b.decal?.rimR]) g?.dispose();
+    for (const g of [b.frame, b.wheelF, b.wheelR, b.crank, b.decal?.frame, b.decal?.rimF, b.decal?.rimR, b.trailer?.body, b.trailer?.wheel, b.trailer?.plate?.geo]) g?.dispose();
     buildCache.delete(k);
   }
 }
@@ -1257,17 +1394,20 @@ export function releaseBikes(keep?: string) {
 export function bikeBuild(id: string | undefined, kit: Kit, q: 0 | 1): BikeBuild {
   const spec = bikeById(id);
   const team = spec.paint.base === 'team';
-  const key = `${spec.id}|${team ? `${kit.jersey}|${kit.side}` : ''}|${q}`;
+  const cargo = spec.frame === 'cargo';
+  // Teamrad im Trikot lackiert; der Hund im Lastenrad trägt die Teammütze
+  const key = `${spec.id}|${team || cargo ? `${kit.jersey}|${kit.side}` : ''}|${q}`;
   const hit = buildCache.get(key);
   if (hit) return hit;
   const x = makeCtx(spec, kit, q);
   const D = dims(spec.frame);
-  const front = v3(0, D.rF, -0.56);
+  const front = cargo ? v3(0, D.rF, -1.56) : v3(0, D.rF, -0.56);
   const rear = v3(0, 0.335, 0.43);
   const tt = spec.frame === 'tt';
   const saddle = tt ? v3(0, 0.95, 0.17) : v3(0, 0.957, 0.215);
   const fit: BikeFit = { front, rear, hood: v3(0.2, 0.92, -0.56), drop: v3(0.2, 0.8, -0.52), aero: null, pelvis: tt ? v3(0, 1.0, 0.13) : v3(0, 1.01, 0.2), lamp: v3(0, 0.86, 0.22) };
-  const out = buildFrame(x, D, front, rear);
+  const out = cargo ? buildCargoFrame(x, D, front, rear) : buildFrame(x, D, front, rear);
+  if (cargo) fit.spinF = 0.335 / D.rF;
   buildSeat(x, out.S, D.seatDir, saddle);
   fit.lamp = out.S.clone().addScaledVector(D.seatDir, (0.865 - out.S.y) / D.seatDir.y).add(v3(0, 0, 0.026));
   const clamp = buildCockpit(x, out, fit);
@@ -1277,14 +1417,39 @@ export function bikeBuild(id: string | undefined, kit: Kit, q: 0 | 1): BikeBuild
   buildBrakes(x, out, front, rear, wf.rimR, wr.rimR, !!D.ssLow);
   if (q) buildBottles(x, out);
   if (spec.bags) buildBags(x, D, out, saddle, clamp, fit);
-  // Achsen und Schnellspanner (stehen still)
+  if (spec.fenders) {
+    const outer = (r: number) => r + tireR(spec) * 1.72;
+    const fe = buildFenders(x, front, rear, outer(wf.rimR), outer(wr.rimR));
+    // Lastenrad: Rücklicht hinten auf dem Schutzblech
+    if (cargo) fit.lamp = fe.rearAt((32 * Math.PI) / 180, 0).add(v3(0, 0.026, 0.012));
+  }
+  let boxDecal: THREE.BufferGeometry | null = null;
+  if (cargo) boxDecal = buildCargoBox(x.f, q, rgb(kit.jersey), rgb(kit.side));
+  // Achsen; Schnellspanner, beim Bahn- und Lastenrad Achsmuttern (stehen still)
+  const nuts = spec.brakes === 'none';
   for (const p of [front, rear]) {
     x.f.metal.add(new THREE.CylinderGeometry(0.005, 0.005, 0.134, 6), M4(p.x, p.y, p.z, 0, 0, Math.PI / 2), x.silver);
-    if (q) {
+    if (q && nuts) {
+      for (const sx of [-1, 1]) x.f.metal.add(new THREE.CylinderGeometry(0.009, 0.009, 0.009, 6), M4(p.x + sx * 0.066, p.y, p.z, 0, 0, Math.PI / 2), x.silver);
+    } else if (q) {
       const lever = spec.brakes === 'rim' ? x.silver : x.dark;
       x.f.metal.add(new THREE.CylinderGeometry(0.009, 0.009, 0.006, 10), M4(p.x - 0.068, p.y, p.z, 0, 0, Math.PI / 2), lever);
       strut(x.f.metal, v3(-0.07, p.y, p.z), v3(-0.072, p.y + 0.014, p.z + 0.05), 0.004, 0.01, lever, X, 0.004, 0.007);
     }
+  }
+  // Anhänger: Wohnwagen mit eigenen Rädern; am Rad nur der Kupplungsarm an der Achse
+  let trailer: BikeBuild['trailer'] = null;
+  if (spec.trailer === 'caravan') {
+    const C = CARAVAN;
+    const cb = buildCaravan(q, x.pc(v3(0, 0.6, 0)));
+    const tw = buildWheel(x, true, rimFor(spec, C.wheelR));
+    const wy = C.wheelR - C.hitch.y;
+    trailer = {
+      body: cb.geo, wheel: tw.geo, plate: cb.plate, hitch: C.hitch.clone(),
+      wheels: [v3(C.xc - C.wheelX, wy, C.axleZ), v3(C.xc + C.wheelX, wy, C.axleZ)],
+      wheelR: C.wheelR, axle: C.axleZ, axleX: C.xc,
+    };
+    x.f.satin.add(new THREE.BoxGeometry(0.03, 0.03, 0.05), M4(C.hitch.x + 0.012, C.hitch.y, C.hitch.z), x.dark);
   }
   if (x.mud) applyMud(x.f.paint, x.mudC);
   const build: BikeBuild = {
@@ -1293,7 +1458,7 @@ export function bikeBuild(id: string | undefined, kit: Kit, q: 0 | 1): BikeBuild
     wheelR: wr.geo,
     crank: merge([crank.paint, crank.metal, crank.satin, crank.matte])!,
     decal: q ? {
-      frame: downTubeDecal(D, out),
+      frame: boxDecal ?? downTubeDecal(D, out),
       rimF: tt ? null : rimDecal(wf),
       rimR: tt ? null : rimDecal(wr),
       mat: decalMat(spec, team ? teamDecal(kit) : spec.paint.decal),
@@ -1301,7 +1466,9 @@ export function bikeBuild(id: string | undefined, kit: Kit, q: 0 | 1): BikeBuild
     } : null,
     fit,
     spec,
+    trailer,
   };
+  if (!q) boxDecal?.dispose();
   buildCache.set(key, build);
   return build;
 }

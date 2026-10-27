@@ -1,7 +1,7 @@
 /**
- * Räder zum Freischalten: zwölf erfundene Modelle, gestaltet nach den großen Epochen und Gattungen des
- * Rennrads (keine echten Marken). Rein optisch – an der Fahrphysik ändert sich nichts, die Bestenlisten
- * bleiben fair.
+ * Räder zum Freischalten: vierzehn erfundene Modelle, gestaltet nach den großen Epochen und Gattungen des
+ * Rennrads – plus zwei Spaßräder (Lastenrad mit Hund, Rad mit Alu-Wohnwagen). Keine echten Marken.
+ * Rein optisch – an der Fahrphysik ändert sich nichts, die Bestenlisten bleiben fair.
  *
  * Freigeschaltet wird der Reihe nach: Am Anfang hat man nur das Teamrad, jedes weitere Rad hat eine Aufgabe,
  * die erst zählt, wenn das Rad davor freigeschaltet ist. Gezählt werden die eigenen Läufe aller Minispiele
@@ -9,7 +9,7 @@
  */
 import type { GameBest, GameId } from '../data/source';
 
-export type FrameKind = 'modern' | 'steel' | 'alu' | 'climb' | 'aero' | 'ti' | 'tt' | 'cross' | 'gravel' | 'track';
+export type FrameKind = 'modern' | 'steel' | 'alu' | 'climb' | 'aero' | 'ti' | 'tt' | 'cross' | 'gravel' | 'track' | 'cargo';
 export type WheelKind = 'carbon45' | 'box36' | 'box32' | 'carbon30' | 'deep60' | 'tt' | 'spoke4';
 
 /** ab hier zählen die Läufe für die Garage (Eröffnung) */
@@ -25,16 +25,20 @@ export interface BikeSpec {
   frame: FrameKind;
   wheels: WheelKind;
   brakes: 'rim' | 'disc' | 'canti' | 'none';
-  bar: 'modern' | 'classic' | 'integrated' | 'tt' | 'track' | 'flare';
+  bar: 'modern' | 'classic' | 'integrated' | 'tt' | 'track' | 'flare' | 'city';
   saddle: 'race' | 'leather' | 'tt';
   pedals: 'clipless' | 'toeclip';
   tires: 'black' | 'tan';
-  /** Reifen: halbe Breite (m) und Stollen */
-  tire?: { w?: number; knobs?: number };
-  /** Antrieb: zwei Kettenblätter (Standard), eins mit Schaltung, oder starrer Gang ohne Schaltung */
-  drive?: 'double' | 'single' | 'fixed';
+  /** Reifen: halbe Breite (m), Stollen, Reflexstreifen an der Flanke */
+  tire?: { w?: number; knobs?: number; reflex?: boolean };
+  /** Antrieb: zwei Kettenblätter (Standard), eins mit Schaltung, starrer Gang oder Nabenschaltung im Kettenkasten */
+  drive?: 'double' | 'single' | 'fixed' | 'hub';
   /** Taschen fürs Bikepacking */
   bags?: boolean;
+  /** Schutzbleche */
+  fenders?: boolean;
+  /** Anhänger */
+  trailer?: 'caravan';
   /** Kopfbedeckung des Fahrers auf diesem Rad, eigene Helmfarbe */
   head: 'helmet' | 'aero' | 'cap';
   helmet?: string;
@@ -69,13 +73,20 @@ export const BIKES: BikeSpec[] = [
     unlock: { kind: 'free' },
   },
   {
+    id: 'lastesel', name: 'Lastesel', era: 'Lastenrad · Stadtverkehr',
+    blurb: 'Vorn die Holzkiste, darin Bello – mit Rennmütze, fliegenden Ohren und heraushängender Zunge. Das kleine Vorderrad lenkt über eine Stange unter der Kiste, die Nabenschaltung sitzt im Kettenkasten. Dazu Klingel, Ständer, Wimpel und ein Baguette.',
+    specs: [['Rahmen', 'Stahl, Long John'], ['Laufräder', '26" hinten · 20" vorn'], ['Gruppe', '8-Gang-Nabe, Rollenbremsen'], ['Gewicht', '41 kg plus Bello']],
+    frame: 'cargo', wheels: 'box36', brakes: 'none', bar: 'city', saddle: 'leather', pedals: 'toeclip', tires: 'black', tire: { w: 0.019, reflex: true }, drive: 'hub', fenders: true, head: 'helmet',
+    paint: { base: '#2f8f83', decal: '#2b2118', metal: 'silver', finish: 'satin' }, wordmark: 'LASTESEL', tape: '#7a5234',
+    unlock: { kind: 'runs', n: 2 },
+  },
+  {
     id: 'acciaio', name: "Acciaio '74", era: 'Stahlrenner · 1970er',
     blurb: 'Dünne Stahlrohre, verchromte Muffen, Rahmenschalthebel, Kastenfelgen mit Schlauchreifen und Ledersattel. Dazu die Stoffmütze.',
     specs: [['Rahmen', 'Stahl, gemufft'], ['Laufräder', 'Kastenfelge · 36 Speichen'], ['Gruppe', '2 × 6, Rahmenschalter'], ['Gewicht', '9,8 kg']],
     frame: 'steel', wheels: 'box36', brakes: 'rim', bar: 'classic', saddle: 'leather', pedals: 'toeclip', tires: 'tan', head: 'cap',
     paint: { base: '#6e1423', panel: '#efe4c8', decal: '#d9b25a', metal: 'silver' }, wordmark: 'Acciaio', tape: '#f1ede3',
-    unlock: { kind: 'runs', n: 3 },
-
+    unlock: { kind: 'runs', n: 4 },
   },
   {
     id: 'pave', name: "Pavé '93", era: 'Alu-Klassiker · 1990er',
@@ -83,8 +94,7 @@ export const BIKES: BikeSpec[] = [
     specs: [['Rahmen', 'Aluminium, oversized'], ['Laufräder', '32 Speichen · 28 mm'], ['Gruppe', '2 × 8, Brems-Schalthebel'], ['Gewicht', '8,9 kg']],
     frame: 'alu', wheels: 'box32', brakes: 'rim', bar: 'classic', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet',
     paint: { base: '#d9ff2a', second: '#ff2d95', fade: 'z', decal: '#16171a', metal: 'silver' }, wordmark: 'PAVÉ', tape: '#16171a',
-    unlock: { kind: 'runs', n: 6 },
-
+    unlock: { kind: 'runs', n: 7 },
   },
   {
     id: 'matsch', name: 'Matschkönig', era: 'Querfeldein · 2000er',
@@ -93,7 +103,6 @@ export const BIKES: BikeSpec[] = [
     frame: 'cross', wheels: 'box32', brakes: 'canti', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'black', tire: { w: 0.0165, knobs: 0.003 }, head: 'helmet',
     paint: { base: '#ff6a13', second: '#16171a', fade: 'z', decal: '#16171a', metal: 'black', mud: true }, wordmark: 'MATSCHKÖNIG', tape: '#16171a',
     unlock: { kind: 'runs', n: 10 },
-
   },
   {
     id: 'feder', name: 'Federgewicht', era: 'Kletterrad · heute',
@@ -102,7 +111,6 @@ export const BIKES: BikeSpec[] = [
     frame: 'climb', wheels: 'carbon30', brakes: 'rim', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'tan', head: 'helmet',
     paint: { base: '#232428', decal: '#d6b25e', metal: 'gold', finish: 'satin' }, wordmark: 'FEDERGEWICHT', tape: '#232428',
     unlock: { kind: 'km', n: 40 },
-
   },
   {
     id: 'aero', name: 'Aero Pfeil', era: 'Aero-Maschine · heute',
@@ -111,7 +119,6 @@ export const BIKES: BikeSpec[] = [
     frame: 'aero', wheels: 'deep60', brakes: 'disc', bar: 'integrated', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet',
     paint: { base: '#0e1f3d', second: '#19c3b3', fade: 'y', decal: '#e9eef5', metal: 'black' }, wordmark: 'AERO PFEIL', tape: '#101114',
     unlock: { kind: 'km', n: 60 },
-
   },
   {
     id: 'fernweh', name: 'Fernweh', era: 'Gravel · Bikepacking',
@@ -120,7 +127,6 @@ export const BIKES: BikeSpec[] = [
     frame: 'gravel', wheels: 'box32', brakes: 'disc', bar: 'flare', saddle: 'race', pedals: 'clipless', tires: 'tan', tire: { w: 0.021, knobs: 0.0014 }, drive: 'single', bags: true, head: 'helmet',
     paint: { base: '#6f8564', decal: '#f1ede3', metal: 'black', finish: 'satin' }, wordmark: 'FERNWEH', tape: '#5a4632',
     unlock: { kind: 'km', n: 85 },
-
   },
   {
     id: 'titan', name: 'Titan Ti-1', era: 'Titanrahmen · zeitlos',
@@ -129,7 +135,6 @@ export const BIKES: BikeSpec[] = [
     frame: 'ti', wheels: 'carbon45', brakes: 'disc', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'tan', head: 'helmet',
     paint: { base: '#a7acb2', decal: '#16171a', metal: 'black', finish: 'brushed' }, wordmark: 'TITAN', tape: '#16171a',
     unlock: { kind: 'km', n: 115 },
-
   },
   {
     id: 'bahn', name: 'Bahnrakete', era: 'Bahnrad · heute',
@@ -138,7 +143,6 @@ export const BIKES: BikeSpec[] = [
     frame: 'track', wheels: 'spoke4', brakes: 'none', bar: 'track', saddle: 'race', pedals: 'clipless', tires: 'black', drive: 'fixed', head: 'aero',
     paint: { base: '#3b1fd6', second: '#ff2d95', fade: 'z', decal: '#ffffff', metal: 'black' }, wordmark: 'BAHNRAKETE', tape: '#16171a',
     unlock: { kind: 'km', n: 150 },
-
   },
   {
     id: 'zeit', name: "Zeitmaschine '89", era: 'Zeitfahrrad · späte 1980er',
@@ -146,8 +150,7 @@ export const BIKES: BikeSpec[] = [
     specs: [['Rahmen', 'Aluminium, Low Profile'], ['Laufräder', 'Scheibe · Dreispeiche'], ['Gruppe', '1 × 7'], ['Gewicht', '9,1 kg']],
     frame: 'tt', wheels: 'tt', brakes: 'rim', bar: 'tt', saddle: 'tt', pedals: 'clipless', tires: 'black', head: 'aero',
     paint: { base: '#f4f4f1', second: '#19c6d6', fade: 'z', panel: '#ff3d8b', decal: '#16171a', metal: 'black' }, wordmark: 'ZEITMASCHINE', tape: '#16171a',
-    unlock: { kind: 'km', n: 190 },
-
+    unlock: { kind: 'km', n: 185 },
   },
   {
     id: 'regenbogen', name: 'Regenbogen', era: 'Weltmeister-Rad · heute',
@@ -155,8 +158,15 @@ export const BIKES: BikeSpec[] = [
     specs: [['Rahmen', 'Carbon'], ['Laufräder', '45 mm Carbon'], ['Gruppe', '2 × 12 elektronisch'], ['Gewicht', '6,9 kg']],
     frame: 'modern', wheels: 'carbon45', brakes: 'disc', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#f6f6f3',
     paint: { base: '#f6f6f3', decal: '#16171a', metal: 'black', stripes: ['#1f5fd8', '#e2231a', '#111111', '#ffd200', '#1ea34a'] }, wordmark: 'REGENBOGEN', tape: '#f6f6f3',
-    unlock: { kind: 'km', n: 240 },
-
+    unlock: { kind: 'km', n: 225 },
+  },
+  {
+    id: 'wohnwagen', name: 'Blechbüchse', era: 'Rad mit Wohnwagen · Eigenbau',
+    blurb: 'Stahl-Reiserad mit selbst genietetem Alu-Wohnwagen in Tropfenform: Bullaugen mit karierten Gardinen, Dachluke, Ofenrohr, Gasflasche, Stützrad und Wimpel. Bergab schiebt er, bergauf zieht er – Hauptsache, abends gibt es Kaffee.',
+    specs: [['Rad', 'Stahl-Reiserad, Schutzbleche'], ['Anhänger', 'Alu genietet · 1,5 m'], ['Schlafplätze', '1 (quer, mit Kissen)'], ['Gewicht', '58 kg mit Kaffeemaschine']],
+    frame: 'steel', wheels: 'box36', brakes: 'rim', bar: 'classic', saddle: 'leather', pedals: 'toeclip', tires: 'tan', tire: { w: 0.0155 }, fenders: true, trailer: 'caravan', head: 'cap',
+    paint: { base: '#78c2b0', panel: '#f1e7cf', decal: '#1f4a43', metal: 'silver' }, wordmark: 'Blechbüchse', tape: '#f1ede3',
+    unlock: { kind: 'km', n: 260 },
   },
   {
     id: 'legende', name: 'Goldene Legende', era: 'Sonderedition',
@@ -165,7 +175,6 @@ export const BIKES: BikeSpec[] = [
     frame: 'aero', wheels: 'deep60', brakes: 'disc', bar: 'integrated', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#d4ad3c',
     paint: { base: '#c99a2e', second: '#f3d77a', fade: 'y', decal: '#16171a', metal: 'gold', finish: 'chrome' }, wordmark: 'LEGENDE', tape: '#16171a',
     unlock: { kind: 'km', n: 300 },
-
   },
 ];
 

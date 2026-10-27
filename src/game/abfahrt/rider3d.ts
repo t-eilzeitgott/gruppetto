@@ -347,6 +347,15 @@ export class RiderModel {
   readonly shadow: THREE.Mesh;
   readonly lamp: THREE.Mesh;
   kitKey = '';
+  /** Anhänger (Wohnwagen): hängt in der Kupplung, folgt der gefahrenen Spur, neigt sich nicht mit */
+  private trailer: THREE.Group | null = null;
+  private trailerWheels: THREE.Mesh[] = [];
+  private hitch = new THREE.Vector3();
+  private trailerSpin = 1;
+  private trailerAxle = 0;
+  private trailerOff = 0;
+  /** gefahrene Spur (Weltkoordinaten x, y, z; neueste zuletzt) */
+  private track: number[] = [];
 
   /** Maße des Rads (Sattel, Griffe, Auflieger) */
   private fit: BikeFit;
@@ -398,6 +407,32 @@ export class RiderModel {
     this.lamp = new THREE.Mesh(lamp.geo, lamp.mat);
     this.lamp.position.copy(bike.fit.lamp);
     this.body.add(this.lamp);
+    if (bike.trailer) {
+      const t = bike.trailer;
+      const tr = new THREE.Group();
+      tr.rotation.order = 'YXZ';
+      tr.add(new THREE.Mesh(t.body, gloss));
+      for (const w of t.wheels) {
+        const m = new THREE.Mesh(t.wheel, gloss);
+        m.position.copy(w);
+        tr.add(m);
+        this.trailerWheels.push(m);
+      }
+      if (t.plate) tr.add(new THREE.Mesh(t.plate.geo, t.plate.mat));
+      const sh = new THREE.Mesh(SHADOW_GEO(), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.5 }));
+      sh.rotation.x = -Math.PI / 2;
+      sh.scale.set(0.95, 0.85, 1);
+      sh.position.set(t.axleX, 0.03 - t.hitch.y, t.axle - 0.12);
+      sh.renderOrder = 1;
+      tr.add(sh);
+      this.hitch.copy(t.hitch);
+      this.trailerSpin = 0.335 / t.wheelR;
+      this.trailerAxle = t.axle;
+      this.trailerOff = Math.atan2(t.axleX, t.axle);
+      tr.position.copy(t.hitch);
+      this.trailer = tr;
+      this.group.add(tr);
+    }
     this.shadow = new THREE.Mesh(SHADOW_GEO(), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.55 }));
     this.shadow.rotation.x = -Math.PI / 2;
     this.shadow.position.y = 0.03;
@@ -457,7 +492,12 @@ export class RiderModel {
     this.crank.rotation.x = -th;
     // im Wiegetritt pendelt das Rad im Takt der Tritte
     this.body.rotation.z = -p.lean + st * 0.1 * Math.sin(th);
-    if (p.roll !== undefined) { this.wheelF.rotation.x = -p.roll; this.wheelR.rotation.x = -p.roll; }
+    if (p.roll !== undefined) {
+      this.wheelF.rotation.x = -p.roll * (this.fit.spinF ?? 1);
+      this.wheelR.rotation.x = -p.roll;
+      for (const w of this.trailerWheels) w.rotation.x = -p.roll * this.trailerSpin;
+    }
+    if (this.trailer) this.followTrailer();
 
     // Becken über dem Sattel, im Wiegetritt nach vorn über das Tretlager
     const pelvis = this.pelvis.copy(fit.pelvis).lerp(PELVIS_UP, st);
@@ -516,6 +556,62 @@ export class RiderModel {
       bone(this.fores[s], elbow, h);
     }
     (this.lamp.material as THREE.MeshLambertMaterial).emissiveIntensity = 0.4 + p.light * 1.6;
+  }
+
+  private tv = new THREE.Vector3();
+  /**
+   * Anhänger nachziehen: Die Achse läuft auf der Spur, die die Kupplung vorher gefahren ist (wie ein echter
+   * Anhänger in der Kurve); Kupplung neigt sich mit dem Rad, der Wohnwagen bleibt aufrecht. Neigung aus der
+   * Höhe der Spur (bergauf, bergab). Springt der Fahrer (Neustart), beginnt die Spur neu.
+   */
+  private followTrailer() {
+    const tr = this.trailer!;
+    const g = this.group.position;
+    const ry = this.group.rotation.y;
+    const T = this.track;
+    const n = T.length;
+    if (n) {
+      const d = Math.hypot(g.x - T[n - 3], g.z - T[n - 1]);
+      if (d > 4) T.length = 0;
+      else if (d > 0.04) T.push(g.x, g.y, g.z);
+    }
+    if (!T.length) T.push(g.x, g.y, g.z);
+    // Punkt auf der Spur: Kupplung hinter dem Tretlager plus Deichsel bis zur Achse
+    let rem = this.hitch.z + this.trailerAxle;
+    let px = g.x, py = g.y, pz = g.z;
+    let ax = 0, ay = 0, az = 0;
+    let found = false;
+    let cut = 0;
+    for (let i = T.length - 3; i >= 0; i -= 3) {
+      const qx = T[i], qy = T[i + 1], qz = T[i + 2];
+      const seg = Math.hypot(qx - px, qz - pz);
+      if (seg >= rem && seg > 1e-6) {
+        const t = rem / seg;
+        ax = px + (qx - px) * t; ay = py + (qy - py) * t; az = pz + (qz - pz) * t;
+        found = true;
+        cut = i;
+        break;
+      }
+      rem -= seg;
+      px = qx; py = qy; pz = qz;
+    }
+    if (!found) {
+      // noch keine Spur: gerade nach hinten
+      ax = px + Math.sin(ry) * rem; ay = py; az = pz + Math.cos(ry) * rem;
+    } else if (cut > 30) T.splice(0, cut - 30);
+    // Kupplung in der Welt (ohne Schräglage) und Richtung zur Achse, in Fahrerkoordinaten
+    const c = Math.cos(ry), s = Math.sin(ry);
+    const hx = g.x + this.hitch.x * c + this.hitch.z * s;
+    const hz = g.z - this.hitch.x * s + this.hitch.z * c;
+    const dx = ax - hx, dz = az - hz;
+    const lx = dx * c - dz * s;
+    const lz = dx * s + dz * c;
+    let yaw = Math.atan2(lx, lz) - this.trailerOff;
+    yaw = Math.max(-1.2, Math.min(1.2, yaw));
+    const pitch = -Math.asin(Math.max(-0.25, Math.min(0.25, (ay - g.y) / Math.max(0.5, this.trailerAxle))));
+    // Kupplung folgt der Schräglage des Rads
+    tr.position.copy(this.tv.copy(this.hitch).applyEuler(this.body.rotation));
+    tr.rotation.set(pitch, yaw, 0);
   }
 
   /** Sturz: Rad und Fahrer kippen und überschlagen sich */

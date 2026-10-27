@@ -39,10 +39,26 @@ export function bikeObject(id: string, kit: Kit): THREE.Group {
     if (b.decal.rimF) wf.add(new THREE.Mesh(b.decal.rimF, b.decal.rimMat));
     if (b.decal.rimR) wr.add(new THREE.Mesh(b.decal.rimR, b.decal.rimMat));
   }
-  // Rad um seine Mitte drehen
-  g.position.set(0, 0, 0.065);
+  if (b.trailer) {
+    // Wohnwagen gerade hinter dem Rad
+    const t = new THREE.Group();
+    t.position.copy(b.trailer.hitch);
+    t.add(new THREE.Mesh(b.trailer.body, mat));
+    for (const p of b.trailer.wheels) {
+      const w = new THREE.Mesh(b.trailer.wheel, mat);
+      w.position.copy(p);
+      t.add(w);
+    }
+    if (b.trailer.plate) t.add(new THREE.Mesh(b.trailer.plate.geo, b.trailer.plate.mat));
+    g.add(t);
+  }
+  // um die Mitte der Länge drehen (Lastenrad und Gespann sind länger)
+  const box = new THREE.Box3().setFromObject(g);
+  g.position.set(0, 0, -(box.min.z + box.max.z) / 2);
   const holder = new THREE.Group();
   holder.add(g);
+  // halbe Länge (für den Bildausschnitt)
+  holder.userData.half = Math.max(0.9, (box.max.z - box.min.z) / 2);
   return holder;
 }
 
@@ -80,6 +96,9 @@ export class GarageView {
   private disposed = false;
   /** Zoom-Anteil (0 = ganzes Rad) */
   private zoom = 0;
+  /** halbe Länge des Rads (Gespann länger) – Kamera weiter weg */
+  private half = 0.9;
+  private shadow: THREE.Mesh;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance', stencil: false });
@@ -102,7 +121,9 @@ export class GarageView {
     this.scene.add(hemi, key, rim, fill, this.turn);
     const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.0), new THREE.MeshBasicMaterial({ map: shadowTex(), transparent: true, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
+    shadow.rotation.z = Math.PI / 2;
     shadow.position.y = 0.002;
+    this.shadow = shadow;
     this.turn.add(shadow);
     canvas.addEventListener('pointerdown', this.onDown);
     window.addEventListener('pointermove', this.onMove);
@@ -120,6 +141,8 @@ export class GarageView {
     if (this.bike) this.turn.remove(this.bike);
     this.bike = bikeObject(id, kit);
     this.turn.add(this.bike);
+    this.half = this.bike.userData.half ?? 0.9;
+    this.shadow.scale.set(this.half / 0.9, 1, 1);
     // kleiner Schwung beim Wechsel
     this.vel = Math.max(this.vel, 1.6);
     this.idle = 0;
@@ -170,7 +193,8 @@ export class GarageView {
     const vf = (this.camera.fov * Math.PI) / 180;
     const hf = 2 * Math.atan(Math.tan(vf / 2) * this.camera.aspect);
     // unten liegt das Namensschild: Rad etwas nach oben ins Bild rücken
-    const dist = Math.max(0.96 / Math.tan(hf / 2), 0.78 / Math.tan(vf / 2)) * (1 - this.zoom * 0.35) + 0.3;
+    const k = this.half / 0.9;
+    const dist = Math.max((0.96 * k) / Math.tan(hf / 2), (0.78 * Math.min(1.25, k)) / Math.tan(vf / 2)) * (1 - this.zoom * 0.35) + 0.3;
     this.camera.position.set(0, 0.5 + dist * 0.2, dist);
     this.camera.lookAt(0, 0.3, 0);
     // Vorschaubilder: eins pro Bild
@@ -188,6 +212,7 @@ export class GarageView {
     if (prevBike) prevBike.visible = false;
     const obj = bikeObject(job.id, job.kit);
     this.turn.add(obj);
+    const k = (obj.userData.half ?? 0.9) / 0.9;
     // Seitenansicht: Antriebsseite, Vorderrad rechts, leicht schräg
     this.turn.rotation.y = -Math.PI / 2 + 0.22;
     const pr = this.gl.getPixelRatio();
@@ -200,7 +225,7 @@ export class GarageView {
     this.thumbCam.updateProjectionMatrix();
     const vf = (22 * Math.PI) / 180;
     const hf = 2 * Math.atan(Math.tan(vf / 2) * this.thumbCam.aspect);
-    const dist = Math.max(0.92 / Math.tan(hf / 2), 0.56 / Math.tan(vf / 2)) + 0.25;
+    const dist = Math.max((0.92 * k) / Math.tan(hf / 2), (0.56 * Math.min(1.3, k)) / Math.tan(vf / 2)) + 0.25;
     this.thumbCam.position.set(0, 0.55 + dist * 0.1, dist);
     this.thumbCam.lookAt(0, 0.5, 0);
     // in die linke obere Ecke zeichnen und sofort herauskopieren

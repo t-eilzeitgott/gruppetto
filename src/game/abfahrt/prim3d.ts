@@ -234,6 +234,87 @@ export function toothed(m: Mesher, center: V, x: number, rOut: number, rIn: numb
   }
 }
 
+// ------------------------------------------------------------------ Prismen (Taschen, Kisten, Wohnwagen)
+
+export const norm2 = (v: [number, number]): [number, number] => { const l = Math.hypot(v[0], v[1]) || 1; return [v[0] / l, v[1] / l]; };
+
+/** Schnitt zweier Geraden (Punkt + Richtung) in der Ebene */
+export function cross2(p: [number, number], d: [number, number], q: [number, number], e: [number, number]): [number, number] {
+  const den = d[0] * e[1] - d[1] * e[0];
+  const t = ((q[0] - p[0]) * e[1] - (q[1] - p[1]) * e[0]) / den;
+  return [p[0] + d[0] * t, p[1] + d[1] * t];
+}
+
+/** Umriss (z, y) gegen den Uhrzeigersinn von rechts (+x) gesehen (u = −z, v = y) */
+export function ccwZY(outline: [number, number][]): [number, number][] {
+  let area = 0;
+  for (let i = 0; i < outline.length; i++) {
+    const [z0, y0] = outline[i];
+    const [z1, y1] = outline[(i + 1) % outline.length];
+    area += -z0 * y1 - -z1 * y0;
+  }
+  return area < 0 ? [...outline].reverse() : outline;
+}
+
+/** Umriss (gegen den Uhrzeigersinn, siehe ccwZY) um d nach innen versetzt (Gehrung) */
+export function insetZY(ol: [number, number][], d: number): [number, number][] {
+  const N = ol.length;
+  return ol.map((p, i) => {
+    const a = ol[(i + N - 1) % N];
+    const b = ol[(i + 1) % N];
+    // in (u, v) = (−z, y): Normale nach innen bei Gegenuhrzeigersinn ist (−dv, du)
+    const n1 = norm2([-(p[1] - a[1]), -p[0] + a[0]]);
+    const n2 = norm2([-(b[1] - p[1]), -b[0] + p[0]]);
+    const k = d / Math.max(0.2, 1 + n1[0] * n2[0] + n1[1] * n2[1]);
+    const du = (n1[0] + n2[0]) * k;
+    const dv = (n1[1] + n2[1]) * k;
+    return [p[0] - du, p[1] + dv] as [number, number];
+  });
+}
+
+/**
+ * konvexes Teil: Umriss in der Ebene (z, y), seitlich von xc − w bis xc + w, Kanten gepolstert
+ * (Taschen, Kettenkasten, Wohnwagen). Farbe fest oder je Umrisspunkt; Seitenflächen flach.
+ */
+export function prism(m: Mesher, outline: [number, number][], w: number, bevel: number, col: C3 | ((i: number) => C3), flat: Mesher = m, xc = 0) {
+  const ol = ccwZY(outline);
+  const rev = ol !== outline;
+  const N = ol.length;
+  const cAt = (i: number): C3 => (typeof col === 'function' ? col(rev ? N - 1 - i : i) : col);
+  const inset = insetZY(ol, bevel);
+  let cz = 0;
+  let cy = 0;
+  for (const [z, y] of ol) { cz += z / N; cy += y / N; }
+  const center = v3(xc, cy, cz);
+  const ringsDef: [number, [number, number][]][] = [[-w, inset], [-w + bevel, ol], [w - bevel, ol], [w, inset]];
+  const rings = ringsDef.map(([xx, o]) => o.map(([z, y], i) => m.v(xc + xx, y, z, cAt(i))));
+  const tri = (mm: Mesher, a: number, b: number, c: number) => {
+    const pa = v3(mm.pos[a * 3], mm.pos[a * 3 + 1], mm.pos[a * 3 + 2]);
+    const pb = v3(mm.pos[b * 3], mm.pos[b * 3 + 1], mm.pos[b * 3 + 2]);
+    const pc = v3(mm.pos[c * 3], mm.pos[c * 3 + 1], mm.pos[c * 3 + 2]);
+    const nrm = pb.clone().sub(pa).cross(pc.clone().sub(pa));
+    const mid = pa.add(pb).add(pc).multiplyScalar(1 / 3);
+    if (nrm.dot(mid.sub(center)) < 0) mm.tri(a, c, b); else mm.tri(a, b, c);
+  };
+  for (let r = 0; r < 3; r++) {
+    for (let i = 0; i < N; i++) {
+      const a = rings[r][i];
+      const b = rings[r][(i + 1) % N];
+      const c = rings[r + 1][(i + 1) % N];
+      const d = rings[r + 1][i];
+      tri(m, a, b, c);
+      tri(m, a, c, d);
+    }
+  }
+  // flache Seiten mit eigenen Ecken, einfarbig (Nähte laufen nur über die Haut)
+  const base = typeof col === 'function' ? col(0) : col;
+  for (const xx of [-w, w]) {
+    const ids = inset.map(([z, y]) => flat.v(xc + xx, y, z, base));
+    const c0 = flat.v(xc + xx, cy, cz, base);
+    for (let i = 0; i < N; i++) tri(flat, c0, ids[i], ids[(i + 1) % N]);
+  }
+}
+
 export const M4 = (x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) => new THREE.Matrix4().compose(
   v3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), v3(sx, sy, sz));
 /** Three-Grundkörper (Achse y) so drehen, dass seine Achse entlang dir liegt */
