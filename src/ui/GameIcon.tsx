@@ -76,3 +76,26 @@ export function BergIcon({ size = 44 }: { size?: number }) {
 export function GameBadge({ game, size = 20 }: { game: GameId; size?: number }) {
   return game === 'sprint' ? <SprintIcon size={size} /> : game === 'berg' ? <BergIcon size={size} /> : <GameIcon size={size} />;
 }
+
+/** Symbol von „Akku leer!“: leerer Akku, getroffen */
+export function AkkuIcon({ size = 44 }: { size?: number }) {
+  const id = `ga-${useId().replace(/:/g, '')}`;
+  return (
+    <svg className="game-icon" width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="var(--gi-top, #ff7ab6)" />
+          <stop offset="1" stopColor="var(--gi-bottom, #7b2cbf)" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="12" fill={`url(#${id})`} />
+      <path d="M0 36 L12 28 L22 33 L34 24 L48 31 V48 H0Z" fill="rgba(255,255,255,0.16)" />
+      <rect x="8.5" y="17" width="25" height="15" rx="4" fill="rgba(0,0,0,0.28)" stroke="#ffffff" strokeWidth="2.6" />
+      <rect x="34.6" y="21.5" width="3.4" height="6" rx="1.2" fill="#ffffff" />
+      <rect x="11.8" y="20.3" width="4.6" height="8.4" rx="1.2" fill="#ff5a4f" />
+      <path d="M38.5 5.5 l1.9 4.6 4.8 0.6-3.6 3.2 1 4.8-4.1-2.5-4.2 2.5 1.1-4.8-3.6-3.2 4.8-0.6z" fill="#ffd23f" stroke="#ffffff" strokeWidth="1" strokeLinejoin="round" />
+      <circle cx="29" cy="11.5" r="4.2" fill="#2fb24c" stroke="#ffffff" strokeWidth="1.4" />
+      <path d="M18 9 h6 M16.5 12.5 h7 M18.5 16 h5" stroke="rgba(255,255,255,0.8)" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}

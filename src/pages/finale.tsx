@@ -14,8 +14,7 @@ import { Avatar, Segmented, cx } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { readAccent } from './Game';
 
-export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
-export const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
+export { lsGet, lsSet, useGameLock } from './gameKit';
 
 export type Ui = 'ready' | 'countdown' | 'playing' | 'paused' | 'over';
 export type Board = 'day' | 'season';
@@ -185,48 +184,6 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gen]);
   return gen;
-}
-
-/** Kein Zoomen, kein Scrollen, kein Zurückwischen während des Spiels */
-export function useGameLock() {
-  useEffect(() => {
-    const meta = document.querySelector('meta[name=viewport]');
-    const before = meta?.getAttribute('content') ?? '';
-    meta?.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
-    document.documentElement.classList.add('game-lock');
-    const stop = (e: Event) => e.preventDefault();
-    const touchMove = (e: TouchEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (el?.closest('.abf-scroll') && e.touches.length === 1) return;
-      e.preventDefault();
-    };
-    const touchStart = (e: TouchEvent) => { if (e.touches.length > 1) e.preventDefault(); };
-    let lastTap = 0;
-    const touchEnd = (e: TouchEvent) => {
-      const now = Date.now();
-      if (now - lastTap < 320 && !(e.target as HTMLElement | null)?.closest('button, a')) e.preventDefault();
-      lastTap = now;
-    };
-    document.addEventListener('gesturestart', stop, { passive: false } as AddEventListenerOptions);
-    document.addEventListener('gesturechange', stop, { passive: false } as AddEventListenerOptions);
-    document.addEventListener('touchmove', touchMove, { passive: false });
-    document.addEventListener('touchstart', touchStart, { passive: false });
-    document.addEventListener('touchend', touchEnd, { passive: false });
-    document.addEventListener('dblclick', stop);
-    document.addEventListener('contextmenu', stop);
-    window.scrollTo(0, 0);
-    return () => {
-      if (meta) meta.setAttribute('content', before);
-      document.documentElement.classList.remove('game-lock');
-      document.removeEventListener('gesturestart', stop);
-      document.removeEventListener('gesturechange', stop);
-      document.removeEventListener('touchmove', touchMove);
-      document.removeEventListener('touchstart', touchStart);
-      document.removeEventListener('touchend', touchEnd);
-      document.removeEventListener('dblclick', stop);
-      document.removeEventListener('contextmenu', stop);
-    };
-  }, []);
 }
 
 type KeyEngine = { key(name: 'left' | 'right' | 'down' | 'up', down: boolean): void; swapMate?: () => void };

@@ -1902,3 +1902,46 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   }
   html.game-lock .scrollbar { display: none; }
 }
+
+/* ---------- Minispiel „Akku leer!“ (Prototyp) ---------- */
+.akku { background: #8fcbe8; }
+.akku__stage { cursor: default; }
+.akku__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.akku-hud__top { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.akku-score { justify-self: center; min-width: 0; }
+.akku-score strong {
+  display: block; font-size: 30px; line-height: 1; font-weight: 900; font-style: italic; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums; color: #fff; white-space: nowrap;
+  text-shadow: 0 2px 0 rgba(27, 29, 36, 0.85), 0 0 2px rgba(27, 29, 36, 0.9), 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+.akku-score strong.is-bump { animation: akku-bump 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.4); }
+@keyframes akku-bump { 0% { transform: scale(1.18); } 100% { transform: scale(1); } }
+.akku-bats {
+  display: flex; align-items: center; gap: 5px; padding: 7px 9px; border-radius: 999px;
+  background: rgba(16, 18, 24, 0.62); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.akku-bat { position: relative; width: 17px; height: 10px; border: 2px solid #fff; border-radius: 3px; }
+.akku-bat::before { content: ""; position: absolute; right: -4px; top: 1px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: #fff; }
+.akku-bat::after { content: ""; position: absolute; inset: 1px; border-radius: 1px; background: #5be37d; transition: transform 0.35s ease, background 0.35s; transform-origin: left; }
+.akku-bat.is-empty { border-color: #ff6b5f; opacity: 0.85; }
+.akku-bat.is-empty::before { background: #ff6b5f; }
+.akku-bat.is-empty::after { background: #ff6b5f; transform: scaleX(0.18); }
+.akku-card { gap: 14px; }
+.akku-lineup { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 2px 0 0; }
+.akku-lineup li { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+.akku-portrait { width: 52px; height: 52px; max-width: 100%; height: auto; aspect-ratio: 1; }
+.akku-lineup__name { font-size: 12px; font-weight: 700; color: var(--muted); text-align: center; white-space: nowrap; line-height: 1.2; letter-spacing: -0.01em; }
+@media (max-width: 360px) { .akku-lineup__name { font-size: 10.5px; letter-spacing: -0.02em; } }
+.akku-keys li { white-space: normal; }
+.akku-best { text-align: center; font-size: 13.5px; color: var(--muted); }
+.akku-best strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.akku-stars { display: flex; align-items: flex-end; justify-content: center; gap: 6px; height: 64px; }
+.akku-star svg { display: block; width: 44px; height: 44px; fill: var(--surface2); stroke: var(--line); stroke-width: 1; }
+.akku-star.is-mid svg { width: 58px; height: 58px; }
+.akku-star.is-on svg { fill: #ffd23f; stroke: #c9a227; }
+.akku-star.is-on { animation: akku-star 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.5) both; }
+@keyframes akku-star { 0% { opacity: 0; transform: scale(0.2) rotate(-40deg); } 100% { opacity: 1; transform: none; } }
+.akku-result { font-size: 26px; letter-spacing: -0.03em; line-height: 1.1; font-weight: 800; }
+.akku-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.akku-back { align-self: center; }
+@media (prefers-reduced-motion: reduce) { .akku-star.is-on, .akku-score strong.is-bump { animation: none; } }

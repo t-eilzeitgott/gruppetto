@@ -41,6 +41,7 @@ function Sections({ tour }: { tour: Tour }) {
       sub: !tour.sync_mode || tour.sync_mode === 'off' ? 'Aus · Ergebnisse von procyclingstats.com holen' : `Von procyclingstats.com · ${SYNC_MODE_LABEL[tour.sync_mode]}`,
     },
     { to: '/admin/mitglieder', icon: 'user', title: 'Mitglieder & Einladung', sub: 'Einladungscode, Admins, Pro' },
+    { to: '/admin/akku', icon: 'zap', title: 'Minispiel „Akku leer!“', sub: 'Prototyp · nur für Admins sichtbar' },
   ];
   return (
     <ul className="list admin-list">

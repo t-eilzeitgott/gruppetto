@@ -78,6 +78,8 @@ const PAGES = [
     await p.waitForSelector('.abf-summary', { timeout: 20000 });
     await p.waitForTimeout(1700); // Punkte zählen hoch
   }],
+  ['akku', '?demo&lowgfx#/admin/akku'],
+  ['akku-play', '?demo&lowgfx#/admin/akku', async (p) => { await p.click('text=Los geht'); await p.waitForTimeout(3600); }],
   ['sprint', `?demo&${GFX}#/spiel/sprint`],
   ['sprint-board', `?demo&${GFX}#/spiel/sprint`, async (p) => { await p.click('.abf-link'); }],
   ['sprint-hud', `?demo&${GFX}#/spiel/sprint`, async (p) => { await p.click('text=Losfahren'); await runGame(p, 8); }],

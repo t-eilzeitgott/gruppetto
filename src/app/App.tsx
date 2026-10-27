@@ -24,7 +24,7 @@ import { RiderPage } from '../pages/Rider';
 import { RidersPage } from '../pages/Riders';
 import { ClimbsPage } from '../pages/Climbs';
 import { Suspense } from 'react';
-import { BergPage, GamePage, GaragePage, SprintPage } from './pages';
+import { AkkuPage, BergPage, GamePage, GaragePage, SprintPage } from './pages';
 import { AppSkeleton, RouteSkeleton } from '../ui/skeleton';
 import { DemoBanner } from '../ui/Shell';
 
@@ -104,7 +104,7 @@ function MemberApp({ me }: { me: ProfileT }) {
   useEffect(() => {
     if (!loading && first !== undefined) introReady('content');
   }, [loading, first]);
-  const fullScreen = first === 'tipp' || first === 'spiel' || (first === 'bonus' && !!second);
+  const fullScreen = first === 'tipp' || first === 'spiel' || (first === 'bonus' && !!second) || (first === 'admin' && second === 'akku');
 
   let page;
   if (error) page = <ErrorBox error={error} />;
@@ -192,6 +192,7 @@ function AdminRouter({ section }: { section?: string }) {
     case 'bonus': return <AdminBonus />;
     case 'mitglieder': return <AdminMembers />;
     case 'automatik': return <AdminSync />;
+    case 'akku': return <Suspense fallback={<RouteSkeleton parts={['spiel', 'akku']} />}><AkkuPage /></Suspense>;
     default: return <NotFound />;
   }
 }
