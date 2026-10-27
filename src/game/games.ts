@@ -1,3 +1,4 @@
+import type { StageKind } from '../lib/types';
 import type { GameId } from '../data/source';
 
 /** Alle Minispiele – ein neues Spiel braucht hier einen Eintrag (plus Symbol in GameBadge) */
@@ -20,3 +21,9 @@ export function gameInfo(id: GameId): GameInfo {
   return GAMES.find((g) => g.id === id) ?? GAMES[0];
 }
 
+
+/** Reihenfolge der Spiele: das Finale zur Etappe des Tages zuerst (flach/wellig → Sprint, sonst Berg), dann das andere, dann die Abfahrt */
+export function gameOrder(kind: StageKind | null): GameInfo[] {
+  const rank: Record<string, number> = kind === 'flat' || kind === 'hilly' ? { sprint: 0, berg: 1, abfahrt: 2 } : { berg: 0, sprint: 1, abfahrt: 2 };
+  return [...GAMES].sort((a, b) => (rank[a.id] ?? 9) - (rank[b.id] ?? 9));
+}

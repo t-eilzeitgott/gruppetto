@@ -10,7 +10,7 @@ import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import type { Stage, StageKind } from '../lib/types';
-import { GAMES, type GameInfo } from '../game/games';
+import { gameOrder, type GameInfo } from '../game/games';
 import { Track } from '../game/abfahrt/track';
 import { overtaken, type Seen } from '../lib/overtaken';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
@@ -48,11 +48,7 @@ function useOvertaken(game: string, board: string, rows: GameBest[], meId: strin
   return { alert, ack };
 }
 
-/** Reihenfolge: das Finale zur nächsten Etappe zuerst (flach/wellig → Sprint, sonst Berg), dann das andere, dann die Abfahrt */
-function order(kind: StageKind | null): GameInfo[] {
-  const rank: Record<string, number> = kind === 'flat' || kind === 'hilly' ? { sprint: 0, berg: 1, abfahrt: 2 } : { berg: 0, sprint: 1, abfahrt: 2 };
-  return [...GAMES].sort((a, b) => (rank[a.id] ?? 9) - (rank[b.id] ?? 9));
-}
+const order = gameOrder;
 
 export function GamesCard({ stageKind = null, tourName = null, stages = null }: { stageKind?: StageKind | null; tourName?: string | null; stages?: Stage[] | null }) {
   const games = useMemo(() => order(stageKind), [stageKind]);

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { prewarm } from '../game/abfahrt/pool';
+import type { WarmArgs } from '../app/warm';
 import { useApp } from '../app/context';
 import { useMembers, useTourData } from '../app/hooks';
 import { invalidate, useQuery } from '../app/query';
@@ -37,6 +39,26 @@ const sprintBars = (t: RiderOption['type']): [string, number][] => {
   return [['Endspeed', b.top], ['Antritt', b.acc], ['Ausdauer', b.end]];
 };
 
+/** Startbild des Sprints ohne Seite: beim App-Start unsichtbar vorwärmen (siehe app/warm.ts) */
+export function warmSprint(a: WarmArgs): Promise<void> {
+  const options = riderOptions(a.data, a.me, a.day);
+  const pick = lsGet(LS_RIDER);
+  const chosen = options.find((o) => `${o.id ?? 'x'}:${o.type}` === pick) ?? options[0];
+  const town = stageRef('sprint', a.tour?.name, a.data?.stages, a.day);
+  return prewarm(() => new SprintRace({
+    dayKey: a.day,
+    names: a.names,
+    rider: chosen,
+    rivals: rivalNames(a.data, chosen.id),
+    trains: sprintTrains(a.data, chosen.id, a.day),
+    mate: teamMate(a.data, chosen.id, 'sprint')?.name ?? null,
+    kit: { jersey: a.accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number, bike: a.bike },
+    town,
+    onEvent: () => undefined,
+    onOver: () => undefined,
+  }), { accent: a.accent, dark: a.dark });
+}
+
 /** Minispiel „Sprintfinale“: die letzten 2,4 km im Feld – Windschatten, Position, Antritt */
 export function SprintPage() {
   useTitle('Sprintfinale');
@@ -49,8 +71,7 @@ export function SprintPage() {
   const bikes = useBikes();
   const today = useQuery<GameBest[]>(`game:sprint:day:${day}`, () => source.gameLeaderboard('sprint', since));
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const stageEl = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<SprintRace | null>(null);
   const [glError, setGlError] = useState(false);
   const [ui, setUi] = useState<Ui>('ready');
@@ -93,7 +114,7 @@ export function SprintPage() {
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
-    eng.setViewport(canvasRef.current?.getBoundingClientRect().width ?? 390);
+    eng.setViewport(stageEl.current?.getBoundingClientRect().width ?? 390);
     return eng;
   };
 
@@ -135,7 +156,7 @@ export function SprintPage() {
   };
 
   const glGen = useRaceLoop({
-    canvasRef, overlayRef, engineRef, uiRef,
+    stageRef: stageEl, engineRef, uiRef,
     make: makeEngine,
     onFrame: writeHud,
     onGlError: () => setGlError(true),
@@ -151,7 +172,7 @@ export function SprintPage() {
   useGameLock();
 
   const start = () => {
-    if (!canvasRef.current) return;
+    if (!stageEl.current) return;
     engineRef.current = makeEngine();
     engineRef.current.start();
     setResult(null);
@@ -176,12 +197,12 @@ export function SprintPage() {
     lsSet(LS_RIDER, keyOf(o));
   };
 
-  const onPointerDown = (e: RPointerEvent<HTMLCanvasElement>) => {
+  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
     if (ui !== 'playing' && ui !== 'countdown') return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     engineRef.current?.pointerDown(e.clientX, e.clientY);
   };
-  const onPointerMove = (e: RPointerEvent<HTMLCanvasElement>) => {
+  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.buttons === 0) return;
     engineRef.current?.pointerMove(e.clientX, e.clientY);
   };
@@ -195,17 +216,18 @@ export function SprintPage() {
 
   return (
     <div className={cx('abf', 'abf--sprint', `abf--${ui}`)}>
-      <canvas
+      {/* 3D-Bühne: die Leinwand kommt aus dem Vorrat (pool.ts) und wird hier eingehängt */}
+      <div
         key={glGen}
-        ref={canvasRef}
-        className="abf__canvas"
+        ref={stageEl}
+        className="abf__stage"
+        role="application"
         aria-label="Spielfeld: Daumen seitlich ziehen wechselt das Hinterrad, nach oben antreten, nach unten Tempo rausnehmen"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       />
-      <canvas ref={overlayRef} className="abf__overlay" aria-hidden="true" />
       {glError ? (
         <div className="abf-layer">
           <div className="abf-card abf-card--small">

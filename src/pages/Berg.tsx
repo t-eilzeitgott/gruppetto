@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { prewarm } from '../game/abfahrt/pool';
+import type { WarmArgs } from '../app/warm';
 import { useApp } from '../app/context';
 import { useMembers, useTourData } from '../app/hooks';
 import { invalidate, useQuery } from '../app/query';
@@ -39,6 +41,25 @@ const bars = (t: RiderOption['type']): [string, number][] => {
 
 const sec = (s: number) => s.toFixed(1).replace('.', ',');
 
+/** Startbild des Bergfinales ohne Seite: beim App-Start unsichtbar vorwärmen (siehe app/warm.ts) */
+export function warmBerg(a: WarmArgs): Promise<void> {
+  const options = riderOptions(a.data, a.me, a.day);
+  const pick = lsGet(LS_RIDER);
+  const chosen = options.find((o) => `${o.id ?? 'x'}:${o.type}` === pick) ?? options.find((o) => o.type === 'climber') ?? options[0];
+  const town = stageRef('mountain', a.tour?.name, a.data?.stages, a.day);
+  return prewarm(() => new BergRace({
+    dayKey: a.day,
+    names: a.names,
+    rider: chosen,
+    rivals: rivalNames(a.data, chosen.id, 'climb'),
+    mate: teamMate(a.data, chosen.id, 'climb')?.name ?? null,
+    kit: { jersey: a.accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number, bike: a.bike },
+    town,
+    onEvent: () => undefined,
+    onOver: () => undefined,
+  }), { accent: a.accent, dark: a.dark });
+}
+
 /** Minispiel „Bergfinale“: Schlussanstieg in der Favoritengruppe, Bergwertung, Abfahrt ins Ziel */
 export function BergPage() {
   useTitle('Bergfinale');
@@ -51,8 +72,7 @@ export function BergPage() {
   const bikes = useBikes();
   const today = useQuery<GameBest[]>(`game:berg:day:${day}`, () => source.gameLeaderboard('berg', since));
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const stageEl = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<BergRace | null>(null);
   const [glError, setGlError] = useState(false);
   const [ui, setUi] = useState<Ui>('ready');
@@ -94,7 +114,7 @@ export function BergPage() {
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
-    eng.setViewport(canvasRef.current?.getBoundingClientRect().width ?? 390);
+    eng.setViewport(stageEl.current?.getBoundingClientRect().width ?? 390);
     return eng;
   };
 
@@ -157,7 +177,7 @@ export function BergPage() {
   };
 
   const glGen = useRaceLoop({
-    canvasRef, overlayRef, engineRef, uiRef,
+    stageRef: stageEl, engineRef, uiRef,
     make: makeEngine,
     onFrame: writeHud,
     onGlError: () => setGlError(true),
@@ -173,7 +193,7 @@ export function BergPage() {
   useGameLock();
 
   const start = () => {
-    if (!canvasRef.current) return;
+    if (!stageEl.current) return;
     engineRef.current = makeEngine();
     engineRef.current.start();
     setResult(null);
@@ -198,12 +218,12 @@ export function BergPage() {
     lsSet(LS_RIDER, keyOf(o));
   };
 
-  const onPointerDown = (e: RPointerEvent<HTMLCanvasElement>) => {
+  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
     if (ui !== 'playing' && ui !== 'countdown') return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     engineRef.current?.pointerDown(e.clientX, e.clientY);
   };
-  const onPointerMove = (e: RPointerEvent<HTMLCanvasElement>) => {
+  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.buttons === 0) return;
     engineRef.current?.pointerMove(e.clientX, e.clientY);
   };
@@ -216,17 +236,18 @@ export function BergPage() {
 
   return (
     <div className={cx('abf', 'abf--sprint', 'abf--berg', `abf--${ui}`)}>
-      <canvas
+      {/* 3D-Bühne: die Leinwand kommt aus dem Vorrat (pool.ts) und wird hier eingehängt */}
+      <div
         key={glGen}
-        ref={canvasRef}
-        className="abf__canvas"
+        ref={stageEl}
+        className="abf__stage"
+        role="application"
         aria-label="Spielfeld: Daumen seitlich ziehen wechselt das Hinterrad, nach oben angreifen (bergab ducken), nach unten Tempo rausnehmen (bergab bremsen)"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       />
-      <canvas ref={overlayRef} className="abf__overlay" aria-hidden="true" />
       {glError ? (
         <div className="abf-layer">
           <div className="abf-card abf-card--small">

@@ -200,6 +200,8 @@ async function checkPage(context, theme, vpName, [name, url, action, storage]) {
     if (sessionStorage.getItem('__ui')) return;
     sessionStorage.setItem('__ui', '1');
     localStorage.clear();
+    // ohne App-Intro prüfen (es liegt sonst die ersten 1–2 s über allem)
+    localStorage.setItem('gruppetto.nointro', '1');
     if (s?.tour) localStorage.setItem('gruppetto.tour', s.tour);
     if (s?.adminTour) localStorage.setItem('gruppetto.adminTour', s.adminTour);
   }, storage ?? null);

@@ -1,5 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo } from 'react';
-import { useAuthUser, useMe, useSelectedTour } from './hooks';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useAuthUser, useMe, useMembers, useSelectedTour, useTourData } from './hooks';
+import { endIntro, introReady } from './intro';
+import { startWarm } from './warm';
+import { stageOfDay } from '../game/abfahrt/sprintRiders';
+import { berlinDayKey } from '../game/abfahrt/rng';
 import { refreshOnFocus, resetCache } from './query';
 import { useRoute } from './router';
 import { AppContext } from './context';
@@ -34,7 +38,7 @@ import { AdminResults } from '../pages/admin/AdminResults';
 import { AdminBonus } from '../pages/admin/AdminBonus';
 import { AdminMembers } from '../pages/admin/AdminMembers';
 import { AdminSync } from '../pages/admin/AdminSync';
-import { BONUS_CATEGORIES, type BonusCategory, type Profile as ProfileT } from '../lib/types';
+import { BONUS_CATEGORIES, type BonusCategory, type Profile as ProfileT, type Tour as TourT } from '../lib/types';
 
 export function App() {
   const userId = useAuthUser();
@@ -57,6 +61,12 @@ export function App() {
       </div>
     );
   }
+
+  // Intro nur für angemeldete Mitglieder: Anmeldung, Fehler und Beitritt beenden es sofort
+  const plain = !userId || !!me.error || (!me.loading && (!me.data || !me.data.is_member || !me.data.display_name));
+  useEffect(() => {
+    if (plain) endIntro();
+  }, [plain]);
 
   let content;
   if (!userId) content = <Login />;
@@ -90,6 +100,10 @@ function MemberApp({ me }: { me: ProfileT }) {
   }, [tour?.theme, loading]);
 
   const ctx = useMemo(() => ({ me, tour, tours }), [me, tour, tours]);
+  // andere Seite als die Startseite (z. B. Link aufs Spiel): sobald der Rahmen steht, darf das Intro gehen
+  useEffect(() => {
+    if (!loading && first !== undefined) introReady('content');
+  }, [loading, first]);
   const fullScreen = first === 'tipp' || first === 'spiel' || (first === 'bonus' && !!second);
 
   let page;
@@ -143,8 +157,29 @@ function MemberApp({ me }: { me: ProfileT }) {
   return (
     <AppContext.Provider value={ctx}>
       <Shell hideTabBar={fullScreen} isAdmin={me.is_admin}>{page}</Shell>
+      {loading ? null : <WarmUp me={me} tour={tour} />}
     </AppContext.Provider>
   );
+}
+
+/**
+ * Vorwärmen beim Start: sobald Rundfahrt und Mitglieder da sind (aus dem Zwischenspeicher sofort), sonst
+ * nach kurzer Wartezeit mit dem, was da ist – die Welt des ersten Minispiels entsteht unsichtbar.
+ */
+function WarmUp({ me, tour }: { me: ProfileT; tour: TourT | null }) {
+  const data = useTourData(tour).data;
+  const members = useMembers().data;
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setLate(true), 1200);
+    return () => window.clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    if (tour && !(data && members) && !late) return;
+    const names = (members ?? []).map((m) => m.display_name ?? '').filter(Boolean);
+    startWarm({ me, tour, data, names, kind: data ? stageOfDay(data.stages, berlinDayKey())?.kind ?? null : null });
+  }, [me, tour, data, members, late]);
+  return null;
 }
 
 function AdminRouter({ section }: { section?: string }) {

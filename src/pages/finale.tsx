@@ -2,14 +2,14 @@
  * Gemeinsame Bausteine der Rennfinals (Sprintfinale, Bergfinale): 3D-Schleife, Gestensperre,
  * Tastatur, Fahrerauswahl, Bestenlisten und Podium.
  */
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/abfahrt/pool';
 import { afterPaint } from '../lib/afterPaint';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
 import type { RaceView } from '../game/abfahrt/engine';
 import type { RiderType } from '../game/abfahrt/sprint';
 import type { RiderOption } from '../game/abfahrt/sprintRiders';
-import { Renderer3D } from '../game/abfahrt/render3d';
 import { Avatar, Segmented, cx } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { readAccent } from './Game';
@@ -34,8 +34,8 @@ export interface LoopEngine extends RaceView {
  * Auflösung senken), Größe und Thema verfolgen. Testmodi: ?nogl (ohne 3D) und ?lowgfx (winzig).
  */
 export function useRaceLoop<E extends LoopEngine>(opts: {
-  canvasRef: RefObject<HTMLCanvasElement | null>;
-  overlayRef: RefObject<HTMLCanvasElement | null>;
+  /** Platz für die 3D-Bühne (die Leinwand wird hineingehängt) */
+  stageRef: RefObject<HTMLDivElement | null>;
   engineRef: RefObject<E | null>;
   uiRef: RefObject<Ui>;
   make: () => E;
@@ -47,10 +47,9 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
   cb.current = opts;
   // Neuaufbau der 3D-Ansicht (neue Leinwand), wenn der Browser den Kontext entzogen hat
   const [gen, setGen] = useState(0);
-  useEffect(() => {
-    const canvas = cb.current.canvasRef.current;
-    const overlay = cb.current.overlayRef.current;
-    if (!canvas || !overlay) return undefined;
+  useLayoutEffect(() => {
+    const stage = cb.current.stageRef.current;
+    if (!stage) return undefined;
     const engineRef = cb.current.engineRef;
     const uiRef = cb.current.uiRef;
     const g = window as unknown as { __abfahrt?: unknown };
@@ -71,19 +70,25 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
     }
     // 3D erst nach dem ersten Bild aufbauen: Startkarte und Bühne stehen sofort, die Szene blendet ein
     const start = (): (() => void) | undefined => {
-      let renderer: Renderer3D;
+      // fertige Bühne aus dem Vorrat (beim App-Start vorgewärmt) oder eine neue
+      const warm = hasWarmStage();
+      let st: Stage;
       try {
-        renderer = new Renderer3D(canvas, overlay);
+        st = acquireStage();
       } catch {
         cb.current.onGlError();
         return undefined;
       }
+      const { renderer, canvas, overlay } = st;
+      stage.append(canvas, overlay);
+      renderer.resize();
       renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
       const low = /[?&]lowgfx\b/.test(window.location.search);
       if (low) { renderer.quality = 0.25; renderer.resize(); }
-      renderer.warm();
       // beim Neuaufbau läuft das Rennen weiter
       if (!engineRef.current || (gen === 0 && uiRef.current === 'ready')) engineRef.current = cb.current.make();
+      // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
+      if (warm) renderer.draw(engineRef.current!, 0);
       let raf = 0;
       let prev = performance.now();
       let acc = 0;
@@ -145,7 +150,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-tour'] });
       window.addEventListener('resize', onResize);
       // Homescreen-App auf iOS: 100vh ist dort zu kurz, darum die echte Bildschirmhöhe nehmen
-      const root = canvas.parentElement as HTMLElement | null;
+      const root = stage.parentElement as HTMLElement | null;
       const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
       const fit = () => {
         if (!root || !standalone) return;
@@ -165,14 +170,17 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         canvas.removeEventListener('webglcontextrestored', onRestored);
         ro?.disconnect();
         window.removeEventListener('orientationchange', fit);
-        renderer.dispose();
+        releaseStage(st);
         window.removeEventListener('resize', onResize);
         document.removeEventListener('visibilitychange', onVis);
         obs.disconnect();
       };
     };
+    // vorgewärmte Bühne: sofort (das erste Bild ist schon im Übergang zu sehen), sonst nach dem ersten Bild
     let stop: (() => void) | undefined;
-    const cancel = afterPaint(() => { stop = start(); });
+    let cancel = () => {};
+    if (hasWarmStage()) stop = start();
+    else cancel = afterPaint(() => { stop = start(); });
     return () => { cancel(); stop?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gen]);

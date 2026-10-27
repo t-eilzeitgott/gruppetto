@@ -350,6 +350,25 @@ a.card--row:hover, a.card:hover { background: var(--surface2); }
 /* Startansicht in index.html (bis das Skript läuft): nur die zur Seite passende Variante */
 .boot { display: none; }
 [data-boot=home] .boot--home, [data-boot=page] .boot--page, [data-boot=full] .boot--full, [data-boot=garage] .boot--garage { display: contents; }
+/* ---------- App-Intro (index.html): „g." rollt die Wortmarke aus, die dann in den Kopf fliegt ---------- */
+.intro { position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center; padding-bottom: 6vh; overflow: hidden; }
+.intro__bg { position: absolute; inset: 0; background: var(--bg); }
+.intro__mark {
+  position: relative; display: inline-flex; align-items: baseline;
+  font-size: 48px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; white-space: nowrap; color: var(--text);
+}
+.intro__word { position: relative; }
+.intro__roll { position: relative; display: inline-block; }
+/* Abdeckung in Hintergrundfarbe rechts vom Punkt: versteckt das noch nicht ausgerollte Wort (weiche Kante) */
+.intro__cover { position: absolute; left: -0.22em; top: -0.3em; bottom: -0.35em; width: 8em; background: linear-gradient(90deg, transparent, var(--bg) 0.22em); }
+.intro__dot { position: relative; display: inline-block; color: var(--accent); transition: color 0.35s; }
+/* während die Wortmarke aus dem Intro an ihren Platz fliegt */
+.intro-fly #root .wordmark { visibility: hidden; }
+.intro__dotin { display: inline-block; transform-origin: 40% 88%; }
+.intro__ping {
+  position: absolute; left: 0.03em; bottom: 0.0em; width: 0.17em; height: 0.17em; border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--accent); opacity: 0; pointer-events: none; transition: box-shadow 0.35s;
+}
 /* Inhalt, der nach dem Laden an die Stelle der Platzhalter tritt: weich einblenden */
 .reveal { animation: reveal 0.3s ease-out both; }
 @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
@@ -1196,6 +1215,10 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   color: #fff;
 }
 .abf__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+/* Platz für die 3D-Bühne: die Leinwand kommt aus dem Vorrat (vorgewärmt beim App-Start) */
+.abf__stage { position: absolute; inset: 0; touch-action: none; cursor: grab; }
+/* unsichtbarer Platz zum Vorwärmen (echte Größe, nicht zu sehen) */
+.stage-holder { position: fixed; inset: 0; opacity: 0; pointer-events: none; z-index: -1; overflow: hidden; }
 /* 3D-Szene blendet ein, sobald das erste Bild gezeichnet ist (die Startkarte steht schon) */
 .abf__canvas { opacity: 0; transition: opacity 0.45s ease; }
 .abf__canvas.is-drawn { opacity: 1; }

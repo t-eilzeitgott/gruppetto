@@ -7,6 +7,7 @@ import { BONUS_CATEGORIES, type Stage, type TourData } from '../lib/types';
 import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, cx, useTitle } from '../ui/kit';
 import { HomeSkeleton, Skel, firstContent } from '../ui/skeleton';
 import { prefetchGames } from '../app/pages';
+import { introReady } from '../app/intro';
 import { Icon } from '../ui/Icon';
 import { KindChip, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
 import { TourPicker, Wordmark } from '../ui/Shell';
@@ -45,6 +46,11 @@ export function Home() {
   }, []);
 
   const header = <HomeHead me={me} />;
+  // Intro beenden, sobald die Startseite mit Inhalt steht (oder es nichts zu laden gibt)
+  const shown = !tour || !!error || (!loading && !!data && !!members);
+  useEffect(() => {
+    if (shown) introReady('content');
+  }, [shown]);
 
   if (!tour) {
     return (

@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { acquireStage, hasWarmStage, prewarm, releaseStage, type Stage } from '../game/abfahrt/pool';
+import type { WarmArgs } from '../app/warm';
 import { afterPaint } from '../lib/afterPaint';
 import { useApp } from '../app/context';
 import { useMembers } from '../app/hooks';
@@ -52,6 +54,22 @@ export function rankFor(totalKm: number) {
   return { name: RANKS[i][1], from: RANKS[i][0], to: next?.[0] ?? null, nextName: next?.[1] ?? null };
 }
 
+/** Startbild der Abfahrt ohne Seite: beim App-Start unsichtbar vorwärmen (siehe app/warm.ts) */
+export function warmAbfahrt(a: WarmArgs): Promise<void> {
+  return prewarm(() => new Abfahrt({
+    dayKey: a.day,
+    names: a.names,
+    friends: [],
+    kit: { jersey: a.accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: '27', bike: a.bike },
+    best: 0,
+    missions: dailyMissions(a.day),
+    missionsDone: new Set(),
+    tutorial: false,
+    onEvent: () => undefined,
+    onOver: () => undefined,
+  }), { accent: a.accent, dark: a.dark });
+}
+
 export function readAccent(): string {
   return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#ff5fa2';
 }
@@ -69,10 +87,9 @@ export function GamePage() {
   const missions = useMemo(() => dailyMissions(day), [day]);
   const [doneIds, setDoneIds] = useState<string[]>(() => { try { return JSON.parse(lsGet(missionKey(day)) ?? '[]'); } catch { return []; } });
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<Abfahrt | null>(null);
   const rendererRef = useRef<Renderer3D | null>(null);
-  const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const [glError, setGlError] = useState(false);
   const [ui, setUi] = useState<Ui>('ready');
   const [count, setCount] = useState(3);
@@ -120,7 +137,7 @@ export function GamePage() {
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
-    eng.setViewport(canvasRef.current?.getBoundingClientRect().width ?? 390);
+    eng.setViewport(stageRef.current?.getBoundingClientRect().width ?? 390);
     return eng;
   };
 
@@ -181,10 +198,9 @@ export function GamePage() {
   const [glGen, setGlGen] = useState(0);
 
   // Spielschleife
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const overlay = overlayRef.current;
-    if (!canvas || !overlay) return undefined;
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return undefined;
     // Testmodus ohne 3D (?nogl): nur Spiellogik und Oberfläche – für schnelle automatische Layout-Checks
     if (/[?&]nogl\b/.test(window.location.search)) {
       engineRef.current = makeEngine(false);
@@ -203,21 +219,27 @@ export function GamePage() {
     }
     // 3D erst nach dem ersten Bild aufbauen: Startkarte und Bühne stehen sofort, die Szene blendet ein
     const start = (): (() => void) | undefined => {
-      let renderer: Renderer3D;
+      // fertige Bühne aus dem Vorrat (beim App-Start vorgewärmt) oder eine neue
+      const warm = hasWarmStage();
+      let st: Stage;
       try {
-        renderer = new Renderer3D(canvas, overlay);
+        st = acquireStage();
       } catch {
         setGlError(true);
         return undefined;
       }
+      const { renderer, canvas, overlay } = st;
+      stage.append(canvas, overlay);
+      renderer.resize();
       renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
       rendererRef.current = renderer;
       // Testmodus (?lowgfx): winzige Auflösung, selten zeichnen – für schnelle automatische Layout-Checks
       const low = /[?&]lowgfx\b/.test(window.location.search);
       if (low) { renderer.quality = 0.25; renderer.resize(); }
-      renderer.warm();
       // beim Neuaufbau läuft die Fahrt weiter
       if (!engineRef.current || (glGen === 0 && uiRef.current === 'ready')) engineRef.current = makeEngine(false);
+      // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
+      if (warm) renderer.draw(engineRef.current!, 0);
       let raf = 0;
       let prev = performance.now();
       let acc = 0;
@@ -268,7 +290,7 @@ export function GamePage() {
       obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-tour'] });
       window.addEventListener('resize', onResize);
       // Homescreen-App auf iOS: 100vh ist dort zu kurz, darum die echte Bildschirmhöhe nehmen
-      const root = canvas.parentElement as HTMLElement | null;
+      const root = stage.parentElement as HTMLElement | null;
       const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
       const fit = () => {
         if (!root || !standalone) return;
@@ -289,14 +311,17 @@ export function GamePage() {
         canvas.removeEventListener('webglcontextrestored', onRestored);
         ro?.disconnect();
         window.removeEventListener('orientationchange', fit);
-        renderer.dispose();
+        releaseStage(st);
         window.removeEventListener('resize', onResize);
         document.removeEventListener('visibilitychange', onVis);
         obs.disconnect();
       };
     };
+    // vorgewärmte Bühne: sofort (das erste Bild ist schon im Übergang zu sehen), sonst nach dem ersten Bild
     let stop: (() => void) | undefined;
-    const cancel = afterPaint(() => { stop = start(); });
+    let cancel = () => {};
+    if (hasWarmStage()) stop = start();
+    else cancel = afterPaint(() => { stop = start(); });
     return () => { cancel(); stop?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [glGen]);
@@ -443,7 +468,7 @@ export function GamePage() {
   };
 
   const start = () => {
-    if (!canvasRef.current) return;
+    if (!stageRef.current) return;
     // Plätze vorher merken für „↑ 2“
     const pos = (list: GameBest[] | undefined) => (list ?? []).findIndex((b) => b.user_id === me.id);
     setPrevRank({ day: pos(today.data), season: pos(season.data) });
@@ -469,12 +494,12 @@ export function GamePage() {
   };
 
   // Daumensteuerung
-  const onPointerDown = (e: RPointerEvent<HTMLCanvasElement>) => {
+  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
     if (ui !== 'playing' && ui !== 'countdown') return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     engineRef.current?.pointerDown(e.clientX, e.clientY);
   };
-  const onPointerMove = (e: RPointerEvent<HTMLCanvasElement>) => {
+  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.buttons === 0) return;
     engineRef.current?.pointerMove(e.clientX, e.clientY);
   };
@@ -484,17 +509,18 @@ export function GamePage() {
 
   return (
     <div className={cx('abf', `abf--${ui}`)}>
-      <canvas
+      {/* 3D-Bühne: die Leinwand kommt aus dem Vorrat (pool.ts) und wird hier eingehängt */}
+      <div
         key={glGen}
-        ref={canvasRef}
-        className="abf__canvas"
+        ref={stageRef}
+        className="abf__stage"
+        role="application"
         aria-label="Spielfeld: Daumen seitlich ziehen zum Lenken, nach oben zum Ducken, nach unten zum Bremsen"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       />
-      <canvas ref={overlayRef} className="abf__overlay" aria-hidden="true" />
       {glError ? (
         <div className="abf-layer">
           <div className="abf-card abf-card--small">
