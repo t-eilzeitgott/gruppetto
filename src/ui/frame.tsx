@@ -3,6 +3,7 @@
  * von den Ladeansichten und beim Bauen für die statische Startansicht in index.html.
  */
 import type { ReactNode } from 'react';
+import { ScrollIndicator } from './ScrollIndicator';
 import { Icon, type IconName } from './Icon';
 import { Link, cx } from './kit';
 
@@ -49,6 +50,7 @@ export function ShellFrame({ children, active, sideActive = active, adminActive,
           {banner}
         </main>
       </div>
+      <ScrollIndicator tabbar={!hideTabBar} />
       {hideTabBar ? null : (
         <nav className="tabbar" aria-label="Hauptnavigation">
           {NAV.map((n) => (

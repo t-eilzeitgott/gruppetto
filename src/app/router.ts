@@ -20,6 +20,8 @@ function emit() {
 
 type VTDocument = Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void>; ready?: Promise<void> } };
 
+let running = 0;
+
 function transition(update: () => void) {
   const d = document as VTDocument;
   const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -27,12 +29,21 @@ function transition(update: () => void) {
     update();
     return;
   }
+  const root = document.documentElement;
   try {
+    // „vt“: Tableiste und Statusleiste während des Übergangs deckend (siehe styles.css)
+    running += 1;
+    root.classList.add('vt');
     const vt = d.startViewTransition(() => flushSync(update));
     // übersprungene Übergänge (schnelles Doppeltippen) sind kein Fehler
     vt.ready?.catch(() => undefined);
-    vt.finished.catch(() => undefined);
+    vt.finished.catch(() => undefined).finally(() => {
+      running -= 1;
+      if (running <= 0) { running = 0; root.classList.remove('vt'); }
+    });
   } catch {
+    running = Math.max(0, running - 1);
+    if (!running) root.classList.remove('vt');
     update();
   }
 }

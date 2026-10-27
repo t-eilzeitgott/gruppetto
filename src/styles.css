@@ -380,6 +380,16 @@ a.card--row:hover, a.card:hover { background: var(--surface2); }
 @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
 /* Seitenwechsel: kurzer, weicher Übergang (wo der Browser View Transitions kann) */
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.22s; animation-timing-function: cubic-bezier(0.2, 0, 0.2, 1); }
+/* Tableiste und Statusleiste stehen beim Seitenwechsel still: eigene Ebene ohne Überblenden (nur der aktive Tab
+   wechselt sofort). Unscharfer Hintergrund lässt sich im Übergang nicht abbilden – solange er läuft, sind beide
+   deckend in derselben Farbe, sonst scheint die überblendende Seite unscharf-los durch. */
+.tabbar { view-transition-name: tabbar; }
+.status-shade { view-transition-name: status-shade; }
+::view-transition-group(tabbar), ::view-transition-group(status-shade) { animation: none; }
+::view-transition-old(tabbar):not(:only-child), ::view-transition-old(status-shade):not(:only-child) { display: none; }
+::view-transition-new(tabbar):not(:only-child), ::view-transition-new(status-shade):not(:only-child) { animation: none; }
+::view-transition-old(tabbar):only-child, ::view-transition-new(tabbar):only-child { animation-duration: 0.22s; }
+html.vt .tabbar, html.vt .status-shade { background: linear-gradient(var(--header-bg), var(--header-bg)), var(--bg); }
 @media (prefers-reduced-motion: reduce) {
   .skel, .skel-t::before, .tip-count__skel::before { animation: none; }
   .reveal { animation: none; }
@@ -1857,3 +1867,23 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .setting .install-steps { padding: 0; background: none; border: 0; }
 .auth__links--center { justify-content: center; }
 .text-btn--muted { color: var(--muted); font-weight: 500; }
+
+/* Scroll-Anzeige (Touch): native ausblenden, eigene schlanke zwischen Statusleiste und Tableiste */
+.scrollbar { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  html { scrollbar-width: none; }
+  html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  .scrollbar {
+    display: block; position: fixed; z-index: 30; pointer-events: none;
+    right: calc(var(--safe-r) + 3px); width: 3px;
+    top: calc(var(--safe-t) + 6px); bottom: calc(var(--tabbar-h) + var(--safe-b) + 6px);
+    opacity: 0; transition: opacity 0.45s ease;
+  }
+  .scrollbar--full { bottom: calc(var(--safe-b) + 6px); }
+  .scrollbar.is-on { opacity: 1; transition-duration: 0.12s; }
+  .scrollbar__thumb {
+    width: 100%; border-radius: 999px; will-change: transform;
+    background: color-mix(in srgb, var(--text) 42%, transparent);
+  }
+  html.game-lock .scrollbar { display: none; }
+}
