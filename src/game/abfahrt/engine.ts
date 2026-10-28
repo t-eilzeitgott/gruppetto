@@ -7,6 +7,7 @@ import { mulberry32, between, chance, pick, type Rng } from './rng';
 import { EDGE, ROAD_HALF, SEG, Track, difficulty, type Obj, type Seg, type Side, type BiomeId } from './track';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { Mission, MissionStat } from './missions';
+import { cadenceFor, pedalStep, smooth } from './motion';
 
 export const G = 9.81;
 const CD = 0.00105;          // Luftwiderstand in Abfahrtshaltung (1/m)
@@ -29,6 +30,8 @@ export interface Player {
   kit: Kit;
   /** Wiegetritt 0–1 (Antritt, Sprint, Attacke am Berg) */
   stand?: number;
+  /** Drehzahl der Kurbel (rad/s), siehe motion.ts */
+  cad?: number;
 }
 
 export interface Opp {
@@ -37,6 +40,8 @@ export interface Opp {
   passed: boolean; group: number; bump: number; attacker: boolean;
   /** Wiegetritt 0–1 */
   stand?: number;
+  /** Drehzahl der Kurbel (rad/s), siehe motion.ts */
+  cad?: number;
 }
 
 export interface Particle {
@@ -462,8 +467,10 @@ export class Abfahrt {
     }
 
     // --- Pedal und Kosmetik
-    if (p.v < 13.5 || p.tuck < 0.5) p.pedal += (p.v / 2.1 + 2) * dt;
-    else p.pedal += (0 - Math.sin(p.pedal) * 2) * dt;  // Kurbel waagrecht in der Abfahrt
+    // treten bei niedrigem Tempo oder aufrecht; geduckt, bremsend und in der Luft rollen lassen – stufenlos,
+    // die Kurbel selbst hat Schwung (motion.ts) und pendelt beim Rollen in die Waagrechte
+    const drive = Math.max(smooth(16.5, 12.5, p.v), 1 - smooth(0.35, 0.65, p.tuck)) * (1 - p.brake) * (p.air ? 0 : 1);
+    pedalStep(p, drive * cadenceFor(p.v), dt);
     p.wobble = Math.max(0, p.wobble - dt * 2);
     p.slick = Math.max(0, p.slick - dt);
     this.shake = Math.max(0, this.shake - dt * 3);
@@ -831,7 +838,8 @@ export class Abfahrt {
         if (dz > 0 && dz < 2.6 && Math.abs(q.x - o.x) < 0.7) target = Math.min(target, q.v);
       }
       const acc = clamp((target - o.v) * 0.9, -6.5, o.v < 13 ? 2.6 : 1.6);
-      o.brake = acc < -1.5 ? 1 : 0;
+      // Bremshaltung weich (vorher ein Schalter: der Oberkörper sprang hoch und wieder runter)
+      o.brake += ((acc < -1.5 ? 1 : 0) - o.brake) * Math.min(1, dt * 6);
       o.v = Math.max(0, o.v + acc * dt);
       o.z += o.v * dt;
 
@@ -851,10 +859,10 @@ export class Abfahrt {
       const lean = Math.atan2(seg.curve * o.v * o.v, G) + o.vx * 0.06 + Math.sin(this.time * 14 + o.id) * o.bump * 0.15;
       o.lean += (clamp(lean, -0.7, 0.7) - o.lean) * Math.min(1, dt * 8);
       o.bump = Math.max(0, o.bump - dt);
-      const pedalling = o.v < 13.5 || o.attacker || acc > 0.8;
-      o.tuck += ((pedalling ? 0.2 : 1) - o.tuck) * Math.min(1, dt * 2);
-      if (pedalling) o.pedal += (o.v / 2.1 + 2) * dt;
-      else o.pedal -= Math.sin(o.pedal) * 2 * dt;
+      // treten: langsam, als Angreifer oder beim Beschleunigen – stufenlos statt An/Aus, dazu der Schwung der Kurbel
+      const drive = Math.max(smooth(16.5, 12.5, o.v), o.attacker ? 1 : 0, smooth(0.3, 1.2, acc)) * (1 - o.brake);
+      o.tuck += ((1 - 0.8 * drive) - o.tuck) * Math.min(1, dt * 2);
+      pedalStep(o, drive * cadenceFor(o.v), dt);
     }
     // Kühe laufen
     if (live) {

@@ -18,9 +18,30 @@ import { appearify, setAp } from './appear';
 
 /**
  * Haltung: Schräglage, Kurbelwinkel, geduckt, bremsen, Licht, Radumdrehung, Wiegetritt (0–1) und dessen Art:
- * sprint = 1 Sprint (Unterlenker, tief, Rad pendelt weit), 0 Wiegetritt am Berg (Griffe, aufrechter)
+ * sprint = 1 Sprint (Unterlenker, tief, Rad pendelt weit), 0 Wiegetritt am Berg (Griffe, aufrechter).
+ * Die übrigen Werte sind Nebenbewegungen (riderAnim.ts liefert sie; ohne sie steht der Fahrer ruhig).
  */
-export interface RiderPose { lean: number; pedal: number; tuck: number; brake: number; light: number; roll?: number; stand?: number; sprint?: number }
+export interface RiderPose {
+  lean: number; pedal: number; tuck: number; brake: number; light: number; roll?: number; stand?: number; sprint?: number;
+  /** Oberkörper arbeitet mit (0–1): Hüfte schwingt, Schultern und Kopf wippen im Takt der Kurbel */
+  pump?: number;
+  /** Rütteln (0–1): Pflaster, Schotter, Wind bei hohem Tempo */
+  shake?: number;
+  /** aus dem Sattel mit weichen Knien, Arme gebeugt (0–1): in der Luft, bei der Landung */
+  absorb?: number;
+  /** Atmen (0–1, weiche Welle): Schultern heben sich */
+  breath?: number;
+  /** Zeit (s) für das Rütteln */
+  t?: number;
+  /** Änderung der Schräglage (rad/s): der Oberkörper geht beim Einlenken voraus */
+  leanRate?: number;
+  /** Bremsbeginn (0–1): Oberkörper rutscht kurz nach vorn */
+  lurch?: number;
+  /** Blick in die Kurve (rad, + nach rechts) */
+  look?: number;
+  /** persönlicher Versatz fürs Rütteln */
+  seed?: number;
+}
 
 const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) => {
   const m = new THREE.Matrix4();
@@ -42,6 +63,8 @@ const SPINE = 0.52;                            // Hüfte bis Schulterlinie
  *  (relativ zum Kurbeldrehpunkt – beim Hochrad die Vorderradnabe) */
 const PELVIS_UP = new THREE.Vector3(0, 0.76, 0.04);
 const PELVIS_SPRINT = new THREE.Vector3(0, 0.75, 0.03);
+/** abfedern (Sprung, Landung): knapp über dem Sattel, Knie weich, Gewicht über dem Tretlager */
+const PELVIS_ABSORB = new THREE.Vector3(0, 0.72, 0.07);
 const ZAXIS = new THREE.Vector3(0, 0, 1);
 /** Knöchel relativ zur Pedalachse (Fußballen über dem Pedal) */
 const ANKLE = new THREE.Vector3(0, 0.075, 0.105);
@@ -628,6 +651,20 @@ export class RiderModel {
     const dance = st - spr;
     const tuck = Math.max(0, Math.min(1, p.tuck - p.brake * 0.6)) * (1 - st);
     const brake = Math.max(0, Math.min(1, p.brake));
+    // Nebenbewegungen (riderAnim.ts); ohne Angabe ruhig – so auch beim Zeichnen des Bildvorrats
+    const pump = (p.pump ?? 0) * (1 - st);
+    const shk = p.shake ?? 0;
+    const ab = (p.absorb ?? 0) * (1 - st);
+    const br = p.breath ?? 0;
+    const lurch = p.lurch ?? 0;
+    const lr = Math.max(-2.5, Math.min(2.5, p.leanRate ?? 0));
+    const tt = p.t ?? 0;
+    const sd = p.seed ?? 0;
+    // Rütteln: drei unregelmäßige Wellen (Becken, Schultern, Kopf), je Fahrer versetzt; höchstens ~5 Hz, damit
+    // es auch bei 30 Bildern je Sekunde noch als Zittern durchgeht
+    const n1 = shk ? Math.sin(tt * 17.3 + sd) * 0.6 + Math.sin(tt * 29.1 + sd * 1.3 + 0.7) * 0.4 : 0;
+    const n2 = shk ? Math.sin(tt * 14.7 + sd * 0.7 + 1.1) * 0.55 + Math.sin(tt * 25.3 + sd + 2.0) * 0.45 : 0;
+    const n3 = shk ? Math.sin(tt * 19.9 + sd * 2.1 + 0.4) * 0.5 + Math.sin(tt * 31.7 + sd * 0.4 + 2.6) * 0.5 : 0;
     const fit = this.fit;
     // Kurbel: Winkel 0 = rechtes Pedal oben, vorwärts drehend (pedal = 0 → Kurbel waagrecht)
     const th = p.pedal + Math.PI / 2;
@@ -637,6 +674,10 @@ export class RiderModel {
     const alpha = st * (0.1 + 0.12 * kind) * Math.sin(th);
     this.body.rotation.z = -p.lean + alpha;
     const counter = -alpha * (0.62 + 0.18 * kind);
+    // im Sitzen schwingt die Hüfte mit jedem Tritt (die Seite des gestreckten Beins sinkt), die Schultern gehen
+    // zum Teil mit; in der Kurve bleibt der Oberkörper etwas aufrechter als das Rad und geht beim Einlenken voraus
+    const hipRoll = pump * 0.07 * Math.cos(th);
+    const bodyRoll = counter + hipRoll * 0.5 + p.lean * 0.12 - lr * 0.03 + shk * 0.012 * n2;
     if (p.roll !== undefined) {
       // schnell gedreht (mehr als ~0,25 rad je Bild): Speichen verschwimmen
       const dr = Math.abs(p.roll - this.lastRoll);
@@ -657,16 +698,22 @@ export class RiderModel {
     // senkt sich mit jedem Tritt und bleibt über der Mitte, während das Rad pendelt
     const bb = fit.bb ?? BB;
     const pelvis = this.pelvis.copy(fit.pelvis).lerp(this.v3.copy(PELVIS_UP).lerp(PELVIS_SPRINT, kind).add(bb), st);
-    pelvis.y += st * 0.016 * Math.cos(2 * th);
-    pelvis.x += Math.sin(-counter) * pelvis.y * 0.85;
+    // Sprung und Landung: aus dem Sattel, Knie und Arme weich
+    if (ab > 0) pelvis.lerp(this.v3.copy(PELVIS_ABSORB).add(bb), ab);
+    pelvis.y += st * 0.016 * Math.cos(2 * th) + pump * 0.004 * Math.cos(2 * th) + shk * 0.006 * n1;
+    pelvis.x += Math.sin(-counter) * pelvis.y * 0.85 - pump * 0.01 * Math.cos(th) + shk * 0.003 * n2;
     // Zeitfahrrad: auf den Polstern liegen, außer beim Bremsen und im Wiegetritt
     const aero = fit.aero ? Math.max(0, 1 - brake * 1.6) * (1 - st) : 0;
     // rechte Hand: Griff → Unterlenker (geduckt) bzw. Auflieger
     const hand = this.hand.copy(fit.hood).lerp(fit.drop, Math.max(tuck, spr));
+    // Abstand Schulter–Hand: wippt mit dem Tritt (die Schultern sinken zweimal je Umdrehung), hebt sich beim
+    // Atmen, zittert auf rauer Straße, beim Abfedern beugen sich die Arme
+    const reach = 0.55 - 0.08 * tuck + 0.02 * dance - 0.08 * spr + 0.015 * brake
+      - pump * 0.012 * Math.cos(2 * th + 0.6) + br * 0.006 + shk * 0.008 * n2 - ab * 0.035;
     // Hochrad: fester, aufrechter Oberkörper (Griffe tief neben der Hüfte)
     let beta = fit.trunk !== undefined
       ? fit.trunk - 0.16 * Math.max(tuck, spr)
-      : trunkAngle(pelvis, hand, 0.55 - 0.08 * tuck + 0.02 * dance - 0.08 * spr + 0.015 * brake, hand.x - 0.172);
+      : trunkAngle(pelvis, hand, reach, hand.x - 0.172);
     if (fit.aero && aero > 0) {
       // Schulter über dem Ellbogen auf dem Polster, Hand vorn am Auflieger
       this.elbowPad.copy(fit.aero.pad).add(new THREE.Vector3(0, 0.028, -0.016));
@@ -674,22 +721,30 @@ export class RiderModel {
       beta += (ba - beta) * aero;
       hand.lerp(fit.aero.hand, aero);
     }
+    // Bremsbeginn: der Oberkörper rutscht kurz nach vorn
+    beta -= lurch * 0.08;
     // aufrechte Räder (Hollandlenker, Hochrad, Hochlenker) erlauben einen steileren Oberkörper
     beta = Math.max(0.12, Math.min(fit.upright ?? 0.95, beta));
     this.spine.set(0, Math.sin(beta), -Math.cos(beta));
     this.torso.position.copy(pelvis);
     this.torso.quaternion.setFromUnitVectors(UP, this.spine);
-    // Oberkörper gegen das Pendeln des Rads drehen (um die Fahrtrichtung)
-    this.torso.quaternion.premultiply(this.cq.setFromAxisAngle(ZAXIS, counter));
+    // Oberkörper gegen das Pendeln des Rads drehen (um die Fahrtrichtung), dazu Hüftschwung und Kurvenhaltung;
+    // die Schultern drehen beim Treten leicht mit
+    this.torso.quaternion.premultiply(this.cq.setFromAxisAngle(ZAXIS, bodyRoll));
+    if (pump > 0) this.torso.quaternion.premultiply(this.cq.setFromAxisAngle(UP, -pump * 0.025 * Math.sin(th)));
     this.sq.copy(this.torso.quaternion);
 
-    // Kopf: über dem Halsansatz, Blick nach vorn auf die Straße (flacher Rücken → Kopf weiter in den Nacken)
+    // Kopf: über dem Halsansatz, Blick nach vorn auf die Straße (flacher Rücken → Kopf weiter in den Nacken);
+    // er bleibt in der Kurve aufrechter als Rad und Rumpf, nickt leicht im Takt und schaut in die Kurve
     const flat = Math.max(0, Math.min(1, (0.7 - beta) / 0.45));
     const neck = this.v1.set(0, SPINE + 0.07, 0.01).applyQuaternion(this.sq).add(pelvis);
-    this.head.position.set(neck.x, neck.y + 0.11 - flat * 0.016 - spr * 0.045, neck.z - 0.05 - flat * 0.035);
-    this.head.rotation.x = 0.08 + flat * 0.14 - brake * 0.05 + spr * 0.08;
+    const headRoll = -counter * 0.4 + alpha * 0.25 - hipRoll * 0.3 + p.lean * 0.3 + shk * 0.025 * n1;
+    const up = 0.11 - flat * 0.016 - spr * 0.045 + br * 0.003;
+    this.head.position.set(neck.x - Math.sin(headRoll) * up, neck.y + Math.cos(headRoll) * up, neck.z - 0.05 - flat * 0.035 - ab * 0.02);
+    this.head.rotation.x = 0.08 + flat * 0.14 - brake * 0.05 + spr * 0.08 + pump * 0.035 * Math.cos(2 * th + 0.9) - lurch * 0.1 + shk * 0.035 * n3;
+    this.head.rotation.y = -(p.look ?? 0);
     // Kopf bleibt beim Pendeln fast waagrecht, im Sprint wippt er leicht mit
-    this.head.rotation.z = -counter * 0.4 + alpha * 0.25;
+    this.head.rotation.z = headRoll;
 
     // Beine: Hüfte → Knöchel über dem Pedal, Knie nach vorn
     const crank = fit.crank ?? CRANK;
@@ -704,7 +759,8 @@ export class RiderModel {
       shoe.rotation.x = pitch;
       const ankle = this.v3.copy(ANKLE).applyAxisAngle(XAXIS, pitch).add(ped);
       ankle.x -= sx * 0.008;
-      const hip = this.v1.set(pelvis.x + sx * 0.088, pelvis.y - 0.012 - sx * Math.sin(counter) * 0.088, pelvis.z - 0.02);
+      // Hüftgelenke folgen dem Pendeln und dem Hüftschwung (die Seite des gestreckten Beins sinkt)
+      const hip = this.v1.set(pelvis.x + sx * 0.088, pelvis.y - 0.012 - sx * Math.sin(counter) * 0.088 + sx * Math.sin(hipRoll) * 0.088, pelvis.z - 0.02);
       this.pole.set(sx * 0.12, 0.25, -1);
       const knee = this.v4;
       ik(hip, ankle, THIGH, SHIN, this.pole, knee, ankle);

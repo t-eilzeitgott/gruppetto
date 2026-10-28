@@ -20,7 +20,8 @@ import { buildPeaks, buildPeaksSteps, peakKeepers, peakLight, setPeakOpacity } f
 import { FAC_B, FAC_H, FAC_W, TB, portalFacade, tunnelMaterial, tunnelName, tunnelRing, tunnelUniforms, type TunnelUniforms } from './tunnel3d';
 import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
 import { GB, alphaTex, lin, lin255, propGeometries, type Prop3D, type RGBf } from './models3d';
-import { RiderModel, riderKitKey } from './rider3d';
+import { RiderModel, riderKitKey, type RiderPose } from './rider3d';
+import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
@@ -268,12 +269,15 @@ export class Renderer3D {
 
   // Dynamisches
   private riders = new Map<number, RiderModel>();
+  /** Nebenbewegungen und weiche Übergänge je Gegner (riderAnim.ts) */
+  private anims = new Map<number, RiderAnim>();
   /** Fahrer in der Ferne als 2D-Bilder (ein Zeichenaufruf für alle) */
   private rs!: RiderSprites;
   /** ab wo Bilder statt 3D-Fahrer (m; zum Prüfen änderbar) */
   spriteNear = SPRITE_NEAR;
   spriteFar = SPRITE_FAR;
   private player: RiderModel | null = null;
+  private playerAnim = new RiderAnim(1, true);
   private playerKit = '';
   private objPool: Map<string, THREE.Object3D[]> = new Map();
   private objUsed = new Map<string, number>();
@@ -4259,7 +4263,10 @@ export class Renderer3D {
     if (g.phase === 'crash' || g.phase === 'over') pm.crash(g.phaseT, g.crashSpin);
     else {
       pm.resetCrash();
-      pm.pose({ lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, light: this.bikeLight(), roll: p.z / 0.34, stand: p.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0 });
+      pm.pose(this.playerAnim.step({
+        lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, stand: p.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0,
+        v: p.v, air, surface: track.segAt(p.z).surface, wobble: p.wobble, light: this.bikeLight(), roll: p.z / 0.34,
+      }, this.lastDt, this.time.value));
     }
     // Bildschirmposition für Popups
     const v = new THREE.Vector3(w.x, w.y + air + 1.9, w.z).project(this.camera);
@@ -4296,12 +4303,13 @@ export class Renderer3D {
         const t = Math.max(0, Math.min(1, (dc - this.spriteNear) / (this.spriteFar - this.spriteNear)));
         sa = apQ(t * t * (3 - 2 * t));
       }
-      this.placeOpp(m, o, track, sa < 1);
+      const rp = this.placeOpp(m, o, track, sa < 1);
       m.setSprite(sa >= 1);
       m.setBodyAp(sa > 0 && sa < 1 ? apOut(sa) : undefined);
       if (sa > 0) {
-        const tk = Math.max(0, Math.min(1, o.tuck - o.brake * 0.6));
-        this.rs.add(this.w.x, this.w.y, this.w.z, m.group.rotation.y, o.lean, o.pedal, tk, o.stand ?? 0, sa, o.kit);
+        // das Bild bekommt dieselbe (gefederte) Haltung wie der 3D-Fahrer – in der Überblendung passen beide zusammen
+        const tk = Math.max(0, Math.min(1, rp.tuck - rp.brake * 0.6));
+        this.rs.add(this.w.x, this.w.y, this.w.z, m.group.rotation.y, rp.lean, rp.pedal, tk, rp.stand ?? 0, sa, o.kit);
       }
       // weit weg (Kamera): kleine Teile weglassen – erst, wenn sie sich im Shader schon aufgelöst haben
       const fh = RiderModel.FAR_HIDE;
@@ -4348,17 +4356,26 @@ export class Renderer3D {
       // außer Sicht: nur ausblenden – kommt der Fahrer zurück, ist er sofort wieder da (kein Neuaufbau, kein Ruckler);
       // wer nicht mehr im Rennen ist, fliegt raus
       if (alive.has(id)) m.group.visible = false;
-      else { this.scene.remove(m.group); this.riders.delete(id); }
+      else { this.scene.remove(m.group); this.riders.delete(id); this.anims.delete(id); }
     }
   }
 
-  private placeOpp(m: RiderModel, o: Opp, track: Track, pose = true) {
+  /** Gegner an seinen Ort setzen; liefert die (gefederte) Pose des Bildes – angewendet nur, wenn der 3D-Fahrer zu sehen ist */
+  private placeOpp(m: RiderModel, o: Opp, track: Track, pose = true): RiderPose {
     const w = this.w;
     track.world(o.z, o.x, 0, w);
     m.group.position.set(w.x, w.y, w.z);
     m.group.rotation.y = -w.th;
-    // nur als Bild zu sehen: Haltung nicht rechnen
-    if (pose) m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.bikeLight(), roll: o.z / 0.34, stand: o.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0 });
+    // die Federn laufen auch, solange nur das Bild zu sehen ist (kein Nachschwingen, wenn der 3D-Fahrer wiederkommt);
+    // die Haltung selbst wird dann nicht gerechnet
+    let an = this.anims.get(o.id);
+    if (!an) { an = new RiderAnim(o.id * 7.31 + 3); this.anims.set(o.id, an); }
+    const rp = an.step({
+      lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, stand: o.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0,
+      v: o.v, air: 0, surface: track.segAt(o.z).surface, wobble: o.bump, light: this.bikeLight(), roll: o.z / 0.34,
+    }, this.lastDt, this.time.value);
+    if (pose) m.pose(rp);
+    return rp;
   }
 
   private poolGet(kind: string, make: () => THREE.Object3D): THREE.Object3D {

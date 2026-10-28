@@ -2,14 +2,19 @@
  * Fahrer als 2D-Bilder für die Ferne (Impostors).
  *
  * Einmal (auf der Startkarte, in Häppchen) werden echte 3D-Fahrer in einen Bildvorrat gezeichnet: aus sieben
- * Blickwinkeln (hinten … Seite … vorn; die andere Seite ist gespiegelt), in vier Kurbelstellungen und drei
+ * Blickwinkeln (hinten … Seite … vorn; die andere Seite ist gespiegelt), in acht Kurbelstellungen und drei
  * Haltungen (sitzend, geduckt, im Wiegetritt). Im Vorrat stehen keine festen Farben, sondern Anteile je Rolle
  * (Trikot, Absetzung, Helm, Hose, Haut, Schuhe, Rest in Grau) und die Normalen – eingefärbt und beleuchtet wird
  * erst beim Zeichnen, für jeden Fahrer in seinem Trikot und im Licht der Szene.
  *
- * Zwischen den Bildern wird überblendet (Blickwinkel, Kurbel, Haltung): nichts springt. Ab gut 26 m löst sich
- * der 3D-Fahrer gerastert auf, während das Bild in genau den übrigen Bildpunkten erscheint (appear.ts). Alle
- * Bildfahrer zusammen kosten einen Zeichenaufruf statt rund zwanzig je Fahrer.
+ * Zwischen den Bildern wird überblendet (Blickwinkel, Kurbel, und alle drei Haltungen zugleich – ein Fahrer kann
+ * halb geduckt sein und gerade aus dem Sattel gehen, ohne dass das Bild umschaltet): nichts springt. Acht
+ * Kurbelstellungen liegen so dicht, dass die Beine sich bewegen statt ineinander zu verschwimmen. Ab gut 44 m
+ * löst sich der 3D-Fahrer gerastert auf, während das Bild in genau den übrigen Bildpunkten erscheint
+ * (appear.ts). Alle Bildfahrer zusammen kosten einen Zeichenaufruf statt rund zwanzig je Fahrer.
+ *
+ * Vorrat: eine Zeile je Blickwinkel und Haltung (7 × 3), in der Zeile die Kurbelstellungen – so bleibt er
+ * schmal (512 px breit), egal wie viele Kurbelstellungen es sind.
  */
 import * as THREE from 'three';
 import type { Kit } from './rider';
@@ -22,11 +27,12 @@ import { lin } from './models3d';
 /** Blickwinkel 0°, 30°, … 180° (0 = von hinten) */
 const NA = 7;
 /** Kurbelstellungen je Umdrehung */
-const NF = 4;
+const NF = 8;
 /** Haltungen: sitzend, geduckt, Wiegetritt */
 const NP = 3;
-const COLS = NF * NP;
-const ROWS = NA;
+/** Vorrat: Spalte = Kurbelstellung, Zeile = Blickwinkel · NP + Haltung */
+const COLS = NF;
+const ROWS = NA * NP;
 /** Zellgröße im fertigen Vorrat (px); gezeichnet wird doppelt so fein und dann gemittelt */
 const CPX = 64;
 const SS = 2;
@@ -263,15 +269,15 @@ export class RiderSprites {
   }
 
   private bakeCell(gl: THREE.WebGLRenderer, b: Bake, c: number) {
-    // Zelle: Zeile = Blickwinkel, Spalte = Haltung · NF + Kurbelstellung
-    const ai = Math.floor(c / (NF * NP));
-    const rest = c % (NF * NP);
-    const pi = Math.floor(rest / NF);
-    const fi = rest % NF;
+    // Zelle: Zeile = Blickwinkel · NP + Haltung, Spalte = Kurbelstellung (die Zeichenfläche hält eine Zeile)
+    const row = Math.floor(c / NF);
+    const fi = c % NF;
+    const ai = Math.floor(row / NP);
+    const pi = row % NP;
     for (const k of ['F', 'A', 'B'] as const) this.posePose(b.models[k], fi, pi);
     this.placeCam(b.cam, ai, b.cam.userData.cy as number);
     const px = CPX * SS;
-    const x = (pi * NF + fi) * px;
+    const x = fi * px;
     const y = 0;
     const passes: [THREE.Scene, number, boolean][] = [[b.scenes.F, 0, true], [b.scenes.F, 1, false], [b.scenes.A, 2, false], [b.scenes.B, 3, false]];
     for (const [scene, ti, normal] of passes) {
@@ -286,18 +292,18 @@ export class RiderSprites {
     }
   }
 
-  /** fertige Zeile (ein Blickwinkel) in den Vorrat rechnen: 2×2 mitteln, Rollen trennen */
-  private combineRow(gl: THREE.WebGLRenderer, b: Bake, ai: number) {
+  /** fertige Zeile (ein Blickwinkel, eine Haltung) in den Vorrat rechnen: 2×2 mitteln, Rollen trennen */
+  private combineRow(gl: THREE.WebGLRenderer, b: Bake, row: number) {
     const u = COMBINE.uniforms;
     u.uN.value = b.src[0].texture;
     u.uF.value = b.src[1].texture;
     u.uA.value = b.src[2].texture;
     u.uB.value = b.src[3].texture;
-    u.uRow.value = ai * CPX;
+    u.uRow.value = row * CPX;
     for (let k = 0; k < 3; k++) {
       const rt = this.out[k];
-      rt.viewport.set(0, ai * CPX, COLS * CPX, CPX);
-      rt.scissor.set(0, ai * CPX, COLS * CPX, CPX);
+      rt.viewport.set(0, row * CPX, COLS * CPX, CPX);
+      rt.scissor.set(0, row * CPX, COLS * CPX, CPX);
       u.uOut.value = k;
       gl.setRenderTarget(rt);
       gl.render(b.quad, b.qcam);
@@ -391,7 +397,7 @@ attribute vec4 iC4; // Schuhe
 uniform vec4 uCell;
 varying vec2 vUv;
 varying vec4 vSel;  // Blickwinkel a0, a1, Kurbel f0, f1
-varying vec4 vW;    // Gewichte: Blickwinkel, Kurbel, Haltung; Haltung 2 (1 = geduckt, 2 = Wiegetritt)
+varying vec4 vW;    // Gewichte: Blickwinkel, Kurbel, geduckt, Wiegetritt (sitzend = Rest)
 varying float vFade;
 varying vec3 vR;
 varying vec3 vU;
@@ -420,9 +426,9 @@ void main() {
   float f1 = mod(f0 + 1.0, ${NF.toFixed(1)});
   float st = clamp(iA.w, 0.0, 1.0);
   float tk = clamp(iA.z, 0.0, 1.0);
-  float p2 = st > 0.01 ? 2.0 : 1.0;
+  // alle drei Haltungen zugleich: aus dem Sattel löst den Rest ab, der sitzend/geduckt mischt
   vSel = vec4(a0, a1, f0, f1);
-  vW = vec4(af - a0, pf - f0, st > 0.01 ? st : tk, p2);
+  vW = vec4(af - a0, pf - f0, tk * (1.0 - st), st);
   vFade = iF.x;
   // zur Kamera gedreht, von oben gesehen etwas zurückgekippt
   vec3 F = vec3(dC.x, 0.0, dC.y);
@@ -475,7 +481,7 @@ varying vec3 vSk;
 varying vec3 vSo;
 vec4 t1; vec4 t2; vec4 t3;
 void acc(float a, float f, float p, float w) {
-  vec2 uv = (vec2(p * ${NF.toFixed(1)} + f, a) + vUv) / vec2(${COLS.toFixed(1)}, ${ROWS.toFixed(1)});
+  vec2 uv = (vec2(f, a * ${NP.toFixed(1)} + p) + vUv) / vec2(${COLS.toFixed(1)}, ${ROWS.toFixed(1)});
   t1 += texture2D(uT1, uv) * w;
   t2 += texture2D(uT2, uv) * w;
   t3 += texture2D(uT3, uv) * w;
@@ -485,17 +491,15 @@ void main() {
   float dth = ${DITHER_GLSL};
   if (dth >= vFade) discard;
   t1 = vec4(0.0); t2 = vec4(0.0); t3 = vec4(0.0);
-  float wa = vW.x, wf = vW.y, wp = vW.z;
+  float wa = vW.x, wf = vW.y, wT = vW.z, wS = vW.w;
+  float wN = 1.0 - wT - wS;
   for (int i = 0; i < 2; i++) {
     float a = i == 0 ? vSel.x : vSel.y;
     float ka = i == 0 ? 1.0 - wa : wa;
     if (ka <= 0.0) continue;
-    acc(a, vSel.z, 0.0, ka * (1.0 - wf) * (1.0 - wp));
-    acc(a, vSel.w, 0.0, ka * wf * (1.0 - wp));
-    if (wp > 0.0) {
-      acc(a, vSel.z, vW.w, ka * (1.0 - wf) * wp);
-      acc(a, vSel.w, vW.w, ka * wf * wp);
-    }
+    if (wN > 0.0) { acc(a, vSel.z, 0.0, ka * (1.0 - wf) * wN); acc(a, vSel.w, 0.0, ka * wf * wN); }
+    if (wT > 0.0) { acc(a, vSel.z, 1.0, ka * (1.0 - wf) * wT); acc(a, vSel.w, 1.0, ka * wf * wT); }
+    if (wS > 0.0) { acc(a, vSel.z, 2.0, ka * (1.0 - wf) * wS); acc(a, vSel.w, 2.0, ka * wf * wS); }
   }
   float cov = t1.a;
   // Ränder scharf; dünne Teile (Felgen, Rohre) mit ihrer Deckung statt weggeschnitten

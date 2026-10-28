@@ -21,6 +21,7 @@ import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { RiderType, SprintRider } from './sprint';
 import type { StageRef } from './stageRef';
+import { pedalStep } from './motion';
 
 /** Fahrertypen im Bergfinale: Dauerleistung (W/kg), Antritt (W/kg darüber), Abfahrtskönnen, Punktebonus */
 export const BERG_STATS: Record<RiderType, { label: string; cp: number; kick: number; desc: number; bonus: number }> = {
@@ -583,9 +584,9 @@ export class BergRace {
       this.topV = Math.max(this.topV, p.v);
     }
     this.lateral(dt, stage === 'descent' && racing);
-    // Pedale: Trittfrequenz in Echtzeit (der Zeitraffer soll nicht hektisch wirken); bergab rollen
-    if (stage === 'descent' && P === 0) p.pedal += (0 - Math.sin(p.pedal) * 2) * dt;
-    else p.pedal += (Math.min(9.5, 3.2 + p.v * 0.95) * dt) / this.warp;
+    // Pedale: Trittfrequenz in Echtzeit (der Zeitraffer soll nicht hektisch wirken); bergab rollen lassen –
+    // die Kurbel läuft aus und kommt wieder auf Touren (motion.ts), statt umzuschalten
+    pedalStep(p, stage === 'descent' && P === 0 ? 0 : Math.min(9.5, 3.2 + p.v * 0.95) / this.warp, dt);
     p.tuck += ((stage === 'descent' ? (posture < 0.7 ? 1 : 0.45) : stand(this.stand)) - p.tuck) * Math.min(1, dt * 5);
     p.brake += (clamp(B / 6.5, 0, 1) - p.brake) * Math.min(1, dt * 8);
     p.stand = this.stand;
@@ -862,8 +863,7 @@ export class BergRace {
       o.vx = (nx - o.x) / dt;
       o.x = clamp(nx, -XMAX, XMAX);
       o.lean += (clamp(-o.vx * 0.12 + Math.atan2(seg.curve * o.v * o.v, G) * 0.8, -0.55, 0.55) - o.lean) * Math.min(1, dt * 6);
-      if (stage === 'descent' && P === 0) o.pedal += (0 - Math.sin(o.pedal) * 2) * dt;
-      else o.pedal += (Math.min(9.5, 3.2 + o.v * 0.95) * dt) / this.warp;
+      pedalStep(o, stage === 'descent' && P === 0 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / this.warp, dt);
       o.tuck += ((stage === 'descent' ? (posture < 0.7 ? 1 : 0.45) : stand(o.stand)) - o.tuck) * Math.min(1, dt * 5);
       o.brake += (clamp(B / 6.5, 0, 1) - o.brake) * Math.min(1, dt * 8);
     }

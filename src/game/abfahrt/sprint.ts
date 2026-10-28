@@ -12,6 +12,7 @@ import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, t
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { StageRef } from './stageRef';
+import { pedalStep } from './motion';
 
 export type RiderType = 'sprinter' | 'puncheur' | 'allround' | 'rouleur' | 'climber';
 
@@ -446,7 +447,7 @@ export class SprintRace {
     p.vx = (nx - p.x) / dt;
     p.x = clamp(nx, -XMAX, XMAX);
     p.lean += (clamp(-p.vx * 0.12, -0.25, 0.25) - p.lean) * Math.min(1, dt * 8);
-    p.pedal += p.v * dt * 0.62 * (go ? 1.15 : 1);
+    pedalStep(p, p.v * 0.62 * (go ? 1.15 : 1), dt);
     p.tuck += ((go ? 0.15 : 0.6) - p.tuck) * Math.min(1, dt * 5);
     // Antritt im Wiegetritt
     p.stand = (p.stand ?? 0) + ((go ? 1 : 0) - (p.stand ?? 0)) * Math.min(1, dt * 6);
@@ -576,7 +577,7 @@ export class SprintRace {
       o.vx = (nx - o.x) / dt;
       o.x = clamp(nx, -XMAX, XMAX);
       o.lean += (clamp(-o.vx * 0.12, -0.25, 0.25) - o.lean) * Math.min(1, dt * 8);
-      o.pedal += o.v * dt * 0.62;
+      pedalStep(o, o.v * 0.62, dt);
       o.tuck += ((o.going ? 0.15 : 0.6) - o.tuck) * Math.min(1, dt * 5);
       o.stand = (o.stand ?? 0) + ((o.going && o.e > 0.2 ? 1 : 0) - (o.stand ?? 0)) * Math.min(1, dt * 6);
     }
