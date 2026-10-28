@@ -45,6 +45,10 @@ export interface Building {
   /** Ladenschild (Index im Schilderatlas, −1 = keins) und Steckschild (Apothekenkreuz, Tabak; −1 = keins) */
   sign: number;
   badge: number;
+  /** Laubengang: Pfeiler und Bögen vor dem Erdgeschoss (Palazzi an der Piazza) */
+  arcade?: boolean;
+  /** Kirche an der Piazza: hoher Campanile */
+  tall?: boolean;
 }
 
 export type SpriteKind =
@@ -84,7 +88,7 @@ export interface Decal {
 }
 
 export interface Banner {
-  kind: 'gpm' | 'sprint' | 'welcome' | 'arch' | 'flamme' | 'finish';
+  kind: 'gpm' | 'sprint' | 'welcome' | 'arch' | 'flamme' | 'finish' | 'gate';
   text: string;
   sub?: string;
 }
@@ -125,6 +129,8 @@ export interface Section {
   name: string;
   alt: number;      // Höhe am Anfang (m ü. NN)
   descent: number;  // laufende Nummer der Abfahrt
+  /** Stadt: Piazza (Segmente von … bis) – Häuser zurückgesetzt, Brunnen, Laubengänge, Campanile */
+  piazza?: [number, number];
 }
 
 const PASSES: [string, number][] = [
@@ -457,7 +463,9 @@ export class Track {
     const bridge = new Array<number>(n).fill(0);
     // eigener Zufallsstrom: die übrige Strecke (Hindernisse, Deko) bleibt dieselbe wie ohne Brücke
     const rb = mulberry32((this.seed * 7 + start * 131 + 17) >>> 0);
-    if (!race && p.biome !== 'village' && chance(rb, 0.6)) {
+    // Sprint: auf der Anfahrt eine Flussbrücke in die Stadt (am Wasser fast immer)
+    const wantBridge = race ? sprint && secIndex === 0 && chance(rb, this.finale?.waterfront ? 0.9 : 0.55) : chance(rb, 0.6);
+    if (p.biome !== 'village' && wantBridge) {
       const BL = 16;      // Brücke (Segmente)
       const RL = 12;      // Rampen davor und danach (der Graben läuft aus)
       const clear = (k: number) => k >= 0 && k < n && marks[k] === 0 && Math.abs(curve[k]) < 0.012 && !tunnels.some(([a, b]) => k >= a - 40 && k < b + 40)
@@ -477,7 +485,7 @@ export class Track {
         }
       }
     }
-    const buildings = p.biome === 'village' ? this.villageBuildings(start, n, 'town')
+    const buildings = p.biome === 'village' ? this.villageBuildings(start, n, 'town', curve, marks)
       : hamlet ? this.villageBuildings(start + hamlet[0], hamlet[1] - hamlet[0], 'hamlet') : { L: [], R: [] };
 
     let sideRun = 0;
@@ -1035,8 +1043,22 @@ export class Track {
    * Häuserzeilen: Stil, Geschosse, Läden mit Schildern je nach Landessprache und Ortsgröße.
    * Eigener Zufall je Abschnitt – die Strecke selbst bleibt davon unberührt.
    */
-  private villageBuildings(start: number, n: number, mode: 'town' | 'hamlet') {
+  private villageBuildings(start: number, n: number, mode: 'town' | 'hamlet', curve?: number[], marks?: number[]) {
     const r = mulberry32((this.seed ^ Math.imul(start + 17, 2654435761)) >>> 0);
+    // Zielstadt im Sprint: Piazza auf einem geraden Stück in der ersten Hälfte (vor den Finalkurven)
+    let piazza: [number, number] | null = null;
+    if (mode === 'town' && this.kind !== 'descent' && curve && marks) {
+      const PL = 38;
+      const ok = (k: number) => k >= 0 && k < n && marks[k] === 0 && Math.abs(curve[k]) < 0.006;
+      const k0s = Math.floor(between(r, 0.12, 0.3) * n);
+      for (let k0 = k0s; k0 + PL < n * 0.6; k0 += 3) {
+        let good = true;
+        for (let k = k0 - 6; k < k0 + PL + 6 && good; k++) if (!ok(k)) good = false;
+        if (good) { piazza = [start + k0, start + k0 + PL]; break; }
+      }
+      const sec = this.sections[this.sections.length - 1];
+      if (piazza) sec.piazza = piazza;
+    }
     const lang = this.lang;
     const S = STYLE;
     // Bergdörfer (Bergfinale, Dolomiten-Abfahrt, Weiler) mit Chalets und Bruchstein, Städte mit Bürgerhäusern
@@ -1047,14 +1069,16 @@ export class Track {
           : [S.ocker, S.lachs, S.creme, S.gelb, S.terrakotta, S.ocker, S.gelb];
     const alpPool: number[] = lang === 'en' ? [S.bruchstein, S.backstein] : [S.chalet, S.chalet, S.bruchstein, S.chalet, S.creme];
     const big = this.kind === 'sprint' && mode === 'town';
-    let churchAt = mode === 'town' ? Math.floor(between(r, 0.25, 0.6) * n) : chance(r, 0.5) ? Math.floor(n * 0.5) : -1;
+    let churchAt = piazza ? piazza[0] - start + 12 : mode === 'town' ? Math.floor(between(r, 0.25, 0.6) * n) : chance(r, 0.5) ? Math.floor(n * 0.5) : -1;
     let hallAt = mode === 'town' && chance(r, big ? 1 : 0.6) ? Math.floor(between(r, 0.3, 0.8) * n) : -1;
     const shopRate = mode === 'hamlet' ? 0.12 : big ? 0.6 : 0.42;
     const make = (from: number, to: number, side: number): Building[] => {
       const out: Building[] = [];
       let i = from;
       while (i < to) {
+        const inPiazza = !!piazza && i >= piazza[0] - 1 && i < piazza[1];
         let style = chance(r, alpine) ? pick(r, alpPool) : pick(r, townPool);
+        if (inPiazza) style = pick(r, [S.haussmann, S.creme, S.ocker, S.gelb, S.haussmann]);
         let len = Math.round(between(r, 3, 6));
         let floors = style === S.chalet || style === S.bruchstein ? Math.round(between(r, 1, 2.2))
           : style === S.haussmann ? Math.round(between(r, 3, 4.4)) : Math.round(between(r, 2, 3.4));
@@ -1063,7 +1087,10 @@ export class Track {
         let sign = -1;
         let badge = -1;
         // Kirche und Rathaus je einmal pro Ort (eine Seite)
-        if (side < 0 && churchAt >= 0 && i - start >= churchAt) { style = S.kirche; len = Math.round(between(r, 7, 9)); floors = 2; churchAt = -1; }
+        let tall = false;
+        let arcade = false;
+        if (side < 0 && churchAt >= 0 && i - start >= churchAt) { style = S.kirche; len = Math.round(between(r, 7, 9)); floors = 2; churchAt = -1; tall = inPiazza; }
+        else if (inPiazza) { arcade = true; len = Math.round(between(r, 5, 8)); floors = Math.max(2, floors); }
         else if (side > 0 && hallAt >= 0 && i - start >= hallAt) {
           style = S.rathaus; len = Math.round(between(r, 6, 8)); floors = 2; hallAt = -1; sign = 7;
         } else if (style !== S.kirche && chance(r, shopRate)) {
@@ -1072,13 +1099,23 @@ export class Track {
           if (sign === 2) badge = lang === 'fr' ? 1 : lang === 'it' ? 2 : -1;
           if (sign === 1 && lang === 'en' && chance(r, 0.6)) badge = 3;
         }
+        // kein Haus ragt von der Gasse in die Piazza hinein
+        if (piazza && !inPiazza && i < piazza[0] && i + len > piazza[0] - 1) {
+          len = piazza[0] - 1 - i;
+          if (len < 2) { i = piazza[0] - 1; continue; }
+        }
+        // Piazza: Häuser weit zurück, dicht an dicht; sonst nah an der Gasse
+        const setback = inPiazza ? EDGE + 8.5 : EDGE + (mode === 'hamlet' ? between(r, 2, 3.6) : between(r, 1.6, 2.6));
+        if (inPiazza && i + len > piazza![1] + 1 && style !== S.kirche) len = Math.max(2, piazza![1] + 1 - i);
         out.push({
-          start: i, len, floors, style, sign, badge,
+          start: i, len, floors, style, sign: inPiazza && style !== S.kirche ? -1 : sign, badge: inPiazza ? -1 : badge,
           depth: between(r, 8, 12),
-          setback: EDGE + (mode === 'hamlet' ? between(r, 2, 3.6) : between(r, 1.6, 2.6)),
+          setback,
           seed: Math.floor(r() * 1e9),
+          arcade: arcade || undefined,
+          tall: tall || undefined,
         });
-        i += len + (chance(r, mode === 'hamlet' ? 0.55 : 0.3) ? Math.round(between(r, 1, mode === 'hamlet' ? 6 : 4)) : 0);
+        i += len + (inPiazza ? 0 : chance(r, mode === 'hamlet' ? 0.55 : 0.3) ? Math.round(between(r, 1, mode === 'hamlet' ? 6 : 4)) : 0);
       }
       return out;
     };
@@ -1187,6 +1224,22 @@ export class Track {
     }
     if (biome === 'village' && this.kind !== 'descent') {
       put(start + 18, 1, 'townSign', 0.9, { s: 1, f: false, text: name });
+      // Zielstadt (Sprint- und Bergfinale): Stadttor am Ortseingang, Piazza mit Brunnen, Schirmen und Laternen
+      {
+        if (Math.abs(curve[24]) < 0.01) S(start + 24).banner = { kind: 'gate', text: name };
+        const pz = this.sections[sec].piazza;
+        if (pz) {
+          const mid = Math.round((pz[0] + pz[1]) / 2);
+          put(mid, 1, 'fountain', 4.6, { s: 1.25, f: false });
+          put(mid - 9, -1, 'fountain', 4.2, { s: 1, f: false });
+          for (let i = pz[0] + 2; i < pz[1] - 1; i += 3) {
+            const sign = chance(r, 0.5) ? -1 : 1;
+            if (chance(r, 0.55)) put(i, sign, 'parasol', between(r, 1.6, 3.2), { s: 1 });
+            if (i % 6 === 0) { put(i, -sign, 'lamp', 1.2, { s: 1, f: sign > 0 }); S(i).lamp = true; }
+            if (chance(r, 0.3)) put(i, sign, pick(r, ['treeRound', 'cypress'] as SpriteKind[]), between(r, 5.5, 7), { s: between(r, 0.7, 0.95) });
+          }
+        }
+      }
     } else if (biome === 'village') {
       put(start + 18, 1, 'townSign', 0.9, { s: 1, f: false, text: name });
       S(start + 28).banner = { kind: 'welcome', text: name };

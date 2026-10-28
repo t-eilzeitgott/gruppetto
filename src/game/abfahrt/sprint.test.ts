@@ -101,3 +101,32 @@ test('Echtes Finale (Neapel): Kurven an ihrer Stelle, Zielgerade gerade und 4 % 
   const plain = new Track('2026-05-14', [], 'sprint', 'Napoli');
   assert.ok(plain.seg(iF - 100).grade <= 0.01);
 });
+
+test('Zielstadt: Stadttor am Ortseingang, Piazza mit zurückgesetzten Palazzi, Laubengängen, Campanile und Brunnen', () => {
+  const t = new Track('2026-05-14', [], 'sprint', 'Napoli');
+  t.seg(SPRINT_FINISH / 2);   // Abschnitte entstehen beim ersten Zugriff
+  const town = t.sections[1];
+  assert.equal(town.biome, 'village');
+  assert.ok(town.piazza, 'Piazza angelegt');
+  const [p0, p1] = town.piazza!;
+  assert.ok(p0 > town.start + 40 && p1 < town.start + (town.end - town.start) * 0.6, 'Piazza in der ersten Hälfte der Stadt');
+  let arcades = 0;
+  let tall = 0;
+  let fountains = 0;
+  for (let i = p0; i < p1; i++) {
+    const s = t.seg(i);
+    for (const b of [s.bL, s.bR]) {
+      if (!b) continue;
+      assert.ok(b.setback > 10, `Haus an der Piazza steht zurück (${b.setback.toFixed(1)} m)`);
+      if (b.arcade) arcades++;
+      if (b.tall) tall++;
+    }
+    fountains += s.sprites?.filter((x) => x.k === 'fountain').length ?? 0;
+  }
+  assert.ok(arcades > 0, 'Laubengänge');
+  assert.ok(tall > 0, 'Campanile');
+  assert.equal(fountains, 2);
+  const gate = t.seg(town.start + 24).banner;
+  assert.equal(gate?.kind, 'gate');
+  assert.equal(gate?.text, 'Napoli');
+});

@@ -134,6 +134,15 @@ export const DEMO_REAL_PROFILES: Record<number, StageProfileData> = Object.fromE
     .map((s) => [tourStageId(s.n), { points: profilePoints(s), waypoints: s.waypoints, source: TOUR_2027.source }]),
 );
 
+/** Beispieltexte für das Finale der Flach- und Hügeletappen (Vorlage: echte Streckenbücher) */
+const DEMO_FINALES = [
+  'Die letzten 3 km gerade am Hafen entlang. Linkskurve 650 m vor dem Ziel in einen leichten Anstieg (4 %) über die gepflasterte Via Acton, zwei Rechtskurven 400 m vor dem Ziel auf die 8 m breite, gepflasterte Zielgerade.',
+  'Breite, überwiegend gerade Straßen. Der letzte Kilometer steigt leicht an, letzte Kurve 300 m vor dem Ziel, Zielgerade 8 m breit.',
+  'Die letzten 3 km auf breiten Stadtstraßen mit einigen Kurven, leicht steigend bis zur Brücke über den Fluss. Über weite Kurven auf die Zielgerade (450 m, 3,7 % Steigung), 8 m breit.',
+  'Nur zwei Kurven im Finale: rechts auf die Uferpromenade 1 km vor dem Ziel und ein letzter kleiner Anstieg 150 m vor dem Ziel auf die 8 m breite Zielgerade.',
+  'Die letzten 3 km am See: erst breit und fast gerade, dann kurviger entlang des Ufers und etwas schmaler. Zielgerade 300 m, 7 m breit.',
+];
+
 const GIRO_STAGES: Stage[] = PLAN.map(([day, h, m, kind, km, from, to], i) => ({
   id: 1000 + i + 1,
   tour_id: 'giro-2027',
@@ -153,6 +162,9 @@ const GIRO_STAGES: Stage[] = PLAN.map(([day, h, m, kind, km, from, to], i) => ({
     finale: 'Beispieltext: Die letzten 6 km steigen konstant um 9–10 %, mit einer Rampe von 14 % kurz vor dem Ziel. Zielgerade 150 m, 7 m breit.',
     feed: '61.2 - 118.4',
     neutral_km: 3,
+  } : kind === 'flat' || kind === 'hilly' ? {
+    // Beispielfinale (wie bei einer echten Etappe): daraus baut das Sprintfinale seine letzten Kilometer
+    finale: DEMO_FINALES[(i + 1) % DEMO_FINALES.length],
   } : undefined,
 }));
 

@@ -2479,7 +2479,8 @@ export class Renderer3D {
       if (s.banner) {
         const k = s.banner.kind;
         if (this.soon(2)) { yield; resume(); }
-        this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : '#ffffff');
+        if (k === 'gate') this.gate(town, group, disp, a, s.banner.text);
+        else this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : '#ffffff');
       }
       for (const f of g.friends) {
         if (Math.floor(f.meters / SEG) !== s.i) continue;
@@ -3350,12 +3351,69 @@ export class Renderer3D {
       for (const [x0, y0, x1, y1] of sides) T.plain.quad(P0(x0 * 1.22, y0 * 1.22, top - 0.1), P0(x1 * 1.22, y1 * 1.22, top - 0.1), P0(x1 * 1.22, y1 * 1.22, top), P0(x0 * 1.22, y0 * 1.22, top), cap);
     }
 
+    // ---- Laubengang vor dem Erdgeschoss: Pfeiler, Rundbögen, Terrasse darüber (Palazzi an der Piazza)
+    if (b.arcade) {
+      const AD = 3.0;                 // Tiefe des Laubengangs
+      const AH = GH - 0.25;           // Oberkante der Bögen
+      const pil = lin('#d8cfbd');
+      const pilD = shadeF(pil, 0.82);
+      const soff = lin('#b9ae99');
+      const dark = lin('#3a3028');
+      const lp = l0 + out * AD;       // Pfeilerlinie
+      const np = Math.max(1, Math.round(L / 3.6));
+      const step = L / np;
+      const PW = 0.55;
+      for (let k = 0; k <= np; k++) {
+        const c = Math.min(L - PW / 2, Math.max(PW / 2, k * step));
+        const s0 = c - PW / 2;
+        const s1 = c + PW / 2;
+        // Pfeiler (vier Seiten)
+        T.plain.quad(at(lp, s0, -0.5), at(lp, s1, -0.5), at(lp, s1, AH), at(lp, s0, AH), out * sg < 0 ? pil : pil);
+        T.plain.quad(at(lp - out * PW, s1, -0.5), at(lp - out * PW, s0, -0.5), at(lp - out * PW, s0, AH), at(lp - out * PW, s1, AH), pilD);
+        T.plain.quad(at(lp - out * PW, s0, -0.5), at(lp, s0, -0.5), at(lp, s0, AH), at(lp - out * PW, s0, AH), pilD);
+        T.plain.quad(at(lp, s1, -0.5), at(lp - out * PW, s1, -0.5), at(lp - out * PW, s1, AH), at(lp, s1, AH), pilD);
+        // Kapitell
+        T.plain.quad(at(lp + out * 0.1, s0 - 0.1, AH - 0.3), at(lp + out * 0.1, s1 + 0.1, AH - 0.3), at(lp + out * 0.1, s1 + 0.1, AH), at(lp + out * 0.1, s0 - 0.1, AH), shadeF(pil, 0.92));
+      }
+      // Bogenfeld: Wand über den Bögen bis zur Terrasse, Bögen als dunkle Öffnungen mit rundem Scheitel
+      for (let k = 0; k < np; k++) {
+        const s0 = Math.min(L, k * step + PW / 2);
+        const s1 = Math.min(L, (k + 1) * step - PW / 2);
+        const w = s1 - s0;
+        if (w < 0.6) continue;
+        const cx = (s0 + s1) / 2;
+        const R = w / 2;
+        const base = AH - R * 0.95;
+        // Zwickel über dem Bogen (helle Wand)
+        const la = lp + out * 0.02;
+        T.plain.quad(at(la, s0, base), at(la, s1, base), at(la, s1, GH + 0.2), at(la, s0, GH + 0.2), pil);
+        // Bogenöffnung als Fächer (dunkel, sieht man in den Gang)
+        const N = 8;
+        for (let q = 0; q < N; q++) {
+          const a0 = Math.PI * (q / N);
+          const a1 = Math.PI * ((q + 1) / N);
+          const p0 = at(la + out * 0.01, cx - Math.cos(a0) * R, base + Math.sin(a0) * R * 0.95);
+          const p1 = at(la + out * 0.01, cx - Math.cos(a1) * R, base + Math.sin(a1) * R * 0.95);
+          const pc = at(la + out * 0.01, cx, base);
+          if (sg < 0) T.plain.tri(pc, p0, p1, dark); else T.plain.tri(pc, p1, p0, dark);
+        }
+        T.plain.quad(at(la + out * 0.01, s0, -0.5), at(la + out * 0.01, s1, -0.5), at(la + out * 0.01, s1, base), at(la + out * 0.01, s0, base), dark);
+      }
+      // Terrasse mit Brüstung über dem Gang
+      T.plain.quad(at(l0, 0, GH + 0.2), at(l0, L, GH + 0.2), at(lp + out * 0.15, L, GH + 0.2), at(lp + out * 0.15, 0, GH + 0.2), shadeF(pil, 0.96));
+      T.plain.quad(at(lp + out * 0.15, 0, GH + 0.2), at(lp + out * 0.15, L, GH + 0.2), at(lp + out * 0.15, L, GH + 1.1), at(lp + out * 0.15, 0, GH + 1.1), pil);
+      T.plain.quad(at(lp + out * 0.15, 0, GH + 1.1), at(lp + out * 0.15, L, GH + 1.1), at(lp - out * 0.1, L, GH + 1.1), at(lp - out * 0.1, 0, GH + 1.1), shadeF(pil, 0.9));
+      // Decke des Gangs (von unten sichtbar)
+      T.plain.quad(at(lp, 0, GH - 0.05), at(lp, L, GH - 0.05), at(l0, L, GH - 0.05), at(l0, 0, GH - 0.05), soff);
+    }
+
     // ---- Kirchturm vorn an der Straße mit Uhr und Schallarkaden
     if (church) {
-      const tw = 4.4;
+      const tw = b.tall ? 5.2 : 4.4;
       const t0 = l0 + out * 0.6;
       const t1 = t0 - out * tw;
-      const TH = 23;
+      // Campanile an der Piazza: deutlich höher, mit zweitem Arkadengeschoss
+      const TH = b.tall ? 34 : 23;
       const stone = lin('#d6ccb8');
       const T3 = (lat: number, al: number, h: number) => at(lat, al, h);
       const [ta, tb] = out > 0 ? [t1, t0] : [t0, t1];
@@ -3365,7 +3423,7 @@ export class Renderer3D {
       T.plain.quad(T3(t0, -0.6 + tw, -2), T3(t0, -0.6, -2), T3(t0, -0.6, TH), T3(t0, -0.6 + tw, TH), shadeF(stone, 0.95));
       T.plain.quad(T3(t1, -0.6, -2), T3(t1, -0.6 + tw, -2), T3(t1, -0.6 + tw, TH), T3(t1, -0.6, TH), shadeF(stone, 0.9));
       // Gesimse
-      for (const h of [7.5, 15.5]) {
+      for (const h of b.tall ? [7.5, 15.5, 24.5] : [7.5, 15.5]) {
         const band = lin('#bfb39c');
         T.plain.quad(T3(t0 + out * 0.08, -0.68, h), T3(t0 + out * 0.08, -0.6 + tw + 0.08, h), T3(t0 + out * 0.08, -0.6 + tw + 0.08, h + 0.35), T3(t0 + out * 0.08, -0.68, h + 0.35), band);
         T.plain.quad(T3(ta, -0.68, h), T3(tb, -0.68, h), T3(tb, -0.68, h + 0.35), T3(ta, -0.68, h + 0.35), band);
@@ -3373,11 +3431,13 @@ export class Renderer3D {
       // Schallarkaden (dunkel) und Uhr zur Straße und nach vorn
       const dark = lin('#2a2420');
       const mid = -0.6 + tw / 2;
-      for (const [w0, w1] of [[mid - 1.3, mid - 0.25], [mid + 0.25, mid + 1.3]]) {
-        T.plain.quad(T3(t0 + out * 0.02, w1, 17.2), T3(t0 + out * 0.02, w0, 17.2), T3(t0 + out * 0.02, w0, 20.4), T3(t0 + out * 0.02, w1, 20.4), dark);
-      }
       const cm = (ta + tb) / 2;
-      for (const [w0, w1] of [[cm - 1.3, cm - 0.25], [cm + 0.25, cm + 1.3]]) T.plain.quad(T3(w0, -0.62, 17.2), T3(w1, -0.62, 17.2), T3(w1, -0.62, 20.4), T3(w0, -0.62, 20.4), dark);
+      for (const [o0, o1] of b.tall ? [[17.2, 20.4], [26.2, 30.4]] : [[17.2, 20.4]]) {
+        for (const [w0, w1] of [[mid - 1.3, mid - 0.25], [mid + 0.25, mid + 1.3]]) {
+          T.plain.quad(T3(t0 + out * 0.02, w1, o0), T3(t0 + out * 0.02, w0, o0), T3(t0 + out * 0.02, w0, o1), T3(t0 + out * 0.02, w1, o1), dark);
+        }
+        for (const [w0, w1] of [[cm - 1.3, cm - 0.25], [cm + 0.25, cm + 1.3]]) T.plain.quad(T3(w0, -0.62, o0), T3(w1, -0.62, o0), T3(w1, -0.62, o1), T3(w0, -0.62, o1), dark);
+      }
       const clock = (cx: number, ca: number, nx: number, na: number) => {
         // Zifferblatt als Achteck, Zeiger
         const R = 0.95;
@@ -3396,11 +3456,11 @@ export class Renderer3D {
       clock(t0 + out * 0.03, mid, out, 0);
       clock(cm, -0.63, 0, -1);
       // Turmhelm
-      const tip = T3(cm, mid, TH + 7.5);
-      const helm = lin('#4f5a58');
+      const tip = T3(cm, mid, TH + (b.tall ? 9 : 7.5));
+      const helm = lin(b.tall ? '#8a4a32' : '#4f5a58');
       const cnr = [T3(ta, -0.6, TH), T3(tb, -0.6, TH), T3(tb, -0.6 + tw, TH), T3(ta, -0.6 + tw, TH)];
       for (let k = 0; k < 4; k++) T.plain.tri(cnr[k], cnr[(k + 1) % 4], tip, shadeF(helm, 0.85 + k * 0.05));
-      const ball = T3(cm, mid, TH + 7.9);
+      const ball = T3(cm, mid, TH + (b.tall ? 9.4 : 7.9));
       T.plain.quad([ball[0] - 0.05, ball[1] - 0.4, ball[2]], [ball[0] + 0.05, ball[1] - 0.4, ball[2]], [ball[0] + 0.05, ball[1] + 0.6, ball[2]], [ball[0] - 0.05, ball[1] + 0.6, ball[2]], lin('#c8a24a'));
     }
 
@@ -3609,6 +3669,123 @@ export class Renderer3D {
         }
       }
     }
+  }
+
+  /**
+   * Stadttor am Ortseingang: zwei Türme aus Naturstein mit Zinnen links und rechts der Straße, dazwischen
+   * ein Torbogen mit Wehrgang. Darauf das Stadtwappen (Schild in den Farben des Landes) und der Ortsname.
+   */
+  private gate(T: Town, group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], a: Row, name: string) {
+    const fx = Math.sin(a.th);
+    const fz = -Math.cos(a.th);
+    const P = (lat: number, al: number, h: number) => [a.x + a.rx * lat + fx * al, a.y + h, a.z + a.rz * lat + fz * al];
+    const stone = lin('#b9ab92');
+    const stoneD = shadeF(stone, 0.78);
+    const stoneL = shadeF(stone, 1.06);
+    const dark = lin('#2c2420');
+    const TW = 4.2;             // Turmbreite (quer)
+    const TD = 4.6;             // Turmtiefe (längs)
+    const TH = 11.5;            // Turmhöhe
+    const AH = 6.2;             // Scheitel des Torbogens
+    const WH = 8.6;             // Wehrgang über dem Bogen
+    const x0 = EDGE + 0.5;      // Innenkante der Türme
+    /** Quader mit vier Wänden und Deckel */
+    const box = (la0: number, la1: number, al0: number, al1: number, h0: number, h1: number, col: RGBf) => {
+      T.plain.quad(P(la0, al0, h0), P(la1, al0, h0), P(la1, al0, h1), P(la0, al0, h1), col);                 // vorn
+      T.plain.quad(P(la1, al1, h0), P(la0, al1, h0), P(la0, al1, h1), P(la1, al1, h1), shadeF(col, 0.9));   // hinten
+      T.plain.quad(P(la0, al1, h0), P(la0, al0, h0), P(la0, al0, h1), P(la0, al1, h1), shadeF(col, 0.84));  // links
+      T.plain.quad(P(la1, al0, h0), P(la1, al1, h0), P(la1, al1, h1), P(la1, al0, h1), shadeF(col, 0.84));  // rechts
+      T.plain.quad(P(la0, al0, h1), P(la1, al0, h1), P(la1, al1, h1), P(la0, al1, h1), shadeF(col, 1.04));  // oben
+    };
+    for (const sg of [-1, 1]) {
+      const la0 = sg < 0 ? -x0 - TW : x0;
+      const la1 = la0 + TW;
+      box(la0, la1, -TD / 2, TD / 2, -0.6, TH, stone);
+      // Zinnen
+      for (let k = 0; k < 4; k++) {
+        const w = TW / 4;
+        if (k % 2 === 0) box(la0 + k * w, la0 + (k + 1) * w, -TD / 2, TD / 2, TH, TH + 0.9, stoneL);
+      }
+      // Schießscharten
+      for (const h of [3.5, 7.5]) {
+        const c = (la0 + la1) / 2;
+        T.plain.quad(P(c - 0.14, -TD / 2 - 0.02, h), P(c + 0.14, -TD / 2 - 0.02, h), P(c + 0.14, -TD / 2 - 0.02, h + 1.1), P(c - 0.14, -TD / 2 - 0.02, h + 1.1), dark);
+      }
+    }
+    // Wehrgang über der Straße: Wand vorn und hinten mit Zinnen, Decke, Bogenlaibung
+    const D2 = TD / 2 - 0.6;
+    for (const sgn of [-1, 1]) {
+      const al = sgn * D2;
+      const face = (la0: number, la1: number, h0: number, h1: number, col: RGBf) => {
+        if (sgn < 0) T.plain.quad(P(la0, al, h0), P(la1, al, h0), P(la1, al, h1), P(la0, al, h1), col);
+        else T.plain.quad(P(la1, al, h0), P(la0, al, h0), P(la0, al, h1), P(la1, al, h1), col);
+      };
+      // Wand oberhalb des Bogens
+      face(-x0, x0, AH, WH, sgn < 0 ? stone : stoneD);
+      // Bogenzwickel: Wand von der Kämpferhöhe bis zum Scheitel, Öffnung als Halbkreis frei
+      const R = x0;
+      const N = 10;
+      for (let q = 0; q < N; q++) {
+        const a0 = Math.PI * (q / N);
+        const a1 = Math.PI * ((q + 1) / N);
+        const p0 = P(-Math.cos(a0) * R, al, AH - R + Math.sin(a0) * R);
+        const p1 = P(-Math.cos(a1) * R, al, AH - R + Math.sin(a1) * R);
+        const t0 = P(-Math.cos(a0) * R, al, AH);
+        const t1 = P(-Math.cos(a1) * R, al, AH);
+        if (sgn < 0) T.plain.quad(p0, p1, t1, t0, stone); else T.plain.quad(p1, p0, t0, t1, stoneD);
+      }
+      // Zinnen
+      for (let k = 0; k < 7; k++) {
+        const w = (2 * x0) / 7;
+        if (k % 2 === 0) face(-x0 + k * w, -x0 + (k + 1) * w, WH, WH + 0.8, sgn < 0 ? stoneL : stone);
+      }
+    }
+    // Bogenlaibung (Innenseite des Bogens, von unten sichtbar) und Decke des Wehrgangs
+    {
+      const R = x0;
+      const N = 10;
+      for (let q = 0; q < N; q++) {
+        const a0 = Math.PI * (q / N);
+        const a1 = Math.PI * ((q + 1) / N);
+        const l0 = -Math.cos(a0) * R;
+        const l1 = -Math.cos(a1) * R;
+        const h0 = AH - R + Math.sin(a0) * R;
+        const h1 = AH - R + Math.sin(a1) * R;
+        T.plain.quad(P(l0, -D2, h0), P(l0, D2, h0), P(l1, D2, h1), P(l1, -D2, h1), shadeF(stone, 0.7));
+      }
+      T.plain.quad(P(-x0, -D2, WH), P(x0, -D2, WH), P(x0, D2, WH), P(-x0, D2, WH), shadeF(stone, 1.02));
+    }
+    // Wappen und Ortsname zur Anfahrt hin (Schild in den Landesfarben)
+    const lang = this.track!.lang;
+    const cols = lang === 'fr' ? ['#1f3c9c', '#f4f4f4', '#d6202a'] : lang === 'it' ? ['#1f8a4c', '#f4f4f4', '#d6202a'] : lang === 'es' ? ['#c8102e', '#ffc400', '#c8102e'] : ['#1f3c9c', '#f4f4f4', '#d6202a'];
+    const al = -D2 - 0.06;
+    const sw = 1.4;
+    const sh = 1.6;
+    const hy = AH + 0.4;
+    for (let k = 0; k < 3; k++) {
+      const u0 = -sw / 2 + (k * sw) / 3;
+      const u1 = -sw / 2 + ((k + 1) * sw) / 3;
+      T.plain.quad(P(u0, al, hy), P(u1, al, hy), P(u1, al, hy + sh), P(u0, al, hy + sh), lin(cols[k]));
+    }
+    T.plain.tri(P(-sw / 2, al, hy), P(sw / 2, al, hy), P(0, al, hy - 0.5), lin(cols[1]));
+    // Ortsname als Tafel über dem Bogen
+    const key = `gate:${name}`;
+    let tex = this.labelTex.get(key);
+    if (!tex) {
+      tex = this.tex(plaqueTex(name.toUpperCase(), ''), false);
+      this.labelTex.set(key, tex);
+    }
+    const pg = new GB();
+    pg.uv = true;
+    const pw = 3.6;
+    const ph = pw * 120 / 512;
+    const py = hy + sh + 0.25;
+    pg.quad(P(-pw / 2, al, py), P(pw / 2, al, py), P(pw / 2, al, py + ph), P(-pw / 2, al, py + ph), [1, 1, 1], [[0, 0], [1, 0], [1, 1], [0, 1]]);
+    const geo = pg.build();
+    const t2 = tex;
+    const mat = this.matFor(`plaque|${key}`, () => new THREE.MeshLambertMaterial({ map: t2, side: THREE.DoubleSide }));
+    disp.push(geo);
+    group.add(new THREE.Mesh(geo, mat));
   }
 
   private arch(group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], a: Row, banner: Banner | { kind: string; text: string; sub?: string }, color: string) {
