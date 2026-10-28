@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from 'react';
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
-import { RANGES, setViewRange, viewRange, type RangeId } from '../game/abfahrt/viewRange';
+import { RANGES, setViewRange, userRange, type RangeId } from '../game/abfahrt/viewRange';
 import { Segmented } from '../ui/kit';
 
 export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -71,7 +71,7 @@ export function useCountUp(target: number) {
 
 /** Sichtweite im Pausenmenü: wie weit und wie schnell Details geladen werden */
 export function RangePicker() {
-  const [v, setV] = useState<RangeId>(() => viewRange().id);
+  const [v, setV] = useState<RangeId>(() => userRange().id);
   const hint: Record<RangeId, string> = {
     eco: 'Kurze Sicht, schont Akku und ältere Geräte',
     normal: 'Ausgewogen',
