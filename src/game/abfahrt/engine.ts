@@ -192,7 +192,7 @@ export class Abfahrt {
     this.friends = opts.friends.map((f) => ({ ...f, passed: false })).sort((a, b) => a.meters - b.meters);
     this.missionsDone = new Set(opts.missionsDone);
     this.track = new Track(opts.dayKey, opts.names);
-    if (opts.cruise) this.track.dropHazards();
+    if (opts.cruise) { this.track.dropHazards(); this.dbg.speed = opts.cruise; }
     this.rng = mulberry32(this.track.seed ^ 0x5eed);
     this.reset();
   }
@@ -273,9 +273,21 @@ export class Abfahrt {
 
   // ------------------------------------------------------------ Hauptschleife
 
+  /** Testfahrt: Zeitraffer (1–5), Stehenbleiben, Vor- und Zurückschieben (−1/0/1) – vom Prüfpult aus gesetzt */
+  dbg = { speed: 1, freeze: false, move: 0 };
+
   update(dtReal: number) {
+    if (this.opts.cruise && this.phase === 'playing') {
+      // Prüfpult: steht oder wird geschoben – die Welt läuft weiter, der Fahrer rollt nicht
+      if (this.dbg.move !== 0) {
+        this.p.z = Math.max((this.track.first + 2) * SEG, this.p.z + this.dbg.move * 22 * dtReal);
+        this.p.y = this.track.heightAt(this.p.z);
+        this.p.v = 0;
+      }
+      if (this.dbg.freeze || this.dbg.move !== 0) { this.time += dtReal; this.stepFx(0.0001, dtReal); return; }
+    }
     // Testfahrt: Zeitraffer (die Welt läuft schneller, die Fahrphysik bleibt gleich)
-    const dt = Math.min(0.05, dtReal) * this.timeScale * (this.phase === 'playing' ? this.opts.cruise ?? 1 : 1);
+    const dt = Math.min(0.05, dtReal) * this.timeScale * (this.phase === 'playing' && this.opts.cruise ? this.dbg.speed : 1);
     this.time += dt;
     this.phaseT += dtReal;
     if (this.keys.left) { this.tx = clamp(this.tx - 6 * dt, -EDGE - 1.2, EDGE + 1.2); this.steered += 6 * dt; }

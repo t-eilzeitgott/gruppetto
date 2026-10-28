@@ -554,6 +554,7 @@ export function GamePage() {
       ) : null}
 
       {/* HUD */}
+      {cruiseRef.current && (ui === 'playing' || ui === 'countdown') ? <DebugBar eng={() => engineRef.current} /> : null}
       {ui === 'playing' || ui === 'paused' || ui === 'countdown' ? (
         <div className="abf-hud hud" aria-hidden={ui === 'countdown'}>
           <div className="hud-top hud-top--score">
@@ -667,6 +668,28 @@ export function GamePage() {
 }
 
 // ------------------------------------------------------------------ Bausteine
+
+/** Prüfpult der Testfahrt (Admin): stehen bleiben, vor/zurück schieben, Zeitraffer */
+function DebugBar({ eng }: { eng: () => Abfahrt | null }) {
+  const [speed, setSpeed] = useState(() => eng()?.dbg.speed ?? 1);
+  const [freeze, setFreeze] = useState(false);
+  const hold = (move: number) => ({
+    onPointerDown: (e: RPointerEvent) => { e.preventDefault(); const g = eng(); if (g) g.dbg.move = move; },
+    onPointerUp: () => { const g = eng(); if (g) g.dbg.move = 0; },
+    onPointerCancel: () => { const g = eng(); if (g) g.dbg.move = 0; },
+    onPointerLeave: () => { const g = eng(); if (g) g.dbg.move = 0; },
+  });
+  return (
+    <div className="abf-dbg" role="group" aria-label="Prüfpult">
+      <button type="button" className={cx('abf-dbg__btn', freeze && 'is-on')} onClick={() => { const g = eng(); if (!g) return; g.dbg.freeze = !g.dbg.freeze; setFreeze(g.dbg.freeze); }}>{freeze ? '▶' : '⏸'}</button>
+      <button type="button" className="abf-dbg__btn" {...hold(-1)} aria-label="Zurück">◀</button>
+      <button type="button" className="abf-dbg__btn" {...hold(1)} aria-label="Vor">▶▶</button>
+      {[1, 2, 3, 5].map((k) => (
+        <button key={k} type="button" className={cx('abf-dbg__btn', speed === k && 'is-on')} onClick={() => { const g = eng(); if (!g) return; g.dbg.speed = k; setSpeed(k); }}>{k}×</button>
+      ))}
+    </div>
+  );
+}
 
 function Missions({ missions, done, compact }: { missions: Mission[]; done: string[]; compact?: boolean }) {
   return (

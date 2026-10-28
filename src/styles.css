@@ -1576,6 +1576,9 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .abf-link { display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; padding: 4px 0; color: var(--accent); font-weight: 600; font-size: 14px; }
 .abf-go { min-height: 50px; font-size: 17px; }
+.abf-dbg { position: absolute; left: 50%; bottom: calc(var(--safe-b) + 14px); transform: translateX(-50%); z-index: 30; display: flex; gap: 6px; padding: 6px; border-radius: 14px; background: rgba(20, 22, 28, 0.72); backdrop-filter: blur(8px); }
+.abf-dbg__btn { min-width: 44px; height: 40px; padding: 0 10px; border: 0; border-radius: 10px; background: rgba(255, 255, 255, 0.12); color: #fff; font: 600 15px/1 var(--font, system-ui); touch-action: none; user-select: none; -webkit-user-select: none; }
+.abf-dbg__btn.is-on { background: var(--accent, #d63384); }
 .abf-cruise { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .abf-cruise > span { flex: 1; min-width: 0; font-size: 13px; line-height: 1.3; }
 
