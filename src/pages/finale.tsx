@@ -130,6 +130,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           return;
         }
         const c0 = performance.now();
+        renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.period));
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : idle ? Math.min(0.1, idleT) : dt, raw);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         idleT = 0;

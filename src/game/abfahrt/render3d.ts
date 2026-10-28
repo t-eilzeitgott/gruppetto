@@ -942,10 +942,13 @@ export class Renderer3D {
    * mehr Bilder verteilt), statt das Bild zu verlängern.
    */
   private baseMs = 5;
+  /** Bildschirmtakt (ms): 16,7 bei 60 Hz, 8,3 bei 120 Hz – die Bauzeit je Bild richtet sich danach */
+  period = 1000 / 60;
   private room(): number {
-    // Ziel ~11,5 ms Rechenzeit fürs Bild: Platz für Spiellogik, Anzeige, Speicherbereinigung und Hochladen
-    let r = 11.5 - this.baseMs;
-    if (this.lastRaw > 0.021) r *= 0.5;
+    // Ziel ~70 % des Bildschirmtakts Rechenzeit fürs Bild (11,5 ms bei 60 Hz): Platz für Spiellogik, Anzeige,
+    // Speicherbereinigung und Hochladen
+    let r = this.period * 0.69 - this.baseMs;
+    if (this.lastRaw * 1000 > this.period * 1.26) r *= 0.5;
     return r;
   }
   /** Entsteht gerade Landschaft? (dann zählt das Bild nicht für die Qualitätsregelung) */
