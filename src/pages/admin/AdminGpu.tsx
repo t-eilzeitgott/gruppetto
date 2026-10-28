@@ -31,6 +31,8 @@ export function GpuTestPage() {
   const [cam, setCam] = useState<CamMode>('chase');
   const [hud, setHud] = useState(true);
   const [hint60, setHint60] = useState(false);
+  // Ladeschirm nach dem Laden noch kurz zum Ausblenden stehen lassen
+  const [veil, setVeil] = useState(true);
   const names = (members.data ?? []).map((m) => (m.display_name ?? '').trim()).filter(Boolean);
   const namesRef = useRef<string[]>(names);
   namesRef.current = names;
@@ -78,16 +80,22 @@ export function GpuTestPage() {
   };
 
   const loading = stats ? stats.loading < 1 : true;
+  useEffect(() => {
+    if (loading) return;
+    const id = window.setTimeout(() => setVeil(false), 650);
+    return () => window.clearTimeout(id);
+  }, [loading]);
+  const pct = Math.round((stats?.loading ?? 0) * 100);
   return (
     <div className="gpu-root">
-      <div ref={hostRef} className="gpu-canvas" onClick={nextCam} />
+      <div ref={hostRef} className="gpu-canvas" onPointerDown={nextCam} />
       <button type="button" className="gpu-back" onClick={() => navigate('/admin')} aria-label="Zurück">
         <Icon name="chevron" size={18} />
       </button>
-      {hud && stats ? (
+      {hud && stats && !loading ? (
         <div className="gpu-hud" onClick={() => setHud(false)}>
           <strong>{Math.round(stats.fps)} fps</strong>
-          <span>{stats.ms.toFixed(1)} ms · Takt {Math.round(1000 / stats.period)} Hz</span>
+          <span>{stats.ms.toFixed(1)} ms · CPU {stats.cpu.toFixed(1)} ms · Takt {Math.round(1000 / stats.period)} Hz</span>
           <span>{stats.backend} · Auflösung ×{stats.dpr.toFixed(2)}</span>
           <span>{(stats.tris / 1000).toFixed(0)}k Dreiecke · {stats.calls} Aufrufe</span>
         </div>
@@ -100,10 +108,15 @@ export function GpuTestPage() {
         </div>
       ) : null}
       {!hud ? <button type="button" className="gpu-hud gpu-hud--off" onClick={() => setHud(true)}>fps</button> : null}
-      <div className="gpu-cam">{CAMS.find((c) => c.id === cam)?.label} · tippen wechselt</div>
-      {loading && !error ? (
-        <div className="gpu-load">
-          <span>{stats ? `Landschaft wird gebaut … ${Math.round(stats.loading * 100)} %` : 'WebGPU startet …'}</span>
+      {!loading ? <div className="gpu-cam">{CAMS.find((c) => c.id === cam)?.label} · tippen wechselt</div> : null}
+      {veil && !error ? (
+        <div className={`gpu-load${loading ? '' : ' gpu-load--done'}`}>
+          <div className="gpu-load__box">
+            <strong>Passabfahrt</strong>
+            <span className="gpu-load__sub">Dolomiten · WebGPU</span>
+            <div className="gpu-load__bar"><i style={{ transform: `scaleX(${(stats?.loading ?? 0).toFixed(3)})` }} /></div>
+            <span className="gpu-load__stage">{loading ? `${stats?.stage ?? 'WebGPU startet'} … ${pct} %` : 'Los geht’s'}</span>
+          </div>
         </div>
       ) : null}
       {error ? <div className="gpu-load gpu-load--err"><span>{error}</span></div> : null}

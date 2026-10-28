@@ -7,8 +7,9 @@
 import * as THREE from 'three/webgpu';
 import type { TreeSpot } from '../abfahrt/terrain3d';
 import { tsl, type N } from './nodes';
+import { commit, disposeGroup, instGroup, instNodes, STRIDE, type InstGroup } from './inst';
 
-const { attribute, cameraPosition, cos, dot, float, max, normalize, positionGeometry, positionLocal, positionWorld, pow, sin, time, uniform, vec3, vertexColor } = tsl;
+const { attribute, cameraPosition, cos, dot, float, max, normalize, positionGeometry, positionWorld, pow, sin, time, uniform, vec3, vertexColor } = tsl;
 
 type Arch = 'pine' | 'larch' | 'broad';
 const ARCHS: Arch[] = ['pine', 'larch', 'broad'];
@@ -165,26 +166,30 @@ const archOf = (kind: string): Arch => (kind === 'larch' ? 'larch' : kind === 'p
 
 /** Grenzen der Detailstufen je Baum (m) */
 const LOD_D = [90, 250];
+/** ganz fern: Bäume schrumpfen weg (das Kronendach im Boden bleibt), Zellen dahinter werden nicht gezeichnet */
+const GONE: [number, number] = [1300, 1600];
 
 /**
  * Bäume werden in Zellen von 256 m gesammelt (vier Landschaftskacheln) – wenige Zeichenaufrufe. Die Detailstufe
  * gilt je Baum: in Zellen nahe der Kamera werden die Bäume nach Abstand auf die drei Stufen verteilt (neu, wenn
- * die Kamera ein Stück weiter ist), ferne Zellen zeigen alle in der groben Stufe.
+ * die Kamera ein Stück weiter ist), ferne Zellen zeigen alle in der groben Stufe. Die Instanzdaten stehen in der
+ * Geometrie (inst.ts) – alle Zellen teilen sich ein Shaderprogramm, neue Zellen im Bild ruckeln nicht.
  */
 const CELL = 256;
 
 interface Group {
   n: number;
-  mats: Float32Array;
-  cols: Float32Array;
+  /** je Baum STRIDE Floats (Ort, Drehung, Größe, Farbe) */
+  src: Float32Array;
   xz: Float32Array;
-  meshes: THREE.InstancedMesh[];
+  lods: InstGroup[];
 }
 interface Cell {
   cx: number; cz: number; cy: number;
   spots: TreeSpot[];
   dirty: boolean;
-  far: boolean | null;
+  /** 0 nah (je Baum verteilt), 1 fern (alle grob), 2 weg; null: neu bestimmen */
+  far: 0 | 1 | 2 | null;
   at: THREE.Vector3;
   groups: Group[];
 }
@@ -199,14 +204,16 @@ export class Trees {
 
   constructor() {
     const m = new THREE.MeshStandardNodeMaterial();
+    const I = instNodes(GONE);
     const sway = attribute('aSway', 'float');
     // Wind: jeder Baum mit eigener Phase (aus dem Ort), oben mehr als unten
-    const ph = positionLocal.x.mul(0.071).add(positionLocal.z.mul(0.053));
+    const ph = I.world.x.mul(0.071).add(I.world.z.mul(0.053));
     const t = time;
     const amp = sway.mul(sway).mul(0.16);
     const off = vec3(sin(t.mul(1.25).add(ph)).add(sin(t.mul(2.9).add(ph.mul(1.7))).mul(0.3)), 0, cos(t.mul(1.05).add(ph.mul(1.3))).mul(0.7)).mul(amp);
-    m.positionNode = positionLocal.add(off.mul(max(float(0.3), positionGeometry.y.div(12))));
-    const col: N = vertexColor();
+    m.positionNode = I.world.add(off.mul(max(float(0.3), positionGeometry.y.div(12))));
+    m.normalNode = I.normal;
+    const col: N = vertexColor().mul(I.color);
     m.colorNode = col;
     m.roughnessNode = float(0.86);
     m.metalnessNode = float(0);
@@ -231,7 +238,7 @@ export class Trees {
   }
 
   private rebuild(c: Cell) {
-    for (const g of c.groups) for (const m of g.meshes) { this.group.remove(m); m.dispose(); }
+    for (const g of c.groups) for (const l of g.lods) disposeGroup(l);
     c.groups = [];
     c.dirty = false;
     c.far = null;
@@ -240,63 +247,47 @@ export class Trees {
     let sy = 0;
     for (const t of c.spots) { by[archOf(t.kind)].push(t); sy += t.y; }
     c.cy = c.spots.length ? sy / c.spots.length : 0;
-    const m4 = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const v = new THREE.Vector3();
-    const sc = new THREE.Vector3();
-    const col = new THREE.Color();
     const sphere = new THREE.Sphere(new THREE.Vector3(c.cx, c.cy + 6, c.cz), CELL * 0.75);
     for (const a of ARCHS) {
       const list = by[a];
       if (!list.length) continue;
       const n = list.length;
-      const mats = new Float32Array(n * 16);
-      const cols = new Float32Array(n * 3);
+      const src = new Float32Array(n * STRIDE);
       const xz = new Float32Array(n * 2);
       list.forEach((t, k) => {
         const seed = Math.round(t.x * 13 + t.z * 7);
-        q.setFromAxisAngle(v.set(0, 1, 0), t.rot);
         const s = t.s * (a === 'broad' ? 0.9 : 1);
-        // leicht unterschiedlich schlank (keine Klone)
-        sc.set(s * (0.9 + rnd(seed + 1) * 0.2), s * (0.92 + rnd(seed + 2) * 0.16), s * (0.9 + rnd(seed + 3) * 0.2));
-        m4.compose(v.set(t.x, t.y + 0.25, t.z), q, sc);
-        m4.toArray(mats, k * 16);
         const tint = t.tint;
-        col.setRGB(tint * (0.92 + rnd(seed) * 0.16), tint * (0.95 + rnd(seed + 9) * 0.1), tint * (0.9 + rnd(seed + 4) * 0.12));
-        col.toArray(cols, k * 3);
+        // leicht unterschiedlich schlank (keine Klone)
+        src.set([
+          t.x, t.y + 0.25, t.z, t.rot,
+          s * (0.9 + rnd(seed + 1) * 0.2), s * (0.92 + rnd(seed + 2) * 0.16), s * (0.9 + rnd(seed + 3) * 0.2), 0,
+          tint * (0.92 + rnd(seed) * 0.16), tint * (0.95 + rnd(seed + 9) * 0.1), tint * (0.9 + rnd(seed + 4) * 0.12), 0,
+        ], k * STRIDE);
         xz[k * 2] = t.x;
         xz[k * 2 + 1] = t.z;
       });
-      const meshes: THREE.InstancedMesh[] = [];
+      const lods: InstGroup[] = [];
       for (let lv = 0; lv < 3; lv++) {
-        const mesh = new THREE.InstancedMesh(this.geo[a][lv], this.mat, n);
-        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-        mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
-        mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-        mesh.boundingSphere = sphere;
+        const g = instGroup(this.geo[a][lv], this.mat, n, sphere);
         // Schatten nur von den nahen Bäumen (der Schattenausschnitt reicht ohnehin nur ~55 m weit)
-        mesh.castShadow = lv === 0;
-        mesh.receiveShadow = lv === 0;
-        mesh.visible = false;
-        mesh.count = 0;
-        mesh.matrixAutoUpdate = false;
-        this.group.add(mesh);
-        meshes.push(mesh);
+        g.mesh.castShadow = lv === 0;
+        g.mesh.receiveShadow = lv === 0;
+        this.group.add(g.mesh);
+        lods.push(g);
       }
-      c.groups.push({ n, mats, cols, xz, meshes });
+      c.groups.push({ n, src, xz, lods });
     }
   }
 
   /** Bäume einer Zelle nach Abstand auf die Stufen verteilen (far: alle grob) */
   private partition(c: Cell, cam: THREE.Vector3, far: boolean) {
-    c.far = far;
+    c.far = far ? 1 : 0;
     c.at.copy(cam);
     const d0 = LOD_D[0] * LOD_D[0];
     const d1 = LOD_D[1] * LOD_D[1];
     for (const g of c.groups) {
       const cnt = [0, 0, 0];
-      const M = g.meshes.map((m) => m.instanceMatrix.array as Float32Array);
-      const C = g.meshes.map((m) => m.instanceColor!.array as Float32Array);
       for (let k = 0; k < g.n; k++) {
         let lv = 2;
         if (!far) {
@@ -306,19 +297,13 @@ export class Trees {
           lv = dd < d0 ? 0 : dd < d1 ? 1 : 2;
         }
         const i = cnt[lv]++;
-        M[lv].set(g.mats.subarray(k * 16, k * 16 + 16), i * 16);
-        C[lv].set(g.cols.subarray(k * 3, k * 3 + 3), i * 3);
+        g.lods[lv].data.set(g.src.subarray(k * STRIDE, k * STRIDE + STRIDE), i * STRIDE);
       }
-      g.meshes.forEach((m, lv) => {
-        m.count = cnt[lv];
-        m.visible = cnt[lv] > 0;
-        m.instanceMatrix.needsUpdate = true;
-        m.instanceColor!.needsUpdate = true;
-      });
+      g.lods.forEach((l, lv) => commit(l, cnt[lv]));
     }
   }
 
-  /** neue Bäume einbauen (eine Zelle je Bild) und Detailstufen nachführen (eine nahe Zelle je Bild) */
+  /** neue Bäume einbauen und Detailstufen nachführen (je Bild höchstens eine nahe Zelle; all: alles sofort) */
   update(cam: THREE.Vector3, all = false) {
     for (const c of this.cells.values()) {
       if (c.dirty) { this.rebuild(c); if (!all) break; }
@@ -328,13 +313,17 @@ export class Trees {
       if (c.dirty || !c.groups.length) continue;
       const dx = Math.max(0, Math.abs(cam.x - c.cx) - CELL / 2);
       const dz = Math.max(0, Math.abs(cam.z - c.cz) - CELL / 2);
-      const far = Math.hypot(dx, dz) > LOD_D[1] + 20;
-      if (far) {
-        if (c.far !== true) this.partition(c, cam, true);
+      const d = Math.hypot(dx, dz);
+      if (d > GONE[1] + 10) {
+        if (c.far !== 2) { c.far = 2; for (const g of c.groups) for (const l of g.lods) l.mesh.visible = false; }
+        continue;
+      }
+      if (d > LOD_D[1] + 20) {
+        if (c.far !== 1) this.partition(c, cam, true);
         continue;
       }
       // nah: neu verteilen, wenn die Kamera 12 m weiter ist (je Bild höchstens eine Zelle)
-      if (c.far !== false || c.at.distanceToSquared(cam) > 144) {
+      if (c.far !== 0 || c.at.distanceToSquared(cam) > 144) {
         if (budget <= 0) continue;
         budget--;
         this.partition(c, cam, false);
@@ -342,8 +331,20 @@ export class Trees {
     }
   }
 
+  /** Vorwärmen: jede Gruppe einmal zeichnen lassen (Daten hochladen); danach neu verteilen */
+  warm(on: boolean) {
+    for (const c of this.cells.values()) {
+      for (const g of c.groups) {
+        for (const l of g.lods) {
+          if (on) { l.geo.instanceCount = Math.max(1, l.geo.instanceCount); l.mesh.visible = true; }
+        }
+      }
+      if (!on) c.far = null;
+    }
+  }
+
   dispose() {
-    for (const c of this.cells.values()) for (const g of c.groups) for (const m of g.meshes) m.dispose();
+    for (const c of this.cells.values()) for (const g of c.groups) for (const l of g.lods) disposeGroup(l);
     for (const a of ARCHS) for (const g of this.geo[a]) g.dispose();
     this.mat.dispose();
   }

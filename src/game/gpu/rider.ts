@@ -67,6 +67,12 @@ export class Rider {
     this.model = new RiderModel(kit, new THREE.Texture(), 1);
     this.model.shadow.visible = false;
     convert(this.model.group);
+    // Lampe aus (Tag); kleine Teile werfen keine Schatten (spart Zeichenaufrufe im Schattendurchgang)
+    this.model.lamp.visible = false;
+    const M = this.model as unknown as { crank: THREE.Mesh; spokes: THREE.Mesh[]; blurs: THREE.Mesh[]; minor: THREE.Object3D[]; shoes: THREE.Mesh[] };
+    const small = new Set<THREE.Object3D>([M.crank, ...M.spokes, ...M.blurs, ...M.minor]);
+    for (const s of M.shoes) small.delete(s);
+    for (const o of small) o.traverse((c) => { c.castShadow = false; });
   }
 
   get group() { return this.model.group; }

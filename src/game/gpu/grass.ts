@@ -1,11 +1,13 @@
 /**
  * Grashalme am Straßenrand (WebGPU-Test): Büschel aus einzelnen, gebogenen Halmen als Instanzen je
  * Straßenabschnitt – nur in der Nähe der Kamera, weich ausgeblendet (die Halme sinken in den Boden), mit Wind.
+ * Instanzdaten in der Geometrie (inst.ts): ein Shaderprogramm für alle Stücke.
  */
 import * as THREE from 'three/webgpu';
 import { tsl } from './nodes';
+import { commit, disposeGroup, instGroup, instNodes, STRIDE, type InstGroup } from './inst';
 
-const { cameraPosition, cos, float, mix, positionGeometry, positionLocal, sin, smoothstep, time, vec2, vec3, vertexColor } = tsl;
+const { cameraPosition, cos, float, mix, positionGeometry, sin, smoothstep, time, vec2, vec3, vertexColor } = tsl;
 
 const rnd = (n: number) => {
   let x = Math.imul(n ^ 0x51ed27, 0x2c1b3c6d);
@@ -63,20 +65,23 @@ export class Grass {
   readonly group = new THREE.Group();
   private geo = clump();
   private mat: THREE.MeshStandardNodeMaterial;
-  private chunks: { mesh: THREE.InstancedMesh; cx: number; cz: number }[] = [];
+  private chunks: { g: InstGroup; cx: number; cz: number; n: number }[] = [];
   count = 0;
 
   constructor() {
     const m = new THREE.MeshStandardNodeMaterial({ side: THREE.DoubleSide });
+    const I = instNodes();
     const h = positionGeometry.y;
+    const w = I.world;
     // nur in der Nähe: zwischen 24 und 36 m sinken die Halme in den Boden
-    const d = positionLocal.xz.sub(cameraPosition.xz).length();
+    const d = w.xz.sub(cameraPosition.xz).length();
     const fade = float(1).sub(smoothstep(24, 36, d));
-    const ph = positionLocal.x.mul(0.37).add(positionLocal.z.mul(0.29));
-    const gust = sin(time.mul(0.7).add(positionLocal.x.mul(0.05))).mul(0.5).add(0.5);
+    const ph = w.x.mul(0.37).add(w.z.mul(0.29));
+    const gust = sin(time.mul(0.7).add(w.x.mul(0.05))).mul(0.5).add(0.5);
     const sway = vec2(sin(time.mul(2.3).add(ph)), cos(time.mul(1.9).add(ph.mul(1.3)))).mul(h.mul(h).mul(mix(0.25, 0.9, gust)));
-    m.positionNode = positionLocal.add(vec3(sway.x, h.mul(fade.sub(1)), sway.y));
-    m.colorNode = vertexColor();
+    m.positionNode = w.add(vec3(sway.x, h.mul(fade.sub(1)), sway.y));
+    m.normalNode = I.normal;
+    m.colorNode = vertexColor().mul(I.color);
     m.roughnessNode = float(0.55);
     m.metalnessNode = float(0);
     this.mat = m;
@@ -85,38 +90,34 @@ export class Grass {
   addChunk(tufts: Tuft[]) {
     if (!tufts.length) return;
     const n = tufts.length;
-    const mesh = new THREE.InstancedMesh(this.geo, this.mat, n);
-    const m4 = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const v = new THREE.Vector3();
-    const sc = new THREE.Vector3();
-    const c = new THREE.Color();
     let cx = 0, cz = 0, cy = 0;
-    tufts.forEach((t, k) => {
-      q.setFromAxisAngle(v.set(0, 1, 0), t.rot);
-      m4.compose(v.set(t.x, t.y, t.z), q, sc.set(t.s, t.s * (0.8 + rnd(k) * 0.5), t.s));
-      mesh.setMatrixAt(k, m4);
-      mesh.setColorAt(k, c.setRGB(t.r, t.g, t.b));
-      cx += t.x; cz += t.z; cy += t.y;
-    });
+    for (const t of tufts) { cx += t.x; cz += t.z; cy += t.y; }
     cx /= n; cz /= n; cy /= n;
-    mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(cx, cy, cz), 60);
-    mesh.castShadow = false;
-    mesh.receiveShadow = true;
-    mesh.visible = false;
-    mesh.matrixAutoUpdate = false;
-    this.group.add(mesh);
-    this.chunks.push({ mesh, cx, cz });
+    const g = instGroup(this.geo, this.mat, n, new THREE.Sphere(new THREE.Vector3(cx, cy, cz), 60));
+    tufts.forEach((t, k) => {
+      g.data.set([t.x, t.y, t.z, t.rot, t.s, t.s * (0.8 + rnd(k) * 0.5), t.s, 0, t.r, t.g, t.b, 0], k * STRIDE);
+    });
+    commit(g, n);
+    g.mesh.castShadow = false;
+    g.mesh.receiveShadow = true;
+    g.mesh.visible = false;
+    this.group.add(g.mesh);
+    this.chunks.push({ g, cx, cz, n });
     this.count += n;
   }
 
   update(cam: THREE.Vector3) {
-    for (const ch of this.chunks) ch.mesh.visible = Math.hypot(ch.cx - cam.x, ch.cz - cam.z) < SHOW;
+    for (const ch of this.chunks) ch.g.mesh.visible = Math.hypot(ch.cx - cam.x, ch.cz - cam.z) < SHOW;
+  }
+
+  /** Vorwärmen: alle Stücke einmal zeichnen lassen (Daten hochladen) */
+  warm() {
+    for (const ch of this.chunks) ch.g.mesh.visible = true;
   }
 
   dispose() {
+    for (const ch of this.chunks) disposeGroup(ch.g);
     this.geo.dispose();
     this.mat.dispose();
-    for (const ch of this.chunks) ch.mesh.dispose();
   }
 }

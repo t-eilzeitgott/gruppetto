@@ -185,7 +185,84 @@ export class Field {
     if (t.lv === 0 && d.trees.length) this.ev.onTrees?.(t.key, d.trees, t.cx, t.cz);
   }
 
+  /**
+   * Wenn alles gebaut ist: Kacheln zu größeren Stücken zusammenlegen (feinste Stufe 4 × 4 = 512 m, mittlere
+   * 2 × 2 = 1 km) – viel weniger Zeichenaufrufe; ganz verdeckte gröbere Kacheln fallen weg.
+   */
+  merge() {
+    if (this.progress < 1) return;
+    for (const t of this.tiles) {
+      if (t.mesh && !t.mesh.visible) { this.group.remove(t.mesh); t.mesh.geometry.dispose(); t.mesh = null; t.y0 = null; }
+    }
+    for (const [lv, B] of [[0, 4], [1, 2]] as const) {
+      const groups = new Map<string, Tile[]>();
+      for (const t of this.tiles) {
+        if (t.lv !== lv || !t.mesh) continue;
+        const k = `${Math.floor(t.tx / B)},${Math.floor(t.tz / B)}`;
+        const g = groups.get(k);
+        if (g) g.push(t); else groups.set(k, [t]);
+      }
+      for (const list of groups.values()) {
+        if (list.length < 2) continue;
+        const mesh = new THREE.Mesh(mergeGeos(list.map((t) => t.mesh!.geometry)), this.mats[lv]);
+        mesh.receiveShadow = lv === 0;
+        mesh.castShadow = false;
+        mesh.matrixAutoUpdate = false;
+        mesh.updateMatrix();
+        this.group.add(mesh);
+        this.merged.push(mesh);
+        for (const t of list) { this.group.remove(t.mesh!); t.mesh!.geometry.dispose(); t.mesh = null; t.y0 = null; }
+      }
+    }
+  }
+  private merged: THREE.Mesh[] = [];
+
   dispose() {
     for (const t of this.tiles) t.mesh?.geometry.dispose();
+    for (const m of this.merged) m.geometry.dispose();
   }
+}
+
+/** Attribute, die die Bodenmaterialien lesen (der Rest der Kachel bleibt beim Zusammenlegen weg) */
+const KEEP = ['position', 'normal', 'color', 'aMat', 'aRock', 'aNz'];
+
+/** Kachelgeometrien hintereinanderhängen (gleiche Attribute, mit Index) */
+function mergeGeos(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  let nv = 0;
+  let ni = 0;
+  for (const g of geos) {
+    const n = g.getAttribute('position').count;
+    nv += n;
+    ni += g.index ? g.index.count : n;
+  }
+  const out = new THREE.BufferGeometry();
+  for (const k of KEEP) {
+    const a0 = geos[0].getAttribute(k) as THREE.BufferAttribute | undefined;
+    if (!a0) continue;
+    const arr = new Float32Array(nv * a0.itemSize);
+    let o = 0;
+    for (const g of geos) {
+      const a = g.getAttribute(k) as THREE.BufferAttribute;
+      const len = a.count * a.itemSize;
+      arr.set((a.array as Float32Array).subarray(0, len), o);
+      o += len;
+    }
+    out.setAttribute(k, new THREE.BufferAttribute(arr, a0.itemSize));
+  }
+  const idx = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+  let io = 0;
+  let vo = 0;
+  for (const g of geos) {
+    const n = g.getAttribute('position').count;
+    if (g.index) {
+      const ia = g.index.array;
+      for (let i = 0; i < g.index.count; i++) idx[io++] = ia[i] + vo;
+    } else {
+      for (let i = 0; i < n; i++) idx[io++] = i + vo;
+    }
+    vo += n;
+  }
+  out.setIndex(new THREE.BufferAttribute(idx, 1));
+  out.computeBoundingSphere();
+  return out;
 }

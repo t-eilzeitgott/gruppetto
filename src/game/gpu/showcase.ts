@@ -34,8 +34,12 @@ export interface ShowcaseStats {
   backend: string;
   tris: number;
   calls: number;
-  /** Aufbau der Landschaft 0 … 1 */
+  /** Rechenzeit je Bild auf der CPU (ms, geglättet) */
+  cpu: number;
+  /** Aufbau 0 … 1 */
   loading: number;
+  /** was gerade geladen wird */
+  stage: string;
   note: string;
 }
 
@@ -80,7 +84,15 @@ export class Showcase {
   private fastFor = 0;
   private ready = false;
   private loadFrac = 0;
-  camMode: CamMode = 'chase';
+  private stage = 'WebGPU startet';
+  private avgCpu = 0;
+  private scenePass: ReturnType<typeof pass> | null = null;
+  private _cam: CamMode = 'chase';
+  /** Kamerawechsel: von welcher Einstellung, wie weit übergeblendet (0 … 1) */
+  private camFrom: CamMode | null = null;
+  private camBlend = 1;
+  /** Seite des Begleitmotorrads (fest je Wechsel – kein Springen, wenn der Fahrer die Straßenmitte kreuzt) */
+  private sideSign = 1;
   /** Prüfbilder ohne Bildschirm (?shots): nie auf die Leinwand zeichnen – nur in Texturen */
   private offscreen = /[?&]shots\b/.test(location.search);
   private frameRT: THREE.RenderTarget | null = null;
@@ -105,9 +117,21 @@ export class Showcase {
   private camTh = 0;
   /** angehalten (Prüfbilder) */
   paused = false;
+  /** Fahrt von vorn: Bäume sofort ganz neu verteilen */
+  private wrapped = false;
 
   constructor(private host: HTMLElement, private opts: ShowcaseOptions) {
     this.renderer = new THREE.WebGPURenderer({ antialias: false, powerPreference: 'high-performance', reversedDepthBuffer: true });
+  }
+
+  get camMode(): CamMode { return this._cam; }
+  /** Kamera wechseln: weich in 0,7 s von der alten Einstellung hinüber (beide fahren dabei mit) */
+  set camMode(m: CamMode) {
+    if (m === this._cam) return;
+    if (m === 'side') this.sideSign = this.x > 0 ? -1 : 1;
+    this.camFrom = this.camInit ? this._cam : null;
+    this.camBlend = this.camFrom ? 0 : 1;
+    this._cam = m;
   }
 
   get backendName(): string {
@@ -124,6 +148,9 @@ export class Showcase {
 
   /** Testhilfe: an eine Stelle der Strecke springen (m) */
   jump(z: number) { this.z = clamp(z, Z0, Z1); this.camInit = false; this.place(0); }
+
+  /** Testhilfe: Kamera sofort (ohne Überblenden) */
+  cut(m: CamMode) { this._cam = m; this.camFrom = null; this.camBlend = 1; if (m === 'side') this.sideSign = this.x > 0 ? -1 : 1; }
 
   async start() {
     const r = this.renderer;
@@ -149,11 +176,19 @@ export class Showcase {
     this.resize();
 
     const low = /[?&]lowbake\b/.test(location.search);
+    const step = async (frac: number, stage: string) => {
+      this.loadFrac = frac;
+      this.stage = stage;
+      log(stage);
+      await new Promise((res) => setTimeout(res, 0));
+    };
+    // während des Ladens nichts zeichnen (der Ladeschirm deckt alles zu) – nur die Anzeige läuft weiter
+    r.setAnimationLoop((t) => this.frame(t));
+    await step(0.02, 'Oberflächen werden gebacken');
     const S: Record<SurfaceId, Surface> = bakeSurfaces(r, low ? 0.25 : 1);
-    log('Oberflächen gebacken');
+    await step(0.06, 'Himmel');
     this.sky = await buildSky(r, 26, 205, low ? 128 : 512);
     if (this.disposed) return;
-    log('Himmel');
     this.scene.background = this.sky.background;
     this.scene.environment = this.sky.environment;
     // abgestimmt: kräftige Sonne, wenig Himmelslicht (Kontrast wie an einem klaren Tag in den Bergen)
@@ -166,6 +201,7 @@ export class Showcase {
     this.setupSunGlow();
 
     // Strecke und Landschaft wie im Spiel
+    await step(0.09, 'Straße');
     const track = (this.track = new Track(this.opts.dayKey, this.opts.names, 'descent'));
     const terrain = new Terrain(track);
     terrain.window(0, Z1 + 700);
@@ -186,7 +222,6 @@ export class Showcase {
     corridor.build(i0, i1);
     this.scene.add(grass.group);
     this.scene.add(corridor.group);
-    log('Straße');
     const trees = (this.trees = new Trees());
     trees.sunDir.value.copy(this.sky.sunDir);
     this.scene.add(trees.group);
@@ -201,33 +236,77 @@ export class Showcase {
 
     // Kantenglättung 4× (auf Apples Kacheln billig); im WebGL-Ersatz ohne (dort scheitert das Umkopieren oft)
     const gpu = !!(r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend;
-    const scenePass = pass(this.scene, this.camera, { samples: gpu ? 4 : 0 });
+    const scenePass = (this.scenePass = pass(this.scene, this.camera, { samples: gpu ? 4 : 0 }));
     const color = scenePass.getTextureNode('output');
-    // nur wirklich Helles leuchtet nach (Sonne, Glanzlichter) – sonst legt der Himmel einen Schleier übers Bild
-    const glow = bloom(color, this.param('bloom', 0.06), 0.3, this.param('bthr', 4));
     this.pipeline = new THREE.RenderPipeline(r);
-    this.pipeline.outputNode = color.add(glow);
+    // Nachleuchten nur auf Wunsch (?bloom=0.06): kaum sichtbar, kostet aber ein Dutzend Durchgänge je Bild
+    const bl = this.param('bloom', 0);
+    this.pipeline.outputNode = bl > 0 ? color.add(bloom(color, bl, 0.3, this.param('bthr', 4))) : color;
 
-    // erst die Landschaft rund um den Start (und die ganze Fernsicht), dann losfahren – der Rest wird unterwegs gebaut
+    // die ganze Landschaft vorab – unterwegs wird nichts mehr gebaut (das ruckelte)
     track.world(this.z, 0, 0, this.w);
     const sx = this.w.x, sz = this.w.z;
-    r.setAnimationLoop((t) => this.frame(t));
+    this.stage = 'Landschaft';
     let lastLog = 0;
-    const near = this.param('fullbuild', 0) ? 1e9 : 700;
-    const need = Math.max(1, field.countNear(sx, sz, near));
-    while (field.hasWork(sx, sz, near)) {
-      this.loadFrac = Math.min(0.97, field.done / need);
+    while (field.hasWork(sx, sz, Infinity)) {
       if (this.disposed) return;
-      field.build(sx, sz, performance.now() + 40, near);
+      this.loadFrac = 0.12 + 0.58 * field.progress;
+      field.build(sx, sz, performance.now() + 40);
       if (performance.now() - lastLog > 2000) { lastLog = performance.now(); log(`Landschaft ${field.done}/${field.total}`); }
       await new Promise((res) => setTimeout(res, 0));
     }
-    log(`Landschaft um den Start: ${field.done} von ${field.total} Kacheln, ${trees.count} Bäume`);
-    try { await r.compileAsync(this.scene, this.camera); } catch { /* nicht schlimm */ }
+    log(`Landschaft: ${field.done} Kacheln, ${trees.count} Bäume`);
+    await step(0.71, 'Bäume');
+    this.updateCamera(0);
+    trees.update(this.camera.position, true);
+    field.merge();
+    await step(0.74, 'Shader werden übersetzt');
+    await this.warmup((f) => { this.loadFrac = 0.74 + 0.24 * f; });
     if (this.disposed) return;
-    log('Shader übersetzt');
+    log('vorgewärmt');
+    this.loadFrac = 1;
     this.ready = true;
     this.opts.onReady?.();
+  }
+
+  /**
+   * Vorwärmen: alles, was unterwegs ins Bild kommen kann (jede Baumgruppe, jedes Grasstück, alle Teile des
+   * Fahrers), einmal übersetzen und hochladen – sonst ruckelt es beim ersten Auftauchen (und beim Kamerawechsel).
+   */
+  private async warmup(progress: (f: number) => void) {
+    const r = this.renderer;
+    const top = [...this.scene.children];
+    // 1) Nachbearbeitung einrichten (ohne Szene – das legt das Bildformat des Szenendurchgangs fest)
+    const vis = top.map((o) => o.visible);
+    for (const o of top) o.visible = false;
+    this.draw();
+    top.forEach((o, i) => { o.visible = vis[i]; });
+    // 2) alles sichtbar, nichts wegschneiden
+    const saved: [THREE.Object3D, boolean, boolean][] = [];
+    this.scene.traverse((o) => { saved.push([o, o.visible, o.frustumCulled]); o.visible = true; o.frustumCulled = false; });
+    this.trees?.warm(true);
+    this.grass?.warm();
+    // 3) Shader im Hintergrund übersetzen (für das Bildformat des Szenendurchgangs), Daten hochladen
+    const rt = this.scenePass?.renderTarget ?? null;
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(rt);
+    try {
+      await r.compileAsync(this.scene, this.camera, null, (e: ProgressEvent) => progress(0.85 * (e.loaded / Math.max(1, e.total))));
+    } catch { /* nicht schlimm: dann beim ersten Bild */ }
+    r.setRenderTarget(prev);
+    if (this.disposed) return;
+    // 4) zwei echte Bilder: Schattendurchgang, Rest
+    for (let k = 0; k < 2; k++) {
+      this.draw();
+      progress(0.9 + k * 0.05);
+      await new Promise((res) => setTimeout(res, 0));
+      if (this.disposed) return;
+    }
+    for (const [o, v, f] of saved) { o.visible = v; o.frustumCulled = f; }
+    this.trees?.warm(false);
+    this.trees?.update(this.camera.position, true);
+    this.grass?.update(this.camera.position);
+    progress(1);
   }
 
   /** Sonne: helle Scheibe mit weichem Hof, weit weg in Sonnenrichtung (Berge verdecken sie) */
@@ -312,7 +391,7 @@ export class Showcase {
       this.v = acc > 0 ? Math.min(vT, this.v + acc * dt) : Math.max(vT, this.v + acc * dt);
       this.brake += ((vT < this.v - 0.4 ? 1 : 0) - this.brake) * Math.min(1, dt * 6);
       this.z += this.v * dt;
-      if (this.z > Z1) { this.z = Z0; this.camInit = false; }
+      if (this.z > Z1) { this.z = Z0; this.camInit = false; this.wrapped = true; }
     }
     const xT = this.prof(this.xProf, this.z);
     this.x += (xT - this.x) * (dt > 0 ? Math.min(1, dt * 1.5) : 1);
@@ -333,66 +412,82 @@ export class Showcase {
     }, Math.max(1e-3, dt), this.time));
   }
 
-  /** Kamera je Modus, weich nachgeführt */
-  private updateCamera(dt: number) {
+  /** Kameraeinstellung je Modus – fest am Fahrer (bzw. an seiner geglätteten Fahrtrichtung), ohne Nachziehen */
+  private camPose(mode: CamMode, out: { pos: THREE.Vector3; look: THREE.Vector3; fov: number }) {
     const t = this.track!;
     const w = this.w;
     t.world(this.z, this.x, 0, w);
     const rx = w.x, ry = w.y, rz = w.z;
-    if (!this.camInit) this.camTh = w.th;
-    this.camTh += angDiff(w.th, this.camTh) * Math.min(1, dt * 5);
     const fx = Math.sin(this.camTh), fz = -Math.cos(this.camTh);
     const sx = Math.cos(this.camTh), sz = Math.sin(this.camTh);
-    const pos = new THREE.Vector3();
-    const look = new THREE.Vector3();
-    let fov = 60;
     const aspect = this.camera.aspect;
     const portrait = aspect < 1;
-    switch (this.camMode) {
+    switch (mode) {
       case 'chase': {
         // wie im Spiel: 6,2 m dahinter, 2,75 m hoch, 15 m voraus
         const back = 6.2;
         const by = t.heightAt(Math.max(0, this.z - back));
-        pos.set(rx - fx * back, Math.max(by, ry) + 2.75, rz - fz * back);
+        out.pos.set(rx - fx * back, Math.max(by, ry) + 2.75, rz - fz * back);
         const ay = t.heightAt(this.z + 15);
-        look.set(rx + fx * 15, ry + (ay - ry) * 0.55 + 0.9, rz + fz * 15);
-        fov = portrait ? 72 - (aspect - 0.45) * 22 : 56;
-        fov += Math.min(9, Math.max(0, (this.v - 14) * 0.38));
+        out.look.set(rx + fx * 15, ry + (ay - ry) * 0.55 + 0.9, rz + fz * 15);
+        out.fov = (portrait ? 72 - (aspect - 0.45) * 22 : 56) + Math.min(9, Math.max(0, (this.v - 14) * 0.38));
         break;
       }
       case 'low': {
         const back = 3.4;
         const by = t.heightAt(Math.max(0, this.z - back));
-        pos.set(rx - fx * back + sx * 0.6, Math.max(by, ry) + 0.55, rz - fz * back + sz * 0.6);
-        look.set(rx + fx * 6, ry + 0.9, rz + fz * 6);
-        fov = portrait ? 74 : 60;
+        out.pos.set(rx - fx * back + sx * 0.6, Math.max(by, ry) + 0.55, rz - fz * back + sz * 0.6);
+        out.look.set(rx + fx * 6, ry + 0.9, rz + fz * 6);
+        out.fov = portrait ? 74 : 60;
         break;
       }
       case 'side': {
         // Begleitmotorrad außen, etwas voraus, Teleobjektiv
-        const side = this.x > 0 ? -1 : 1;
-        t.world(this.z + 9, side * (EDGE + 2.5), 0, w);
-        pos.set(w.x, Math.max(w.y, t.heightAt(this.z + 9)) + 1.45, w.z);
-        look.set(rx, ry + 1.0, rz);
-        fov = portrait ? 46 : 32;
+        t.world(this.z + 9, this.sideSign * (EDGE + 2.5), 0, w);
+        out.pos.set(w.x, Math.max(w.y, t.heightAt(this.z + 9)) + 1.45, w.z);
+        out.look.set(rx, ry + 1.0, rz);
+        out.fov = portrait ? 46 : 32;
         break;
       }
       case 'drone': {
         const back = 26;
-        pos.set(rx - fx * back + sx * 9, ry + 19, rz - fz * back + sz * 9);
-        look.set(rx + fx * 30, ry - 6, rz + fz * 30);
-        fov = portrait ? 70 : 55;
+        out.pos.set(rx - fx * back + sx * 9, ry + 19, rz - fz * back + sz * 9);
+        out.look.set(rx + fx * 30, ry - 6, rz + fz * 30);
+        out.fov = portrait ? 70 : 55;
         break;
       }
     }
-    if (!this.camInit) { this.cam.copy(pos); this.camLook.copy(look); this.camInit = true; }
-    const kp = this.camMode === 'chase' ? 1 : Math.min(1, dt * 3);
-    this.cam.lerp(pos, kp);
-    this.camLook.lerp(look, this.camMode === 'chase' ? 1 : Math.min(1, dt * 8));
-    this.camera.position.copy(this.cam);
-    this.camera.lookAt(this.camLook);
-    if (Math.abs(this.camera.fov - fov) > 0.05) {
-      this.camera.fov += (fov - this.camera.fov) * Math.min(1, dt * 3 + (this.camInit ? 0 : 1));
+  }
+
+  private poseA = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
+  private poseB = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
+
+  /** Kamera nachführen; beim Wechsel beide Einstellungen mitfahren lassen und weich überblenden */
+  private updateCamera(dt: number) {
+    const t = this.track!;
+    t.world(this.z, this.x, 0, this.w);
+    if (!this.camInit) { this.camTh = this.w.th; this.camFrom = null; this.camBlend = 1; }
+    this.camTh += angDiff(this.w.th, this.camTh) * Math.min(1, dt * 5);
+    const A = this.poseA;
+    this.camPose(this._cam, A);
+    if (this.camFrom && this.camBlend < 1) {
+      this.camBlend = Math.min(1, this.camBlend + dt / 0.7);
+      const B = this.poseB;
+      this.camPose(this.camFrom, B);
+      const u = this.camBlend;
+      const k = u * u * u * (u * (u * 6 - 15) + 10);
+      A.pos.lerpVectors(B.pos, A.pos, k);
+      A.look.lerpVectors(B.look, A.look, k);
+      A.fov = B.fov + (A.fov - B.fov) * k;
+      if (this.camBlend >= 1) this.camFrom = null;
+    }
+    this.camInit = true;
+    this.cam.copy(A.pos);
+    this.camLook.copy(A.look);
+    this.camera.position.copy(A.pos);
+    this.camera.lookAt(A.look);
+    if (Math.abs(this.camera.fov - A.fov) > 0.01) {
+      this.camera.fov = A.fov;
       this.camera.updateProjectionMatrix();
     }
   }
@@ -431,7 +526,9 @@ export class Showcase {
     const mn = Math.min(...this.intervals);
     this.period = mn < 9.6 ? 1000 / 120 : mn < 12.5 ? 1000 / 90 : 1000 / 60;
     if (this.intervals.length < 60 || now - this.lastDprChange < 1200) return;
-    if (this.avgMs > this.period * 1.22) { this.slowFor += dtMs; this.fastFor = 0; } else if (this.avgMs < this.period * 1.06) { this.fastFor += dtMs; this.slowFor = 0; }
+    // zu langsam, weil die CPU nicht nachkommt? Dann hilft eine kleinere Auflösung nicht – dann bleibt sie
+    const cpuBound = this.avgCpu > this.period * 0.75;
+    if (this.avgMs > this.period * 1.22 && !cpuBound) { this.slowFor += dtMs; this.fastFor = 0; } else if (this.avgMs < this.period * 1.06) { this.fastFor += dtMs; this.slowFor = 0; } else { this.slowFor = 0; }
     let want = this.dpr;
     if (this.slowFor > 700) want = Math.max(0.7, this.dpr - 0.15);
     else if (this.fastFor > 3500) want = Math.min(this.maxDpr, this.dpr + 0.1);
@@ -445,30 +542,28 @@ export class Showcase {
 
   private frame(t: number) {
     if (this.disposed) return;
+    const t0 = performance.now();
     const dtMs = this.last ? Math.min(100, t - this.last) : 16.7;
     this.last = t;
     this.avgMs += (dtMs - this.avgMs) * 0.05;
     const dt = Math.min(0.05, dtMs / 1000);
     this.time += dt;
-    if (this.track && this.rider) {
-      if (this.ready && !this.paused) this.place(dt);
+    if (this.ready && this.track && this.rider) {
+      if (!this.paused) this.place(dt);
       this.updateCamera(dt);
       this.updateSun();
-      this.trees?.update(this.camera.position);
+      this.trees?.update(this.camera.position, this.wrapped);
+      this.wrapped = false;
       this.grass?.update(this.camera.position);
-      // Landschaft weiterbauen: nah am Fahrer zuerst, mit kleinem Zeitbudget
-      if (this.ready && this.field && this.field.progress < 1) {
-        this.track.world(this.z + 80, 0, 0, this.w);
-        this.field.build(this.w.x, this.w.z, performance.now() + 1.5);
-      }
     }
     this.adapt(dtMs, t);
-    // Prüfbilder: nur auf Abruf zeichnen (Software-Grafik ist zu langsam für jedes Bild)
-    if (!this.offscreen) this.draw();
+    // Prüfbilder: nur auf Abruf zeichnen (Software-Grafik ist zu langsam für jedes Bild); beim Laden gar nicht
+    if (this.ready && !this.offscreen) this.draw();
+    if (this.ready) this.avgCpu += (performance.now() - t0 - this.avgCpu) * 0.05;
     const info = this.renderer.info.render;
     this.opts.onStats?.({
       fps: 1000 / this.avgMs, ms: this.avgMs, period: this.period, dpr: this.dpr, backend: this.backendName,
-      tris: info.triangles, calls: info.drawCalls, loading: this.ready ? 1 : this.loadFrac,
+      tris: info.triangles, calls: info.drawCalls, cpu: this.avgCpu, loading: this.ready ? 1 : this.loadFrac, stage: this.stage,
       note: this.ready && this.period > 14 ? 'Safari begrenzt auf 60 Hz (siehe Hinweis)' : '',
     });
   }
