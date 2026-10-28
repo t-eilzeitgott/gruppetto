@@ -24,7 +24,7 @@ import { RiderPage } from '../pages/Rider';
 import { RidersPage } from '../pages/Riders';
 import { ClimbsPage } from '../pages/Climbs';
 import { Suspense } from 'react';
-import { AkkuPage, BergPage, GamePage, GaragePage, SprintPage } from './pages';
+import { AkkuPage, BergPage, GamePage, GaragePage, JourneyPage, SprintPage } from './pages';
 import { AppSkeleton, RouteSkeleton } from '../ui/skeleton';
 import { DemoBanner } from '../ui/Shell';
 
@@ -142,7 +142,7 @@ function MemberApp({ me }: { me: ProfileT }) {
         page = <ClimbsPage />;
         break;
       case 'spiel':
-        page = <Suspense fallback={<RouteSkeleton parts={route.parts} />}>{second === 'sprint' ? <SprintPage /> : second === 'berg' ? <BergPage /> : second === 'garage' ? <GaragePage /> : <GamePage />}</Suspense>;
+        page = <Suspense fallback={<RouteSkeleton parts={route.parts} />}>{second === 'sprint' ? <SprintPage /> : second === 'berg' ? <BergPage /> : second === 'garage' ? <GaragePage /> : second === 'reise' ? <JourneyPage /> : <GamePage />}</Suspense>;
         break;
       case 'profil':
         page = <Profile />;

@@ -20,6 +20,8 @@ import { Avatar, Link, cx } from './kit';
 import { Icon } from './Icon';
 import { GameBadge } from './GameIcon';
 import { useBikes } from './useBikes';
+import { useJourney } from './useJourney';
+import { fmtKm, ROUTE, ROUTE_KM } from '../game/journey';
 import { BIKES } from '../game/bikes';
 import { BoardSkeleton, SkelText } from './skeleton';
 
@@ -87,6 +89,7 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
   return (
     <>
       <GarageTeaser />
+      <JourneyTeaser />
       <section className={cx('card games-card', games.length > 1 && active < games.length - 1 && 'has-more', !swiped && games.length > 1 && 'nudge')} aria-label="Minispiele">
         <div className="games-scroller" ref={scroller} onScroll={onScroll}>
           {games.map((g) => <GameSlide key={g.id} game={g} tourName={tourName} stages={stages} onAlert={onAlert} />)}
@@ -132,6 +135,25 @@ function GarageTeaser() {
       {bikes.loaded ? <span className="garage-teaser__count">{n}/{BIKES.length}</span> : <SkelText w={34} size={14} />}
       <Icon name="chevron" className="muted" size={18} />
       {bikes.loaded && !all ? <span className="garage-teaser__bar" aria-hidden="true"><i style={{ width: `${Math.round(frac * 100)}%` }} /></span> : null}
+    </Link>
+  );
+}
+
+/** Europareise: wo man gerade steht – alle Kilometer aus allen Spielen auf dem Weg nach Palermo */
+function JourneyTeaser() {
+  const j = useJourney();
+  const p = j.me;
+  const at = ROUTE[p.at];
+  const next = ROUTE[p.next];
+  const done = p.at === ROUTE.length - 1;
+  const sub = !j.loaded ? '' : p.meters === 0 ? `Wuppertal → Palermo · jeder Lauf zählt` : done ? 'In Palermo angekommen' : `${at.name} · noch ${fmtKm(p.toNext)} bis ${next.name}`;
+  return (
+    <Link to="/spiel/reise" className="card garage-teaser journey-teaser" ariaLabel={`Europareise – ${sub}`}>
+      <span className="garage-teaser__icon" aria-hidden="true"><Icon name="flag" size={22} /></span>
+      <span className="garage-teaser__title"><strong>Europareise</strong>{j.loaded ? <span className="journey-teaser__sub">{sub}</span> : <SkelText w={150} size={12} />}</span>
+      {j.loaded ? <span className="garage-teaser__count">{fmtKm(p.meters / 1000)}</span> : null}
+      <Icon name="chevron" className="muted" size={18} />
+      {j.loaded && p.meters > 0 ? <span className="garage-teaser__bar" aria-hidden="true"><i style={{ width: `${Math.round(Math.min(1, p.km / ROUTE_KM) * 100)}%` }} /></span> : null}
     </Link>
   );
 }

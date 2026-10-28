@@ -8,6 +8,7 @@ export const GamePage = lazyPage(() => import('../pages/Game').then((m) => m.Gam
 export const SprintPage = lazyPage(() => import('../pages/Sprint').then((m) => m.SprintPage));
 export const BergPage = lazyPage(() => import('../pages/Berg').then((m) => m.BergPage));
 export const GaragePage = lazyPage(() => import('../pages/Garage').then((m) => m.GaragePage));
+export const JourneyPage = lazyPage(() => import('../pages/Journey').then((m) => m.JourneyPage));
 /** Prototyp „Akku leer!“ – vorerst nur im Admin-Bereich (2D, klein, wird nicht vorab geladen) */
 export const AkkuPage = lazyPage(() => import('../pages/Akku').then((m) => m.AkkuPage));
 

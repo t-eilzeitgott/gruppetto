@@ -111,6 +111,11 @@ export function HomeSkeleton() {
         <SkelText w={150} size={15.5} className="garage-teaser__title" />
         <SkelText w={34} size={14} />
       </div>
+      <div className="card garage-teaser">
+        <Skel w={36} h={36} r={12} />
+        <SkelText w={120} size={15.5} className="garage-teaser__title" />
+        <SkelText w={44} size={14} />
+      </div>
       <GamesCardSkeleton />
     </div>
   );
@@ -203,7 +208,7 @@ export function GameSkeleton() {
 /** Ladeansicht passend zur Seite (ohne Rahmen) */
 export function RouteSkeleton({ parts, head }: { parts: string[]; head?: ReactNode }) {
   const [first, second] = parts;
-  if (first === 'spiel') return second === 'garage' ? <GarageSkeleton /> : <GameSkeleton />;
+  if (first === 'spiel') return second === 'garage' || second === 'reise' ? <GarageSkeleton /> : <GameSkeleton />;
   if (first === undefined) return <>{head ?? <HomeHeadSkeleton />}<HomeSkeleton /></>;
   return (
     <>
