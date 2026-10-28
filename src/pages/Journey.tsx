@@ -6,19 +6,28 @@
 import { useMemo } from 'react';
 import { goBack } from '../app/router';
 import { useApp } from '../app/context';
-import { useMembers } from '../app/hooks';
+import { useMembers, useTourData } from '../app/hooks';
+import { useQuery } from '../app/query';
+import { source } from '../app/config';
+import type { GameRun } from '../data/source';
+import { GARAGE_START } from '../game/bikes';
+import { passStamps, stampMeters } from '../game/passbook';
 import { fmtKm, journeyAt, MAP, mapXY, ROUTE, ROUTE_KM, type JourneyPos } from '../game/journey';
 import { useJourney } from '../ui/useJourney';
 import { Avatar, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 
 const LAND: Record<string, string> = { DE: 'Deutschland', CH: 'Schweiz', IT: 'Italien' };
+const fmtDate = (day: string) => { const [y, m, d] = day.split('-'); return `${Number(d)}.${Number(m)}.${y.slice(2)}`; };
 
 export function JourneyPage() {
   useTitle('Europareise');
-  const { me } = useApp();
+  const { me, tour } = useApp();
   const j = useJourney();
   const members = useMembers().data ?? [];
+  const tourData = useTourData(tour);
+  const runs = useQuery<GameRun[]>('game:runs:me', () => source.myRuns(GARAGE_START));
+  const stamps = useMemo(() => (runs.data ? passStamps(runs.data, tour?.name, tourData.data?.stages) : null), [runs.data, tour?.name, tourData.data]);
   const nameOf = (id: string) => members.find((m) => m.id === id)?.display_name ?? 'Jemand';
   const pos = j.me;
   const grp = j.group;
@@ -63,6 +72,26 @@ export function JourneyPage() {
                 <Icon name="users" size={15} />
                 <span>Die Runde zusammen: <b>{fmtKm(grp.meters / 1000)}</b>{grp.lap > 1 ? ` – ${grp.lap}. Reise, gerade` : ' – gerade'} bei {ROUTE[grp.at].name}</span>
               </p>
+            </>
+          )}
+        </section>
+
+        <section className="journey__pass" aria-label="Passbuch">
+          <h2>Passbuch</h2>
+          {!stamps ? <p className="journey__muted">Lade deine Pässe …</p> : stamps.length === 0 ? (
+            <p className="journey__muted">Noch kein Stempel. Jede Passhöhe in der Abfahrt und jeder Schlussanstieg im Bergfinale kommt hier hinein.</p>
+          ) : (
+            <>
+              <p className="journey__pass-sum"><b>{stamps.length}</b> {stamps.length === 1 ? 'Pass' : 'Pässe'} · {stamps.reduce((a, s) => a + s.count, 0)} Überquerungen · {stampMeters(stamps).toLocaleString('de-DE')} Höhenmeter gestempelt</p>
+              <ul className="journey__stamps">
+                {stamps.map((s, i) => (
+                  <li key={s.name} className={cx('journey__stampcard', s.real && 'is-real')} style={{ transform: `rotate(${((i * 7) % 5) - 2}deg)` }}>
+                    <span className="journey__stampcard-name">{s.name}</span>
+                    <span className="journey__stampcard-alt">{s.alt.toLocaleString('de-DE')} m</span>
+                    <span className="journey__stampcard-meta">{s.count > 1 ? `${s.count}× · ` : ''}{s.real ? 'echte Etappe' : fmtDate(s.first)}</span>
+                  </li>
+                ))}
+              </ul>
             </>
           )}
         </section>

@@ -7,7 +7,7 @@ import { DEFAULT_SCALE, tipLimit } from '../lib/scoring';
 import { bonusDeadline } from '../lib/time';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
-  type StageInput, type TourInput, type GameId, type GameBest,
+  type StageInput, type TourInput, type GameId, type GameBest, type GameRun,
 } from './source';
 import {
   DEMO_BONUS_RESULTS, DEMO_BONUS_TIPS, DEMO_ME, DEMO_NOW, DEMO_PROFILES, DEMO_RESULTS, DEMO_RIDERS, DEMO_STAGES,
@@ -165,6 +165,7 @@ export class DemoSource implements DataSource {
   private scores: { user_id: string; game: GameId; score: number; meters: number; at: string }[] = [
     ['u-felix', 14210, 3480, 2], ['u-julian', 11885, 2950, 30], ['u-lena', 9630, 2610, 5], ['u-christoph', 7410, 2080, 50],
     ['u-tobi', 6190, 1760, 70], ['u-anna', 4860, 1320, 3], ['u-ben', 2540, 860, 90], ['u-felix', 9800, 2400, 1], ['u-julian', 7300, 2010, 1],
+    [DEMO_ME, 5120, 2210, 6], [DEMO_ME, 8450, 4120, 29], [DEMO_ME, 3310, 1400, 52],
   ].map(([user_id, score, meters, h]) => ({
     user_id: user_id as string, game: 'abfahrt' as GameId, score: score as number, meters: meters as number,
     at: new Date(Date.now() - (h as number) * 3600e3).toISOString(),
@@ -174,7 +175,7 @@ export class DemoSource implements DataSource {
     user_id: user_id as string, game: 'sprint' as GameId, score: score as number, meters: 2400,
     at: new Date(Date.now() - (h as number) * 3600e3).toISOString(),
   }))).concat([
-    ['u-lena', 1420, 3], ['u-ben', 1180, 2], ['u-julian', 760, 30],
+    ['u-lena', 1420, 3], ['u-ben', 1180, 2], ['u-julian', 760, 30], [DEMO_ME, 640, 28],
   ].map(([user_id, score, h]) => ({
     user_id: user_id as string, game: 'berg' as GameId, score: score as number, meters: 2000,
     at: new Date(Date.now() - (h as number) * 3600e3).toISOString(),
@@ -183,6 +184,11 @@ export class DemoSource implements DataSource {
   async submitScore(game: GameId, score: number, meters = 0): Promise<void> {
     await wait(80);
     this.scores.push({ user_id: DEMO_ME, game, score: Math.round(score), meters: Math.round(meters), at: new Date().toISOString() });
+  }
+
+  async myRuns(since: string): Promise<GameRun[]> {
+    await wait(60);
+    return this.scores.filter((x) => x.user_id === DEMO_ME && x.at >= since).map((x) => ({ game: x.game, meters: x.meters, created_at: x.at }));
   }
 
   async gameLeaderboard(game: GameId, since?: string): Promise<GameBest[]> {

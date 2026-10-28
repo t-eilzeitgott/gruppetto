@@ -5,7 +5,7 @@ import type {
 } from '../lib/types';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
-  type StageInput, type TourInput, type GameId, type GameBest,
+  type StageInput, type TourInput, type GameId, type GameBest, type GameRun,
 } from './source';
 
 interface StoredSession {
@@ -290,6 +290,13 @@ export class SupabaseSource implements DataSource {
     const body: Record<string, unknown> = { game, score: Math.round(score) };
     if (meters !== undefined) body.meters = Math.max(0, Math.round(meters));
     await this.rest('game_scores', { method: 'POST', body, prefer: 'return=minimal' });
+  }
+
+  async myRuns(since: string): Promise<GameRun[]> {
+    const rows = await this.rest<{ game: GameId; meters: number | null; created_at: string }[]>(
+      `game_scores?user_id=eq.${this.me()}&created_at=gte.${encodeURIComponent(since)}&select=game,meters,created_at&order=created_at.asc&limit=2000`,
+    );
+    return rows.map((r) => ({ game: r.game, meters: r.meters ?? 0, created_at: r.created_at }));
   }
 
   async gameLeaderboard(game: GameId, since?: string): Promise<GameBest[]> {

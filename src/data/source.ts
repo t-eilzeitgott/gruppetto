@@ -11,6 +11,12 @@ export interface SessionUser {
 
 export type GameId = 'abfahrt' | 'sprint' | 'berg';
 
+export interface GameRun {
+  game: GameId;
+  meters: number;
+  created_at: string;
+}
+
 export interface GameBest {
   user_id: string;
   best: number;
@@ -89,6 +95,8 @@ export interface DataSource {
   submitScore(game: GameId, score: number, meters?: number): Promise<void>;
   /** beste Läufe je Mitglied, optional nur seit einem Zeitpunkt (z. B. heute) */
   gameLeaderboard(game: GameId, since?: string): Promise<GameBest[]>;
+  /** eigene Läufe (Spiel, Strecke, Zeitpunkt) seit einem Zeitpunkt – für Passbuch und Reisetagebuch */
+  myRuns(since: string): Promise<GameRun[]>;
   /** Lieblingsfahrer (IDs der Fahrer-Stammdaten) */
   listFavorites(): Promise<number[]>;
   setFavorite(cyclistId: number, on: boolean): Promise<void>;

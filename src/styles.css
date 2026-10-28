@@ -2063,3 +2063,18 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 
 /* Teaser auf der Startseite */
 .journey-teaser__sub { display: block; font-size: 12.5px; color: var(--muted); margin-top: 1px; font-weight: 500; }
+.journey__pass h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--g-muted); margin: 4px 4px 10px; }
+.journey__pass-sum { font-size: 13.5px; color: var(--g-muted); margin: 0 4px 12px; line-height: 1.4; }
+.journey__pass-sum b { color: #fff; }
+.journey__stamps { list-style: none; margin: 0; padding: 4px; display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.journey__stampcard {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; aspect-ratio: 1; padding: 10px 8px; text-align: center;
+  border-radius: 50%; border: 2.5px solid color-mix(in srgb, var(--accent) 70%, transparent); color: var(--g-accent);
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 70%);
+  box-shadow: inset 0 0 0 5px rgba(0, 0, 0, 0), inset 0 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent);
+  -webkit-mask-image: radial-gradient(circle at 30% 20%, #000 60%, rgba(0, 0, 0, 0.75) 100%); mask-image: radial-gradient(circle at 30% 20%, #000 60%, rgba(0, 0, 0, 0.75) 100%);
+}
+.journey__stampcard.is-real { border-color: #ffd400; color: #ffe566; box-shadow: inset 0 0 0 5px rgba(0, 0, 0, 0), inset 0 0 0 6px rgba(255, 212, 0, 0.4); }
+.journey__stampcard-name { font-size: 12px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1.15; overflow-wrap: anywhere; }
+.journey__stampcard-alt { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.journey__stampcard-meta { font-size: 10.5px; font-weight: 600; opacity: 0.8; }
