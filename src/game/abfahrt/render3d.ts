@@ -306,7 +306,7 @@ export class Renderer3D {
   private holeU = { value: 0 };
   /** Sichtweite: Abstände der Bäume (Ausblenden) und des Kronendachs (Heben, Farbe) als Uniforms */
   private treeFadeU = { value: new THREE.Vector2(VR0.fade, VR0.gone) };
-  private canU = { value: new THREE.Vector4(VR0.canNear, VR0.canFull, VR0.gone - 10, 0) };
+  private canU = { value: new THREE.Vector4(VR0.canNear, VR0.canFull, VR0.gone - 10, VR0.detail) };
   private range = VR0;
   private rangeVer = 0;
   /** Sichtweite übernehmen (live: Ringe wachsen/schrumpfen über die übliche Ringpflege) */
@@ -320,7 +320,7 @@ export class Renderer3D {
     MORPH_AHEAD[0] = Math.round(r.morph[0][1] * 0.23);
     AHEAD = r.ahead;
     this.treeFadeU.value.set(r.fade, r.gone);
-    this.canU.value.set(r.canNear, r.canFull, r.gone - 10, 0);
+    this.canU.value.set(r.canNear, r.canFull, r.gone - 10, r.detail);
   }
   /** Shader-Programme, die nicht übersetzt haben (0 = alles in Ordnung) */
   shaderErrors = 0;
@@ -563,7 +563,7 @@ export class Renderer3D {
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
     // Weltkoordinaten statt UV – waagrechte Lagen laufen so über alle Flächen hinweg
     const rockMap = this.tex(rockTex());
-    const rockU = { uRock: { value: rockMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time };
+    const rockU = { uRock: { value: rockMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uCanD: this.canU };
     const rockify = (sh: THREE.WebGLProgramParametersWithUniforms) => {
       Object.assign(sh.uniforms, rockU);
       sh.vertexShader = sh.vertexShader
@@ -572,7 +572,7 @@ export class Renderer3D {
       // (uRelief und uTime erklärt auf der feinsten Landschaftsstufe schon der Landschafts-Shader – nicht doppelt,
       // sonst übersetzt der Shader nicht und die Stufe bleibt unsichtbar)
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uRock;\n#ifndef SPLAT_U\nuniform sampler2D uRelief;\nuniform float uTime;\n#endif\nvarying vec3 vRockP;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uRock;\n#ifndef SPLAT_U\nuniform sampler2D uRelief;\nuniform float uTime;\nuniform vec4 uCanD;\n#endif\nvarying vec3 vRockP;')
         .replace('#include <map_fragment>', `
           #ifdef USE_MAP
             vec4 sampledDiffuseColor = texture2D(map, vMapUv);
@@ -589,7 +589,7 @@ export class Renderer3D {
             vec3 fn = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
             // nur in der Nähe: weiter weg würden die feinen Schichten zu Streifen flimmern
             float camDR = distance(vRockP, cameraPosition);
-            float steep = (1.0 - smoothstep(0.5, 0.8, abs(fn.y))) * (1.0 - smoothstep(220.0, 460.0, camDR));
+            float steep = (1.0 - smoothstep(0.5, 0.8, abs(fn.y))) * (1.0 - smoothstep(220.0 * uCanD.w, 460.0 * uCanD.w, camDR));
             #ifdef TMORPH
               steep *= 1.0 - vMk;
             #endif
@@ -602,7 +602,7 @@ export class Renderer3D {
               // zwei Maßstäbe: Schichten (11 m) und feine Körnung (2,7 m, nur nah) – sonst wirkt die Wand wie verwaschen
               vec4 r1 = textureGrad(uRock, ruv, rux, ruy);
               vec4 r2 = textureGrad(uRock, ruv * 4.1 + 0.37, rux * 4.1, ruy * 4.1);
-              float fine = 1.0 - smoothstep(40.0, 120.0, camDR);
+              float fine = 1.0 - smoothstep(40.0 * uCanD.w, 120.0 * uCanD.w, camDR);
               vec3 rockC = r1.rgb * mix(vec3(1.0), 0.55 + 0.55 * r2.rgb, fine);
               sampledDiffuseColor = mix(sampledDiffuseColor, vec4(rockC, 1.0), steep);
             }
@@ -695,7 +695,7 @@ export class Renderer3D {
             // Fels: Gewicht, Rauschen und die Steilheit dieser Fläche
             float rk = smoothstep(0.42, 0.64, vMat.y + (big - 0.5) * 0.4 + (nz2.r - 0.5) * 0.22 + (1.0 - fnT.y) * 0.3);
             float far = smoothstep(60.0, 220.0, camD);
-            float hiF = 1.0 - smoothstep(450.0, 1300.0, camD);
+            float hiF = 1.0 - smoothstep(450.0 * uCanD.w, 1300.0 * uCanD.w, camD);
             // Rinnen und Schichten nur an steilen Flächen
             float wallW = 1.0 - smoothstep(0.55, 0.85, fnT.y);
             // Felswände: senkrechte Rinnen (Erosion) – zwei feste Projektionen (waagrecht entlang z bzw. x, senkrecht
@@ -768,7 +768,7 @@ export class Renderer3D {
             {
               float lay = sin(vTW.y * 0.72 + (nz2.r - 0.5) * 3.2 + (big - 0.5) * 2.5 + vTW.x * 0.004);
               float band = smoothstep(-0.25, 0.55, lay);
-              float strata = 1.0 - smoothstep(200.0, 480.0, camD);
+              float strata = 1.0 - smoothstep(200.0 * uCanD.w, 480.0 * uCanD.w, camD);
               rc *= mix(1.0, mix(0.84, 1.1, band) * (1.0 - 0.25 * wallW) + 0.25 * wallW * mix(0.72, 1.16, band), strata);
             }
             #endif

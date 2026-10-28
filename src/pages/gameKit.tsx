@@ -76,7 +76,9 @@ export function RangePicker() {
     eco: 'Kurze Sicht, schont Akku und ältere Geräte',
     normal: 'Ausgewogen',
     far: 'Weite Sicht, mehr Bäume',
-    max: 'Maximale Sicht – braucht ein starkes Gerät',
+    max: 'Sehr weite Sicht (Standard)',
+    ultra: 'Noch weiter – braucht ein starkes Gerät',
+    extreme: 'So weit es geht – viel Speicher und Rechenzeit',
   };
   return (
     <div className="abf-range">
