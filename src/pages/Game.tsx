@@ -15,6 +15,7 @@ import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock } from '../game/frameClock';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { Track } from '../game/abfahrt/track';
+import { nextWeatherName } from '../game/abfahrt/weather';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, Segmented, cx, useTitle } from '../ui/kit';
@@ -528,6 +529,8 @@ export function GamePage() {
   const onPointerUp = () => engineRef.current?.pointerUp();
 
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
+  // Wetter der nächsten Fahrt (wechselt über den Tag, siehe weather.ts)
+  const wetter = nextWeatherName();
 
   return (
     <div className={cx('abf', `abf--${ui}`)}>
@@ -618,7 +621,7 @@ export function GamePage() {
                   <GameIcon size={44} />
                   <div>
                     <h1 className="abf-title">Abfahrt</h1>
-                    <p className="abf-sub">{track.title}</p>
+                    <p className="abf-sub">{track.title}{wetter ? ` · ${wetter}` : ''}</p>
                   </div>
                 </div>
                 <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />

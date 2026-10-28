@@ -12,6 +12,7 @@ import { riderOptions, rivalNames, teamMate, type RiderOption } from '../game/ab
 import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { LOOKS } from '../game/abfahrt/region';
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
+import { nextWeatherName } from '../game/abfahrt/weather';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { HudBanner, PowerRing, RaceBar, SwapIcon, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
@@ -232,6 +233,8 @@ export function BergPage() {
   const onPointerUp = () => engineRef.current?.pointerUp();
 
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
+  // Wetter der nächsten Fahrt (wechselt über den Tag, siehe weather.ts)
+  const wetter = nextWeatherName();
   const boardView = (
     <FinaleBoard title="Bestenliste Bergfinale" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Bergfinale', 'Bergfinals']} />
   );
@@ -318,7 +321,7 @@ export function BergPage() {
                   <BergIcon size={44} />
                   <div>
                     <h1 className="abf-title">Bergfinale</h1>
-                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title}{ref ? ` · ${LOOKS[ref.region].label}` : ''}</p>
+                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title}{ref ? ` · ${LOOKS[ref.region].label}` : ''}{wetter ? ` · ${wetter}` : ''}</p>
                   </div>
                 </div>
                 <BergProfile track={track} />

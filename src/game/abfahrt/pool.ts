@@ -5,9 +5,10 @@
  * kurz schwarz. Beim Verlassen wandert sie zurück in den Vorrat (ein verlorener Kontext wird verworfen).
  */
 import { Renderer3D } from './render3d';
+import { attachWeather, type WeatherFx } from './weather';
 import type { RaceView } from './engine';
 
-export interface Stage { renderer: Renderer3D; canvas: HTMLCanvasElement; overlay: HTMLCanvasElement }
+export interface Stage { renderer: Renderer3D; canvas: HTMLCanvasElement; overlay: HTMLCanvasElement; weather: WeatherFx | null }
 
 let spare: Stage | null = null;
 let inUse = 0;
@@ -19,7 +20,14 @@ function makeStage(): Stage {
   const overlay = document.createElement('canvas');
   overlay.className = 'abf__overlay';
   overlay.setAttribute('aria-hidden', 'true');
-  return { renderer: new Renderer3D(canvas, overlay), canvas, overlay };
+  const renderer = new Renderer3D(canvas, overlay);
+  // Wetter (Schatten, Licht, Nachbearbeitung) vor dem ersten Bild anhängen – so übersetzt das Vorwärmen gleich die richtigen Shader
+  return { renderer, canvas, overlay, weather: attachWeather(renderer) };
+}
+
+function drop(s: Stage) {
+  s.weather?.dispose();
+  s.renderer.dispose();
 }
 
 /** liegt eine vorgewärmte Bühne bereit? */
@@ -35,7 +43,7 @@ export function acquireStage(): Stage {
     inUse += 1;
     return s;
   }
-  s?.renderer.dispose();
+  if (s) drop(s);
   const fresh = makeStage();
   inUse += 1;
   return fresh;
@@ -46,7 +54,7 @@ export function releaseStage(s: Stage) {
   inUse = Math.max(0, inUse - 1);
   s.canvas.remove();
   s.overlay.remove();
-  if (spare || s.renderer.lost) s.renderer.dispose();
+  if (spare || s.renderer.lost) drop(s);
   else spare = s;
 }
 
@@ -81,7 +89,7 @@ export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: b
   } catch {
     s.canvas.remove();
     s.overlay.remove();
-    s.renderer.dispose();
+    drop(s);
     return Promise.resolve();
   }
   return new Promise((resolve) => {
@@ -91,7 +99,7 @@ export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: b
         // inzwischen hat ein Spiel eine eigene Bühne – diese nicht mehr nötig
         s.canvas.remove();
         s.overlay.remove();
-        s.renderer.dispose();
+        drop(s);
         resolve();
         return;
       }
