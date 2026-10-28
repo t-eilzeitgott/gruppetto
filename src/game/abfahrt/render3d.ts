@@ -7,8 +7,9 @@
  */
 import * as THREE from 'three';
 import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, TT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
-import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
-import { SpriteBank, cloud, roadArrow, roadText, warmRoadText } from './sprites';
+import { BIOME_PALETTES, lightAt, mixRGB, type RGB } from './palette';
+import { SpriteBank, roadArrow, roadText, warmRoadText } from './sprites';
+import { Lightning, SKY_FRAG, SKY_VERT, dailyMood, skyUniforms, type SkyMood } from './sky';
 import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
@@ -188,7 +189,6 @@ export class Renderer3D {
   private fog = new THREE.FogExp2(0xcfe0ea, 0.0024);
   /** Bild mit Kantenglättung (mehrere Abtastpunkte je Bildpunkt) */
   private msaa = true;
-  private light: Light = lightAt(0);
   private night = 0;
   private tunnelDim = 0;
 
@@ -207,7 +207,11 @@ export class Renderer3D {
   private peakU = peakLight();
   private valley: THREE.Mesh;
   private valleyMat: THREE.MeshLambertMaterial;
-  private clouds: THREE.Sprite[] = [];
+  /** Himmel: Stimmung des Tages (Wolken, Front, Hochnebel), vom Wetter überstimmbar; Blitze der Front */
+  private mood: SkyMood = dailyMood(0);
+  private moodOverride: Partial<SkyMood> | null = null;
+  private lightning = new Lightning();
+  private flash = 0;
   /** Adler, Gleitschirme, Ballon, Fernsehhubschrauber */
   private skyLife = new SkyLife();
   private leaderV = new THREE.Vector3();
@@ -405,7 +409,6 @@ export class Renderer3D {
   /** Prüfmodus für Löcher: Himmel unter dem Horizont und die tiefe Rückfallfläche werden magenta */
   set debugHoles(on: boolean) {
     this.skyMat.uniforms.uHoles.value = on ? 1 : 0;
-    for (const c of this.clouds) c.visible = !on;
     const vm = this.valleyMat as unknown as THREE.MeshBasicMaterial;
     vm.color.set(on ? 0xff00ff : 0xcfe0ea);
     vm.fog = !on;
@@ -467,34 +470,19 @@ export class Renderer3D {
     this.scene.fog = this.fog;
     this.scene.add(this.hemi, this.sun, this.sun.target, this.fill, this.fill.target, this.objRoot, this.skyLife.group);
 
-    // Himmel
+    // Himmel mit Wolken, Sonne und Sternen (sky.ts); das Rauschen kommt aus derselben Textur wie Straße und Gelände
+    this.noiseMap = this.dataTex(noiseTex(), 1);
     this.skyMat = new THREE.ShaderMaterial({
-      side: THREE.BackSide, depthWrite: false, fog: false, toneMapped: true,
-      uniforms: {
-        top: { value: new THREE.Color() }, horizon: { value: new THREE.Color() }, below: { value: new THREE.Color() },
-        sunDir: { value: new THREE.Vector3(0, 0.3, -1).normalize() }, sunCol: { value: new THREE.Color() }, sunSize: { value: 1 },
-        uHoles: { value: 0 },
-      },
-      vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: `
-        uniform vec3 top; uniform vec3 horizon; uniform vec3 below; uniform vec3 sunDir; uniform vec3 sunCol; uniform float sunSize; uniform float uHoles;
-        varying vec3 vDir;
-        void main(){
-          vec3 d = normalize(vDir);
-          float h = d.y;
-          // Prüfmodus: Himmel unterhalb des Horizonts = Loch in der Welt (magenta)
-          if (uHoles > 0.5 && h < -0.03) { gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }
-          vec3 c = h > 0.0 ? mix(horizon, top, pow(clamp(h, 0.0, 1.0), 0.55)) : mix(horizon, below, clamp(-h * 6.0, 0.0, 1.0));
-          float s = max(dot(d, normalize(sunDir)), 0.0);
-          c += sunCol * (pow(s, 900.0) * 3.0 * sunSize + pow(s, 24.0) * 0.35 + pow(s, 4.0) * 0.12);
-          gl_FragColor = vec4(c, 1.0);
-          #include <tonemapping_fragment>
-          #include <colorspace_fragment>
-        }`,
+      side: THREE.BackSide, depthWrite: false, depthTest: true, depthFunc: THREE.LessEqualDepth, fog: false, toneMapped: true,
+      uniforms: skyUniforms(this.noiseMap),
+      vertexShader: SKY_VERT,
+      fragmentShader: SKY_FRAG,
     });
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(5000, 32, 16), this.skyMat);
     this.sky.userData.nopick = true;
-    this.sky.renderOrder = -10;
+    // nach allem Festen (siehe SKY_VERT): nur sichtbarer Himmel kostet Rechenzeit
+    this.sky.renderOrder = 9;
+    this.sky.frustumCulled = false;
     this.scene.add(this.sky);
 
 
@@ -504,15 +492,6 @@ export class Renderer3D {
     this.valley.userData.nopick = true;
     this.valley.rotation.x = -Math.PI / 2;
     this.scene.add(this.valley);
-
-    // Wolken
-    const cTex = [cloud(1), cloud(2), cloud(3)].map((c) => alphaTex(c));
-    for (let i = 0; i < 9; i++) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: cTex[i % 3], fog: false, transparent: true, depthWrite: false, opacity: 0.85 }));
-      s.scale.set(900 + hash(i) * 700, 350 + hash(i + 9) * 200, 1);
-      this.clouds.push(s);
-      this.scene.add(s);
-    }
 
     // Partikel
     const pg = new THREE.BufferGeometry();
@@ -662,7 +641,7 @@ export class Renderer3D {
   }
 
   private initMaterials() {
-    this.noiseMap = this.dataTex(noiseTex(), 1);
+    this.noiseMap ??= this.dataTex(noiseTex(), 1);
     const L = (opts: THREE.MeshLambertMaterialParameters) => new THREE.MeshLambertMaterial(opts);
     const fa = facadeAtlas();
     const facade = this.tex(fa.day, false);
@@ -1331,6 +1310,8 @@ export class Renderer3D {
 
   private reset(track: Track) {
     this.track = track;
+    this.mood = dailyMood(track.seed);
+    this.skyMat.uniforms.uSeed.value = (hash(track.seed + 3) - 0.5) * 40;
     this.skyLife.reset();
     this.tunSpan.clear();
     this.clearTiles();
@@ -1971,7 +1952,10 @@ export class Renderer3D {
 
   /** was das Wetter vom Renderer braucht */
   get weatherEnv(): WeatherEnv {
-    return { gl: this.gl, scene: this.scene, camera: this.camera, sun: this.sun, fog: this.fog, sky: this.skyMat.uniforms, skyMesh: this.sky, noCast: [this.mats.billboard] };
+    return {
+      gl: this.gl, scene: this.scene, camera: this.camera, sun: this.sun, fog: this.fog, sky: this.skyMat.uniforms, skyMesh: this.sky, noCast: [this.mats.billboard],
+      setMood: (m) => { this.moodOverride = m; },
+    };
   }
 
   /**
@@ -1992,7 +1976,6 @@ export class Renderer3D {
   private updateLight(g: RaceView, biome: BiomeId, seg: Seg, dt: number) {
     const tod = this.todAt(g);
     const L = lightAt(tod);
-    this.light = L;
     this.night = L.lights;
     const pal = BIOME_PALETTES[biome];
     const inTunnel = seg.tunnel ? 1 : 0;
@@ -2043,6 +2026,14 @@ export class Renderer3D {
     (u.below.value as THREE.Color).copy(fogC);
     (u.sunDir.value as THREE.Vector3).copy(sd);
     (u.sunCol.value as THREE.Color).copy(sunC).multiplyScalar(L.sunY > -0.1 ? 1 : 0);
+    // Wolken: Stimmung des Tages, vom Wetter der Fahrt überstimmt; Blitze einer Front erhellen auch die Landschaft
+    const M = { ...this.mood, ...(this.moodOverride ?? {}) };
+    u.uTime.value = this.time.value;
+    u.uCover.value = M.cover; u.uCirrus.value = M.cirrus; u.uStorm.value = M.storm; u.uOvercast.value = M.overcast; u.uTowers.value = M.towers;
+    u.uStars.value = L.stars; u.uWarm.value = Math.max(0, Math.min(1, (L.t - 0.3) / 0.4));
+    this.flash = this.lightning.update(dt, M.storm);
+    u.uFlash.value = this.flash;
+    if (this.flash > 0.01) { this.hemi.intensity *= 1 + this.flash * 1.2; this.fill.intensity *= 1 + this.flash * 2; }
     this.mats.facade.emissiveIntensity = L.lights * 1.25;
     this.mats.sign.emissiveIntensity = L.lights * 0.75;
     const dusk = Math.max(0, Math.min(1, (L.lights - 0.08) / 0.4));
@@ -2197,13 +2188,6 @@ export class Renderer3D {
       (this.mtnOld.material as THREE.Material).dispose();
       this.mtnOld = null;
     }
-    this.clouds.forEach((c, i) => {
-      const a = hash(i + 40) * Math.PI * 2 + this.time.value * 0.003;
-      const r = 1800 + hash(i + 50) * 1200;
-      c.position.set(cp.x + Math.cos(a) * r, cp.y + 380 + hash(i + 60) * 420, cp.z + Math.sin(a) * r);
-      (c.material as THREE.SpriteMaterial).opacity = 0.85 * (1 - this.light.stars * 0.6);
-      (c.material as THREE.SpriteMaterial).color.setRGB(this.light.tint[0] / 255, this.light.tint[1] / 255, this.light.tint[2] / 255, THREE.SRGBColorSpace);
-    });
   }
 
   // ------------------------------------------------------------------ Abschnitte

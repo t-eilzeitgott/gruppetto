@@ -8,9 +8,9 @@
  *
  * Aufbau: Die Szene wird in ein Bild mit Tiefe gezeichnet. Daraus entstehen in Viertelauflösung das Leuchten
  * (helle Anteile, zweimal weichgezeichnet) und die Lichtstrahlen (Himmelsmaske, radial zur Sonne verwischt).
- * Der letzte Durchgang setzt alles zusammen: Himmel mit Wolken und Sonne (wo das Tiefenbild leer ist),
- * Wolkenschatten und Nebelbänke (aus der Weltposition je Bildpunkt), Leuchten, Strahlen, dann Tonwertkurve,
- * Farbkorrektur, Vignette und Korn.
+ * Der letzte Durchgang setzt alles zusammen: Wolkenschatten und Nebelbänke (aus der Weltposition je Bildpunkt),
+ * Leuchten, Strahlen, dann Tonwertkurve, Farbkorrektur, Vignette und Korn. Den Himmel selbst (Wolken, Front,
+ * Hochnebel, Blitze) malt die Himmelskugel des Renderers (sky.ts) – das Wetter gibt ihr nur die Stimmung vor.
  *
  * Ein- und ausschaltbar im Pausenmenü (gfxOpts.ts), anfangs nur die Schatten an: „Lichtfilter & Wetter“ (alles hier außer den
  * Schatten – ausgeschaltet gilt das Licht des Spiels ohne Wetter) und „Sonnenschatten“. Umschalten übersetzt
@@ -26,6 +26,7 @@ import { MOUNTAIN_FINISH, SPRINT_FINISH } from './track';
 import { berlinDayKey } from './rng';
 import { storedQuality } from './quality';
 import { gfxOn, onGfxChange } from './gfxOpts';
+import type { SkyMood } from './sky';
 
 export type WeatherId = 'gold' | 'storm' | 'nebel';
 
@@ -38,8 +39,8 @@ export interface Weather {
   bloomThreshold: number;
   rays: number;
   clouds: number;
-  /** 0 Himmel wie im Spiel, 1 Quellwolken und tiefes Blau, 2 Gewitterdecke */
-  sky: 0 | 1 | 2;
+  /** Stimmung der Himmelskugel (sky.ts): Bedeckung, Schleier, Front, Hochnebel */
+  sky: Partial<SkyMood>;
   fogBank: number;
   fogBankH: number;
   exposure: number;
@@ -56,19 +57,19 @@ export interface Weather {
 export const WEATHERS: Record<WeatherId, Weather> = {
   gold: {
     id: 'gold', name: 'Goldene Stunde', tod: [0.4, 0.56],
-    bloom: 0.3, bloomThreshold: 0.85, rays: 0.8, clouds: 0.3, sky: 1, fogBank: 0, fogBankH: 10,
+    bloom: 0.3, bloomThreshold: 0.85, rays: 0.8, clouds: 0.3, sky: { cover: 0.5, cirrus: 0.9, storm: 0, overcast: 0, towers: 0.8 }, fogBank: 0, fogBankH: 10,
     exposure: 1.02, contrast: 1.18, sat: 1.06, warm: 0.45, split: 0.6, splitS: [0.86, 0.93, 1.12], splitH: [1.1, 1.0, 0.86],
     vignette: 0.4, grain: 0.12,
   },
   storm: {
     id: 'storm', name: 'Wetterumschwung', tod: [0.5, 0.6],
-    bloom: 0.25, bloomThreshold: 0.8, rays: 1.0, clouds: 1.0, sky: 2, fogBank: 0.4, fogBankH: 12,
+    bloom: 0.25, bloomThreshold: 0.8, rays: 1.0, clouds: 1.0, sky: { cover: 0.8, cirrus: 0.2, storm: 1, overcast: 0, towers: 1 }, fogBank: 0.4, fogBankH: 12,
     exposure: 0.95, contrast: 1.26, sat: 0.74, warm: -0.6, split: 0.7, splitS: [0.82, 0.9, 1.1], splitH: [1.0, 0.98, 0.9],
     vignette: 0.55, grain: 0.2,
   },
   nebel: {
     id: 'nebel', name: 'Nebel am Pass', tod: [0.5, 0.58],
-    bloom: 0.3, bloomThreshold: 0.75, rays: 0.9, clouds: 0.3, sky: 2, fogBank: 1.0, fogBankH: 16,
+    bloom: 0.3, bloomThreshold: 0.75, rays: 0.9, clouds: 0.3, sky: { cover: 0.7, cirrus: 0, storm: 0.15, overcast: 0.8, towers: 0.2 }, fogBank: 1.0, fogBankH: 16,
     exposure: 1.0, contrast: 1.05, sat: 0.8, warm: -0.2, split: 0, splitS: [1, 1, 1], splitH: [1, 1, 1],
     vignette: 0.4, grain: 0.12,
   },
@@ -189,28 +190,9 @@ uniform sampler2D tScene, tDepth, tBloom, tRays;
 uniform vec2 uRes, uSunUv;
 uniform vec3 uSunDir, uSunCol, uFogCol, uSkyTop, uSkyHz, uSplitS, uSplitH;
 uniform float uSunVis, uTime;
-uniform float uBloom, uRays, uClouds, uSky, uFogBank, uFogBankH;
+uniform float uBloom, uRays, uClouds, uFogBank, uFogBankH;
 uniform float uExposure, uContrast, uSat, uWarm, uSplit, uVignette, uGrain;
 varying vec2 vUv;
-
-vec3 skyDrama( vec3 base, vec3 dir ) {
-	float e = clamp( dir.y, 0.0, 1.0 );
-	float sd = max( dot( dir, uSunDir ), 0.0 );
-	bool storm = uSky > 1.5;
-	vec3 top = storm ? vec3( 0.075, 0.085, 0.11 ) : uSkyTop * vec3( 0.5, 0.66, 1.0 );
-	vec3 hz = storm ? uSkyHz * vec3( 0.72, 0.74, 0.78 ) : uSkyHz;
-	vec3 c = mix( hz, top, pow( e, 0.5 ) );
-	vec2 cp = dir.xz / max( dir.y, 0.05 ) * 1.4 + uTime * vec2( 0.012, 0.005 );
-	float n = fbm( cp * 1.2 );
-	float cov = storm ? smoothstep( 0.28, 0.6, n ) : smoothstep( 0.5, 0.74, n );
-	float shade = fbm( cp * 2.6 + 3.0 );
-	vec3 cloud = storm ? mix( vec3( 0.09, 0.1, 0.12 ), vec3( 0.42, 0.42, 0.45 ), shade ) : mix( vec3( 0.62, 0.66, 0.74 ), vec3( 1.25, 1.2, 1.1 ), shade );
-	cloud *= 0.55 + 0.7 * sd;
-	float fadeH = smoothstep( 0.015, 0.16, e );
-	c = mix( c, cloud, cov * fadeH );
-	c += uSunCol * ( pow( sd, 400.0 ) * 8.0 + pow( sd, 14.0 ) * 0.5 + pow( sd, 3.0 ) * 0.1 ) * ( storm ? 0.55 : 1.0 ) * uSunVis;
-	return mix( base, c, smoothstep( 0.0, 0.1, e ) );
-}
 
 void main() {
 	vec2 uv = vUv;
@@ -219,9 +201,7 @@ void main() {
 	float dist = linZ( d );
 	vec3 wp = worldAt( uv, d );
 	vec3 col = sceneAt( tScene, uv );
-	if ( sky ) {
-		if ( uSky > 0.0 ) col = skyDrama( col, normalize( wp - uCamPos ) );
-	} else {
+	if ( ! sky ) {
 		if ( uClouds > 0.0 ) {
 			float n = fbm( wp.xz * 0.0026 + uTime * vec2( 0.011, 0.006 ) );
 			col *= 1.0 - uClouds * 0.55 * smoothstep( 0.42, 0.66, n );
@@ -267,6 +247,8 @@ export interface WeatherEnv {
   skyMesh: THREE.Object3D;
   /** Fahrer in der Ferne als Bilder – werfen keine Schatten (ihr Tiefenbild wäre falsch) */
   noCast: THREE.Material[];
+  /** Stimmung der Himmelskugel vorgeben (null: die des Tages) */
+  setMood: (m: Partial<SkyMood> | null) => void;
 }
 
 export interface WeatherHost {
@@ -324,7 +306,7 @@ export class WeatherFx {
       uFogCol: { value: new THREE.Color() }, uSkyTop: { value: new THREE.Color() }, uSkyHz: { value: new THREE.Color() },
       uSplitS: { value: new THREE.Vector3(1, 1, 1) }, uSplitH: { value: new THREE.Vector3(1, 1, 1) },
       uSunVis: { value: 0 }, uTime: { value: 0 },
-      uBloom: { value: 0 }, uRays: { value: 0 }, uClouds: { value: 0 }, uSky: { value: 0 }, uFogBank: { value: 0 }, uFogBankH: { value: 10 },
+      uBloom: { value: 0 }, uRays: { value: 0 }, uClouds: { value: 0 }, uFogBank: { value: 0 }, uFogBankH: { value: 10 },
       uExposure: { value: 1 }, uContrast: { value: 1 }, uSat: { value: 1 }, uWarm: { value: 0 }, uSplit: { value: 0 }, uVignette: { value: 0 }, uGrain: { value: 0 },
     } });
     if (gfxOn('schatten')) this.setShadows(true);
@@ -341,10 +323,11 @@ export class WeatherFx {
   /** Wetter der n-ten Fahrt des Tages einstellen (oder die feste Vorgabe aus der Adresse) */
   private choose(n: number) {
     // Lichtfilter aus: Licht des Spiels ohne Wetter (die Vorgabe aus der Adresse gilt trotzdem – zum Prüfen)
-    if (!this.fixed && !gfxOn('licht')) { this.weather = null; return; }
+    if (!this.fixed && !gfxOn('licht')) { this.weather = null; this.env.setMood(null); return; }
     const id = this.fixed ?? weatherForRun(n);
-    // ohne Nachbearbeitung wären Gewitter und Nebel nur eine tiefe Sonne: dann bleibt es bei der Goldenen Stunde
-    this.weather = id === 'none' ? null : WEATHERS[this.tier === 'low' && id !== 'gold' ? 'gold' : id];
+    // auch ohne Nachbearbeitung trägt der Himmel das Wetter (Front, Hochnebel); nur Nebelbänke und Strahlen fehlen dann
+    this.weather = id === 'none' ? null : WEATHERS[id];
+    this.env.setMood(this.weather?.sky ?? null);
   }
 
   /**
@@ -493,7 +476,7 @@ export class WeatherFx {
     (cu.uSkyTop.value as THREE.Color).copy(sky.top.value as THREE.Color);
     (cu.uSkyHz.value as THREE.Color).copy(sky.horizon.value as THREE.Color);
     cu.uSunVis.value = sunVis; cu.uTime.value = this.time;
-    cu.uBloom.value = L.bloom; cu.uRays.value = sunVis ? L.rays : 0; cu.uClouds.value = L.clouds; cu.uSky.value = L.sky;
+    cu.uBloom.value = L.bloom; cu.uRays.value = sunVis ? L.rays : 0; cu.uClouds.value = L.clouds;
     cu.uFogBank.value = L.fogBank; cu.uFogBankH.value = L.fogBankH;
     cu.uExposure.value = L.exposure; cu.uContrast.value = L.contrast; cu.uSat.value = L.sat; cu.uWarm.value = L.warm; cu.uSplit.value = L.split;
     cu.uVignette.value = L.vignette; cu.uGrain.value = L.grain;
