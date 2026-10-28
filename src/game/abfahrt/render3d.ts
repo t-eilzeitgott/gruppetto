@@ -108,7 +108,7 @@ const TK = 16384;
 const tkey = (lv: number, i: number, j: number) => (lv * TK + (i + TK / 2)) * TK + (j + TK / 2);
 const tkI = (k: number) => (Math.floor(k / TK) % TK) - TK / 2;
 const tkJ = (k: number) => (k % TK) - TK / 2;
-interface Tile { lv: number; key: number; objs: THREE.Object3D[]; geos: THREE.BufferGeometry[]; tsrc: TreeSource | null; box: [number, number, number, number]; stale?: boolean; out?: boolean; staged?: boolean }
+interface Tile { lv: number; key: number; objs: THREE.Object3D[]; geos: THREE.BufferGeometry[]; tsrc: TreeSource | null; box: [number, number, number, number]; stale?: boolean; out?: boolean; staged?: boolean; keep?: boolean }
 
 /** so viel kommt je Bild vorab auf die Grafikkarte (Geometrie und Texturen neuer Teile, Bytes) */
 const UP_BYTES = 256 * 1024;
@@ -984,7 +984,7 @@ export class Renderer3D {
       this.rs.mesh.visible = false;
     }
     // Landschaftsproben zuerst: die Abschnitte fragen beim Bau nach Geländehöhen
-    if (this.terrain?.window(Math.max(0, p.z - 520), p.z + 3000)) {
+    if (this.terrain?.window(Math.max(0, p.z - 520), Math.max(p.z + 3000, this.routeEnd))) {
       // neue oder weggefallene Straßenstücke ändern die Höhen ringsum: betroffene Kacheln neu bauen
       for (const [x0, z0, x1, z1] of this.terrain.takeDirty()) {
         for (const t of this.tiles.values()) {
@@ -1040,6 +1040,8 @@ export class Renderer3D {
     this.skyLife.reset();
     this.tunSpan.clear();
     this.clearTiles();
+    this.routeEnd = 0;
+    this.pre = null;
     this.terrain = new Terrain(track);
     this.setAds(track.names);
     this.clearChunks();
@@ -1092,6 +1094,7 @@ export class Renderer3D {
     const old = [...this.tiles.values()].filter((t) => t.lv === lv && t.out);
     for (const t of old) {
       if (inside(t.box, nb)) { t.out = false; continue; }
+      if (t.keep) { t.out = false; this.tileVis(t, false); continue; }
       this.dropTile(t);
       this.tiles.delete(t.key);
     }
@@ -1120,7 +1123,13 @@ export class Renderer3D {
         if (Math.max(t.box[0] - m.x, m.x - t.box[2], t.box[1] - m.y, m.y - t.box[3]) < m.w + 1) { done = false; break; }
       }
       if (!any || !done) continue;
-      for (const t of [...this.tiles.values()]) if (t.lv === lv && t.out) { this.dropTile(t); this.tiles.delete(t.key); }
+      for (const t of [...this.tiles.values()]) {
+        if (t.lv !== lv || !t.out) continue;
+        // vorgebaute Kacheln bleiben (nur unsichtbar), die anderen gehen
+        if (t.keep) { t.out = false; this.tileVis(t, false); continue; }
+        this.dropTile(t);
+        this.tiles.delete(t.key);
+      }
       this.lvBoxA[lv].copy(this.lvBox[lv]);
     }
   }
@@ -1350,7 +1359,7 @@ export class Renderer3D {
       if (rc === Lv.ring) {
         for (const t of this.tiles.values()) {
           // (Löschen während des Durchlaufs ist bei Map erlaubt)
-          if (t.lv === lv && !t.out && ringOf(lv, t.key) > Lv.ring) { this.dropTile(t); this.tiles.delete(t.key); }
+          if (t.lv === lv && !t.out && !t.keep && ringOf(lv, t.key) > Lv.ring) { this.dropTile(t); this.tiles.delete(t.key); }
         }
       }
     }
@@ -1366,6 +1375,59 @@ export class Renderer3D {
         }
       }
     }
+    // 4) auf der Startkarte: die mittlere und grobe Stufe entlang der ganzen Strecke vorbauen (bleiben dann
+    //    unterwegs stehen – kein Nachladen in der Ferne mehr, nur noch die feine Stufe in der Nähe)
+    if (this.idleBuild && g.phase === 'ready') this.prebuildRoute(T, g, t0, budget);
+  }
+
+  /** vorgebaute Strecke (m): so weit reicht das Probenfenster, so weit stehen mittlere und grobe Stufe */
+  private routeEnd = 0;
+  private pre: { keys: number[]; idx: number; gen: Generator<void, Tile, void> | null } | null = null;
+  private prebuildRoute(T: Terrain, g: RaceView, t0: number, budget: number) {
+    if (!this.pre) {
+      const t = g.track;
+      // Abfahrt: 7 km (so weit fährt kaum jemand), Finals: die ganze Strecke
+      this.routeEnd = t.kind === 'descent' ? 7000 : t.kind === 'sprint' ? SPRINT_FINISH + 400 : MOUNTAIN_FINISH + 400;
+      const w = this.w2;
+      const keys: number[] = [];
+      const seen = new Set<number>();
+      for (const lv of [2, 1]) {
+        const Lv = LEVELS[lv];
+        for (let z = 0; z < this.routeEnd; z += 16) {
+          t.world(z, 0, 0, w);
+          const cx = Math.floor(w.x / Lv.size);
+          const cz = Math.floor(w.z / Lv.size);
+          for (let j = -Lv.ring; j <= Lv.ring; j++) for (let i = -Lv.ring; i <= Lv.ring; i++) { const k = tkey(lv, cx + i, cz + j); if (!seen.has(k)) { seen.add(k); keys.push(k); } }
+        }
+      }
+      this.pre = { keys, idx: 0, gen: null };
+      // die Proben müssen die ganze Strecke abdecken (sonst stimmten die Kacheln später nicht mehr); geänderte
+      // Gebiete holt draw() im nächsten Bild ab (betroffene Kacheln werden neu gebaut)
+      T.window(Math.max(0, g.p.z - 520), Math.max(g.p.z + 3000, this.routeEnd));
+    }
+    const pre = this.pre;
+    T.deadline = t0 + budget;
+    while (performance.now() - t0 < budget) {
+      if (!pre.gen) {
+        while (pre.idx < pre.keys.length && this.tiles.get(pre.keys[pre.idx])?.keep) pre.idx++;
+        if (pre.idx >= pre.keys.length) break;
+        const k = pre.keys[pre.idx];
+        const have = this.tiles.get(k);
+        if (have) { have.keep = true; pre.idx++; continue; }
+        pre.gen = this.tileGen(T, Math.floor(k / (TK * TK)), k);
+      }
+      const r = pre.gen.next();
+      if (r.done) {
+        const tile = r.value;
+        tile.keep = true;
+        tile.staged = true;
+        this.tileVis(tile, false);
+        this.tiles.set(tile.key, tile);
+        pre.gen = null;
+        pre.idx++;
+      }
+    }
+    T.deadline = Infinity;
   }
 
   /** Kachel beginnen und im Rahmen des Budgets fertigbauen (sonst im nächsten Bild weiter); true = fertig */
