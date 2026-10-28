@@ -12,7 +12,8 @@ import { SpriteBank, cloud, roadArrow, roadText, warmRoadText } from './sprites'
 import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
-import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, canopyTex, fallTex, glowTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
+import { mistTexture, waterTexture } from './falls3d';
+import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, canopyTex, glowTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
 import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
 import { buildPeaks, buildPeaksSteps, peakKeepers, peakLight, setPeakOpacity } from './peaks3d';
@@ -68,6 +69,11 @@ function texMean(cv: HTMLCanvasElement, srgb: boolean, ch = 0): number {
 const CH = 40;            // Segmente je Abschnitt (80 m)
 let AHEAD = VR0.ahead;        // so weit voraus wird gebaut (m, aus der Sichtweite)
 const BEHIND = 30;
+/** Wasserfälle liegen auf der feinen Stufe; weiter weg folgen sie der mittleren (aDy.x), dann der gröbsten (aDy.y) */
+const FALL_MORPH = `float fallMorph(vec3 p, vec2 d) {
+  return d.x * smoothstep(uMorph0.z, uMorph0.w, max(abs(p.x - uMorph0.x), abs(p.z - uMorph0.y)))
+    + d.y * smoothstep(uMorph.z, uMorph.w, max(abs(p.x - uMorph.x), abs(p.z - uMorph.y)));
+}`;
 const CAM_BACK = 6.2;
 const CAM_UP = 2.75;
 const SPRINT_BACK = 7.4;
@@ -241,7 +247,8 @@ export class Renderer3D {
   private markGeo!: Record<Landmark, THREE.BufferGeometry>;
   private markMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
   /** Wasserfälle: fließende Gischt (Textur läuft nach unten) */
-  private fallMat: THREE.MeshBasicMaterial | null = null;
+  private fallMat: THREE.MeshLambertMaterial | null = null;
+  private mistMat: THREE.MeshLambertMaterial | null = null;
   private atlas = new Map<string, AtlasEntry>();
   private bank = new SpriteBank();
   private labelTex = new Map<string, THREE.Texture>();
@@ -508,13 +515,16 @@ export class Renderer3D {
     this.skyLife.group.userData.nopick = true;
     // Landmarken (auf der mittleren Stufe) folgen deren Übergang zur gröbsten
     const mU = this.morphU[1];
+    const mU0 = this.morphU[0];
     this.markMat.onBeforeCompile = (sh) => {
       sh.uniforms.uMorph = mU;
+      sh.uniforms.uMorph0 = mU0;
+      // Felsen der Wasserfälle liegen auf der feinen Stufe: weiter weg folgen sie der mittleren (aD1), dann der gröbsten
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute float aDy;\nuniform vec4 uMorph;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.y += aDy * smoothstep(uMorph.z, uMorph.w, max(abs(position.x - uMorph.x), abs(position.z - uMorph.y)));');
+        .replace('#include <common>', '#include <common>\nattribute float aDy;\nattribute float aD1;\nuniform vec4 uMorph;\nuniform vec4 uMorph0;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.y += aD1 * smoothstep(uMorph0.z, uMorph0.w, max(abs(position.x - uMorph0.x), abs(position.z - uMorph0.y))) + aDy * smoothstep(uMorph.z, uMorph.w, max(abs(position.x - uMorph.x), abs(position.z - uMorph.y)));');
     };
-    this.markMat.customProgramCacheKey = () => 'marks-morph';
+    this.markMat.customProgramCacheKey = () => 'marks-morph2';
     // weiches Ein- und Ausblenden (Abschnitte, Kacheln, Straßenobjekte): Materialien vor dem ersten Bild vorbereiten
     for (const m of [...Object.values(this.mats), ...this.terrMats, ...this.waterMats, this.markMat, this.crowdMat, this.sprMat]) appearify(m);
     this.resize();
@@ -1162,7 +1172,8 @@ export class Renderer3D {
     this.work = performance.now() - w0;
     this.updateRiders(g);
     this.updateSky(g, biome, dt);
-    if (this.fallMat?.map) this.fallMat.map.offset.y -= dt * 0.9;
+    // Wasser strömt: eine Texturlänge je Sekunde (wie schnell das aussieht, legt die Dichte der Koordinaten fest)
+    if (this.fallMat?.map) this.fallMat.map.offset.y = (this.fallMat.map.offset.y - dt) % 1;
     this.updateCrowd(g, dt);
     this.updateObjects(g);
     this.updateParticles(g);
@@ -1706,14 +1717,19 @@ export class Renderer3D {
       objs.push(bm);
     }
     if (d.falls) {
-      geos.push(d.falls);
-      const fm = new THREE.Mesh(d.falls, this.fallMaterial());
+      // Wasser (Strömung) und Gischt; die Felsen kommen zu den Landmarken
+      geos.push(d.falls.water, d.falls.mist);
+      const fm = new THREE.Mesh(d.falls.water, this.fallMaterial());
       fm.renderOrder = 3;
       objs.push(fm);
+      const mm = new THREE.Mesh(d.falls.mist, this.mistMaterial());
+      mm.renderOrder = 4;
+      objs.push(mm);
     }
-    if (d.marks.length) {
+    const rock = d.falls?.rock;
+    if (d.marks.length || rock?.pos.length) {
       // alle Landmarken der Kachel in einer Geometrie (ein Zeichenaufruf statt einem je Art)
-      let total = 0;
+      let total = rock ? rock.pos.length / 3 : 0;
       for (const t of d.marks) {
         const g = this.markGeo[t.kind as Landmark];
         if (g) total += g.index ? g.index.count : g.getAttribute('position').count;
@@ -1723,6 +1739,7 @@ export class Renderer3D {
         const col = new Float32Array(total * 3);
         // Höhenunterschied zur gröbersten Stufe: im Übergang dorthin bleibt die Hütte auf dem Boden
         const dys = new Float32Array(total);
+        const d1s = new Float32Array(total);
         const m = new THREE.Matrix4();
         const q = new THREE.Quaternion();
         const up = new THREE.Vector3(0, 1, 0);
@@ -1751,10 +1768,19 @@ export class Renderer3D {
             o++;
           }
         }
+        // Felsstufen und Becken der Wasserfälle
+        if (rock) {
+          pos.set(rock.pos, o * 3);
+          col.set(rock.col, o * 3);
+          dys.set(rock.dy, o);
+          d1s.set(rock.d1, o);
+          o += rock.pos.length / 3;
+        }
         const mg = new THREE.BufferGeometry();
         mg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         mg.setAttribute('color', new THREE.BufferAttribute(col, 3));
         mg.setAttribute('aDy', new THREE.BufferAttribute(dys, 1));
+        mg.setAttribute('aD1', new THREE.BufferAttribute(d1s, 1));
         mg.computeBoundingSphere();
         if (mg.boundingSphere) mg.boundingSphere.radius += 60;
         geos.push(mg);
@@ -2097,15 +2123,61 @@ export class Renderer3D {
     }
   }
 
-  /** Wasserfälle: fließende Gischt (einmal angelegt) */
-  private fallMaterial(): THREE.MeshBasicMaterial {
+  /** Wasserfälle: strömendes Wasser (Farbe und Deckkraft je Ecke, folgt den Übergängen zu den gröberen Stufen) */
+  private fallMaterial(): THREE.MeshLambertMaterial {
     if (!this.fallMat) {
-      const t = alphaTex(fallTex(), [235, 244, 250]);
-      t.wrapS = t.wrapT = THREE.RepeatWrapping;
       // beidseitig in einem Durchgang (sonst zeichnet three.js durchsichtige Flächen zweimal und baut das Material jedes Mal neu auf)
-      this.fallMat = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, color: new THREE.Color(0.95, 0.97, 1) });
+      const m = new THREE.MeshLambertMaterial({ map: waterTexture(), vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, emissive: new THREE.Color(0.3, 0.31, 0.32) });
+      const mU = this.morphU[1];
+      const mU0 = this.morphU[0];
+      m.onBeforeCompile = (sh) => {
+        sh.uniforms.uMorph = mU;
+        sh.uniforms.uMorph0 = mU0;
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', `#include <common>\nattribute float aAlpha;\nattribute vec2 aDy;\nuniform vec4 uMorph;\nuniform vec4 uMorph0;\nvarying float vAlpha;\n${FALL_MORPH}`)
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvAlpha = aAlpha;\ntransformed.y += fallMorph(position, aDy);');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', '#include <common>\nvarying float vAlpha;')
+          .replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.a *= vAlpha;')
+          // Eigenleuchten nur so hell wie das Wasser selbst: weiße Gischt strahlt, dunkles Bachwasser bleibt dunkel
+          .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= diffuseColor.rgb;');
+      };
+      m.customProgramCacheKey = () => 'falls-water2';
+      this.fallMat = m;
     }
     return this.fallMat;
+  }
+
+  /** Gischt über den Aufschlägen: Wolken, die sich zur Kamera drehen, aufsteigen, wachsen und vergehen */
+  private mistMaterial(): THREE.MeshLambertMaterial {
+    if (!this.mistMat) {
+      const m = new THREE.MeshLambertMaterial({ map: mistTexture(), transparent: true, depthWrite: false, color: new THREE.Color(0.95, 0.97, 1), emissive: new THREE.Color(0.16, 0.17, 0.18) });
+      const mU = this.morphU[1];
+      const mU0 = this.morphU[0];
+      const T = this.time;
+      m.onBeforeCompile = (sh) => {
+        sh.uniforms.uMorph = mU;
+        sh.uniforms.uMorph0 = mU0;
+        sh.uniforms.uTime = T;
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', `#include <common>\nattribute vec2 aCorner;\nattribute vec4 aMist;\nattribute vec2 aDy;\nuniform vec4 uMorph;\nuniform vec4 uMorph0;\nuniform float uTime;\nvarying float vMistA;\n${FALL_MORPH}`)
+          .replace('#include <begin_vertex>', `#include <begin_vertex>
+            float mt = fract(uTime * 0.16 + aMist.x);
+            transformed.y += aMist.z * mt + fallMorph(position, aDy);
+            vMistA = aMist.w * sin(3.14159 * mt);`)
+          .replace('#include <project_vertex>', `#include <project_vertex>
+            float mAng = aMist.x * 6.2832 + mt * 0.7;
+            vec2 mCor = mat2(cos(mAng), sin(mAng), -sin(mAng), cos(mAng)) * aCorner;
+            mvPosition.xy += mCor * aMist.y * (0.55 + 0.75 * mt) * 0.5;
+            gl_Position = projectionMatrix * mvPosition;`);
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', '#include <common>\nvarying float vMistA;')
+          .replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.a *= vMistA;');
+      };
+      m.customProgramCacheKey = () => 'falls-mist';
+      this.mistMat = m;
+    }
+    return this.mistMat;
   }
 
   /**
@@ -2120,7 +2192,7 @@ export class Renderer3D {
     const geo = new THREE.PlaneGeometry(1, 1);
     const pgeo = new THREE.BufferGeometry();
     pgeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
-    const noNormals = new Set<THREE.Material>([this.mats.tunWall, this.mats.tunRoad, this.mats.tunMarks, this.bbMat, this.sprMat, this.markMat, this.fallMaterial()]);
+    const noNormals = new Set<THREE.Material>([this.mats.tunWall, this.mats.tunRoad, this.mats.tunMarks, this.bbMat, this.sprMat, this.markMat]);
     const tex = this.noiseMap;
     // Beschriftungen (Malereien, Schilder, Tafeln, Bögen) entstehen erst unterwegs – je Art ein Stellvertreter
     const labels: THREE.Material[] = [
@@ -2130,7 +2202,7 @@ export class Renderer3D {
       new THREE.MeshLambertMaterial({ map: tex }),
       new THREE.MeshLambertMaterial({ color: 0x9aa0a8 }),
     ];
-    const mats: THREE.Material[] = [...Object.values(this.mats), ...this.terrMats, ...this.waterMats, this.markMat, this.crowdMat, this.sprMat, this.bbMat, this.fallMaterial(), ...labels];
+    const mats: THREE.Material[] = [...Object.values(this.mats), ...this.terrMats, ...this.waterMats, this.markMat, this.crowdMat, this.sprMat, this.bbMat, this.fallMaterial(), this.mistMaterial(), ...labels];
     for (const m of mats) {
       if (!(m as THREE.ShaderMaterial).isShaderMaterial) appearify(m);
       if ((m as THREE.PointsMaterial).isPointsMaterial) { g.add(new THREE.Points(pgeo, m)); continue; }

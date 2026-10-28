@@ -13,11 +13,14 @@ import { EDGE, MOUNTAIN_FINISH, SEG, type BiomeId, type Seg, type Side, type Tra
 
 /** Asphalt (linear) für Straßenbänder in der Landschaft */
 const ASPHALT: RGBf = [0.035, 0.036, 0.04];
+/** sattes, dunkles Grün am Wasser (linear) */
+const LUSH: RGBf = [0.035, 0.085, 0.03];
 import { BIOME_PALETTES, mixRGB, type RGB } from './palette';
 import { lin255, type RGBf } from './models3d';
 import { LOOKS, pickWeighted, type RegionLook } from './region';
 import { MARK_CELL, markCandidate, nearMark, type Landmark } from './landmarks3d';
 import { bumpAt } from './worldEdits';
+import { buildFall, fallDist, fallGeo, fallOut, inFall, planFall, type FallGeo, type FallProbe, type FallSpec } from './falls3d';
 
 // ------------------------------------------------------------------ Rauschen
 
@@ -224,8 +227,8 @@ export interface TileData {
   trees: TreeSpot[];
   /** Hütten, Kapellen, Höfe … (nur mittlere Stufe) */
   marks: TreeSpot[];
-  /** Wasserfälle: Bänder, die an steilen Hängen hinabfallen (nur mittlere Stufe) */
-  falls: THREE.BufferGeometry | null;
+  /** Wasserfälle: Felsstufen, Wasser, Gischt (nur mittlere Stufe) */
+  falls: FallGeo | null;
   minY: number;
   maxY: number;
 }
@@ -452,6 +455,10 @@ export class Terrain {
           x0 = Math.min(x0, sg.wx); z0 = Math.min(z0, sg.wz); x1 = Math.max(x1, sg.wx); z1 = Math.max(z1, sg.wz);
         }
         this.dirty.push([x0 - R_INF, z0 - R_INF, x1 + R_INF, z1 + R_INF]);
+        // Wasserfälle dort neu bestimmen (die Höhen ändern sich)
+        for (const [k, f] of this.fallCache) {
+          if (f.x > x0 - R_INF - 340 && f.x < x1 + R_INF + 340 && f.z > z0 - R_INF - 340 && f.z < z1 + R_INF + 340) this.fallCache.delete(k);
+        }
       };
       box(Math.min(oFrom, kk0), Math.max(oFrom, kk0) - 1);
       box(Math.min(oTo, kk1) + 1, Math.max(oTo, kk1));
@@ -800,6 +807,85 @@ export class Terrain {
     return { buf, n, x0: gx0, z0: gz0, cs, nx, nz, start, order };
   }
 
+  // ---------------------------------------------------------------- Wasserfälle
+
+  /** Wasserfall je Kandidatenzelle (Lage überall gleich: aus der feinen Höhe, nicht aus einer Kachel) */
+  private fallCache = new Map<number, { x: number; z: number; f: FallSpec | null; bumps: unknown }>();
+
+  /** Wasserfall der Zelle (am Stück gerechnet) */
+  fallAt(i: number, j: number): FallSpec | null {
+    const it = this.fallSteps(i, j);
+    for (;;) { const r = it.next(); if (r.done) return r.value; }
+  }
+
+  /** Wasserfall der Zelle, in Häppchen (gibt an der Zeitgrenze ab) */
+  *fallSteps(i: number, j: number): Generator<void, FallSpec | null, void> {
+    const key = (i + 32768) * 65536 + (j + 32768);
+    const hit = this.fallCache.get(key);
+    // (Hügel und Mulden aus dem Welt-Editor geändert: neu bestimmen)
+    if (hit && hit.bumps === this.track.bumps) return hit.f;
+    const c = markCandidate(i, j, NOISE_SEED);
+    let f: FallSpec | null = null;
+    if (c && c.r1 < 0.5 && this.s.n) {
+      const r = this.region(c.x - 340, c.z - 340, c.x + 340, c.z + 340);
+      const pr: FallProbe = { h: 0, water: 0, floor: 0, b: 0, dRoad: 0, skip: false, near: false };
+      const probe = (x: number, z: number) => {
+        const p = this.heightAt(x, z, r.cand, r.sg, 4);
+        pr.h = p.h; pr.water = p.water; pr.floor = p.floor; pr.b = p.b; pr.dRoad = p.dRoad; pr.skip = p.skip; pr.near = p.near;
+        return pr;
+      };
+      // Höhe der mittleren Stufe: bilinear zwischen ihren Gitterpunkten (alle 16 m)
+      const c1 = LEVELS[1].size / LEVELS[1].n;
+      const grid = new Map<number, number>();
+      const gh = (gi: number, gj: number) => {
+        const k = gi * 100003 + gj;
+        let h = grid.get(k);
+        if (h === undefined) { h = this.heightAt(gi * c1, gj * c1, r.cand, r.sg, c1).h; grid.set(k, h); }
+        return h;
+      };
+      const h1 = (x: number, z: number) => {
+        const gx = x / c1, gz = z / c1;
+        const gi = Math.floor(gx), gj = Math.floor(gz);
+        const u = gx - gi, v = gz - gj;
+        return gh(gi, gj) * (1 - u) * (1 - v) + gh(gi + 1, gj) * u * (1 - v) + gh(gi, gj + 1) * (1 - u) * v + gh(gi + 1, gj + 1) * u * v;
+      };
+      const S1 = LEVELS[1].size;
+      const tx = Math.floor(c.x / S1);
+      const tz = Math.floor(c.z / S1);
+      const snow = (b: number) => this.colorsFor(1)[b].snowLine + 40;
+      const ver = this.version;
+      f = yield* planFall(c.x, c.z, i * 7 + j * 13 + NOISE_SEED, 3.2 + c.r2 * 3, probe, h1, [tx * S1 + 2, tz * S1 + 2, (tx + 1) * S1 - 2, (tz + 1) * S1 - 2], snow, () => this.late());
+      // inzwischen ein anderes Probenfenster: die Höhen können anders sein – nicht merken, beim nächsten Mal neu
+      if (ver !== this.version) return f;
+      // (eine andere Kachel hat dieselbe Zelle in der Zwischenzeit fertig gerechnet)
+      const again = this.fallCache.get(key);
+      if (again && again.bumps === this.track.bumps) return again.f;
+    }
+    this.fallCache.set(key, { x: c?.x ?? i * MARK_CELL, z: c?.z ?? j * MARK_CELL, f, bumps: this.track.bumps });
+    if (this.fallCache.size > 6000) {
+      let drop = 1500;
+      for (const k of this.fallCache.keys()) { this.fallCache.delete(k); if (--drop <= 0) break; }
+    }
+    return f;
+  }
+
+  /** alle Wasserfälle, die in das Rechteck reichen (in Häppchen) */
+  *fallsNear(x0: number, z0: number, x1: number, z1: number): Generator<void, FallSpec[], void> {
+    const out: FallSpec[] = [];
+    // so weit kann ein Fall von seinem Kandidaten wegreichen (Zulauf, Stufen, Bach)
+    const M = 360;
+    const i0 = Math.floor((x0 - M) / MARK_CELL), i1 = Math.floor((x1 + M) / MARK_CELL);
+    const j0 = Math.floor((z0 - M) / MARK_CELL), j1 = Math.floor((z1 + M) / MARK_CELL);
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const f = yield* this.fallSteps(i, j);
+        if (f && f.box[0] < x1 && f.box[2] > x0 && f.box[1] < z1 && f.box[3] > z0) out.push(f);
+      }
+      if (this.late()) yield;
+    }
+    return out;
+  }
+
   // ---------------------------------------------------------------- Kachel
 
   /**
@@ -919,12 +1005,15 @@ export class Terrain {
     // echte Bäume, weiter weg voll) – so wächst das Dach beim Näherkommen unmerklich weg statt zu springen.
     // Nicht in Straßennähe, nicht an Seen und Tunnelportalen.
     const CAN = new Float32Array(G * G);
+    // über Wasserfällen kein Kronendach (es deckte sie in der Ferne zu)
+    const flc = lv === 1 ? yield* this.fallsNear(x0 - cell, z0 - cell, x0 + (N + 1) * cell, z0 + (N + 1) * cell) : [];
     for (let j = 1; j < G - 1; j++) {
       for (let i = 1; i < G - 1; i++) {
         const k = j * G + i;
         if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < 45) continue;
         const x = x0 + (i - 1) * cell;
         const z = z0 + (j - 1) * cell;
+        if (flc.length && inFall(flc, x, z, cell * 0.6)) continue;
         const f = this.forestAt(x, z, H[k] - FL[k], (H[k + 1] - H[k - 1]) / (2 * cell), (H[k + G] - H[k - G]) / (2 * cell), cols[BI[k]]);
         if (f > 0) CAN[k] = f * CANOPY * (0.8 + 0.4 * vnoise(x / 37, z / 37)) * sstep(45, 90, DR[k]);
       }
@@ -946,6 +1035,8 @@ export class Terrain {
     const { pos, nor, col, mat, nzA, rck, can, uvs } = a;
     const RD = g.RD;
     const CT = g.CT;
+    // Wasserfälle: ringsum felsig, dunkel und feucht, dann ein Saum aus sattem Grün, der in die Umgebung ausläuft
+    const fl = g.lv < 2 ? yield* this.fallsNear(x0 - 40, z0 - 40, x0 + (V - 1) * cell + 40, z0 + (V - 1) * cell + 40) : [];
     for (let j = 0; j < V; j++) {
       for (let i = 0; i < V; i++) {
         const k = (j + 1) * G + (i + 1);
@@ -998,6 +1089,23 @@ export class Terrain {
           if (rd > 0) {
             c = mix(c, ASPHALT, rd, c);
             mat[v * 4] *= 1 - rd; mat[v * 4 + 1] *= 1 - rd; mat[v * 4 + 2] *= 1 - rd;
+          }
+        }
+        if (fl.length && !(wet > 0.5 && y < LY[k] - 0.5)) {
+          const fd = fallDist(fl, x, z, 36);
+          if (fd.e < 34) {
+            // Fels nah am Fall (unregelmäßig ausfransend), am Bach nur ein schmaler Streifen
+            const ragged = fd.e + (n2 - 0.5) * 9;
+            const rockW = sstep(12 + 8 * fd.k, -1, ragged) * (0.3 + 0.7 * fd.k);
+            const lush = sstep(32, 3, ragged) * (1 - rockW);
+            mat[v * 4 + 1] = Math.max(mat[v * 4 + 1], rockW * 0.95);
+            mat[v * 4] *= 1 - 0.85 * rockW;
+            mat[v * 4 + 2] *= 1 - sstep(24, 0, fd.e);
+            // nasser Fels dunkel und kühl, Gras ringsum satter und dunkler
+            const wr: RGBf = [C.rockDark[0] * 0.55, C.rockDark[1] * 0.6, C.rockDark[2] * 0.58];
+            mix(rc, wr, rockW * 0.7, rc);
+            rck[v * 3] = rc[0]; rck[v * 3 + 1] = rc[1]; rck[v * 3 + 2] = rc[2];
+            mix(c, LUSH, lush * 0.55 + rockW * 0.4, c);
           }
         }
         const shadeV = 0.94 + (n2 - 0.5) * 0.1;
@@ -1163,6 +1271,8 @@ export class Terrain {
     // Bäume (nur feinste Stufe): Wald nach Rauschmaske, vereinzelte Bäume auf Wiesen
     const trees: TreeSpot[] = [];
     if (lv === 0) {
+      // um Wasserfälle herum (Felsstufen, Becken, Bach) stehen keine Bäume
+      const fl0 = yield* this.fallsNear(x0, z0, x0 + L.size, z0 + L.size);
       // dichtes Raster (6 m): ein Wald ist eine geschlossene Masse, keine verstreuten Einzelbäume
       const step = 6;
       const M = Math.floor(L.size / step);
@@ -1178,6 +1288,13 @@ export class Terrain {
           const k = gj * G + gi;
           if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < LIM_MAX + 3 || segDist(sgr, x, z) < LIM_MAX + 2) continue;
           if (nearMark(x, z, NOISE_SEED)) continue;
+          // Wasserfälle: im Bett keine Bäume, auf dem felsigen Saum nur vereinzelt, am Bach Ufergehölz
+          let fallP = 0;
+          if (fl0.length) {
+            const fe = fallDist(fl0, x, z, 12);
+            if (fe.e < 1 || (fe.e < 10 * fe.k && r1 < 0.7)) continue;
+            if (fe.e < 12) fallP = fe.k > 0.5 ? 0.18 : 0.45 * sstep(12, 3, fe.e);
+          }
           const b = BI[k];
           const C = cols[b];
           // Höhe genau wie im Gitter (bilinear), damit nichts schwebt
@@ -1205,7 +1322,7 @@ export class Terrain {
           const nzx = 0.5 + (fbm(x / 170 - 4.7, z / 170 + 8.2, 2) - 0.5) * 1.7;
           const fo = sstep(0.42, 0.62, forest + (big - 0.5) * 0.25 + (nzx - 0.5) * 0.6);
           // innen dicht, am Rand ausdünnend (weicher Saum), auf der Wiese vereinzelt
-          const p = fo > 0.5 ? 0.92 : fo > 0.1 ? 0.25 + fo * 0.6 : C.meadowTrees;
+          const p = Math.max(fallP, fo > 0.5 ? 0.92 : fo > 0.1 ? 0.25 + fo * 0.6 : C.meadowTrees);
           if (h2(tx * 3000 + i * 7, tz * 3000 + j * 13) > p) continue;
           const kind = pickTree(b, above, h2(i * 31 + tx, j * 17 + tz), fo > 0.3, this.look);
           // Höhe der gröberen Stufe an derselben Stelle (der Baum folgt dem Gelände beim Übergang)
@@ -1218,8 +1335,6 @@ export class Terrain {
     yield;
     // Dinge zum Entdecken (mittlere Stufe: dort sieht man sie aus der Ferne; die Kacheln sind am Raster ausgerichtet)
     const marks: TreeSpot[] = [];
-    const fp: number[] = [];
-    const fuv: number[] = [];
     // Höhe auf dem Gitter (bilinear), innerhalb der Kachel
     const hAt = (px: number, pz: number) => {
       const gx = Math.min(G - 2.001, Math.max(0, (px - x0) / cell + 1));
@@ -1231,46 +1346,7 @@ export class Terrain {
       const k = iz * G + ix;
       return H[k] * (1 - ux) * (1 - uz) + H[k + 1] * ux * (1 - uz) + H[k + G] * (1 - ux) * uz + H[k + G + 1] * ux * uz;
     };
-    /** Wasserfall: vom Punkt aus immer steilsten Weges bergab, solange es steil bleibt; Band knapp über dem Hang */
-    const fall = (sx: number, sz: number, wid: number) => {
-      const pts: number[][] = [];
-      let px = sx;
-      let pz = sz;
-      for (let q = 0; q < 60; q++) {
-        const h = hAt(px, pz);
-        const gx = (hAt(px + 2, pz) - hAt(px - 2, pz)) / 4;
-        const gz = (hAt(px, pz + 2) - hAt(px, pz - 2)) / 4;
-        const sl = Math.hypot(gx, gz);
-        pts.push([px, h, pz]);
-        if (sl < 0.32 && q > 3) break;
-        if (px < x0 + cell || px > x0 + L.size - cell || pz < z0 + cell || pz > z0 + L.size - cell) break;
-        px -= (gx / Math.max(1e-4, sl)) * 4;
-        pz -= (gz / Math.max(1e-4, sl)) * 4;
-      }
-      if (pts.length < 10 || pts[0][1] - pts[pts.length - 1][1] < 35) return false;
-      let v = 0;
-      for (let q = 0; q < pts.length - 1; q++) {
-        const [ax, ay, az] = pts[q];
-        const [bx, by, bz] = pts[q + 1];
-        const dx = bx - ax;
-        const dz = bz - az;
-        const dl = Math.hypot(dx, dz) || 1;
-        const nx = -dz / dl;
-        const nz = dx / dl;
-        const t0 = q / (pts.length - 1);
-        const t1 = (q + 1) / (pts.length - 1);
-        const w0 = wid * (0.45 + t0 * 0.9);
-        const w1 = wid * (0.45 + t1 * 0.9);
-        const seg = Math.hypot(dx, by - ay, dz);
-        const v1 = v + seg / 18;
-        const up = 0.7;
-        fp.push(ax - nx * w0, ay + up, az - nz * w0, ax + nx * w0, ay + up, az + nz * w0, bx + nx * w1, by + up, bz + nz * w1);
-        fp.push(ax - nx * w0, ay + up, az - nz * w0, bx + nx * w1, by + up, bz + nz * w1, bx - nx * w1, by + up, bz - nz * w1);
-        fuv.push(0, v, 1, v, 1, v1, 0, v, 1, v1, 0, v1);
-        v = v1;
-      }
-      return true;
-    };
+    const fo = fallOut();
     if (lv === 1) {
       const n = L.size / MARK_CELL;
       const i0 = Math.round(x0 / MARK_CELL);
@@ -1280,6 +1356,13 @@ export class Terrain {
         for (let i = 0; i < n; i++) {
           const c = markCandidate(i0 + i, j0 + j, NOISE_SEED);
           if (!c) continue;
+          // Wasserfall (Lage aus der feinen Höhe, für alle Stufen gleich)
+          const fs = yield* this.fallSteps(i0 + i, j0 + j);
+          if (fs) {
+            const C = cols[fs.b];
+            buildFall(fs, { rock: C.rock, rockDark: C.rockDark, moss: C.forest, meadow: C.meadow }, (x, z) => this.coarseDy(x, z, hAt(x, z), cg, cV, cA), fo);
+            continue;
+          }
 
           const fx = (c.x - x0) / cell + 1;
           const fz = (c.z - z0) / cell + 1;
@@ -1296,11 +1379,8 @@ export class Terrain {
           for (let dj = 0; dj <= 1; dj++) for (let di = 0; di <= 1; di++) { const h = H[k + dj * G + di]; lo = Math.min(lo, h); hi = Math.max(hi, h); }
           const C = cols[BI[k]];
           const above = y - FL[k];
-          // steil: dort vielleicht ein Wasserfall statt eines Hauses
-          if (hi - lo > 8) {
-            if (hi - lo > 13 && c.r1 < 0.5 && above > 30 && above < C.snowLine + 40) fall(c.x, c.z, 2.6 + c.r2 * 2.6);
-            continue;
-          }
+          // steil: kein Haus
+          if (hi - lo > 8) continue;
           if (this.forestAt(c.x, c.z, above, (H[k + 1] - H[k - 1]) / (2 * cell), (H[k + G] - H[k - G]) / (2 * cell), C) > 0.25) continue;
           // Kuppe: höher als die Umgebung
           const knoll = H[k] >= Math.max(H[k - 2], H[k + 2], H[k - 2 * G], H[k + 2 * G]) - 1;
@@ -1329,13 +1409,7 @@ export class Terrain {
       }
     }
     yield;
-    let falls: THREE.BufferGeometry | null = null;
-    if (fp.length) {
-      falls = new THREE.BufferGeometry();
-      falls.setAttribute('position', new THREE.Float32BufferAttribute(fp, 3));
-      falls.setAttribute('uv', new THREE.Float32BufferAttribute(fuv, 2));
-      falls.computeBoundingSphere();
-    }
+    const falls = fallGeo(fo);
     return { geo, water, trees, marks, falls, minY, maxY };
   }
 

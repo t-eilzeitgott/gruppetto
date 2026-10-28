@@ -762,43 +762,6 @@ export function canopyTex(): HTMLCanvasElement {
   return cv;
 }
 
-/** Wasserfall: senkrechte, unruhige Streifen aus Gischt (Alpha), zu den Rändern hin auslaufend. Läuft in v nahtlos. */
-export function fallTex(): HTMLCanvasElement {
-  const W = 64;
-  const H = 256;
-  const cv = canvas(W, H);
-  const c = cv.getContext('2d')!;
-  const r = mulberry32(71);
-  // durchgehender Schleier, darüber Streifen
-  c.fillStyle = 'rgba(255,255,255,0.5)';
-  c.fillRect(0, 0, W, H);
-  for (let i = 0; i < 110; i++) {
-    const x = 6 + r() * (W - 12);
-    const y = r() * H;
-    const len = 30 + r() * 120;
-    const w = 1.5 + r() * 4;
-    const a = 0.25 + r() * 0.55;
-    const g = c.createLinearGradient(0, y, 0, y + len);
-    g.addColorStop(0, 'rgba(255,255,255,0)');
-    g.addColorStop(0.3, `rgba(255,255,255,${a.toFixed(2)})`);
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    c.fillStyle = g;
-    for (const dy of [-H, 0, H]) c.fillRect(x - w / 2, y + dy, w, len);
-  }
-  // Ränder weich
-  const img = c.getImageData(0, 0, W, H);
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const e = Math.min(x, W - 1 - x) / (W * 0.22);
-      const i = (y * W + x) * 4;
-      img.data[i + 3] = Math.round(img.data[i + 3] * Math.min(1, e));
-      img.data[i] = 235; img.data[i + 1] = 244; img.data[i + 2] = 250;
-    }
-  }
-  c.putImageData(img, 0, 0);
-  return cv;
-}
-
 /**
  * Lichtschein für additive Darstellung: Farbe in der Mitte, zum Rand schwarz – ganz ohne Durchsichtigkeit.
  * (Verläufe ins Durchsichtige bekommen auf manchen Handys beim Hochladen farbiges Rauschen in den Rand.)
