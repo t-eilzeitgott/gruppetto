@@ -154,3 +154,29 @@ test('Gegner: Bremshaltung und Trittfrequenz wechseln stufenlos', () => {
   assert.ok(maxDb < 0.12, `Bremssprung je Bild: ${maxDb.toFixed(3)}`);
   assert.ok(mid > 0, 'Bremsen hat Zwischenwerte');
 });
+
+test('Kopf bleibt ruhig: im Sitzen kein Auf und Ab im Tritttakt – auch bei Tempo und auf Pflaster', async () => {
+  const ctx = new Proxy({}, { get: (_t, k) => (k === 'measureText' ? () => ({ width: 100 }) : k === 'createLinearGradient' || k === 'createRadialGradient' ? () => ({ addColorStop: () => undefined }) : () => undefined), set: () => true });
+  (globalThis as { document?: unknown }).document = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx }) };
+  const { RiderModel } = await import('./rider3d');
+  const m = new RiderModel(kit, new THREE.Texture(), 0);
+  delete (globalThis as { document?: unknown }).document;
+  const head = (m as unknown as { head: THREE.Object3D }).head;
+  for (const [v, cad, surface, tuck] of [[8, 6, 'asphalt', 0], [14, 9, 'asphalt', 0], [22, 0, 'asphalt', 1], [12, 8, 'cobble', 0]] as const) {
+    const an = new RiderAnim(3);
+    let ped = 0;
+    let lo = 9;
+    let hi = -9;
+    let plo = 9;
+    let phi = -9;
+    for (let i = 0; i < 600; i++) {
+      ped = (ped + cad * DT) % (Math.PI * 2);
+      m.pose(an.step({ lean: 0, pedal: ped, tuck, brake: 0, stand: 0, sprint: 0, v, air: 0, surface, wobble: 0, light: 0, roll: 0 }, DT));
+      if (i < 300) continue;
+      lo = Math.min(lo, head.position.y); hi = Math.max(hi, head.position.y);
+      plo = Math.min(plo, head.rotation.x); phi = Math.max(phi, head.rotation.x);
+    }
+    assert.ok(hi - lo < 0.006, `${v} m/s ${surface}: Kopf hüpft ${((hi - lo) * 1000).toFixed(1)} mm`);
+    assert.ok(phi - plo < 0.02, `${v} m/s ${surface}: Kopf nickt ${((phi - plo) * 57.3).toFixed(1)}°`);
+  }
+});

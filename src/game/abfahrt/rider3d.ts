@@ -700,16 +700,17 @@ export class RiderModel {
     const pelvis = this.pelvis.copy(fit.pelvis).lerp(this.v3.copy(PELVIS_UP).lerp(PELVIS_SPRINT, kind).add(bb), st);
     // Sprung und Landung: aus dem Sattel, Knie und Arme weich
     if (ab > 0) pelvis.lerp(this.v3.copy(PELVIS_ABSORB).add(bb), ab);
-    pelvis.y += st * 0.016 * Math.cos(2 * th) + pump * 0.004 * Math.cos(2 * th) + shk * 0.006 * n1;
+    // im Sitzen bleibt das Becken ruhig auf dem Sattel (nur Stöße der Straße kommen leicht durch)
+    pelvis.y += st * 0.016 * Math.cos(2 * th) + shk * 0.0015 * n1;
     pelvis.x += Math.sin(-counter) * pelvis.y * 0.85 - pump * 0.01 * Math.cos(th) + shk * 0.003 * n2;
     // Zeitfahrrad: auf den Polstern liegen, außer beim Bremsen und im Wiegetritt
     const aero = fit.aero ? Math.max(0, 1 - brake * 1.6) * (1 - st) : 0;
     // rechte Hand: Griff → Unterlenker (geduckt) bzw. Auflieger
     const hand = this.hand.copy(fit.hood).lerp(fit.drop, Math.max(tuck, spr));
-    // Abstand Schulter–Hand: wippt mit dem Tritt (die Schultern sinken zweimal je Umdrehung), hebt sich beim
-    // Atmen, zittert auf rauer Straße, beim Abfedern beugen sich die Arme
+    // Abstand Schulter–Hand: hebt sich kaum merklich beim Atmen, beim Abfedern beugen sich die Arme. Kein Wippen
+    // im Tritttakt – der Abstand kippt den ganzen Rumpf, der Kopf würde sichtbar auf und ab hüpfen
     const reach = 0.55 - 0.08 * tuck + 0.02 * dance - 0.08 * spr + 0.015 * brake
-      - pump * 0.012 * Math.cos(2 * th + 0.6) + br * 0.006 + shk * 0.008 * n2 - ab * 0.035;
+      + br * 0.002 - ab * 0.035;
     // Hochrad: fester, aufrechter Oberkörper (Griffe tief neben der Hüfte)
     let beta = fit.trunk !== undefined
       ? fit.trunk - 0.16 * Math.max(tuck, spr)
@@ -735,13 +736,14 @@ export class RiderModel {
     this.sq.copy(this.torso.quaternion);
 
     // Kopf: über dem Halsansatz, Blick nach vorn auf die Straße (flacher Rücken → Kopf weiter in den Nacken);
-    // er bleibt in der Kurve aufrechter als Rad und Rumpf, nickt leicht im Takt und schaut in die Kurve
+    // er bleibt in der Kurve aufrechter als Rad und Rumpf und schaut in die Kurve
     const flat = Math.max(0, Math.min(1, (0.7 - beta) / 0.45));
     const neck = this.v1.set(0, SPINE + 0.07, 0.01).applyQuaternion(this.sq).add(pelvis);
-    const headRoll = -counter * 0.4 + alpha * 0.25 - hipRoll * 0.3 + p.lean * 0.3 + shk * 0.025 * n1;
-    const up = 0.11 - flat * 0.016 - spr * 0.045 + br * 0.003;
+    const headRoll = -counter * 0.4 + alpha * 0.25 - hipRoll * 0.3 + p.lean * 0.3 + shk * 0.008 * n1;
+    const up = 0.11 - flat * 0.016 - spr * 0.045;
     this.head.position.set(neck.x - Math.sin(headRoll) * up, neck.y + Math.cos(headRoll) * up, neck.z - 0.05 - flat * 0.035 - ab * 0.02);
-    this.head.rotation.x = 0.08 + flat * 0.14 - brake * 0.05 + spr * 0.08 + pump * 0.035 * Math.cos(2 * th + 0.9) - lurch * 0.1 + shk * 0.035 * n3;
+    // der Blick bleibt ruhig auf der Straße (wie bei echten Fahrern: der Kopf gleicht die Bewegung des Rumpfs aus)
+    this.head.rotation.x = 0.08 + flat * 0.14 - brake * 0.05 + spr * 0.08 - lurch * 0.1 + shk * 0.006 * n3;
     this.head.rotation.y = -(p.look ?? 0);
     // Kopf bleibt beim Pendeln fast waagrecht, im Sprint wippt er leicht mit
     this.head.rotation.z = headRoll;
