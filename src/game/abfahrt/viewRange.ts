@@ -35,18 +35,39 @@ export const RANGES: ViewRange[] = [
 ];
 
 const KEY = 'gruppetto.range';
+const KEY_DROP = 'gruppetto.rangeDrop';
 let cur: ViewRange = (() => {
   try { return RANGES.find((r) => r.id === localStorage.getItem(KEY)) ?? RANGES[3]; } catch { return RANGES[3]; }
 })();
+/** automatisch um so viele Stufen kürzer als gewählt (Auflösungsregelung, siehe quality.ts) */
+let drop = (() => {
+  try { return Math.max(0, Math.min(RANGES.length - 1, Number(localStorage.getItem(KEY_DROP)) || 0)); } catch { return 0; }
+})();
 let ver = 1;
 
-export function viewRange(): ViewRange { return cur; }
+/** wirksame Sichtweite: die gewählte, bei knapper Leistung automatisch kürzer */
+export function viewRange(): ViewRange { return RANGES[Math.max(0, RANGES.indexOf(cur) - drop)]; }
+/** die im Pausenmenü gewählte Sichtweite */
+export function userRange(): ViewRange { return cur; }
 /** zählt bei jeder Änderung hoch (der Renderer vergleicht) */
 export function viewRangeVersion(): number { return ver; }
 export function setViewRange(id: RangeId) {
   const r = RANGES.find((x) => x.id === id);
   if (!r || r === cur) return;
   cur = r;
+  // neue Wahl: automatische Kürzung von vorn
+  drop = 0;
   ver += 1;
-  try { localStorage.setItem(KEY, id); } catch { /* egal */ }
+  try { localStorage.setItem(KEY, id); localStorage.setItem(KEY_DROP, '0'); } catch { /* egal */ }
 }
+export function rangeDrop(): number { return drop; }
+/** um wie viele Stufen die Sichtweite automatisch kürzer ist (bis zur kürzesten); das Gerät merkt es sich */
+export function setRangeDrop(n: number) {
+  const d = Math.max(0, Math.min(RANGES.indexOf(cur), Math.round(n)));
+  if (d === drop) return;
+  drop = d;
+  ver += 1;
+  try { localStorage.setItem(KEY_DROP, String(d)); } catch { /* egal */ }
+}
+/** kann die Sichtweite noch kürzer werden? */
+export function canDropRange(): boolean { return RANGES.indexOf(cur) - drop > 0; }
