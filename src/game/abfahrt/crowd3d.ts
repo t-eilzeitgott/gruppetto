@@ -313,7 +313,8 @@ const VERT_BEGIN = /* glsl */ `
     float f0 = 1.0 - smoothstep(12.0, 16.0, dCam);
     float g0 = 1.0 - smoothstep(27.0, 32.0, dCam);
   #ifdef CROWD_ALWAYS
-    vXa = 0.0; vXb = 1.0;
+    // Läufer: immer fein; tauchen sie weit voraus auf, blenden sie weich ein
+    vXa = 0.0; vXb = 1.0 - smoothstep(106.0, 124.0, dCam);
   #else
     if (aLod < 0.5) { vXa = 0.0; vXb = f0; } else { vXa = f0; vXb = g0; }
   #endif

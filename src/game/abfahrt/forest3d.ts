@@ -11,6 +11,7 @@
  * Landschaft ansteigt – kein Aufploppen, kein Schrumpfen.
  */
 import * as THREE from 'three';
+import { AP_FRAG, AP_HEAD, AP_VERT, apHook } from './appear';
 import { GB, M, bakedTexture, lin, mixC, mulC, softNormals } from './models3d';
 import { mulberry32 } from './rng';
 
@@ -397,8 +398,11 @@ export function bakeTreeAtlas(gl: THREE.WebGLRenderer): TreeAtlas {
 
 // ------------------------------------------------------------------ Bilder in der Welt
 
-/** Baumdaten einer Kachel oder eines Abschnitts: je Baum x, y, z, Größe, Drehung, Farbe (r, g, b), Variante */
-export const TREC = 9;
+/**
+ * Baumdaten einer Kachel oder eines Abschnitts: je Baum x, y, z, Größe, Drehung, Farbe (r, g, b), Variante und
+ * der Höhenunterschied zur gröberen Landschaftsstufe (der Baum folgt dem Gelände beim Übergang)
+ */
+export const TREC = 10;
 
 export interface TreeSource {
   /** Grundriss [x0, z0, x1, z1] */
@@ -434,7 +438,7 @@ export function treeBillboards(src: TreeSource, atlas: TreeAtlas): THREE.Instanc
     data[d + 4] = c.u0; data[d + 5] = c.v0; data[d + 6] = c.du; data[d + 7] = c.dv;
     // Spiegeln: jeder zweite Baum (nach Drehung) – mehr Vielfalt aus denselben Bildern
     data[d + 8] = c.w; data[d + 9] = c.h; data[d + 10] = c.base; data[d + 11] = Math.sin(r[o + 4] * 3.7) < 0 ? -1 : 1;
-    data[d + 12] = r[o + 5]; data[d + 13] = r[o + 6]; data[d + 14] = r[o + 7]; data[d + 15] = 0;
+    data[d + 12] = r[o + 5]; data[d + 13] = r[o + 6]; data[d + 14] = r[o + 7]; data[d + 15] = r[o + 9];
     data[d + 16] = c.hw[0]; data[d + 17] = c.hw[1]; data[d + 18] = c.hw[2]; data[d + 19] = 0;
   }
   const q = shape();
@@ -471,12 +475,12 @@ export interface TreeLightU {
  * msaa: Durchsichtigkeit über die Kantenglättung (4 Stufen je Bildpunkt, dazwischen gerastert – wirkt wie echtes
  * Überblenden); ohne Kantenglättung ein Raster je Bildpunkt.
  */
-export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: [number, number], msaa = true): THREE.ShaderMaterial {
+export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: [number, number], msaa = true, morph?: { value: THREE.Vector4 }): THREE.ShaderMaterial {
   const m = new THREE.ShaderMaterial({
     fog: true,
     defines: msaa ? { BB_A2C: '' } : {},
     uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
-      uA: { value: null }, uN: { value: null }, uTime: { value: 0 },
+      uA: { value: null }, uN: { value: null }, uTime: { value: 0 }, uMorph: { value: new THREE.Vector4(0, 0, 1e9, 2e9) },
       uSunDir: { value: new THREE.Vector3() }, uSunC: { value: new THREE.Color() }, uSkyC: { value: new THREE.Color() }, uGroundC: { value: new THREE.Color() },
       uFillDir: { value: new THREE.Vector3() }, uFillC: { value: new THREE.Color() },
     }]),
@@ -489,14 +493,19 @@ attribute vec4 aT2; // Zelle in Metern (Breite, Höhe, unter dem Fuß), Spiegeln
 attribute vec4 aT3; // Farbe
 attribute vec4 aT4; // Umriss: halbe Breiten
 uniform float uTime;
+uniform vec4 uMorph;
 varying vec2 vUv;
 varying vec3 vTint;
 varying vec3 vR;
 varying vec3 vU;
 varying vec3 vF;
 varying float vFade;
+${AP_HEAD}
 void main() {
+  ${AP_VERT}
   vec3 P = aT0.xyz;
+  // Übergang der Landschaft zur gröberen Stufe: der Baum bleibt auf dem Boden
+  P.y += aT3.w * smoothstep(uMorph.z, uMorph.w, max(abs(P.x - uMorph.x), abs(P.z - uMorph.y)));
   vec2 toC = cameraPosition.xz - P.xz;
   float d = max(length(toC), 0.01);
   vFade = 1.0 - smoothstep(${fade[0].toFixed(1)}, ${fade[1].toFixed(1)}, d);
@@ -546,7 +555,9 @@ varying vec3 vR;
 varying vec3 vU;
 varying vec3 vF;
 varying float vFade;
+${AP_HEAD}
 void main() {
+  ${AP_FRAG}
   // weiches Auflösen in der Ferne (Schwellen gleichmäßig über die Bildpunkte verteilt)
   float dth = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
 #ifdef BB_A2C
@@ -574,10 +585,13 @@ void main() {
 }`,
   });
   m.alphaToCoverage = true;
+  // Kachel- und Abschnittswechsel: weich ein- und ausblenden (Wert je Objekt)
+  m.onBeforeRender = apHook;
   // geteilte Werte: Vorrat, Zeit, Licht der Szene
   m.uniforms.uA.value = atlas.albedo;
   m.uniforms.uN.value = atlas.normal;
   m.uniforms.uTime = time;
+  if (morph) m.uniforms.uMorph = morph;
   for (const k of ['uSunDir', 'uSunC', 'uSkyC', 'uGroundC', 'uFillDir', 'uFillC'] as const) m.uniforms[k] = light[k];
   return m;
 }

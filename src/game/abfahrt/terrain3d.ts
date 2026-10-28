@@ -155,7 +155,18 @@ export const LEVELS: TerrainLevel[] = [
 ];
 
 /** Baum auf dem Höhenfeld */
-export interface TreeSpot { kind: string; x: number; y: number; z: number; s: number; rot: number; tint: number }
+export interface TreeSpot { kind: string; x: number; y: number; z: number; s: number; rot: number; tint: number; dy?: number }
+
+/** Gitterwerte einer Stufe über einem Gebiet (mit einem Punkt Rand) */
+interface Grid {
+  lv: number; G: number; cell: number; x0: number; z0: number; sgr: SegGrid | null;
+  H: Float32Array; W: Float32Array; LY: Float32Array; FL: Float32Array; BI: Uint8Array; DR: Float32Array;
+  SK: Uint8Array; NR: Uint8Array; SF: Float32Array; RG: Float32Array; CAN: Float32Array;
+}
+/** Eckwerte einer Kachel (oder ihres Übergangsziels) */
+interface VertexArrays {
+  pos: Float32Array; nor: Float32Array; col: Float32Array; mat: Float32Array; nzA: Float32Array; rck: Float32Array; can: Float32Array; uvs: Float32Array | null;
+}
 
 export interface TileData {
   geo: THREE.BufferGeometry;
@@ -680,17 +691,16 @@ export class Terrain {
     for (;;) { const r = it.next(); if (r.done) return r.value; }
   }
 
-  /** Wie buildTile, aber in Häppchen: liefert zwischendurch die Kontrolle zurück (kein Ruckeln) */
-  *tileSteps(lv: number, tx: number, tz: number): Generator<void, TileData, void> {
+  /**
+   * Gitterwerte einer Stufe über einem Gebiet (Ecke x0/z0, N Zellen) mit einem Punkt Rand: Höhe, Wasser, Seehöhe,
+   * Talboden, Landschaft, Straßenabstand, Aussparung, Straßennähe, Mindesthöhe, Grathöhe, Kronendach.
+   * Wird für eine Kachel selbst gebraucht und (mit der nächstgröberen Stufe) für ihr Übergangsziel.
+   */
+  private *gridSteps(lv: number, x0: number, z0: number, N: number): Generator<void, Grid, void> {
     const L = LEVELS[lv];
-    const N = L.n;
-    const cell = L.size / N;
-    const x0 = tx * L.size;
-    const z0 = tz * L.size;
-    const cx = x0 + L.size / 2;
-    const cz = z0 + L.size / 2;
-    void cx; void cz;
-    const sgr = lv < 2 ? this.segsNear(x0, z0, x0 + L.size, z0 + L.size, clampR(cell) + 24) : null;
+    const cell = L.size / L.n;
+    // Rand mitnehmen: auch die Randpunkte sehen alle Straßenstücke in ihrer Nähe
+    const sgr = lv < 2 ? this.segsNear(x0, z0, x0 + N * cell, z0 + N * cell, clampR(cell) + 24 + cell) : null;
     const G = N + 3; // mit Rand
     const H = new Float32Array(G * G);
     const W = new Float32Array(G * G);
@@ -787,23 +797,19 @@ export class Terrain {
         if (f > 0) CAN[k] = f * CANOPY * (0.8 + 0.4 * vnoise(x / 37, z / 37)) * sstep(45, 90, DR[k]);
       }
     }
-    // Normalen aus dem Gitter (Rand macht sie über Kachelgrenzen hinweg gleich)
-    const V = N + 1;
-    const pos = new Float32Array((V * V + 4 * V * 2) * 3);
-    const nor = new Float32Array(pos.length);
-    const col = new Float32Array(pos.length);
-    // je Ecke: Gewichte für Wald, Fels, Schnee (der Shader mischt pro Bildpunkt mit Rauschen) und die Felsfarbe
-    const mat = new Float32Array((pos.length / 3) * 4);
-    // großflächiges Rauschen je Ecke (Waldrand, Schneegrenze) – spart dem Shader einen Texturzugriff
-    const nzA = new Float32Array((pos.length / 3) * 2);
-    const rck = new Float32Array(pos.length);
-    const can = new Float32Array(pos.length / 3);
-    const uvs = new Float32Array((pos.length / 3) * 2);
-    let minY = Infinity;
-    let maxY = -Infinity;
-    const pal = (b: number) => BIOME_PALETTES[BIOMES[b]];
+    return { lv, G, cell, x0, z0, sgr, H, W, LY, FL, BI, DR, SK, NR, SF, RG, CAN };
+  }
+
+  /**
+   * Eckwerte der Gitterpunkte (ohne Rand, V × V) in die Felder ab Index 0: Höhe/Lage, Normale, Farbe, Gewichte
+   * für Wald/Fels/Schnee, Rauschen, Felsfarbe, Kronendach (und Texturkoordinaten, falls uvs).
+   */
+  private *vertexSteps(g: Grid, V: number, a: VertexArrays): Generator<void, void, void> {
+    const { G, cell, x0, z0, H, W, LY, FL, BI, CAN } = g;
+    const cols = this.colorsFor(g.lv);
     const tmp: RGBf = [0, 0, 0];
-    const mix = (a: RGBf, b: RGBf, t: number, out: RGBf) => { out[0] = a[0] + (b[0] - a[0]) * t; out[1] = a[1] + (b[1] - a[1]) * t; out[2] = a[2] + (b[2] - a[2]) * t; return out; };
+    const mix = (p: RGBf, q: RGBf, t: number, out: RGBf) => { out[0] = p[0] + (q[0] - p[0]) * t; out[1] = p[1] + (q[1] - p[1]) * t; out[2] = p[2] + (q[2] - p[2]) * t; return out; };
+    const { pos, nor, col, mat, nzA, rck, can, uvs } = a;
     for (let j = 0; j < V; j++) {
       for (let i = 0; i < V; i++) {
         const k = (j + 1) * G + (i + 1);
@@ -822,9 +828,7 @@ export class Terrain {
         nor[v * 3] = nx; nor[v * 3 + 1] = ny; nor[v * 3 + 2] = nz;
         can[v] = CAN[k];
         // Höhe mit einrechnen: an steilen Hängen keine langgezogenen Streifen
-        uvs[v * 2] = (x + y * 0.7) / 9; uvs[v * 2 + 1] = (z - y * 0.7) / 9;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
+        if (uvs) { uvs[v * 2] = (x + y * 0.7) / 9; uvs[v * 2 + 1] = (z - y * 0.7) / 9; }
         // Farbe
         const b = BI[k];
         const C = cols[b];
@@ -842,6 +846,7 @@ export class Terrain {
         rck[v * 3] = rc[0]; rck[v * 3 + 1] = rc[1]; rck[v * 3 + 2] = rc[2];
         if (wet > 0.5 && y < LY[k] - 0.5) {
           c = mix(C.sand, C.lakeBed, sstep(0, 6, LY[k] - y), tmp);
+          mat[v * 4] = 0; mat[v * 4 + 1] = 0; mat[v * 4 + 2] = 0;
         } else {
           // Wiese oder Feld im Tal; Wald am Hang, Fels oben und an steilen Stellen, Schnee als Gewichte
           const field = C.fieldy * sstep(55, 12, above) * (n1 > 0.5 ? 1 : 0.4);
@@ -854,9 +859,52 @@ export class Terrain {
         }
         const shadeV = 0.94 + (n2 - 0.5) * 0.1;
         col[v * 3] = c[0] * shadeV; col[v * 3 + 1] = c[1] * shadeV; col[v * 3 + 2] = c[2] * shadeV;
-        void pal;
       }
       if (j % 8 === 7) yield;
+    }
+  }
+
+  /** Wie buildTile, aber in Häppchen: liefert zwischendurch die Kontrolle zurück (kein Ruckeln) */
+  *tileSteps(lv: number, tx: number, tz: number): Generator<void, TileData, void> {
+    const L = LEVELS[lv];
+    const N = L.n;
+    const x0 = tx * L.size;
+    const z0 = tz * L.size;
+    const g = yield* this.gridSteps(lv, x0, z0, N);
+    const { G, cell, H, W, LY, FL, BI, DR, SK, NR, SF, sgr } = g;
+    const cols = this.colorsFor(lv);
+    // Normalen aus dem Gitter (Rand macht sie über Kachelgrenzen hinweg gleich)
+    const V = N + 1;
+    const NV = V * V + 4 * V * 2;
+    const A: VertexArrays = {
+      pos: new Float32Array(NV * 3), nor: new Float32Array(NV * 3), col: new Float32Array(NV * 3),
+      // je Ecke: Gewichte für Wald, Fels, Schnee (der Shader mischt pro Bildpunkt mit Rauschen) und die Felsfarbe
+      mat: new Float32Array(NV * 4),
+      // großflächiges Rauschen je Ecke (Waldrand, Schneegrenze) – spart dem Shader einen Texturzugriff
+      nzA: new Float32Array(NV * 2), rck: new Float32Array(NV * 3), can: new Float32Array(NV), uvs: new Float32Array(NV * 2),
+    };
+    yield* this.vertexSteps(g, V, A);
+    const { pos, nor, col, mat, nzA, rck, can } = A;
+    const uvs = A.uvs!;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let v = 0; v < V * V; v++) { const y = pos[v * 3 + 1]; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+    // Übergangsziel: die nächstgröbere Stufe an jeder Ecke (gleiche Rechnung, gleiche Dreiecke). Zum Rand der
+    // Stufe hin nimmt die Kachel im Shader stufenlos deren Form und Farben an – der Wechsel ist dann unsichtbar.
+    const morph = lv < LEVELS.length - 1 ? new Float32Array(NV * 20) : null;
+    let cg: Grid | null = null;
+    let cV = 0;
+    let cA: VertexArrays | null = null;
+    if (morph) {
+      const CL = LEVELS[lv + 1];
+      const cCell = CL.size / CL.n;
+      const cN = Math.round(L.size / cCell);
+      cg = yield* this.gridSteps(lv + 1, x0, z0, cN);
+      cV = cN + 1;
+      const cNV = cV * cV;
+      cA = { pos: new Float32Array(cNV * 3), nor: new Float32Array(cNV * 3), col: new Float32Array(cNV * 3), mat: new Float32Array(cNV * 4), nzA: new Float32Array(cNV * 2), rck: new Float32Array(cNV * 3), can: new Float32Array(cNV), uvs: null };
+      yield* this.vertexSteps(cg, cV, cA);
+      for (let v = 0; v < V * V; v++) this.coarseAt(pos[v * 3], pos[v * 3 + 2], cg, cV, cA, morph, v);
     }
     // Dreiecke (ohne die ausgesparten Stellen an Tunnelportalen)
     const idx: number[] = [];
@@ -884,6 +932,13 @@ export class Terrain {
       nzA[vn * 2] = nzA[vIdx * 2]; nzA[vn * 2 + 1] = nzA[vIdx * 2 + 1];
       can[vn] = can[vIdx];
       uvs[vn * 2] = uvs[vIdx * 2]; uvs[vn * 2 + 1] = uvs[vIdx * 2 + 1] + 0.5;
+      if (morph) {
+        // Schürze folgt der Kante: gleiche Tiefe unter der (übergehenden) Kante
+        for (let q = 0; q < 20; q++) morph[vn * 20 + q] = morph[vIdx * 20 + q];
+        morph[vn * 20] -= pos[vIdx * 3 + 1] - pos[vn * 3 + 1];
+        for (let q = 8; q < 11; q++) morph[vn * 20 + q] *= 0.8;
+        for (let q = 16; q < 19; q++) morph[vn * 20 + q] *= 0.8;
+      }
       return vn++;
     };
     const edge = (list: number[]) => {
@@ -914,13 +969,19 @@ export class Terrain {
     geo.setAttribute('aCan', new THREE.BufferAttribute(can.subarray(0, vn), 1));
     geo.setAttribute('aRock', new THREE.BufferAttribute(rck.subarray(0, vn * 3), 3));
     geo.setAttribute('aNz', new THREE.BufferAttribute(nzA.subarray(0, vn * 2), 2));
+    if (morph) {
+      // gröbere Stufe je Ecke, in fünf Vierergruppen: (Höhe, Kronendach, Rauschen ×2), Normale, Farbe, Gewichte, Felsfarbe
+      const ib = new THREE.InterleavedBuffer(morph.subarray(0, vn * 20), 20);
+      for (let q = 0; q < 5; q++) geo.setAttribute(`aC${q}`, new THREE.InterleavedBufferAttribute(ib, 4, q * 4));
+    }
     geo.setIndex(idx);
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
     // Kronendach wird im Shader angehoben: Grenzen entsprechend weiter (sonst fehlt am Kachelrand mal ein Stück)
-    geo.boundingSphere!.radius += CANOPY * 1.3;
-    geo.boundingBox!.max.y += CANOPY * 1.3;
-
+    geo.boundingSphere!.radius += CANOPY * 1.3 + 40;
+    geo.boundingBox!.max.y += CANOPY * 1.3 + 40;
+    geo.boundingBox!.min.y -= 40;
+    void cols; void W; void LY; void FL; void BI; void DR; void NR; void sgr; void cell;
     yield;
     // Seen: eigene Wasserfläche auf fester Höhe
     let water: THREE.BufferGeometry | null = null;
@@ -988,7 +1049,9 @@ export class Terrain {
           const p = forest > 0.5 ? 0.78 : C.meadowTrees;
           if (h2(tx * 3000 + i * 7, tz * 3000 + j * 13) > p) continue;
           const kind = pickTree(b, above, h2(i * 31 + tx, j * 17 + tz), forest > 0.5);
-          trees.push({ kind, x, y: y - 0.35, z, s: 0.75 + h2(i + tx * 77, j + tz * 91) * 0.65, rot: r1 * Math.PI * 2, tint: 0.82 + r2 * 0.32 });
+          // Höhe der gröberen Stufe an derselben Stelle (der Baum folgt dem Gelände beim Übergang)
+          const dy = this.coarseDy(x, z, y, cg, cV, cA);
+          trees.push({ kind, x, y: y - 0.35, z, s: 0.75 + h2(i + tx * 77, j + tz * 91) * 0.65, rot: r1 * Math.PI * 2, tint: 0.82 + r2 * 0.32, dy });
         }
         if (j % 8 === 7) yield;
       }
@@ -1087,7 +1150,8 @@ export class Terrain {
           if (knoll && c.r1 < 0.3) kind = low && c.r2 < 0.35 ? 'ruin' : 'chapel';
           else if (above < 70 && low) kind = c.r1 < 0.65 ? 'farm' : 'barn';
           else kind = c.r1 < 0.5 ? 'hut' : c.r1 < 0.88 ? 'barn' : 'chapel';
-          marks.push({ kind, x: c.x, y: Math.min(y, lo + (hi - lo) * 0.35) - 0.3, z: c.z, s: 0.9 + c.r2 * 0.25, rot: c.r2 * Math.PI * 2, tint: 0.9 + c.r1 * 0.2 });
+          const my = Math.min(y, lo + (hi - lo) * 0.35) - 0.3;
+          marks.push({ kind, x: c.x, y: my, z: c.z, s: 0.9 + c.r2 * 0.25, rot: c.r2 * Math.PI * 2, tint: 0.9 + c.r1 * 0.2, dy: this.coarseDy(c.x, c.z, y, cg, cV, cA) });
           // Schafe weiden um Hütten und Stadel
           if ((kind === 'hut' || kind === 'barn') && c.r2 < 0.55 && above < C.snowLine - 20) {
             const n = 4 + Math.floor(c.r1 * 9);
@@ -1097,7 +1161,8 @@ export class Terrain {
               const rr = 12 + h2(q + 9, j0 + j) * 16;
               const sx = c.x + Math.cos(a) * rr;
               const sz = c.z + Math.sin(a) * rr;
-              marks.push({ kind: 'sheep', x: sx, y: hAt(sx, sz) - 0.05, z: sz, s: 0.85 + h2(q, 5) * 0.3, rot: h2(q, 7) * Math.PI * 2, tint: 0.9 + h2(q, 3) * 0.15 });
+              const sy = hAt(sx, sz);
+              marks.push({ kind: 'sheep', x: sx, y: sy - 0.05, z: sz, s: 0.85 + h2(q, 5) * 0.3, rot: h2(q, 7) * Math.PI * 2, tint: 0.9 + h2(q, 3) * 0.15, dy: this.coarseDy(sx, sz, sy, cg, cV, cA) });
             }
           }
         }
@@ -1112,6 +1177,58 @@ export class Terrain {
       falls.computeBoundingSphere();
     }
     return { geo, water, trees, marks, falls, minY, maxY };
+  }
+
+  private cTmp = new Float32Array(20);
+
+  /** Höhenunterschied zur gröberen Stufe an (x, z) bei Geländehöhe y (0 ohne gröbere Stufe) */
+  private coarseDy(x: number, z: number, y: number, g: Grid | null, V: number, a: VertexArrays | null): number {
+    if (!g || !a) return 0;
+    this.coarseAt(x, z, g, V, a, this.cTmp, 0);
+    return this.cTmp[0] - y;
+  }
+
+  /**
+   * Werte der gröberen Stufe an (x, z) – genau wie ihre Dreiecke sie zeigen (Diagonale je Zelle wie dort gewählt) –
+   * nach out ab Index v·20: (Höhe, Kronendach, Rauschen ×2), (Normale, –), (Farbe, –), Gewichte, (Felsfarbe, –)
+   */
+  private coarseAt(x: number, z: number, g: Grid, V: number, a: VertexArrays, out: Float32Array, v: number) {
+    const { G, cell, x0, z0, H } = g;
+    const fx = Math.min(V - 1.000001, Math.max(0, (x - x0) / cell));
+    const fz = Math.min(V - 1.000001, Math.max(0, (z - z0) / cell));
+    const i = Math.floor(fx);
+    const j = Math.floor(fz);
+    const u = fx - i;
+    const w = fz - j;
+    const ka = (j + 1) * G + (i + 1);
+    const ia = j * V + i;
+    const ib = ia + 1;
+    const ic = ia + V;
+    const id = ic + 1;
+    // Gewichte der Ecken a (0,0), b (1,0), c (0,1), d (1,1)
+    let wa: number, wb: number, wc: number, wd: number;
+    if (Math.abs(H[ka] - H[ka + G + 1]) < Math.abs(H[ka + 1] - H[ka + G])) {
+      // Diagonale a–d: Dreiecke (a, c, d) und (a, d, b)
+      if (w >= u) { wa = 1 - w; wc = w - u; wd = u; wb = 0; } else { wa = 1 - u; wb = u - w; wd = w; wc = 0; }
+    } else if (u + w <= 1) {
+      // Diagonale b–c: Dreiecke (a, c, b) und (b, c, d)
+      wa = 1 - u - w; wb = u; wc = w; wd = 0;
+    } else {
+      wd = u + w - 1; wb = 1 - w; wc = 1 - u; wa = 0;
+    }
+    const o = v * 20;
+    const L = (A: Float32Array, n: number, q: number) => A[ia * n + q] * wa + A[ib * n + q] * wb + A[ic * n + q] * wc + A[id * n + q] * wd;
+    out[o] = L(a.pos, 3, 1);
+    out[o + 1] = L(a.can, 1, 0);
+    out[o + 2] = L(a.nzA, 2, 0);
+    out[o + 3] = L(a.nzA, 2, 1);
+    for (let q = 0; q < 3; q++) out[o + 4 + q] = L(a.nor, 3, q);
+    out[o + 7] = 0;
+    for (let q = 0; q < 3; q++) out[o + 8 + q] = L(a.col, 3, q);
+    out[o + 11] = 0;
+    for (let q = 0; q < 4; q++) out[o + 12 + q] = L(a.mat, 4, q);
+    for (let q = 0; q < 3; q++) out[o + 16 + q] = L(a.rck, 3, q);
+    out[o + 19] = 0;
   }
 
   /** Waldanteil an einem Punkt (gleiche Rechnung wie beim Einfärben); hx/hz: Steigung */

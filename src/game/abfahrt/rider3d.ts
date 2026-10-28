@@ -325,7 +325,8 @@ function blurParts() {
     const a = (i / 28) * Math.PI * 2;
     c.beginPath(); c.moveTo(S / 2, S / 2); c.lineTo(S / 2 + Math.cos(a) * S / 2, S / 2 + Math.sin(a) * S / 2); c.stroke();
   }
-  blur = { mat: new LambertFarMaterial({ map: alphaTex(cv, [40, 40, 44]), transparent: true, depthWrite: false, side: THREE.DoubleSide }), geos: new Map() };
+  // beidseitig in einem Durchgang (sonst zwei Zeichenaufrufe je Scheibe und jedes Mal ein Materialwechsel)
+  blur = { mat: new LambertFarMaterial({ map: alphaTex(cv, [40, 40, 44]), transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }), geos: new Map() };
   return blur;
 }
 function blurDisc(r: number): THREE.Mesh {

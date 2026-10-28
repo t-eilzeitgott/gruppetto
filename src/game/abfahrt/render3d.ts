@@ -25,6 +25,7 @@ import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, 
 import { mulberry32 } from './rng';
 import './grade';
 import { setGlossEnv } from './gloss';
+import { apIn, apOut, appearify, appearifyTree, setAp } from './appear';
 
 /**
  * Bäume lösen sich zwischen TREE_FADE und TREE_GONE weich auf; das Kronendach der Landschaft hebt sich schon
@@ -36,6 +37,15 @@ const CAN_NEAR = 150;
 const CAN_FULL = 330;
 
 const TREES = TREE_KINDS;
+
+/**
+ * Übergang zur gröberen Landschaftsstufe (je Stufe 0, 1): zwischen den beiden Abständen (Tschebyschow, um einen
+ * Mittelpunkt bei der Kamera, Stufe 0 etwas voraus) nimmt die feinere Stufe stufenlos Form und Farbe der gröberen
+ * an. Am Rand ihres Gebiets ist sie ihr gleich – kommen dort Kacheln hinzu oder fallen weg, sieht man nichts.
+ * Der Mittelpunkt liegt nur wenig voraus: in Kehren schwenkt er so kaum (die Berge in der Ferne bleiben ruhig).
+ */
+const MORPH: [number, number][] = [[150, 206], [600, 760]];
+const MORPH_AHEAD = [48, 0];
 
 const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
 
@@ -84,7 +94,9 @@ interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: TH
 /** Bauteile der Häuser eines Abschnitts */
 interface Town { facade: GB; tiles: GB; plain: GB; signs: GB; lanterns: number[]; bulbs: number[] }
 interface Runner { z: number; x: number; v: number; go: boolean; p: Person; act: number; yaw: number; flag: boolean }
-interface Tile { lv: number; key: string; objs: THREE.Object3D[]; geos: THREE.BufferGeometry[]; tsrc: TreeSource | null; box: [number, number, number, number]; stale?: boolean }
+interface Tile { lv: number; key: string; objs: THREE.Object3D[]; geos: THREE.BufferGeometry[]; tsrc: TreeSource | null; box: [number, number, number, number]; stale?: boolean; out?: boolean }
+/** Überblendung einer neu gebauten Kachel: die neue (inc) erscheint, die alte (out) geht – je Bildpunkt genau eine */
+interface TileFade { lv: number; a: number; dur: number; inc: Tile[]; out: Tile[] }
 interface AtlasEntry { u0: number; v0: number; u1: number; v1: number; w: number; h: number; du: number }
 
 export class Renderer3D {
@@ -145,6 +157,15 @@ export class Renderer3D {
   private waterMats: THREE.MeshPhongMaterial[] = [];
   /** Gebiet, das eine Stufe vollständig abdeckt (dort wird die nächstgröbere abgesenkt) */
   private lvBox = LEVELS.map(() => new THREE.Vector4(1e9, 1e9, -1e9, -1e9));
+  /** nach einem Ringwechsel das bisherige Gebiet, solange seine Kacheln noch stehen (sonst gleich lvBox) */
+  private lvBoxA = LEVELS.map(() => new THREE.Vector4(1e9, 1e9, -1e9, -1e9));
+  private boxTmp = new THREE.Vector4();
+  /** Übergang zur gröberen Stufe je Stufe: Mittelpunkt (x, z), Beginn, Ende */
+  private morphU = LEVELS.map(() => ({ value: new THREE.Vector4(0, 0, 1e9, 2e9) }));
+  private morphC = LEVELS.map(() => new THREE.Vector2(NaN, NaN));
+  /** wirksamer Außenradius (wächst beim Aufbau mit dem Gebiet, ohne Sprung) */
+  private morphR = LEVELS.map(() => -1);
+  private tFades: TileFade[] = [];
   /** Stufe einmal vollständig aufgebaut (danach bleibt die Abdeckung, bis der neue Ring fertig ist) */
   private boxSet = LEVELS.map(() => false);
   private lastTerrCam = new THREE.Vector3(1e9, 0, 0);
@@ -306,8 +327,19 @@ export class Renderer3D {
     this.crowdAtlas = bakeCrowdAtlas(this.gl);
     this.treeAtlas = bakeTreeAtlas(this.gl);
     // mit Kantenglättung (Normalfall) blenden die Bäume über sie weich aus
-    this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, [TREE_FADE, TREE_GONE], this.msaa);
+    this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, [TREE_FADE, TREE_GONE], this.msaa, this.morphU[0]);
     this.sprMat = spriteMaterial(this.crowdU, this.crowdAtlas);
+    // Landmarken (auf der mittleren Stufe) folgen deren Übergang zur gröbsten
+    const mU = this.morphU[1];
+    this.markMat.onBeforeCompile = (sh) => {
+      sh.uniforms.uMorph = mU;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aDy;\nuniform vec4 uMorph;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.y += aDy * smoothstep(uMorph.z, uMorph.w, max(abs(position.x - uMorph.x), abs(position.z - uMorph.y)));');
+    };
+    this.markMat.customProgramCacheKey = () => 'marks-morph';
+    // weiches Ein- und Ausblenden (Abschnitte, Kacheln, Straßenobjekte): Materialien vor dem ersten Bild vorbereiten
+    for (const m of [...Object.values(this.mats), ...this.terrMats, ...this.waterMats, this.markMat, this.crowdMat, this.sprMat]) appearify(m);
     this.resize();
   }
 
@@ -452,6 +484,10 @@ export class Renderer3D {
         .replace('#include <map_fragment>', `
           #ifdef USE_MAP
             vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+            #ifdef TMORPH
+              // Übergang zur gröberen Stufe: dort gibt es die Detailtextur nicht (nur ihren Mittelwert)
+              sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, vec3(${detailMean.toFixed(4)}), vMk);
+            #endif
           #else
             vec4 sampledDiffuseColor = vec4(1.0);
           #endif
@@ -462,6 +498,9 @@ export class Renderer3D {
             vec3 fn = normalize(cross(px, py));
             // nur in der Nähe: weiter weg würden die feinen Schichten zu Streifen flimmern
             float steep = (1.0 - smoothstep(0.5, 0.8, abs(fn.y))) * (1.0 - smoothstep(60.0, 180.0, distance(vRockP, cameraPosition)));
+            #ifdef TMORPH
+              steep *= 1.0 - vMk;
+            #endif
             vec2 tu = vec2(-fn.z, fn.x) / max(1e-4, length(fn.xz));
             vec2 ruv = vec2(dot(vRockP.xz, tu), vRockP.y) / 11.0;
             vec2 rux = dFdx(ruv);
@@ -489,13 +528,42 @@ export class Renderer3D {
     // großflächiges Rauschen kommt je Ecke (aNz, vMat.w) statt aus einer Textur
     const splat = (sh: THREE.WebGLProgramParametersWithUniforms, lv: number) => {
       Object.assign(sh.uniforms, splatU);
+      // Übergang zur gröberen Stufe (alle außer der gröbsten): je Ecke deren Werte, gemischt nach dem Abstand
+      // zum Übergangs-Mittelpunkt – Höhe, Normale, Farbe, Gewichte, Rauschen, Kronendach
+      const morph = lv < LEVELS.length - 1;
+      if (morph) sh.uniforms.uMorph = this.morphU[lv];
+      const MD = morph ? '#define TMORPH\n' : '';
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec4 aMat;\nattribute vec3 aRock;\nattribute float aCan;\nattribute vec2 aNz;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;')
-        // Kronendach: nah flach (dort stehen Bäume), weiter weg angehoben – stetig mit dem Abstand zur Kamera
-        .replace('#include <begin_vertex>', `#include <begin_vertex>\n{ vec3 cw = (modelMatrix * vec4(transformed, 1.0)).xyz; transformed.y += aCan * smoothstep(${CAN_NEAR.toFixed(1)}, ${CAN_FULL.toFixed(1)}, distance(cw.xz, cameraPosition.xz)); }`)
-        .replace('#include <project_vertex>', '#include <project_vertex>\nvMat = aMat;\nvRk = aRock;\nvNz = aNz;\nvTW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        .replace('#include <common>', `#include <common>\n${MD}attribute vec4 aMat;\nattribute vec3 aRock;\nattribute float aCan;\nattribute vec2 aNz;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;
+          #ifdef TMORPH
+          attribute vec4 aC0;\nattribute vec4 aC1;\nattribute vec4 aC2;\nattribute vec4 aC3;\nattribute vec4 aC4;\nuniform vec4 uMorph;\nvarying float vMk;
+          #endif`)
+        .replace('void main() {', `void main() {
+          #ifdef TMORPH
+            float mk = smoothstep(uMorph.z, uMorph.w, max(abs(position.x - uMorph.x), abs(position.z - uMorph.y)));
+            vMk = mk;
+          #endif`)
+        .replace('#include <color_vertex>', '#include <color_vertex>\n#ifdef TMORPH\nvColor.rgb = mix(color.rgb, aC2.rgb, mk);\n#endif')
+        .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n#ifdef TMORPH\nobjectNormal = normalize(mix(objectNormal, aC1.xyz, mk));\n#endif')
+        // Kronendach: nah flach (dort stehen Bäume), weiter weg angehoben – stetig mit dem Abstand zur Kamera.
+        // Alles additiv (das Absenken unter der feineren Stufe kommt unabhängig davon dazu)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          #ifdef TMORPH
+            transformed.y += (aC0.x - position.y) * mk;
+            float canH = mix(aCan, aC0.y, mk);
+          #else
+            float canH = aCan;
+          #endif
+          { vec3 cw = (modelMatrix * vec4(transformed, 1.0)).xyz; transformed.y += canH * smoothstep(${CAN_NEAR.toFixed(1)}, ${CAN_FULL.toFixed(1)}, distance(cw.xz, cameraPosition.xz)); }`)
+        .replace('#include <project_vertex>', `#include <project_vertex>
+          #ifdef TMORPH
+            vMat = mix(aMat, aC3, mk);\nvRk = mix(aRock, aC4.rgb, mk);\nvNz = mix(aNz, aC0.zw, mk);
+          #else
+            vMat = aMat;\nvRk = aRock;\nvNz = aNz;
+          #endif
+          vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n#define TLV ${lv}\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;`)
+        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
         .replace('#include <color_fragment>', `
           // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
           // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen.
@@ -508,6 +576,10 @@ export class Renderer3D {
             #if TLV < 2
               // mittleres Rauschen: r, Höhe g, Steigung von g in b/a (je Texel ×4)
               vec4 nz2 = texture2D(uRelief, vTW.xz / 33.0);
+              #if TLV == 1 && defined(TMORPH)
+                // die gröbste Stufe hat es nicht: im Übergang dorthin ausblenden
+                nz2 = mix(nz2, vec4(0.5), vMk);
+              #endif
             #else
               vec4 nz2 = vec4(0.5);
             #endif
@@ -556,6 +628,9 @@ export class Renderer3D {
               vec2 cux = dFdx(cuv);
               vec2 cuy = dFdy(cuv);
               if (fo > 0.01) crown = textureGrad(uCanopy, cuv, cux, cuy).r;
+              #ifdef TMORPH
+                crown = mix(crown, ${canMean.toFixed(4)}, vMk);
+              #endif
             #endif
             vec3 fc = mix(uForA, uForB, nz2.r) * (0.42 + crown * 0.72);
             fc = mix(fc, uForA * vec3(0.62, 0.6, 0.5), smoothstep(0.78, 0.45, fnT.y));
@@ -586,18 +661,24 @@ export class Renderer3D {
     };
     // Landschaftsmaterialien: gröbere Stufen sinken dort ab, wo die feinere liegt
     const lower = <M extends THREE.Material>(m: M, lv: number, drop: number, key: string, rock: boolean): M => {
-      const u = { uBox: { value: this.lvBox[Math.max(0, lv - 1)] }, uDrop: { value: drop }, uHole: this.holeU };
+      const f = Math.max(0, lv - 1);
+      const u = { uBox: { value: this.lvBox[f] }, uBoxA: { value: this.lvBoxA[f] }, uDrop: { value: drop }, uHole: this.holeU };
       m.onBeforeCompile = (sh) => {
         // Felstextur nur auf der feinsten Stufe (weiter weg ist sie ohnehin ausgeblendet)
         if (rock) { if (lv === 0) rockify(sh); splat(sh, lv); }
         if (lv === 0) return;
         Object.assign(sh.uniforms, u);
         sh.vertexShader = sh.vertexShader
-          .replace('#include <common>', '#include <common>\nuniform vec4 uBox;\nuniform float uDrop;\nvarying float vLow;')
-          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLow = 0.0;\nif (position.x > uBox.x + 0.5 && position.x < uBox.z - 0.5 && position.z > uBox.y + 0.5 && position.z < uBox.w - 0.5) { transformed.y -= uDrop; vLow = 1.0; }');
-        // Prüfmodus: abgesenkte gröbere Stufe sichtbar = Loch in der feineren (magenta)
+          .replace('#include <common>', '#include <common>\nuniform vec4 uBox;\nuniform vec4 uBoxA;\nuniform float uDrop;\nvarying float vLow;')
+          // abgesenkt, wo die feinere Stufe liegt (nach einem Ringwechsel: im neuen und im alten Gebiet, bis die
+          // herausfallenden Kacheln weg sind – sie haben dann schon genau die Form dieser Stufe)
+          .replace('#include <begin_vertex>', `#include <begin_vertex>
+            vLow = 0.0;
+            if ((position.x > uBox.x + 0.5 && position.x < uBox.z - 0.5 && position.z > uBox.y + 0.5 && position.z < uBox.w - 0.5)
+              || (position.x > uBoxA.x + 0.5 && position.x < uBoxA.z - 0.5 && position.z > uBoxA.y + 0.5 && position.z < uBoxA.w - 0.5)) { transformed.y -= uDrop; vLow = 1.0; }`);
         sh.fragmentShader = sh.fragmentShader
           .replace('#include <common>', '#include <common>\nuniform float uHole;\nvarying float vLow;')
+          // Prüfmodus: abgesenkte gröbere Stufe sichtbar = Loch in der feineren (magenta)
           .replace('#include <dithering_fragment>', '#include <dithering_fragment>\nif (uHole > 0.5 && vLow > 0.5) gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);');
       };
       m.customProgramCacheKey = () => `${key}${lv}`;
@@ -756,7 +837,13 @@ export class Renderer3D {
         const m = Number(e.split(':').pop());
         const k = Math.floor(m / SEG / CH);
         const c = this.chunks.get(k);
-        if (c) { this.scene.remove(c.group); c.dispose(); this.chunks.delete(k); }
+        // neu bauen; der alte bleibt stehen, bis der neue eingeblendet ist
+        if (c) {
+          this.chunks.delete(k);
+          const prev = this.chunkOld.get(k);
+          if (prev) this.dropChunk(prev);
+          this.chunkOld.set(k, c);
+        }
       }
       this.friendsKey = fk;
     }
@@ -777,7 +864,7 @@ export class Renderer3D {
       }
     }
     const w0 = performance.now();
-    this.updateChunks(g);
+    this.updateChunks(g, dt);
     this.updateCamera(g, dt);
     if (this.debugCam) {
       const d = this.debugCam;
@@ -785,7 +872,7 @@ export class Renderer3D {
       this.camera.lookAt(d[3], d[4], d[5]);
     }
     this.updateEnvironment(biome, dt);
-    this.updateTerrain(g);
+    this.updateTerrain(g, dt);
     this.work = performance.now() - w0;
     this.updateRiders(g);
     this.updateSky(g, biome, dt);
@@ -833,11 +920,133 @@ export class Renderer3D {
   }
 
   private clearTiles() {
+    for (const f of this.tFades) for (const t of f.out) if (this.tiles.get(t.key) !== t) this.dropTile(t);
+    this.tFades = [];
+    for (const c of this.morphC) c.set(NaN, NaN);
+    this.morphR.fill(-1);
     for (const t of this.tiles.values()) this.dropTile(t);
     this.tiles.clear();
     this.pending = null;
     for (const b of this.lvBox) b.set(1e9, 1e9, -1e9, -1e9);
+    for (const b of this.lvBoxA) b.set(1e9, 1e9, -1e9, -1e9);
     this.boxSet.fill(false);
+  }
+
+  private tileAp(t: Tile, code: number | undefined) {
+    for (const o of t.objs) setAp(o, code);
+  }
+
+  private tileVis(t: Tile, vis: boolean) {
+    if (t.objs[0]?.visible === vis) return;
+    for (const o of t.objs) o.visible = vis;
+    if (t.tsrc) t.tsrc.on = vis;
+  }
+
+  /**
+   * Neuer Ring einer Stufe (Gebiet nb): die neuen Kacheln erscheinen dort, wo die Stufe schon ganz die Form der
+   * gröberen hat (Rand des Übergangs) – unsichtbar. Herausfallende bleiben stehen, bis der Übergangs-Mittelpunkt
+   * weit genug weitergewandert ist, dass auch sie ganz die gröbere Form haben; erst dann gehen sie (dropMorphed).
+   */
+  private ringChange(lv: number, nb: THREE.Vector4) {
+    const inside = (b: number[], x: THREE.Vector4) => b[0] >= x.x - 1 && b[1] >= x.y - 1 && b[2] <= x.z + 1 && b[3] <= x.w + 1;
+    // ein früherer Wechsel noch nicht abgeschlossen: dessen alte Kacheln jetzt entfernen (selten)
+    const old = [...this.tiles.values()].filter((t) => t.lv === lv && t.out);
+    for (const t of old) {
+      if (inside(t.box, nb)) { t.out = false; continue; }
+      this.dropTile(t);
+      this.tiles.delete(t.key);
+    }
+    this.lvBoxA[lv].copy(this.lvBox[lv]);
+    this.lvBox[lv].copy(nb);
+    // gröbste Stufe: nichts darunter, das übergehen müsste – Überzähliges entfernt die Ringpflege
+    if (lv >= LEVELS.length - 1) { this.lvBoxA[lv].copy(nb); return; }
+    let any = false;
+    for (const t of this.tiles.values()) {
+      if (t.lv !== lv || inside(t.box, nb)) continue;
+      t.out = true;
+      any = true;
+    }
+    if (!any) this.lvBoxA[lv].copy(nb);
+  }
+
+  /** herausgefallene Kacheln entfernen, sobald sie alle ganz die Form der gröberen Stufe haben */
+  private dropMorphed() {
+    for (let lv = 0; lv < LEVELS.length - 1; lv++) {
+      const out = [...this.tiles.values()].filter((t) => t.lv === lv && t.out);
+      if (!out.length) continue;
+      const m = this.morphU[lv].value;
+      const done = out.every((t) => Math.max(t.box[0] - m.x, m.x - t.box[2], t.box[1] - m.y, m.y - t.box[3]) >= m.w + 1);
+      if (!done) continue;
+      for (const t of out) { this.dropTile(t); this.tiles.delete(t.key); }
+      this.lvBoxA[lv].copy(this.lvBox[lv]);
+    }
+  }
+
+  /**
+   * Übergangs-Mittelpunkt je Stufe: folgt dem Ziel (ein Stück voraus) mit begrenztem Tempo – nie sprunghaft – und
+   * bleibt so weit im Gebiet der Stufe, dass ihr Rand immer schon ganz in der gröberen Form liegt.
+   */
+  private updateMorph(mid: number[][], dt: number, snap: boolean) {
+    // mid: Ziel je Stufe (Kamera, ggf. ein Stück voraus)
+    for (let lv = 0; lv < LEVELS.length - 1; lv++) {
+      const [R0, R1] = MORPH[lv];
+      const B = this.lvBox[lv];
+      const u = this.morphU[lv].value;
+      const c = this.morphC[lv];
+      if (B.x > B.z) {
+        // Stufe noch gar nicht da: ganz in der gröberen Form
+        this.morphR[lv] = -1;
+        c.set(mid[lv][0], mid[lv][1]);
+        u.set(c.x, c.y, -2, -1);
+        continue;
+      }
+      const half = (B.z - B.x) / 2;
+      const bx = (B.x + B.z) / 2;
+      const bz = (B.y + B.w) / 2;
+      // Außenradius: höchstens bis kurz vor den Rand (beim Aufbau wächst das Gebiet – der Radius zieht stetig nach)
+      const want = Math.min(R1, half - LEVELS[lv].size / 2 - 2);
+      const rr = this.morphR[lv];
+      this.morphR[lv] = snap || rr < 0 || want < rr ? want : Math.min(want, rr + dt * (lv === 0 ? 90 : 300));
+      const r1 = this.morphR[lv];
+      const h = Math.max(0, half - r1 - 2);
+      const tx = Math.max(bx - h, Math.min(bx + h, mid[lv][0]));
+      const tz = Math.max(bz - h, Math.min(bz + h, mid[lv][1]));
+      if (snap || Number.isNaN(c.x)) c.set(tx, tz);
+      else {
+        const dx = tx - c.x;
+        const dz = tz - c.y;
+        const d = Math.hypot(dx, dz);
+        const step = dt * (lv === 0 ? 70 : 160);
+        if (d > step) { c.x += (dx / d) * step; c.y += (dz / d) * step; } else c.set(tx, tz);
+      }
+      // Beginn < Ende (sonst ist smoothstep undefiniert); ohne Platz ganz in der gröberen Form
+      u.set(c.x, c.y, r1 - Math.max(1, (R1 - R0) * Math.max(0, r1) / R1), r1);
+    }
+  }
+
+  /** Überblendung beenden: neue Kacheln ganz da, alte weg (außer sie liegen in keep – dann bleiben sie) */
+  private endFade(f: TileFade, keep?: THREE.Vector4) {
+    const i = this.tFades.indexOf(f);
+    if (i >= 0) this.tFades.splice(i, 1);
+    for (const t of f.inc) this.tileAp(t, undefined);
+    for (const t of f.out) {
+      if (keep && t.box[0] >= keep.x - 1 && t.box[1] >= keep.y - 1 && t.box[2] <= keep.z + 1 && t.box[3] <= keep.w + 1 && this.tiles.get(t.key) === t) {
+        t.out = false;
+        this.tileAp(t, undefined);
+        continue;
+      }
+      this.dropTile(t);
+      if (this.tiles.get(t.key) === t) this.tiles.delete(t.key);
+    }
+  }
+
+  private updateFades(dt: number) {
+    for (const f of [...this.tFades]) {
+      f.a = Math.min(1, f.a + dt / f.dur);
+      if (f.a >= 1) { this.endFade(f); continue; }
+      for (const t of f.inc) this.tileAp(t, apIn(f.a));
+      for (const t of f.out) this.tileAp(t, apOut(f.a));
+    }
   }
 
   private dropTile(t: Tile) {
@@ -854,10 +1063,11 @@ export class Renderer3D {
    * Landschaftskacheln rund um die Kamera nachladen: feinste Stufe zuerst, nächstgelegene zuerst,
    * mit Zeitbudget je Bild. Alte Kacheln verschwinden erst, wenn der neue Ring vollständig ist.
    */
-  private updateTerrain(g: RaceView) {
+  private updateTerrain(g: RaceView, dt: number) {
     const T = this.terrain;
     if (!T) return;
     void g;
+    this.updateFades(dt);
     const cp = this.camera.position;
     const t0 = performance.now();
     // großer Sprung (neuer Lauf): wie beim Start schrittweise neu aufbauen
@@ -874,6 +1084,8 @@ export class Renderer3D {
     const fw = this.terrFwd;
     // Mittelpunkt je Stufe: ein Stück voraus (die gröbste Stufe bleibt mittig – ihr Neubau ist teuer)
     const mid = LEVELS.map((Lv, lv) => { const k = lv === 0 ? 0.75 : lv === 1 ? 0.5 : 0; return [cp.x + fw.x * Lv.size * k, cp.z + fw.z * Lv.size * k]; });
+    this.updateMorph(MORPH_AHEAD.map((k) => [cp.x + fw.x * k, cp.z + fw.z * k]), dt, jump);
+    this.dropMorphed();
     // nach einem Sprung passen die alten Kacheln nicht mehr zur Strecke (sie stünden als Berge im Bild):
     // weg damit und wie beim Start neu aufbauen
     if (jump && this.tiles.size) this.clearTiles();
@@ -944,6 +1156,7 @@ export class Renderer3D {
         // Aufbau: nur der vollständige Teil ist sichtbar, die gröbere Stufe deckt den Rest
         if (rc >= 0) this.lvBox[lv].set((cx - rc) * Lv.size, (cz - rc) * Lv.size, (cx + rc + 1) * Lv.size, (cz + rc + 1) * Lv.size);
         else this.lvBox[lv].set(1e9, 1e9, -1e9, -1e9);
+        this.lvBoxA[lv].copy(this.lvBox[lv]);
         for (const [key, t] of this.tiles) {
           if (t.lv !== lv) continue;
           const vis = ringOf(lv, key) <= rc;
@@ -952,22 +1165,22 @@ export class Renderer3D {
         }
         if (rc === Lv.ring) this.boxSet[lv] = true;
       } else {
-        if (rc === Lv.ring) this.lvBox[lv].set((cx - rc) * Lv.size, (cz - rc) * Lv.size, (cx + rc + 1) * Lv.size, (cz + rc + 1) * Lv.size);
-        // neue Kacheln erst zeigen, wenn ihr Ring vollständig ist – zusammen mit dem Absinken der gröberen Stufe
-        // (sonst stehen beide Stufen eine Weile ineinander und mischen sich fleckig)
+        // neuer Ring vollständig: neue Kacheln zeigen, herausfallende bleiben bis zum vollständigen Übergang
+        if (rc === Lv.ring) {
+          const nb = this.boxTmp.set((cx - rc) * Lv.size, (cz - rc) * Lv.size, (cx + rc + 1) * Lv.size, (cz + rc + 1) * Lv.size);
+          if (!nb.equals(this.lvBox[lv])) this.ringChange(lv, nb);
+        }
+        // neue Kacheln erst zeigen, wenn ihr Ring vollständig ist; herausfallende bleiben, bis sie ganz übergegangen sind
         const bx = this.lvBox[lv];
         for (const t of this.tiles.values()) {
           if (t.lv !== lv) continue;
-          const vis = t.box[0] >= bx.x - 1 && t.box[1] >= bx.y - 1 && t.box[2] <= bx.z + 1 && t.box[3] <= bx.w + 1;
-          if (t.objs[0].visible === vis) continue;
-          for (const o of t.objs) o.visible = vis;
-          if (t.tsrc) t.tsrc.on = vis;
+          this.tileVis(t, !!t.out || (t.box[0] >= bx.x - 1 && t.box[1] >= bx.y - 1 && t.box[2] <= bx.z + 1 && t.box[3] <= bx.w + 1));
         }
       }
-      // Ring vollständig: Überzähliges entfernen
+      // Ring vollständig: Überzähliges entfernen (außer was noch übergeht)
       if (rc === Lv.ring) {
         for (const [key, t] of this.tiles) {
-          if (t.lv === lv && ringOf(lv, key) > Lv.ring) { this.dropTile(t); this.tiles.delete(key); }
+          if (t.lv === lv && !t.out && ringOf(lv, key) > Lv.ring) { this.dropTile(t); this.tiles.delete(key); }
         }
       }
     }
@@ -1000,8 +1213,25 @@ export class Renderer3D {
   /** fertige Kachel einsetzen (eine veraltete mit gleichem Schlüssel verschwindet erst jetzt) */
   private putTile(key: string, t: Tile) {
     const old = this.tiles.get(key);
-    if (old) this.dropTile(old);
     this.tiles.set(key, t);
+    if (!old) return;
+    // blendet die alte gerade ein: die neue übernimmt ihren Platz in der Überblendung
+    const f0 = this.tFades.find((f) => f.inc.includes(old));
+    if (f0) {
+      f0.inc[f0.inc.indexOf(old)] = t;
+      this.tileAp(t, apIn(f0.a));
+      this.dropTile(old);
+      return;
+    }
+    // sichtbare Kachel neu gebaut (Straße in der Nähe hat sich geändert): weich überblenden statt umzuspringen
+    if (this.boxSet[t.lv] && old.objs[0]?.visible && !old.out) {
+      old.out = true;
+      this.tileAp(t, apIn(0));
+      this.tileAp(old, apOut(0));
+      this.tFades.push({ lv: t.lv, a: 0, dur: 1, inc: [t], out: [old] });
+      return;
+    }
+    this.dropTile(old);
   }
 
   private tileObjects(d: TileData, lv: number, key: string): Tile {
@@ -1029,6 +1259,7 @@ export class Renderer3D {
         rec[o] = t.x; rec[o + 1] = t.y; rec[o + 2] = t.z; rec[o + 3] = t.s; rec[o + 4] = t.rot;
         rec[o + 5] = t.tint * (1 + 0.1 * hv); rec[o + 6] = t.tint * (0.98 + 0.05 * Math.abs(hv)); rec[o + 7] = t.tint * (1 - 0.13 * hv);
         rec[o + 8] = treeVariant(t.kind, (t.rot * 13.17) % 1);
+        rec[o + 9] = t.dy ?? 0;
       });
       tsrc = { box: [tx * size, tz * size, (tx + 1) * size, (tz + 1) * size], rec, n: d.trees.length, on: true };
       const bg = treeBillboards(tsrc, this.treeAtlas);
@@ -1041,7 +1272,8 @@ export class Renderer3D {
       if (!this.fallMat) {
         const t = alphaTex(fallTex(), [235, 244, 250]);
         t.wrapS = t.wrapT = THREE.RepeatWrapping;
-        this.fallMat = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(0.95, 0.97, 1) });
+        // beidseitig in einem Durchgang (sonst zeichnet three.js durchsichtige Flächen zweimal und baut das Material jedes Mal neu auf)
+        this.fallMat = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, color: new THREE.Color(0.95, 0.97, 1) });
       }
       geos.push(d.falls);
       const fm = new THREE.Mesh(d.falls, this.fallMat);
@@ -1058,6 +1290,8 @@ export class Renderer3D {
       if (total) {
         const pos = new Float32Array(total * 3);
         const col = new Float32Array(total * 3);
+        // Höhenunterschied zur gröbersten Stufe: im Übergang dorthin bleibt die Hütte auf dem Boden
+        const dys = new Float32Array(total);
         const m = new THREE.Matrix4();
         const q = new THREE.Quaternion();
         const up = new THREE.Vector3(0, 1, 0);
@@ -1079,24 +1313,31 @@ export class Renderer3D {
             v.fromBufferAttribute(P, k).applyMatrix4(m);
             pos[o * 3] = v.x; pos[o * 3 + 1] = v.y; pos[o * 3 + 2] = v.z;
             col[o * 3] = (C ? C.getX(k) : 1) * t.tint; col[o * 3 + 1] = (C ? C.getY(k) : 1) * t.tint; col[o * 3 + 2] = (C ? C.getZ(k) : 1) * t.tint;
+            dys[o] = t.dy ?? 0;
             o++;
           }
         }
         const mg = new THREE.BufferGeometry();
         mg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         mg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        mg.setAttribute('aDy', new THREE.BufferAttribute(dys, 1));
         mg.computeBoundingSphere();
+        if (mg.boundingSphere) mg.boundingSphere.radius += 60;
         geos.push(mg);
         objs.push(new THREE.Mesh(mg, this.markMat));
       }
     }
-    for (const o of objs) { o.matrixAutoUpdate = false; o.updateMatrix(); this.scene.add(o); }
+    for (const o of objs) { appearifyTree(o); o.matrixAutoUpdate = false; o.updateMatrix(); this.scene.add(o); }
     return { lv, key, objs, geos, tsrc, box: [tx * size, tz * size, (tx + 1) * size, (tz + 1) * size] };
   }
 
   private clearChunks() {
-    for (const c of this.chunks.values()) { this.scene.remove(c.group); c.dispose(); }
+    for (const c of this.chunks.values()) this.dropChunk(c);
+    for (const c of this.chunkOld.values()) this.dropChunk(c);
+    for (const f of [...this.cFades]) this.dropChunk(f.c);
     this.chunks.clear();
+    this.chunkOld.clear();
+    this.cFades = [];
   }
 
   /** Radlampen erst bei Dunkelheit (und im Tunnel) – nicht schon im Abendlicht der Finals */
@@ -1305,22 +1546,67 @@ export class Renderer3D {
   /** Abschnitt im Bau (in Schritten) */
   private chunkGen: { k: number; it: Generator<void, Chunk, void> } | null = null;
 
-  private updateChunks(g: RaceView) {
+  /** Abschnitte, die gerade ein- oder ausgeblendet werden */
+  private cFades: { c: Chunk; a: number; dur: number; out: boolean }[] = [];
+  /** ersetzte Abschnitte (z. B. neue Bestmarken-Bögen): bleiben stehen, bis der Nachfolger eingeblendet ist */
+  private chunkOld = new Map<number, Chunk>();
+
+  /** fertigen Abschnitt einsetzen; fade: weich einblenden (ein ersetzter Vorgänger blendet gegengleich aus) */
+  private addChunk(k: number, c: Chunk, fade: boolean) {
+    appearifyTree(c.group);
+    this.chunks.set(k, c);
+    this.scene.add(c.group);
+    const old = this.chunkOld.get(k);
+    if (old) {
+      this.chunkOld.delete(k);
+      this.fadeChunk(old, true);
+      fade = true;
+    }
+    if (fade) this.fadeChunk(c, false);
+  }
+
+  private fadeChunk(c: Chunk, out: boolean) {
+    this.cFades = this.cFades.filter((f) => f.c !== c);
+    setAp(c.group, out ? apOut(0) : apIn(0));
+    this.cFades.push({ c, a: 0, dur: out ? 0.6 : 0.9, out });
+  }
+
+  private dropChunk(c: Chunk) {
+    this.cFades = this.cFades.filter((f) => f.c !== c);
+    this.scene.remove(c.group);
+    c.dispose();
+  }
+
+  private updateChunkFades(dt: number) {
+    for (const f of [...this.cFades]) {
+      f.a = Math.min(1, f.a + dt / f.dur);
+      if (f.a < 1) { setAp(f.c.group, f.out ? apOut(f.a) : apIn(f.a)); continue; }
+      if (f.out) this.dropChunk(f.c);
+      else { setAp(f.c.group, undefined); this.cFades.splice(this.cFades.indexOf(f), 1); }
+    }
+  }
+
+  private updateChunks(g: RaceView, dt: number) {
     const z = g.p.z;
     const from = Math.max(0, Math.floor((z - BEHIND) / SEG / CH));
     const to = Math.floor((z + AHEAD) / SEG / CH);
+    this.updateChunkFades(dt);
     for (const [k, c] of this.chunks) {
-      if (k < from || k > to + 1) { this.scene.remove(c.group); c.dispose(); this.chunks.delete(k); }
+      if (k < from || k > to + 1) {
+        this.chunks.delete(k);
+        // hinter der Kamera weich ausblenden (in Kehren sieht man zurück), sonst sofort
+        if (k < from) this.fadeChunk(c, true);
+        else this.dropChunk(c);
+      }
+    }
+    for (const [k, c] of this.chunkOld) {
+      if (k < from || k > to + 1) { this.chunkOld.delete(k); this.dropChunk(c); }
     }
     if (this.chunkGen && (this.chunkGen.k < from || this.chunkGen.k > to + 1)) this.chunkGen = null;
     // beim Start alles auf einmal (die Straße muss im ersten Bild stehen)
     if (this.chunks.size === 0) {
       this.chunkGen = null;
-      for (let k = from; k <= to; k++) {
-        const c = this.buildChunk(g, k);
-        this.chunks.set(k, c);
-        this.scene.add(c.group);
-      }
+      for (let k = from; k <= to; k++) this.addChunk(k, this.buildChunk(g, k), false);
       return;
     }
     // der Abschnitt unter dem Fahrer und der nächste müssen stehen (z. B. nach einem Sprung): sofort bauen
@@ -1328,9 +1614,7 @@ export class Renderer3D {
     for (let k = Math.max(from, cur); k <= Math.min(to, cur + 1); k++) {
       if (this.chunks.has(k)) continue;
       if (this.chunkGen?.k === k) this.chunkGen = null;
-      const c = this.buildChunk(g, k);
-      this.chunks.set(k, c);
-      this.scene.add(c.group);
+      this.addChunk(k, this.buildChunk(g, k), false);
     }
     // danach mit Zeitbudget je Bild (nächste zuerst), auf der Startkarte großzügiger
     const t0 = performance.now();
@@ -1344,8 +1628,8 @@ export class Renderer3D {
       }
       const r = this.chunkGen.it.next();
       if (r.done) {
-        this.chunks.set(this.chunkGen.k, r.value);
-        this.scene.add(r.value.group);
+        // weit voraus fertig: weich einblenden (in Kehren liegt er oft schon im Bild)
+        this.addChunk(this.chunkGen.k, r.value, true);
         this.chunkGen = null;
       }
     }
@@ -2370,7 +2654,7 @@ export class Renderer3D {
       const v = 0.85 + hash(s.i * 3 + sp.v) * 0.3;
       if (TREES.has(kind) && this.cTrees) {
         const hv = hash(s.i * 7 + sp.v) * 2 - 1;
-        this.cTrees.push(px, py - 0.05, pz, sc, rot, v * (1 + 0.1 * hv), v * (0.95 + hash(s.i) * 0.1), v * (1 - 0.13 * hv), treeVariant(kind, hash(s.i * 13 + sp.v * 7)));
+        this.cTrees.push(px, py - 0.05, pz, sc, rot, v * (1 + 0.1 * hv), v * (0.95 + hash(s.i) * 0.1), v * (1 - 0.13 * hv), treeVariant(kind, hash(s.i * 13 + sp.v * 7)), 0);
         return;
       }
       let list = inst.get(kind);
@@ -2640,7 +2924,8 @@ export class Renderer3D {
     const t = g.track;
     const pz = g.p.z;
     if (g.phase === 'playing' || g.phase === 'ready' || g.phase === 'countdown') {
-      const ahead = pz + 85;
+      // weit genug voraus, dass sie unsichtbar beginnen (sie blenden ab ~124 m Abstand ein)
+      const ahead = pz + 132;
       if (ahead > this.runNext && this.runners.length < 4 && t.segAt(ahead).crowd && !t.segAt(ahead).tunnel) {
         const r = Math.random;
         const sg = r() < 0.5 ? -1 : 1;
@@ -2814,15 +3099,19 @@ export class Renderer3D {
     const used = this.objUsed.get(kind) ?? 0;
     if (used >= list.length) {
       const o = make();
+      appearifyTree(o);
       list.push(o);
       this.objRoot.add(o);
     }
     const o = list[used];
     o.visible = true;
+    setAp(o, this.objAp);
     this.objUsed.set(kind, used + 1);
     return o;
   }
 
+  /** Einblendung des gerade platzierten Objekts (am Rand der Sichtweite: weich herein) */
+  private objAp: number | undefined = undefined;
   private objMade = false;
   private objGeo: Record<string, THREE.BufferGeometry> = {};
   private objMat: Record<string, THREE.Material> = {};
@@ -2877,6 +3166,9 @@ export class Renderer3D {
       if (!s.objs) continue;
       for (const o of s.objs) {
         if (o.done && (o.k === 'bidon' || o.k === 'gold' || o.k === 'cone')) continue;
+        // die letzten 30 m vor der Sichtgrenze (220 m voraus): weich einblenden statt aufzutauchen
+        const ahead = o.z - p.z;
+        this.objAp = ahead > 188 ? apIn((220 - ahead) / 32) : undefined;
         track.world(o.z, o.x, 0, w);
         const th = w.th;
         switch (o.k) {
