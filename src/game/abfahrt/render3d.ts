@@ -79,6 +79,9 @@ const BILLBOARD: Record<string, { variants: number; frames: number }> = {
 };
 const CLOTH = ['#ff5fa2', '#2f80ed', '#ffd23f', '#f4f4f4', '#27ae60'];
 
+/** Rücksprung der Oberkante einer Felswand (m): je höher, desto weiter zurückgelehnt (etwa 70°) */
+export const wallSetback = (w: number, snow: boolean) => (snow ? 0.55 : 0.4) + w * 0.3;
+
 const hash = (n: number) => {
   let x = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b);
   x ^= x >>> 13;
@@ -645,7 +648,7 @@ export class Renderer3D {
             vec3 tCol = vColor.rgb * (0.92 + 0.16 * big);
             tCol = mix(tCol, tCol * vec3(1.1, 1.02, 0.78), smoothstep(0.55, 0.85, big) * 0.5);
             // Fels: Gewicht, Rauschen und die Steilheit dieser Fläche
-            float rk = smoothstep(0.42, 0.64, vMat.y + (big - 0.5) * 0.45 + (nz2.r - 0.5) * 0.22 + (1.0 - fnT.y) * 0.45);
+            float rk = smoothstep(0.42, 0.64, vMat.y + (big - 0.5) * 0.4 + (nz2.r - 0.5) * 0.22 + (1.0 - fnT.y) * 0.3);
             float far = smoothstep(60.0, 220.0, camD);
             float hiF = 1.0 - smoothstep(450.0, 1300.0, camD);
             // Rinnen und Schichten nur an steilen Flächen
@@ -678,7 +681,8 @@ export class Renderer3D {
             // auf Absätzen (weniger steil) Gras und Geröll
             rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, big) * 0.6);
             // Wald: Rand aus Rauschen; aus der Nähe Waldboden (dort stehen Bäume), weiter weg das Kronendach
-            float fo = smoothstep(0.46, 0.58, vMat.x + (big - 0.5) * 0.25 + (vNz.x - 0.5) * 0.6 + (nz2.g - 0.5) * 0.28) * (1.0 - rk);
+            // Waldrand weich (kein harter Saum zwischen Wiese und Wald)
+            float fo = smoothstep(0.42, 0.62, vMat.x + (big - 0.5) * 0.25 + (vNz.x - 0.5) * 0.6 + (nz2.g - 0.5) * 0.28) * (1.0 - rk);
             // Kronen: nah aus der Textur, auf den gröberen Stufen ihr Mittelwert (gleiche Helligkeit an der Grenze)
             float crown = ${canMean.toFixed(4)};
             #if TLV == 0
@@ -691,7 +695,7 @@ export class Renderer3D {
               #endif
             #endif
             vec3 fc = mix(uForA, uForB, nz2.r) * (0.42 + crown * 0.72);
-            fc = mix(fc, uForA * vec3(0.62, 0.6, 0.5), smoothstep(0.78, 0.45, fnT.y));
+            fc = mix(fc, uForA * vec3(0.72, 0.7, 0.58), smoothstep(0.78, 0.45, fnT.y) * 0.7);
             float canopy = smoothstep(${CAN_NEAR.toFixed(1)}, ${(TREE_GONE - 10).toFixed(1)}, camD);
             fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, canopy);
             tCol = mix(tCol, fc, fo);
@@ -1579,10 +1583,11 @@ export class Renderer3D {
     this.hemi.color.setRGB(0.74, 0.84, 1, THREE.SRGBColorSpace).multiply(tint);
     // Bodenlicht: helle Wiesen, Fels und Schnee werfen viel Licht zurück – auch Schattenseiten bleiben freundlich
     this.hemi.groundColor.setRGB(0.64, 0.6, 0.5, THREE.SRGBColorSpace).multiply(tint);
-    this.hemi.intensity = (1.0 + 0.35 * dayK) * dim;
+    // kräftiges Himmels- und Bodenlicht: Schattenseiten (Felswände, Hänge weg von der Sonne) bleiben lesbar
+    this.hemi.intensity = (2.1 + 0.6 * dayK) * dim;
     const sunC = new THREE.Color().setRGB(L.sun[0] / 255, L.sun[1] / 255, L.sun[2] / 255, THREE.SRGBColorSpace);
     this.sun.color.copy(sunC);
-    this.sun.intensity = Math.max(0.55, Math.min(2.7, (L.sunY + 0.12) * 6.5)) * dayK * dim;
+    this.sun.intensity = Math.max(0.5, Math.min(2.35, (L.sunY + 0.12) * 5.7)) * dayK * dim;
     // Sonnenstand: am Nachmittag schräg von hinten (die Berge vor einem liegen im Licht), zum Abend hin
     // wandert die Sonne nach Westen, steht tiefer und taucht seitlich vor einem ins Abendrot
     const el = Math.max(-0.2, L.sunY) * 1.5 + 0.18;
@@ -1594,7 +1599,7 @@ export class Renderer3D {
     // Gegenlicht: von der anderen Seite, flacher, bläulich wie Himmelslicht
     this.fill.position.copy(this.camera.position).add(new THREE.Vector3(-sd.x, 0.45, -sd.z).normalize().multiplyScalar(200));
     this.fill.target.position.copy(this.camera.position);
-    this.fill.intensity = 0.62 * dayK * dim;
+    this.fill.intensity = 0.8 * dayK * dim;
     // Spiegelungen auf Lack, Chrom und Helmen werden mit dem Licht dunkler
     setGlossEnv(Math.max(0.2, 1 - L.lights * 0.8) * dim);
     const u = this.skyMat.uniforms;
@@ -2568,21 +2573,24 @@ export class Renderer3D {
       return { o, h, cols: [st, st, st, cap, shadeF(cap, 1.06), gcol(top, 2), gcol(top, 3), gcol(top, 4)] };
     }
     if (side.wall > 0) {
-      // Fels- oder Schneewand: vier Bänder mit leichten Buckeln und Schichtung statt einer glatten Fläche
+      // Fels- oder Schneewand: nach hinten geneigt (Felsböschung ~70°, keine senkrechte Platte), mit Bändern,
+      // Buckeln und Schichtung – oben gerundet in den Hang statt mit flacher Kante gegen den Himmel
       const W = side.wall;
       const snow = side.ground === 'snow';
       const top = side.ground === 'rock' ? 'meadow' : side.ground;
       const j = (k: number, amp: number) => n(k + 60) * amp + (hash(s.i * 13 + k * 7 + (sg > 0 ? 3 : 0)) - 0.5) * amp * 0.35;
-      const d = snow ? 0.55 : 0.3;
-      const o = [0, d * 0.25 + j(1, 0.22), d * 0.5 + j(2, 0.3), d * 0.75 + j(3, 0.26), d, 1.8, 7, 16, 30];
-      for (let k = 1; k < 4; k++) o[k] = Math.max(o[k - 1] + 0.01, Math.min(d - 0.01 * (4 - k), o[k] + 0.25));
-      const h = [0, W * (0.27 + j(4, 0.06)), W * (0.55 + j(5, 0.06)), W * (0.8 + j(6, 0.05)), W,
-        W + 0.4, W + 0.4 + side.tilt * 5.2 + n(1) * 0.4, W + 0.4 + side.tilt * 14.2, W + 0.4 + side.tilt * 28.2];
+      const d = wallSetback(W, snow);
+      const o = [0, d * 0.22 + j(1, 0.2 + d * 0.1), d * 0.5 + j(2, 0.25 + d * 0.12), d * 0.78 + j(3, 0.2 + d * 0.1), d, d + 1.4, d + 6, d + 15, d + 29];
+      for (let k = 1; k < 4; k++) o[k] = Math.max(o[k - 1] + 0.01, Math.min(d - 0.01 * (4 - k), o[k]));
+      const crest = W + 0.5;
+      const h = [0, W * (0.3 + j(4, 0.06)), W * (0.58 + j(5, 0.06)), W * (0.82 + j(6, 0.05)), W,
+        crest, crest + side.tilt * 4.6 + n(1) * 0.4, crest + side.tilt * 13.6, crest + side.tilt * 27.6];
       const band = (k: number, f: number) => snow
         ? shadeF(lin('#e9f1fa'), f + n(40 + k) * 0.08)
-        : shadeF(rgbLin(mixRGB(pal.rock, pal.rockDark, 0.35 + n(50 + k) * 0.6)), f + n(70 + k) * 0.12);
-      const lip = snow ? lin('#f4f8fc') : shadeF(rock(1), 1.12);
-      return { o, h, cols: [band(0, 0.82), band(1, 0.95), band(2, 0.88), band(3, 1.0), lip, gcol(top, 2), gcol(top, 3), gcol(top, 4)] };
+        : shadeF(rgbLin(mixRGB(pal.rock, pal.rockDark, 0.2 + n(50 + k) * 0.5)), f + n(70 + k) * 0.12);
+      // Oberkante: Fels geht in Rasen über (Humus liegt auf der Kante)
+      const lip = snow ? lin('#f4f8fc') : shadeF(gcol(top, 2), 0.86);
+      return { o, h, cols: [band(0, 1.15), band(1, 1.3), band(2, 1.2), band(3, 1.35), lip, gcol(top, 2), gcol(top, 3), gcol(top, 4)] };
     }
     if (side.drop) {
       const k = Math.max(0.6, -side.tilt);

@@ -64,7 +64,8 @@ export class QualityGovernor {
     }
     if (!slow && med < 17.6) {
       this.calm += 1;
-      if (this.calm >= 4 && q < this.ceil - 0.05) {
+      // bis ganz an die Grenze (vorher blieb es knapp darunter stehen, z. B. bei 98 %)
+      if (this.calm >= 4 && q < this.ceil - 0.005) {
         this.calm = 0;
         const nq = Math.min(this.ceil, q + 0.06);
         store(nq);

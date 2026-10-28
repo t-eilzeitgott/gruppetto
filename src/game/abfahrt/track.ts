@@ -842,17 +842,17 @@ export class Track {
     const up = (): Side => {
       switch (biome) {
         case 'pass': return chance(r, 0.6)
-          ? { ground: 'rock', tilt: 0.5, barrier: 'none', wall: between(r, 5, 13), drop: false }
+          ? { ground: 'rock', tilt: 0.5, barrier: 'none', wall: between(r, 3.5, 8), drop: false }
           : { ground: 'snow', tilt: 0.38, barrier: 'none', wall: 0, drop: false };
         case 'alpine': return chance(r, 0.22)
           ? { ground: 'rock', tilt: 0.3, barrier: 'none', wall: between(r, 1.6, 4), drop: false }
           : { ground: 'meadow', tilt: between(r, 0.18, 0.32), barrier: chance(r, 0.25) ? 'fence' : 'none', wall: 0, drop: false };
         case 'forest': return chance(r, 0.3)
-          ? { ground: 'rock', tilt: 0.45, barrier: 'none', wall: between(r, 3, 9), drop: false }
+          ? { ground: 'rock', tilt: 0.45, barrier: 'none', wall: between(r, 2.5, 6), drop: false }
           : { ground: 'forest', tilt: between(r, 0.2, 0.4), barrier: 'none', wall: 0, drop: false };
         case 'village': return { ground: 'pavement', tilt: 0, barrier: 'none', wall: 0, drop: false };
         case 'lake': return chance(r, 0.5)
-          ? { ground: 'rock', tilt: 0.4, barrier: 'none', wall: between(r, 3, 8), drop: false }
+          ? { ground: 'rock', tilt: 0.4, barrier: 'none', wall: between(r, 2.5, 5.5), drop: false }
           : { ground: 'meadow', tilt: 0.15, barrier: chance(r, 0.4) ? 'stone' : 'none', wall: 0, drop: false };
         case 'vineyard': return { ground: pick(r, ['vines', 'vines', 'sunflower', 'meadow', 'field'] as Ground[]), tilt: between(r, 0.05, 0.18), barrier: chance(r, 0.2) ? 'stone' : 'none', wall: 0, drop: false };
       }

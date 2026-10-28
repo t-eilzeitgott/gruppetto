@@ -116,10 +116,13 @@ function profile(kind: number, b: number): void {
     case K_UP:
       x = tilt * Math.min(e, 30) + Math.max(0, e - 30) * S_UP[b];
       break;
-    case K_WALL:
-      x = (e < 0.6 ? wall * (e / 0.6) : wall + 0.4 * Math.min(1, (e - 0.6) / 1.2) + tilt * Math.max(0, e - 1.8)) + Math.max(0, e - 30) * S_UP[b];
+    case K_WALL: {
+      // zurückgelehnte Wand mit gerundeter Oberkante (wie wallSetback in render3d.ts)
+      const d = 0.4 + wall * 0.3;
+      x = (e < d ? wall * (e / d) : wall + 0.5 * Math.min(1, (e - d) / 1.4) + tilt * Math.max(0, e - d - 1.4)) + Math.max(0, e - 30) * S_UP[b];
       y = Math.max(ridgeRel, wall + 24);
       break;
+    }
     case K_TUNNEL: {
       // Berg über dem Tunnel: am Portal gut 10 m, nach innen steil ansteigend (Felsrücken statt Erdwall).
       // Bergseitig steigt er weiter an, talseitig fällt er zum Tal hin ab (sonst stünde dort eine Wand)
@@ -918,7 +921,8 @@ export class Terrain {
         const b = BI[k];
         const C = cols[b];
         const above = y - FL[k];
-        const steep = 1 - sstep(0.5, 0.76, ny);
+        // Fels erst an wirklich steilen Hängen (ab ~55°, voll ab ~68°): Wiese und Wald halten sich länger
+        const steep = 1 - sstep(0.37, 0.58, ny);
         const n1 = fbm(x / 230, z / 230, 3);
         const n2 = vnoise(x / 31, z / 31);
         const wet = W[k];
