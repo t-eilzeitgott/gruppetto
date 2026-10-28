@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useAuthUser, useMe, useMembers, useSelectedTour, useTourData } from './hooks';
 import { endIntro, introReady } from './intro';
 import { startWarm } from './warm';
-import { setFpsMeter } from '../game/fpsMeter';
 import { stageOfDay } from '../game/abfahrt/sprintRiders';
 import { berlinDayKey } from '../game/abfahrt/rng';
 import { refreshOnFocus, resetCache } from './query';
@@ -54,8 +53,6 @@ export function App() {
     if (!userId) resetCache();
   }, [userId]);
 
-  // Bildraten-Anzeige in den Spielen nur für Admins (gleich beim Rendern gesetzt: das Spiel startet vor den Effekten der App)
-  setFpsMeter(!!me.data?.is_admin);
 
   const first = route.parts[0];
   if (first === 'impressum' || first === 'datenschutz') {

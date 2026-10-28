@@ -1254,6 +1254,15 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   color: rgba(255, 255, 255, 0.5); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); white-space: nowrap;
 }
 .fps-meter.is-slow { color: rgba(255, 196, 120, 0.75); }
+/* Schalter im Pausenmenü */
+.abf-switch {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; padding: 4px 2px 0;
+  background: none; border: 0; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer;
+}
+.abf-switch__track { position: relative; flex: none; width: 44px; height: 26px; border-radius: 13px; background: rgba(127, 127, 127, 0.4); transition: background 0.2s; }
+.abf-switch__knob { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s; }
+.abf-switch.is-on .abf-switch__track { background: var(--accent); }
+.abf-switch.is-on .abf-switch__knob { transform: translateX(18px); }
 /* unsichtbarer Platz zum Vorwärmen (echte Größe, nicht zu sehen) */
 .stage-holder { position: fixed; inset: 0; opacity: 0; pointer-events: none; z-index: -1; overflow: hidden; }
 /* 3D-Szene blendet ein, sobald das erste Bild gezeichnet ist (die Startkarte steht schon) */

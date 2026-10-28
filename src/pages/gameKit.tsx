@@ -3,6 +3,7 @@
  * Gestensperre, hochzählende Punkte, lokaler Speicher, Pause-Symbole.
  */
 import { useEffect, useState } from 'react';
+import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
 
 export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 export const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
@@ -64,6 +65,17 @@ export function useCountUp(target: number) {
     return () => cancelAnimationFrame(raf);
   }, [target]);
   return v;
+}
+
+/** Schalter im Pausenmenü: Bildrate unten links anzeigen */
+export function FpsSwitch() {
+  const [on, setOn] = useState(fpsMeterOn);
+  return (
+    <button type="button" role="switch" aria-checked={on} className={`abf-switch${on ? ' is-on' : ''}`} onClick={() => { setFpsMeter(!on); setOn(!on); }}>
+      <span>Bildrate anzeigen</span>
+      <span className="abf-switch__track" aria-hidden="true"><span className="abf-switch__knob" /></span>
+    </button>
+  );
 }
 
 export function PauseIcon() {

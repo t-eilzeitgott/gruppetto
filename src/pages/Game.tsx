@@ -22,7 +22,7 @@ import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { GameIcon } from '../ui/GameIcon';
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
-import { PauseIcon, PlayIcon, useCountUp } from './gameKit';
+import { FpsSwitch, PauseIcon, PlayIcon, useCountUp } from './gameKit';
 
 export { PauseIcon, PlayIcon, useCountUp };
 
@@ -590,6 +590,7 @@ export function GamePage() {
             <h2 className="abf-title">Pause</h2>
             <button type="button" className="btn btn--primary btn--full" onClick={() => setUi('playing')}><span>Weiterfahren</span></button>
             <button type="button" className="btn btn--secondary btn--full" onClick={() => navigate('/')}><span>Aufhören</span></button>
+            <FpsSwitch />
           </div>
         </div>
       ) : null}

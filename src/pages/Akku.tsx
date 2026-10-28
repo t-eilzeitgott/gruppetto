@@ -14,7 +14,7 @@ import { AkkuGame, RIDERS, type AkkuResult, type GameEvents } from '../game/akku
 import { AkkuRenderer } from '../game/akku/render';
 import { LEVEL, type RiderType } from '../game/akku/level';
 import { drawRider } from '../game/akku/chars';
-import { PauseIcon, PlayIcon, lsGet, lsSet, useCountUp, useGameLock } from './gameKit';
+import { FpsSwitch, PauseIcon, PlayIcon, lsGet, lsSet, useCountUp, useGameLock } from './gameKit';
 
 type Ui = 'ready' | 'playing' | 'paused' | 'over';
 
@@ -282,6 +282,7 @@ export function AkkuPage() {
             <button type="button" className="btn btn--primary btn--full" onClick={() => setUi('playing')}><span>Weiter</span></button>
             <button type="button" className="btn btn--secondary btn--full" onClick={again}><span>Neu starten</span></button>
             <button type="button" className="btn btn--secondary btn--full" onClick={close}><span>Aufhören</span></button>
+            <FpsSwitch />
           </div>
         </div>
       ) : null}

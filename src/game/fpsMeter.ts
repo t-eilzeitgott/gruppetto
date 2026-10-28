@@ -1,13 +1,18 @@
 /**
- * Kleine Bildraten-Anzeige für Admins (unten links, blass): Bilder je Sekunde, mittlere und längste Bildzeit
- * der letzten halben Sekunde, Rechenzeit fürs Zeichnen und – bei den 3D-Spielen – die Auflösungsstufe.
- * Schreibt direkt ins DOM (kein React), zweimal je Sekunde.
+ * Kleine Bildraten-Anzeige (unten links, blass): Bilder je Sekunde, mittlere und längste Bildzeit der letzten
+ * halben Sekunde, Rechenzeit fürs Zeichnen und – bei den 3D-Spielen – die Auflösungsstufe. Ein- und ausschaltbar
+ * im Pausenmenü (anfangs aus, das Gerät merkt es sich). Schreibt direkt ins DOM (kein React), zweimal je Sekunde.
  */
-let enabled = false;
+const KEY = 'gruppetto.fps';
+let enabled = (() => { try { return localStorage.getItem(KEY) === '1'; } catch { return false; } })();
 
-/** von der App gesetzt, sobald feststeht, wer angemeldet ist */
+export function fpsMeterOn(): boolean {
+  return enabled;
+}
+
 export function setFpsMeter(on: boolean) {
   enabled = on;
+  try { localStorage.setItem(KEY, on ? '1' : '0'); } catch { /* egal */ }
 }
 
 export class FpsMeter {
@@ -19,7 +24,7 @@ export class FpsMeter {
   private cpu = 0;
   private t0 = 0;
 
-  /** die Anzeige entsteht erst beim Zeichnen: Wer Admin ist, steht beim Spielstart nicht immer schon fest */
+  /** die Anzeige entsteht erst beim Zeichnen (und verschwindet wieder, wenn sie im Pausenmenü ausgeschaltet wird) */
   constructor(parent: HTMLElement | null) {
     this.parent = parent;
   }
