@@ -1164,7 +1164,7 @@ export class Track {
             if (side.drop) { if (near < 0.04) put(i, sign, 'pine', between(r, 6, 20), { s: between(r, 0.8, 1.2) }); break; }
             if (side.barrier === 'fence' && k % 2 === 0) put(i, sign, 'fence', 0.15, { s: 1, f: false });
             if (near < 0.07) put(i, sign, 'flowers', between(r, 0.3, 4), { s: between(r, 0.7, 1.2) });
-            else if (near < 0.1) put(i, sign, 'grassTuft', between(r, 0.2, 2));
+            else if (near < 0.32) put(i, sign, 'grassTuft', between(r, 0.15, 1.4), { s: between(r, 0.7, 1.25) });
             else if (near < 0.13 && biome !== 'lake') put(i, sign, chance(r, 0.5) ? 'cow' : 'cowBW', between(r, 3, 14), { s: between(r, 0.9, 1.1) });
             else if (near < 0.16) put(i, sign, biome === 'lake' ? pick(r, ['cypress', 'palm', 'olive'] as SpriteKind[]) : pick(r, ['larch', 'pine', 'treeRound'] as SpriteKind[]), between(r, 3, 22));
             else if (near < 0.175 && biome === 'alpine') put(i, sign, chance(r, 0.5) ? 'chalet' : 'barn', between(r, 10, 22), { s: between(r, 0.9, 1.1) });
@@ -1217,7 +1217,7 @@ export class Track {
       }
 
       // Belag-Details
-      if (s.surface === 'asphalt' && chance(r, 0.012)) this.decal(i, { k: 'patch', x: between(r, -1.6, 1.6), w: between(r, 0.35, 0.9), len: Math.round(between(r, 1, 3)) });
+      if (s.surface === 'asphalt' && chance(r, 0.03)) this.decal(i, { k: 'patch', x: between(r, -1.6, 1.6), w: between(r, 0.3, 0.6), len: Math.round(between(r, 1, 3)) });
       if (biome === 'village' && chance(r, 0.02)) this.decal(i, { k: 'manhole', x: between(r, -1.5, 1.5), w: 0.35, len: 1 });
       if (biome === 'alpine' && k > 40 && chance(r, 0.003)) this.decal(i, { k: 'grid', x: 0, w: ROAD_HALF, len: 2 });
     }

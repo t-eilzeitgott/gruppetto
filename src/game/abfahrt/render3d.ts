@@ -2610,12 +2610,21 @@ export class Renderer3D {
       };
     }
     const tl = side.tilt;
+    const g = side.ground;
+    if (tl > 0.08 && !side.drop && g !== 'snow') {
+      // Bergseite: Betonrinne am Bankett (Wasser läuft an der Straße entlang), dahinter der Hang
+      const o = [0, 0.2, 0.42, 0.62, 1.5, 5, 11, 20, 34];
+      const h = [0, -0.11, -0.1, 0.04, tl * 1.4, tl * 5, tl * 11, tl * 20, tl * 34];
+      h[5] += n(1) * 0.25;
+      h[6] += n(2) * 0.35;
+      const con = shadeF(lin('#a9a69f'), 0.95 + n(90) * 0.1);
+      return { o, h, cols: [con, shadeF(con, 0.85), con, gcol(g, 1), gcol(g, 1), gcol(g, 2), gcol(g, 3), gcol(g, 5)] };
+    }
     const o = [0, 0.375, 0.75, 1.125, 1.5, 5, 11, 20, 34];
     const bump = (k: number, amp: number) => n(k) * amp;
     const h = o.map((x) => tl * x);
     h[5] += bump(1, 0.25);
     h[6] += bump(2, 0.35);
-    const g = side.ground;
     return { o, h, cols: [gcol(g, 0), gcol(g, 0), gcol(g, 1), gcol(g, 1), gcol(g, 1), gcol(g, 2), gcol(g, 3), gcol(g, 5)] };
   }
 
@@ -2683,6 +2692,12 @@ export class Renderer3D {
         continue;
       }
       if (side.wall > 0) continue;
+      // Leitpfosten alle 50 m (weiß mit schwarzem Band), wo keine Leitplanke, Mauer oder Zaun steht
+      if (side.barrier === 'none' && side.ground !== 'water' && side.ground !== 'pavement' && (s.i + (sg > 0 ? 0 : 12)) % 25 === 0) {
+        const x = sg * (EDGE + 0.1);
+        this.box(bar, a, x, 0, 0.1, 1.0, 0.1, lin('#eef0ee'), P);
+        this.box(bar, a, x, 0.58, 0.112, 0.12, 0.112, lin('#1b1d20'), P);
+      }
       if (side.barrier === 'rail') {
         const x = sg * (EDGE - 0.12);
         wallQ(x, 0.46, 0.56, lin('#9aa1a9'));
@@ -3320,7 +3335,13 @@ export class Renderer3D {
     for (let k = 0; k < len; k++) {
       const a = rows[r + k];
       const b = rows[r + k + 1];
-      if (d.k === 'patch') continue;
+      if (d.k === 'patch') {
+        // Flickstelle: dunkleres, frisches Stück Asphalt mit leicht schiefen Kanten
+        const j = (q: number) => (hash(r * 31 + k * 7 + q) - 0.5) * 0.25;
+        const col = shadeF(lin('#5d6167'), 0.95 + hash(r * 13 + k) * 0.1);
+        marks.quad(P(a, d.x - d.w + j(1), H * 0.5), P(a, d.x + d.w + j(2), H * 0.5), P(b, d.x + d.w + j(3), H * 0.5), P(b, d.x - d.w + j(4), H * 0.5), col);
+        continue;
+      }
       if (d.k === 'zebra') for (let q = -2; q <= 2; q++) marks.quad(P(a, q * 1.05 - 0.25, H), P(a, q * 1.05 + 0.25, H), P(b, q * 1.05 + 0.25, H), P(b, q * 1.05 - 0.25, H), lin('#f2f2ec'));
       else if (d.k === 'grid') for (let q = 0; q < 4; q++) {
         const t0 = q / 4;
