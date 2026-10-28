@@ -1134,7 +1134,8 @@ export class Terrain {
     // Bäume (nur feinste Stufe): Wald nach Rauschmaske, vereinzelte Bäume auf Wiesen
     const trees: TreeSpot[] = [];
     if (lv === 0) {
-      const step = 8;
+      // dichtes Raster (6 m): ein Wald ist eine geschlossene Masse, keine verstreuten Einzelbäume
+      const step = 6;
       const M = Math.floor(L.size / step);
       for (let j = 0; j < M; j++) {
         for (let i = 0; i < M; i++) {
@@ -1168,10 +1169,16 @@ export class Terrain {
           if (above > C.treeLine + 18) continue;
           const n1 = fbm(x / 230, z / 230, 3);
           const n2 = vnoise(x / 31, z / 31);
-          const forest = sstep(C.forestThr, C.forestThr + 0.08, n1 + (n2 - 0.5) * 0.12);
-          const p = forest > 0.5 ? 0.78 : C.meadowTrees;
+          const forest = sstep(C.forestThr, C.forestThr + 0.08, n1 + (n2 - 0.5) * 0.12) * sstep(C.treeLine + 25, C.treeLine - 15, above);
+          // dieselbe Waldmaske wie der Shader (Gewicht plus großflächiges Rauschen): Bäume stehen genau dort,
+          // wo der Boden Waldfarbe hat – nicht als Requisiten auf heller Wiese
+          const big = 0.5 + (fbm(x / 150 + 9.1, z / 150 - 3.3, 2) - 0.5) * 1.9;
+          const nzx = 0.5 + (fbm(x / 170 - 4.7, z / 170 + 8.2, 2) - 0.5) * 1.7;
+          const fo = sstep(0.42, 0.62, forest + (big - 0.5) * 0.25 + (nzx - 0.5) * 0.6);
+          // innen dicht, am Rand ausdünnend (weicher Saum), auf der Wiese vereinzelt
+          const p = fo > 0.5 ? 0.92 : fo > 0.1 ? 0.25 + fo * 0.6 : C.meadowTrees;
           if (h2(tx * 3000 + i * 7, tz * 3000 + j * 13) > p) continue;
-          const kind = pickTree(b, above, h2(i * 31 + tx, j * 17 + tz), forest > 0.5);
+          const kind = pickTree(b, above, h2(i * 31 + tx, j * 17 + tz), fo > 0.3);
           // Höhe der gröberen Stufe an derselben Stelle (der Baum folgt dem Gelände beim Übergang)
           const dy = this.coarseDy(x, z, y, cg, cV, cA);
           trees.push({ kind, x, y: y - 0.35, z, s: 0.75 + h2(i + tx * 77, j + tz * 91) * 0.65, rot: r1 * Math.PI * 2, tint: 0.82 + r2 * 0.32, dy });
