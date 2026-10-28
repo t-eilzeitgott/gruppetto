@@ -21,9 +21,10 @@ import { berlinDayKey } from '../../game/abfahrt/rng';
 import { stageRef } from '../../game/abfahrt/stageRef';
 import type { Marker } from '../../game/abfahrt/editor3d';
 import {
-  GAME_KIND, PLACEABLE, editsKey, emptyEdits, exportText, isEmptyEdits, newId, normalizeEdits, spriteName,
-  type PlacedSprite, type TerrainBump, type WorldEdits, type WorldGame, type WorldNote,
+  ANCHOR_LABEL, GAME_KIND, GLOBAL_KEY, PLACEABLE, editsKey, emptyEdits, emptyGlobal, exportText, isEmptyEdits, nearestFeature, newId, spriteName,
+  type Anchor, type PlacedSprite, type TerrainBump, type WorldEdits, type WorldGame, type WorldNote,
 } from '../../game/abfahrt/worldEdits';
+import * as worldStore from '../../game/abfahrt/worldStore';
 import { Segmented, cx, toast, useTitle } from '../../ui/kit';
 import { Icon } from '../../ui/Icon';
 
@@ -39,7 +40,6 @@ const TOOLS: { id: Tool; label: string; hint: string }[] = [
 ];
 const GAME_LABEL: Record<WorldGame, string> = { abfahrt: 'Abfahrt', sprint: 'Sprint', berg: 'Berg' };
 const SPEEDS = [0.5, 1, 2, 5, 12];
-const LS = (key: string) => `gruppetto.world.${key}`;
 
 interface Cam { x: number; y: number; z: number; yaw: number; pitch: number }
 interface Pending { kind: 'note'; at: [number, number, number]; track: { z: number; x: number } }
@@ -87,10 +87,17 @@ export function WorldEditorPage() {
   const track = useMemo(() => new Track(day, names, GAME_KIND[game], ref), [day, names, game, ref]);
   const key = editsKey(game, day);
 
-  const [edits, setEditsState] = useState<WorldEdits>(() => emptyEdits(game, day, track.title));
+  const [edits, setEditsState] = useState<WorldEdits>(() => worldStore.get(key) ?? emptyEdits(game, day, track.title));
   const editsRef = useRef(edits);
   editsRef.current = edits;
-  const [loaded, setLoaded] = useState<string | null>(null);
+  /** Änderungen „überall“ (verankert an markanten Stellen, für alle Strecken) */
+  const [glob, setGlobState] = useState<WorldEdits>(() => worldStore.get(GLOBAL_KEY) ?? emptyGlobal());
+  const globRef = useRef(glob);
+  globRef.current = glob;
+  /** Geltungsbereich neuer Änderungen: nur diese Tagesstrecke oder überall (an der gleichen markanten Stelle) */
+  const [scope, setScope] = useState<'day' | 'all'>('all');
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
   const [saveState, setSaveState] = useState<'ok' | 'busy' | 'error' | 'local'>('ok');
   const [tool, setTool] = useState<Tool>('fly');
   const toolRef = useRef<Tool>('fly');
@@ -112,7 +119,7 @@ export function WorldEditorPage() {
   const [camInfo, setCamInfo] = useState({ z: 0, x: 0, alt: 0, sec: '' });
   const [glError, setGlError] = useState(false);
   const [sections, setSections] = useState<Section[]>([]);
-  const undo = useRef<WorldEdits[]>([]);
+  const undo = useRef<{ day: WorldEdits; glob: WorldEdits }[]>([]);
   const [undoN, setUndoN] = useState(0);
 
   const stageRefEl = useRef<HTMLDivElement | null>(null);
@@ -124,76 +131,79 @@ export function WorldEditorPage() {
 
   // ---------------------------------------------------------------- Änderungen laden und speichern
 
+  // Streckenwechsel: Stand aus dem Zwischenspeicher (worldStore lädt nebenbei nach, siehe Bildschleife)
+  const seenVersion = useRef(-1);
   useEffect(() => {
-    let alive = true;
-    setLoaded(null);
     setSelected(null);
     undo.current = [];
     setUndoN(0);
-    const local = (() => { try { const t = localStorage.getItem(LS(key)); return t ? JSON.parse(t) : null; } catch { return null; } })();
-    const fromLocal = normalizeEdits(local, game, day, track.title);
-    setEditsState(fromLocal);
-    source.loadWorldEdits(key).then((remote) => {
-      if (!alive) return;
-      if (remote) {
-        const r = normalizeEdits(remote, game, day, track.title);
-        // die neuere Fassung gewinnt (Browser-Kopie kann jünger sein, wenn das Speichern fehlschlug)
-        if (!fromLocal.updated || (r.updated && r.updated >= fromLocal.updated)) setEditsState(r);
-      }
-      setLoaded(key);
-    }).catch(() => { if (alive) setLoaded(key); });
-    return () => { alive = false; };
+    setEditsState(worldStore.get(key) ?? emptyEdits(game, day, track.title));
+    setGlobState(worldStore.get(GLOBAL_KEY) ?? emptyGlobal());
+    seenVersion.current = -1;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  const saveTimer = useRef(0);
+  /** aus der Bildschleife: hat der Store (Datenbank) inzwischen etwas Neues? */
+  const pullStore = () => {
+    const v = worldStore.currentVersion();
+    if (v === seenVersion.current) return;
+    seenVersion.current = v;
+    const d = worldStore.get(key) ?? emptyEdits(game, day, track.title);
+    const g = worldStore.get(GLOBAL_KEY) ?? emptyGlobal();
+    if (d !== editsRef.current) { editsRef.current = d; setEditsState(d); }
+    if (g !== globRef.current) { globRef.current = g; setGlobState(g); }
+  };
+
+  const saveTimer = useRef<Record<string, number>>({});
   const persist = (e: WorldEdits) => {
-    try { localStorage.setItem(LS(e.key), JSON.stringify(e)); } catch { /* egal */ }
-    window.clearTimeout(saveTimer.current);
+    window.clearTimeout(saveTimer.current[e.key]);
     setSaveState('busy');
-    saveTimer.current = window.setTimeout(() => {
+    saveTimer.current[e.key] = window.setTimeout(() => {
       source.saveWorldEdits(e.key, isEmptyEdits(e) ? null : e)
         .then(() => setSaveState(source.mode === 'demo' ? 'local' : 'ok'))
         .catch(() => setSaveState('error'));
     }, 1200);
   };
 
-  /** Änderung übernehmen: anwenden, Szene erneuern, speichern (mit Rückgängig) */
+  /** Änderung der Tagesstrecke übernehmen: anwenden, Szene erneuern, speichern (mit Rückgängig) */
   const commit = (next: WorldEdits, inv: { z?: [number, number]; bumps?: TerrainBump[] } = {}, keepUndo = true) => {
-    const cur = editsRef.current;
-    if (keepUndo) { undo.current = [...undo.current.slice(-39), cur]; setUndoN(undo.current.length); }
+    if (keepUndo) { undo.current = [...undo.current.slice(-39), { day: editsRef.current, glob: globRef.current }]; setUndoN(undo.current.length); }
     next = { ...next, updated: new Date().toISOString(), title: track.title };
     editsRef.current = next;
     setEditsState(next);
-    apply(next, inv);
+    const r = rendererRef.current;
+    track.edits = next;
+    if (inv.z) { track.reapplyEdits(inv.z[0], inv.z[1]); r?.invalidateChunks(inv.z[0] - 10, inv.z[1] + 10); }
+    r?.setBumps(inv.bumps ?? []);
+    worldStore.set(key, next, track);
+    seenVersion.current = worldStore.currentVersion();
     persist(next);
   };
 
-  const apply = (e: WorldEdits, inv: { z?: [number, number]; bumps?: TerrainBump[] }) => {
-    const r = rendererRef.current;
-    track.edits = e;
-    if (inv.z) { track.reapplyEdits(inv.z[0], inv.z[1]); r?.invalidateChunks(inv.z[0] - 10, inv.z[1] + 10); }
-    r?.setBumps(e.terrain, inv.bumps ?? []);
+  /** Änderung „überall“ übernehmen: die Strecke löst sie neu auf, der Renderer baut alles neu */
+  const commitGlobal = (next: WorldEdits, keepUndo = true) => {
+    if (keepUndo) { undo.current = [...undo.current.slice(-39), { day: editsRef.current, glob: globRef.current }]; setUndoN(undo.current.length); }
+    next = { ...next, updated: new Date().toISOString() };
+    globRef.current = next;
+    setGlobState(next);
+    track.global = next;
+    rendererRef.current?.rebuildAll();
+    worldStore.set(GLOBAL_KEY, next, track);
+    seenVersion.current = worldStore.currentVersion();
+    persist(next);
   };
-
-  // geladene Änderungen auf die Welt anwenden (alles neu)
-  useEffect(() => {
-    track.edits = edits;
-    const r = rendererRef.current;
-    if (!r) return;
-    r.setBumps(edits.terrain);
-    r.invalidateChunks(0, track.length * SEG);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, track]);
 
   const doUndo = () => {
     const prev = undo.current.pop();
     setUndoN(undo.current.length);
     if (!prev) return;
     const cur = editsRef.current;
-    const zs = [...cur.sprites, ...prev.sprites, ...cur.removed, ...prev.removed].map((s) => s.z);
-    const bumps = [...cur.terrain, ...prev.terrain];
-    commit(prev, { z: zs.length ? [Math.min(...zs) - 4, Math.max(...zs) + 4] : undefined, bumps }, false);
+    if (prev.glob !== globRef.current) commitGlobal(prev.glob, false);
+    if (prev.day !== cur) {
+      const zs = [...cur.sprites, ...prev.day.sprites, ...cur.removed, ...prev.day.removed].map((s) => s.z);
+      const bumps = [...cur.terrain, ...prev.day.terrain];
+      commit(prev.day, { z: zs.length ? [Math.min(...zs) - 4, Math.max(...zs) + 4] : undefined, bumps }, false);
+    }
     setSelected(null);
   };
 
@@ -204,19 +214,23 @@ export function WorldEditorPage() {
     if (!r) return;
     const list: Marker[] = [];
     const w = { x: 0, y: 0, z: 0, th: 0 };
+    const base = (id: string) => id.split('@')[0];
     for (const n of edits.notes) list.push({ id: n.id, kind: 'note', x: n.at[0], y: n.at[1], z: n.at[2], label: n.text.slice(0, 40), active: selected === n.id });
-    for (const b of edits.terrain) {
+    for (const b of [...edits.terrain.filter((x) => !x.at), ...track.derived.terrain]) {
       const y = r.groundY(b.x, b.z) ?? 0;
-      list.push({ id: b.id, kind: 'bump', x: b.x, y, z: b.z, r: b.r, label: `${b.dy > 0 ? '+' : ''}${Math.round(b.dy)} m`, active: selected === b.id });
+      const on = selected === base(b.id);
+      list.push({ id: b.id, kind: 'bump', x: b.x, y, z: b.z, r: b.r, label: `${b.dy > 0 ? '+' : ''}${Math.round(b.dy)} m${b.id.includes('@') ? ' · überall' : ''}`, active: on });
     }
-    for (const s of edits.sprites) {
+    for (const s of [...edits.sprites.filter((x) => !x.at), ...track.derived.sprites]) {
       if (s.z < track.first * SEG || s.z > track.length * SEG) continue;
       track.world(s.z, s.x, 0, w);
       const y = Math.abs(s.x) > EDGE ? (r.groundY(w.x, w.z) ?? w.y) : w.y;
-      list.push({ id: s.id, kind: 'sprite', x: w.x, y: Math.max(y, w.y - 3), z: w.z, label: selected === s.id ? spriteName(s.k) : undefined, active: selected === s.id });
+      const on = selected === s.id;
+      const g = globRef.current.sprites.find((x) => x.id === s.id);
+      list.push({ id: `${s.id}@${Math.round(s.z)}`, kind: 'sprite', x: w.x, y: Math.max(y, w.y - 3), z: w.z, label: on ? `${spriteName(s.k)}${g ? ' · überall' : ''}` : undefined, active: on });
     }
     r.setMarkers(list);
-  }, [edits, selected, track, loaded]);
+  }, [edits, glob, selected, track, sections]);
 
   // ---------------------------------------------------------------- 3D-Bühne und Flug
 
@@ -245,8 +259,6 @@ export function WorldEditorPage() {
     rendererRef.current = renderer;
     const view = new WorldView(track, readAccent());
     viewRef.current = view;
-    track.edits = editsRef.current;
-    renderer.setBumps(editsRef.current.terrain);
     // Kamera an den Start: hinter dem Startpunkt, Blick die Strecke entlang
     const w = { x: 0, y: 0, z: 0, th: 0 };
     track.world(0, 0, 0, w);
@@ -281,6 +293,7 @@ export function WorldEditorPage() {
       info += dt;
       if (info > 0.25) {
         info = 0;
+        pullStore();
         const s = track.sectionOf(track.segAt(p.z));
         setCamInfo({ z: Math.max(0, n.z), x: n.x, alt: c.y, sec: s ? `${s.name}` : '' });
         if (track.sections.length !== secN) { secN = track.sections.length; setSections([...track.sections]); }
@@ -382,8 +395,6 @@ export function WorldEditorPage() {
       renderer.debugHoles = false;
       renderer.hidePlayer = false;
       renderer.setMarkers([]);
-      renderer.setBumps([]);
-      track.edits = null;
       rendererRef.current = null;
       releaseStage(st);
       delete (window as unknown as { __world?: unknown }).__world;
@@ -436,13 +447,17 @@ export function WorldEditorPage() {
         const onRoad = Math.abs(n.x) <= EDGE && n.d < 1;
         const sp: PlacedSprite = { id: newId(), z: Math.round(n.z * 10) / 10, x: Math.round(n.x * 10) / 10, k: kindRef.current, s: 1, v: Math.floor(Math.random() * 4), f: Math.random() < 0.5, h: onRoad ? Math.max(0, hit.y - track.heightAt(n.z)) : 0 };
         if (sp.k === 'crowd') sp.x = Math.sign(sp.x || 1) * Math.max(EDGE + 0.3, Math.abs(sp.x));
-        commit({ ...e, sprites: [...e.sprites, sp] }, { z: [sp.z - 2, sp.z + 2] });
+        const at = anchorFor(n.z);
+        if (at) { commitGlobal({ ...globRef.current, sprites: [...globRef.current.sprites, { ...sp, at, z: 0 }] }); toast(`${spriteName(sp.k)} überall: ${anchorText(at)}`); }
+        else commit({ ...e, sprites: [...e.sprites, sp] }, { z: [sp.z - 2, sp.z + 2] });
         setSelected(sp.id);
         break;
       }
       case 'terrain': {
         const b: TerrainBump = { id: newId(), x: Math.round(hit.x * 10) / 10, z: Math.round(hit.z * 10) / 10, r: brushRef.current.r, dy: brushRef.current.dy };
-        commit({ ...e, terrain: [...e.terrain, b] }, { bumps: [b] });
+        const at = anchorFor(n.z, Math.round(n.x * 10) / 10);
+        if (at) { commitGlobal({ ...globRef.current, terrain: [...globRef.current.terrain, { ...b, at }] }); toast(`Gelände überall: ${anchorText(at)}`); }
+        else commit({ ...e, terrain: [...e.terrain, b] }, { bumps: [b] });
         setSelected(b.id);
         break;
       }
@@ -467,25 +482,46 @@ export function WorldEditorPage() {
           }
         }
         if (!best) { toast('Keine Requisite in der Nähe'); break; }
-        commit({ ...e, removed: [...e.removed, { id: newId(), z: best.z, x: best.x, k: best.k }] }, { z: [best.z - 2, best.z + 2] });
-        toast(`${spriteName(best.k)} entfernt`);
+        const at = anchorFor(best.z);
+        if (at) { commitGlobal({ ...globRef.current, removed: [...globRef.current.removed, { id: newId(), at, z: 0, x: best.x, k: best.k }] }); toast(`${spriteName(best.k)} überall entfernt: ${anchorText(at)}`); }
+        else { commit({ ...e, removed: [...e.removed, { id: newId(), z: best.z, x: best.x, k: best.k }] }, { z: [best.z - 2, best.z + 2] }); toast(`${spriteName(best.k)} entfernt`); }
         break;
       }
     }
   };
 
-  /** nächster Marker (Notiz, Hügel, gesetzte Requisite) zu einem Weltpunkt */
+  /** Verankerung im Modus „überall“: nächste markante Stelle (null = Modus „heute“ oder keine in Reichweite) */
+  const anchorFor = (z: number, dx?: number): Anchor | null => {
+    if (scopeRef.current !== 'all') return null;
+    const f = nearestFeature(track, z);
+    if (!f) { toast('Keine markante Stelle in der Nähe – gilt nur für diese Strecke'); return null; }
+    const at: Anchor = { kind: f.kind, dz: Math.round((z - f.z) * 10) / 10 };
+    if (f.kind === 'sectionStart') at.biome = f.biome;
+    if (dx !== undefined) at.dx = dx;
+    return at;
+  };
+  const anchorText = (a: Anchor) => `${ANCHOR_LABEL[a.kind]}${a.biome ? ` (${a.biome})` : ''} ${a.dz >= 0 ? '+' : ''}${Math.round(a.dz)} m`;
+
+  /** nächster Marker (Notiz, Hügel, gesetzte Requisite – auch aufgelöste „überall“) zu einem Weltpunkt */
   const nearestMarker = (e: WorldEdits, hit: { x: number; y: number; z: number }, maxD: number): { id: string; d: number } | null => {
     let best: { id: string; d: number } | null = null;
     const w = { x: 0, y: 0, z: 0, th: 0 };
-    const take = (id: string, d: number) => { if (d < maxD && (!best || d < best.d)) best = { id, d }; };
+    const take = (id: string, d: number) => { if (d < maxD && (!best || d < best.d)) best = { id: id.split('@')[0], d }; };
     for (const n of e.notes) take(n.id, Math.hypot(n.at[0] - hit.x, n.at[2] - hit.z));
-    for (const b of e.terrain) take(b.id, Math.max(0, Math.hypot(b.x - hit.x, b.z - hit.z) - b.r * 0.35));
-    for (const s of e.sprites) { track.world(s.z, s.x, 0, w); take(s.id, Math.hypot(w.x - hit.x, w.z - hit.z)); }
+    for (const b of [...e.terrain.filter((x) => !x.at), ...track.derived.terrain]) take(b.id, Math.max(0, Math.hypot(b.x - hit.x, b.z - hit.z) - b.r * 0.35));
+    for (const s of [...e.sprites.filter((x) => !x.at), ...track.derived.sprites]) { track.world(s.z, s.x, 0, w); take(s.id, Math.hypot(w.x - hit.x, w.z - hit.z)); }
     return best;
   };
 
+  const inGlobal = (id: string) => { const g = globRef.current; return g.sprites.some((x) => x.id === id) || g.terrain.some((x) => x.id === id) || g.removed.some((x) => x.id === id); };
+
   const remove = (id: string) => {
+    if (inGlobal(id)) {
+      const g = globRef.current;
+      commitGlobal({ ...g, sprites: g.sprites.filter((x) => x.id !== id), terrain: g.terrain.filter((x) => x.id !== id), removed: g.removed.filter((x) => x.id !== id) });
+      if (selected === id) setSelected(null);
+      return;
+    }
     const e = editsRef.current;
     const sp = e.sprites.find((s) => s.id === id);
     const rm = e.removed.find((s) => s.id === id);
@@ -503,6 +539,8 @@ export function WorldEditorPage() {
   };
 
   const patchSprite = (id: string, patch: Partial<PlacedSprite>) => {
+    const g = globRef.current;
+    if (g.sprites.some((x) => x.id === id)) { commitGlobal({ ...g, sprites: g.sprites.map((x) => (x.id === id ? { ...x, ...patch } : x)) }); return; }
     const e = editsRef.current;
     const sp = e.sprites.find((s) => s.id === id);
     if (!sp) return;
@@ -510,6 +548,8 @@ export function WorldEditorPage() {
     commit({ ...e, sprites: e.sprites.map((s) => (s.id === id ? n : s)) }, { z: [Math.min(sp.z, n.z) - 2, Math.max(sp.z, n.z) + 2] });
   };
   const patchBump = (id: string, patch: Partial<TerrainBump>) => {
+    const g = globRef.current;
+    if (g.terrain.some((x) => x.id === id)) { commitGlobal({ ...g, terrain: g.terrain.map((x) => (x.id === id ? { ...x, ...patch } : x)) }); return; }
     const e = editsRef.current;
     const b = e.terrain.find((s) => s.id === id);
     if (!b) return;
@@ -557,16 +597,17 @@ export function WorldEditorPage() {
 
   // ---------------------------------------------------------------- Export
 
-  const exportJson = () => JSON.stringify({ ...edits, title: track.title }, null, 1);
+  const exportJson = () => JSON.stringify({ day: { ...edits, title: track.title }, global: glob }, null, 1);
+  const exportAll = () => `${exportText({ ...edits, title: track.title })}\n\n${exportText(glob)}`;
   const copyExport = async () => {
-    try { await navigator.clipboard.writeText(exportText({ ...edits, title: track.title })); toast('Export kopiert'); } catch { toast('Kopieren nicht möglich'); }
+    try { await navigator.clipboard.writeText(exportAll()); toast('Export kopiert'); } catch { toast('Kopieren nicht möglich'); }
   };
   const shareExport = async () => {
     const file = new File([exportJson()], `welt-${key.replace(':', '-')}.json`, { type: 'application/json' });
     const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
     try {
       if (nav.share && nav.canShare?.({ files: [file] })) { await nav.share({ files: [file], title: `Welt-Editor ${key}` }); return; }
-      if (nav.share) { await nav.share({ title: `Welt-Editor ${key}`, text: exportText(edits) }); return; }
+      if (nav.share) { await nav.share({ title: `Welt-Editor ${key}`, text: exportAll() }); return; }
     } catch { return; }
     downloadExport();
   };
@@ -584,12 +625,19 @@ export function WorldEditorPage() {
     setSelected(null);
   };
 
+  const clearGlobal = () => {
+    if (!window.confirm('Alle „überall“-Änderungen löschen (alle Strecken)?')) return;
+    commitGlobal(emptyGlobal());
+    setSelected(null);
+  };
+
   const sel = {
-    sprite: edits.sprites.find((s) => s.id === selected),
-    bump: edits.terrain.find((s) => s.id === selected),
+    sprite: edits.sprites.find((s) => s.id === selected) ?? glob.sprites.find((s) => s.id === selected),
+    bump: edits.terrain.find((s) => s.id === selected) ?? glob.terrain.find((s) => s.id === selected),
     note: edits.notes.find((s) => s.id === selected),
   };
   const count = edits.sprites.length + edits.removed.length + edits.terrain.length + edits.notes.length;
+  const countAll = glob.sprites.length + glob.removed.length + glob.terrain.length;
   const groups = useMemo(() => [...new Set(PLACEABLE.map((p) => p.group))], []);
 
   return (
@@ -607,16 +655,20 @@ export function WorldEditorPage() {
           <span>{track.title}</span>
         </button>
         <button type="button" className={cx('wed-chip', holes && 'is-on')} onClick={() => setHoles((h) => !h)} aria-pressed={holes} title="Löcher-Prüfmodus: Himmel unter dem Horizont wird magenta">Löcher</button>
-        <button type="button" className="wed-chip" onClick={() => setSheet(sheet === 'export' ? 'none' : 'export')}><Icon name="share" size={16} />{count ? <b>{count}</b> : null}</button>
+        <button type="button" className="wed-chip" onClick={() => setSheet(sheet === 'export' ? 'none' : 'export')}><Icon name="share" size={16} />{count + countAll ? <b>{count + countAll}</b> : null}</button>
       </div>
       <div className="wed-info" aria-live="polite">
         <span>{m(camInfo.z)}{camInfo.x ? ` · ${camInfo.x > 0 ? 'rechts' : 'links'} ${m(Math.abs(camInfo.x))}` : ''}</span>
         <span>{camInfo.sec}</span>
-        <span className="wed-info__save">{saveState === 'busy' ? 'speichert …' : saveState === 'error' ? 'nicht gespeichert' : saveState === 'local' ? 'nur hier gespeichert' : loaded === key ? 'gespeichert' : 'lädt …'}</span>
+        <span className="wed-info__save">{saveState === 'busy' ? 'speichert …' : saveState === 'error' ? 'nicht gespeichert' : saveState === 'local' ? 'nur hier gespeichert' : 'gespeichert · gilt sofort im Spiel'}</span>
       </div>
 
       {/* Werkzeuge */}
       <div className="wed-tools" role="group" aria-label="Werkzeug">
+        <button type="button" className={cx('wed-tool wed-tool--scope', scope === 'all' && 'is-on')} onClick={() => setScope(scope === 'all' ? 'day' : 'all')} title="Überall: an der gleichen markanten Stelle (Brücke, Tunnel, Kehre, Abschnitt) auf jeder Strecke · Heute: nur diese Tagesstrecke">
+          <Icon name={scope === 'all' ? 'refresh' : 'calendar'} size={18} />
+          <span>{scope === 'all' ? 'Überall' : 'Heute'}</span>
+        </button>
         {TOOLS.map((t) => (
           <button key={t.id} type="button" className={cx('wed-tool', tool === t.id && 'is-on')} aria-pressed={tool === t.id} onClick={() => { setTool(t.id); setPending(null); }}>
             <ToolIcon id={t.id} />
@@ -648,7 +700,7 @@ export function WorldEditorPage() {
             </div>
             {sel.sprite ? (
               <div className="wed-row">
-                <span className="wed-row__name">{spriteName(sel.sprite.k)} · {m(sel.sprite.z)}</span>
+                <span className="wed-row__name">{spriteName(sel.sprite.k)} · {sel.sprite.at ? `überall: ${anchorText(sel.sprite.at)}` : m(sel.sprite.z)}</span>
                 <button type="button" className="wed-chip" onClick={() => patchSprite(sel.sprite!.id, { s: Math.max(0.3, Math.round((sel.sprite!.s - 0.1) * 10) / 10) })}>−</button>
                 <span className="wed-row__val">{sel.sprite.s.toFixed(1)}×</span>
                 <button type="button" className="wed-chip" onClick={() => patchSprite(sel.sprite!.id, { s: Math.min(4, Math.round((sel.sprite!.s + 0.1) * 10) / 10) })}>+</button>
@@ -658,7 +710,7 @@ export function WorldEditorPage() {
                 <button type="button" className="wed-chip" onClick={() => patchSprite(sel.sprite!.id, { x: Math.round((sel.sprite!.x + 0.5) * 10) / 10 })}>▶</button>
                 <button type="button" className="wed-chip wed-chip--danger" onClick={() => remove(sel.sprite!.id)}><Icon name="trash" size={16} /></button>
               </div>
-            ) : <p className="wed-hint">{TOOLS[1].hint}</p>}
+            ) : <p className="wed-hint">{TOOLS[1].hint}{scope === 'all' ? ' – überall: an jeder gleichen markanten Stelle (Brückenende, Tunnel, Kehre, Abschnittsanfang) auf allen Strecken.' : ' – nur auf dieser Tagesstrecke.'}</p>}
           </div>
         ) : tool === 'terrain' ? (
           <div className="wed-panel">
@@ -674,7 +726,7 @@ export function WorldEditorPage() {
             </div>
             {sel.bump ? (
               <div className="wed-row">
-                <span className="wed-row__name">Gewählt: {sel.bump.dy > 0 ? 'Hügel' : 'Mulde'} {sel.bump.r} m</span>
+                <span className="wed-row__name">{sel.bump.dy > 0 ? 'Hügel' : 'Mulde'} {sel.bump.r} m{sel.bump.at ? ` · überall: ${anchorText(sel.bump.at)}` : ''}</span>
                 <button type="button" className="wed-chip" onClick={() => patchBump(sel.bump!.id, { dy: sel.bump!.dy - 2 })}>tiefer</button>
                 <button type="button" className="wed-chip" onClick={() => patchBump(sel.bump!.id, { dy: sel.bump!.dy + 2 })}>höher</button>
                 <button type="button" className="wed-chip" onClick={() => patchBump(sel.bump!.id, { r: Math.max(2, sel.bump!.r - 3) })}>enger</button>
@@ -770,14 +822,17 @@ export function WorldEditorPage() {
         <div className="abf-layer" onClick={() => setSheet('none')}>
           <div className="abf-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="abf-title">Export für Claude</h2>
-            <p className="abf-sub">{edits.notes.length} Notizen · {edits.sprites.length} gesetzt · {edits.removed.length} entfernt · {edits.terrain.length} Gelände. Gespeichert in der Datenbank (world_edits, Schlüssel {key}) – Claude kann sie direkt lesen oder du schickst ihm den Text.</p>
-            <textarea className="wed-export" readOnly value={exportText({ ...edits, title: track.title })} onFocus={(e: { currentTarget: HTMLTextAreaElement }) => e.currentTarget.select()} />
+            <p className="abf-sub">Diese Strecke: {edits.notes.length} Notizen · {edits.sprites.length} gesetzt · {edits.removed.length} entfernt · {edits.terrain.length} Gelände. Überall: {glob.sprites.length} gesetzt · {glob.removed.length} entfernt · {glob.terrain.length} Gelände. Alles liegt in der Datenbank (world_edits) und gilt sofort in den Spielen – der Export ist nur für Nachfragen an Claude.</p>
+            <textarea className="wed-export" readOnly value={exportAll()} onFocus={(e: { currentTarget: HTMLTextAreaElement }) => e.currentTarget.select()} />
             <div className="wed-row">
               <button type="button" className="btn" onClick={copyExport}>Kopieren</button>
               <button type="button" className="btn btn--secondary" onClick={shareExport}>Teilen</button>
               <button type="button" className="btn btn--secondary" onClick={downloadExport}>Datei</button>
             </div>
-            <button type="button" className="wed-chip wed-chip--danger" onClick={clearAll} disabled={!count}>Alle Änderungen dieser Strecke löschen</button>
+            <div className="wed-row">
+              <button type="button" className="wed-chip wed-chip--danger" onClick={clearAll} disabled={!count}>Diese Strecke zurücksetzen</button>
+              <button type="button" className="wed-chip wed-chip--danger" onClick={clearGlobal} disabled={!countAll}>„Überall“ zurücksetzen</button>
+            </div>
             <button type="button" className="btn btn--secondary btn--full" onClick={() => setSheet('none')}><span>Schließen</span></button>
           </div>
         </div>

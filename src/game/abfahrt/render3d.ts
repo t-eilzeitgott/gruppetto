@@ -11,6 +11,7 @@ import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette
 import { SpriteBank, cloud, roadArrow, roadText, warmRoadText } from './sprites';
 import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
+import * as worldStore from './worldStore';
 import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, canopyTex, fallTex, glowTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
 import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
@@ -295,17 +296,20 @@ export class Renderer3D {
   debugCam: number[] | null = null;
   /** Welt-Editor: den eigenen Fahrer nicht zeigen */
   hidePlayer = false;
-  /** Welt-Editor: Hügel und Mulden – gelten auch nach einem Streckenwechsel */
-  private bumps: TerrainBump[] = [];
   private markers: EditorMarkers | null = null;
   private ray = new THREE.Raycaster();
   private rayV = new THREE.Vector2();
 
-  /** Welt-Editor: Hügel und Mulden setzen; betroffene Kacheln werden neu gebaut */
-  setBumps(list: TerrainBump[], changed?: TerrainBump[]) {
-    this.bumps = list;
-    if (this.terrain) this.terrain.bumps = list;
-    for (const b of changed ?? list) this.invalidateTerrain(b.x - b.r - 2, b.z - b.r - 2, b.x + b.r + 2, b.z + b.r + 2);
+  /** Welt-Editor: Hügel und Mulden haben sich geändert (die Strecke kennt sie) – betroffene Kacheln neu bauen */
+  setBumps(changed: TerrainBump[]) {
+    for (const b of changed) this.invalidateTerrain(b.x - b.r - 2, b.z - b.r - 2, b.x + b.r + 2, b.z + b.r + 2);
+  }
+
+  /** Änderungen aus dem Welt-Editor neu aufgelegt: alles neu bauen (Straße und Landschaft) */
+  rebuildAll() {
+    if (!this.track) return;
+    this.invalidateChunks(0, (this.track.length + 1) * SEG);
+    for (const t of this.tiles.values()) t.stale = true;
   }
 
   /** Welt-Editor: Kacheln in einem Gebiet (Weltkoordinaten) neu bauen */
@@ -1100,6 +1104,8 @@ export class Renderer3D {
         if (old.names.join('|') !== g.track.names.join('|')) { this.setAds(g.track.names); this.clearChunks(); }
       } else this.reset(g.track);
     }
+    // Änderungen aus dem Welt-Editor (Tagesstrecke und „überall“): sobald geladen, alles neu bauen
+    if (worldStore.sync(g.track)) this.rebuildAll();
     const fk = g.friends.map((f) => `${f.userId}:${f.meters}`).join('|');
     if (fk !== this.friendsKey) {
       // nur die Abschnitte neu bauen, in denen sich ein Bestmarken-Bogen ändert
@@ -1193,7 +1199,6 @@ export class Renderer3D {
     this.routeEnd = 0;
     this.pre = null;
     this.terrain = new Terrain(track);
-    this.terrain.bumps = this.bumps;
     this.setAds(track.names);
     this.clearChunks();
     this.cam.init = false;

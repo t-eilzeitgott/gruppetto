@@ -9,7 +9,7 @@ import { STYLE, type Lang } from './facade';
 import type { StageRef } from './stageRef';
 import { finaleGrade, type FinaleSpec } from './finale';
 import { LOOKS, pickWeighted, type Region } from './region';
-import { applyEditsRange, type WorldEdits } from './worldEdits';
+import { applyEditsRange, bumpsOf, deriveForSection, emptyDerived, type Derived, type TerrainBump, type WorldEdits } from './worldEdits';
 
 export const SEG = 2;            // Segmentlänge in m
 export const ROAD_HALF = 2.8;    // halbe Fahrbahnbreite in m
@@ -210,8 +210,25 @@ export class Track {
   get edits(): WorldEdits | null { return this.edits_; }
   set edits(e: WorldEdits | null) {
     this.edits_ = e;
+    this.bumps_ = null;
     applyEditsRange(this, e, this.first, this.length);
   }
+  /** Änderungen „überall“ (verankert an markanten Stellen) – werden je Abschnitt in derived aufgelöst */
+  private global_: WorldEdits | null = null;
+  get global(): WorldEdits | null { return this.global_; }
+  set global(g: WorldEdits | null) {
+    this.global_ = g;
+    this.derived = emptyDerived();
+    for (const sec of this.sections) deriveForSection(this, g, Math.max(sec.start, this.first), Math.min(sec.end, this.length));
+    this.bumps_ = null;
+    applyEditsRange(this, this.edits_, this.first, this.length);
+  }
+  derived: Derived = emptyDerived();
+  private bumps_: TerrainBump[] | null = null;
+  /** Hügel und Mulden (Weltkoordinaten) für das Gelände */
+  get bumps(): TerrainBump[] { return (this.bumps_ ??= bumpsOf(this.edits_, this.derived)); }
+  /** Stand der geladenen Änderungen (worldStore): der Renderer erkennt daran einen Wechsel */
+  editsVersion = -1;
   /** Änderungen erneut auf einen Bereich (Streckenmeter) anwenden, z. B. nach einer neuen Requisite */
   reapplyEdits(z0: number, z1: number) {
     applyEditsRange(this, this.edits_, Math.floor(z0 / SEG), Math.ceil(z1 / SEG) + 1);
@@ -675,7 +692,8 @@ export class Track {
     if (sprint) this.sprintDeco(start, n, secIndex);
     else if (mountain) this.mountainDeco(start, n);
     else this.items(start, n, p.biome, D);
-    if (this.edits_) applyEditsRange(this, this.edits_, start, start + n);
+    if (this.global_) { deriveForSection(this, this.global_, start, start + n); this.bumps_ = null; }
+    if (this.edits_ || this.global_) applyEditsRange(this, this.edits_, start, start + n);
   }
 
   /**

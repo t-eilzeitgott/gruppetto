@@ -2116,6 +2116,8 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 }
 .wed-tool:disabled { opacity: 0.35; }
 .wed-tool.is-on { background: var(--accent, #d63384); box-shadow: none; }
+.wed-tool--scope { margin-bottom: 8px; }
+.wed-tool--scope.is-on { background: #1f6feb; }
 .wed-bottom {
   position: absolute; z-index: 20; left: calc(8px + var(--safe-l)); right: calc(8px + var(--safe-r)); bottom: calc(var(--safe-b) + 8px);
 }
