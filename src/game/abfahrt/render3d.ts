@@ -854,6 +854,8 @@ export class Renderer3D {
   // ------------------------------------------------------------------ Bild
 
   private lastDt = 0.016;
+  /** echter Abstand zum vorigen Bild (s): zeigt ausgefallene Bilder (die Spielzeit gleicht sie geglättet aus) */
+  private lastRaw = 0.016;
 
   /** Startkarte oder Countdown: Zeit, die Landschaft vollständig aufzubauen (niemand fährt) */
   private idleBuild = false;
@@ -867,17 +869,19 @@ export class Renderer3D {
   private baseMs = 5;
   private room(): number {
     let r = 12.5 - this.baseMs;
-    if (this.lastDt > 0.021) r *= 0.5;
+    if (this.lastRaw > 0.021) r *= 0.5;
     return r;
   }
   /** Entsteht gerade Landschaft? (dann zählt das Bild nicht für die Qualitätsregelung) */
   get busy(): boolean { return this.work > 3 || !!this.pending || !this.boxSet.every(Boolean); }
 
-  draw(g: RaceView, dt: number) {
+  /** dt: Spielzeit dieses Bildes (s); raw: echter Abstand zum vorigen Bild (s), für das Budget beim Nachladen */
+  draw(g: RaceView, dt: number, raw = dt) {
     const d0 = performance.now();
     // Größenwechsel genau hier: die Leinwand wird gleich danach neu bemalt
     if (this.pendingResize) this.resize();
     this.lastDt = dt;
+    this.lastRaw = raw;
     this.idleBuild = g.phase === 'ready' || g.phase === 'countdown';
     this.time.value += dt;
     if (this.track !== g.track) {

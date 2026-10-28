@@ -5,6 +5,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { FpsMeter } from '../game/fpsMeter';
+import { FrameClock } from '../game/frameClock';
 import { useMembers } from '../app/hooks';
 import { navigate } from '../app/router';
 import { cx, useTitle } from '../ui/kit';
@@ -115,14 +116,14 @@ export function AkkuPage() {
     makeGame(false);
     size(true);
     let raf = 0;
-    let prev = performance.now();
+    // Spielzeit im Takt des Bildschirms (gleichmäßige Schritte, ausgefallene Bilder ohne Sprung nachholen)
+    const clock = new FrameClock();
     let idleAcc = 0;
     // Bildrate für Admins (unauffällig unten links)
     const fps = new FpsMeter(canvas.parentElement);
     let lastDraw = 0;
     const loop = (now: number) => {
-      const dt = Math.min(0.05, (now - prev) / 1000);
-      prev = now;
+      const dt = clock.tick(now);
       const g = gameRef.current;
       if (g) {
         const u = uiRef.current;

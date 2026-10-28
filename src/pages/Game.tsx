@@ -12,6 +12,7 @@ import type { Profile } from '../lib/types';
 import { Abfahrt, type Friend, type GameEvent, type HudState, type RunResult, type ScoreCat } from '../game/abfahrt/engine';
 import { Renderer3D } from '../game/abfahrt/render3d';
 import { FpsMeter } from '../game/fpsMeter';
+import { FrameClock } from '../game/frameClock';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
@@ -249,19 +250,19 @@ export function GamePage() {
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
       if (warm) renderer.draw(engineRef.current!, 0);
       let raf = 0;
-      let prev = performance.now();
+      // Spielzeit im Takt des Bildschirms (gleichmäßige Schritte, ausgefallene Bilder ohne Sprung nachholen)
+      const clock = new FrameClock();
       let acc = 0;
       let frames = 0;
       let lostT = 0;
       let rebuilt = false;
       let drawn = false;
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGlGen((x) => x + 1); } };
-      // Bildrate für Admins (unauffällig unten links)
+      // Bildrate (im Pausenmenü einschaltbar)
       const fps = new FpsMeter(stage);
       const loop = (now: number) => {
-        const raw = (now - prev) / 1000;
-        const dt = Math.min(0.05, raw);
-        prev = now;
+        const dt = clock.tick(now);
+        const raw = clock.raw;
         const eng = engineRef.current!;
         // Kontext verloren und nicht zurückgekommen: neue Leinwand statt schwarzem Bild
         if (renderer.lost) {
@@ -273,7 +274,7 @@ export function GamePage() {
         lostT = 0;
         if (uiRef.current !== 'paused') eng.update(dt);
         const c0 = performance.now();
-        if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
+        if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt, raw);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         hudRef.current(eng, dt);
         fps.frame(raw * 1000, performance.now() - c0, renderer.quality);

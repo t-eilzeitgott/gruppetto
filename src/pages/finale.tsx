@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/abfahrt/pool';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { FpsMeter } from '../game/fpsMeter';
+import { FrameClock } from '../game/frameClock';
 import { afterPaint } from '../lib/afterPaint';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
@@ -94,7 +95,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
       if (warm) renderer.draw(engineRef.current!, 0);
       let raf = 0;
-      let prev = performance.now();
+      // Spielzeit im Takt des Bildschirms (gleichmäßige Schritte, ausgefallene Bilder ohne Sprung nachholen)
+      const clock = new FrameClock();
       let acc = 0;
       let frames = 0;
       let idleT = 0;
@@ -106,9 +108,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       const fps = new FpsMeter(stage);
       let lastDraw = 0;
       const loop = (now: number) => {
-        const raw = (now - prev) / 1000;
-        const dt = Math.min(0.05, raw);
-        prev = now;
+        const dt = clock.tick(now);
+        const raw = clock.raw;
         const eng = engineRef.current!;
         // Kontext verloren und nicht zurückgekommen: neue Leinwand statt schwarzem Bild
         if (renderer.lost) {
@@ -129,7 +130,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           return;
         }
         const c0 = performance.now();
-        if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : idle ? Math.min(0.1, idleT) : dt);
+        if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : idle ? Math.min(0.1, idleT) : dt, raw);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         idleT = 0;
         cb.current.onFrame(eng, dt);
