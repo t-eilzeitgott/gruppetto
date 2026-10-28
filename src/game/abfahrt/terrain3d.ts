@@ -683,7 +683,7 @@ export class Terrain {
       const a = Math.abs(nLat);
       // die Straße selbst als Asphaltband in der Landschaft (ohne Straßenstück sah man sonst einen Graben als Loch)
       o.road = sstep(EDGE + 1.6, EDGE - 0.2, a);
-      o.cut = sstep(CR + 14, EDGE + 1, a);
+      o.cut = sstep(CR + 40, EDGE + 1, a);
       const k = sstep(lim + 2.5, lim - 1, a);
       if (k > 0) { o.h -= 1.4 * k; o.near = true; }
     }
@@ -961,7 +961,8 @@ export class Terrain {
           c = mix(C.meadow, C.meadow2, n2, tmp);
           if (field > 0) c = mix(c, (Math.floor(x / 37 + n1 * 4) + Math.floor(z / 29)) % 3 === 0 ? C.field : C.field2, field * 0.85, c);
           const forest = sstep(C.forestThr, C.forestThr + 0.08, n1 + (n2 - 0.5) * 0.12) * sstep(C.treeLine + 25, C.treeLine - 15, above) * (1 - steep);
-          const rocky = Math.max(steep * (1 - 0.9 * CT[k]), sstep(C.rockLine - 20, C.rockLine + 60, above + (n1 - 0.5) * 40) * 0.85);
+          // am Einschnitt der Straße negativ: der Shader macht steile Flächen sonst von sich aus zu Fels
+          const rocky = Math.max(steep * (1 - 0.9 * CT[k]), sstep(C.rockLine - 20, C.rockLine + 60, above + (n1 - 0.5) * 40) * 0.85) - 0.5 * CT[k];
           const snow = sstep(C.snowLine - 25, C.snowLine + 15, above + (n2 - 0.5) * 50 + (n1 - 0.5) * 60) * sstep(0.5, 0.74, ny);
           mat[v * 4] = forest; mat[v * 4 + 1] = rocky; mat[v * 4 + 2] = snow;
           const rd = RD[k];

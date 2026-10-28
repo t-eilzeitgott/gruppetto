@@ -710,6 +710,12 @@ export class Renderer3D {
             rc *= 0.86 + 0.3 * nzF;
             // auf Absätzen (weniger steil) Gras und Geröll
             rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, big) * 0.6);
+            // Felsflecken an bloß steilen Hängen (keine Wand): dunkler und mit Bewuchs durchsetzt – ein heller grauer
+            // Fleck mitten im Grün las sich aus der Ferne wie ein Loch
+            {
+              float cliff = 1.0 - smoothstep(0.3, 0.55, fnT.y);
+              rc = mix(mix(rc * 0.8, vColor.rgb * 0.62, 0.45), rc, cliff);
+            }
             // Wald: Rand aus Rauschen; aus der Nähe Waldboden (dort stehen Bäume), weiter weg das Kronendach
             // Waldrand weich (kein harter Saum zwischen Wiese und Wald)
             float fo = smoothstep(0.42, 0.62, vMat.x + (big - 0.5) * 0.25 + (vNz.x - 0.5) * 0.6 + (nz2.g - 0.5) * 0.28) * (1.0 - rk);
