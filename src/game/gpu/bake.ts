@@ -9,7 +9,7 @@
 import * as THREE from 'three/webgpu';
 import { fbm, h21, tsl, voronoi, type N } from './nodes';
 
-const { Fn, abs, atan, clamp, float, max, mix, normalize, sin, smoothstep, sqrt, texture, uv, vec2, vec3, vec4 } = tsl;
+const { Fn, abs, atan, clamp, float, floor, fract, max, min, mix, normalize, sin, smoothstep, sqrt, texture, uv, vec2, vec3, vec4 } = tsl;
 
 export interface Surface {
   /** Farbe (als Wurzel gespeichert – im Material quadrieren) */
@@ -20,7 +20,7 @@ export interface Surface {
   mean: THREE.Color;
 }
 
-export type SurfaceId = 'asphalt' | 'rock' | 'grass' | 'gravel' | 'snow';
+export type SurfaceId = 'asphalt' | 'rock' | 'grass' | 'gravel' | 'snow' | 'plaster' | 'logs' | 'boards' | 'shingles' | 'masonry';
 
 interface Recipe {
   size: number;
@@ -161,7 +161,111 @@ const snow: Recipe = {
   },
 };
 
-const RECIPES: Record<SurfaceId, Recipe> = { asphalt, rock, grass, gravel, snow };
+// ——— Haus (WebGPU-Test): Kalkputz, Blockbohlen, Bretter, Holzschindeln, Bruchsteinmauer ———
+
+/** Kalkputz, gekalkt (Kachel 2 m): Kellenschlag, feine Körnung, leicht fleckig verwittert */
+const plaster: Recipe = {
+  size: 512, bump: 2.2, aoR: 3, aoK: 1.8, mean: [0.52, 0.5, 0.46],
+  make: (p) => {
+    const fine = fbm(p.mul(64), 64, 3);
+    const mid = fbm(p.mul(10), 10, 4);
+    const trowel = smoothstep(0.55, 0.75, fbm(p.mul(vec2(5, 5)).add(vec2(fbm(p.mul(14), 14, 2), 0).mul(0.6)), 5, 3));
+    const h = mid.mul(0.45).add(fine.mul(0.35)).add(trowel.mul(0.2));
+    let col: N = mix(lin(0.46, 0.45, 0.41), lin(0.58, 0.565, 0.52), mid.mul(0.55).add(fine.mul(0.45)));
+    // graue Wetterflecken, ein paar dunkle Sprenkel
+    col = mix(col, col.mul(vec3(0.82, 0.83, 0.84)), smoothstep(0.58, 0.8, fbm(p.mul(3).add(2.7), 3, 4)).mul(0.7));
+    col = mix(col, col.mul(0.6), smoothstep(0.86, 0.95, fbm(p.mul(90).add(1.3), 90, 2)).mul(0.5));
+    const rough = float(0.9).add(fine.mul(0.06));
+    return { h, col, rough };
+  },
+};
+
+/** Holz: Maserung längs (u), Äste, Trockenrisse; sonnenverbranntes Lärchenholz, je Bohle anders */
+function woodGrain(p: N, rows: number, round: boolean) {
+  const v = p.y.mul(rows);
+  const row = floor(v);
+  const t = fract(v);
+  const tone = h21(vec2(row, 1.7));
+  const wob = fbm(p.mul(vec2(6, 6)).add(vec2(0, row.mul(0.37))), 6, 3);
+  const grain = sin(p.y.mul(rows * 26 * Math.PI).add(wob.mul(14)).add(row.mul(5.1))).mul(0.5).add(0.5);
+  const grain2 = fbm(p.mul(rows * 4).add(vec2(row.mul(0.13), 0)), rows * 4, 3);
+  const kn = voronoi(p.mul(9).add(vec2(0, 0.05)), 9);
+  const knot = smoothstep(0.1, 0.0, kn.f1).mul(smoothstep(0.82, 0.86, h21(vec2(kn.id, 5.5))));
+  const crackL = smoothstep(0.012, 0.0, abs(fract(p.y.mul(rows * 3).add(wob.mul(0.8)).add(row.mul(0.31))).sub(0.5)))
+    .mul(smoothstep(0.55, 0.75, fbm(p.mul(vec2(3, 3)).add(row.mul(1.3)), 3, 2)));
+  // Querschnitt: rund (Blockbohle) oder flach mit gebrochenen Kanten (Brett), dunkle Fuge dazwischen
+  const prof = round ? sqrt(max(float(0), float(1).sub(t.mul(2).sub(1).mul(t.mul(2).sub(1))))) : smoothstep(0.0, 0.07, t).mul(smoothstep(1.0, 0.93, t));
+  const seam = smoothstep(0.0, round ? 0.1 : 0.05, min(t, float(1).sub(t)));
+  const h = prof.mul(round ? 0.6 : 0.35).add(grain.mul(0.06)).add(grain2.mul(0.06)).sub(crackL.mul(0.25)).sub(knot.mul(0.08));
+  let col: N = mix(lin(0.085, 0.05, 0.028), lin(0.17, 0.105, 0.06), tone.mul(0.7).add(wob.mul(0.3)));
+  col = col.mul(grain.mul(0.25).add(grain2.mul(0.2)).add(0.72));
+  // silbergrau verwittert (Wetterseite, Kanten)
+  col = mix(col, lin(0.2, 0.185, 0.165).mul(grain2.mul(0.3).add(0.8)), smoothstep(0.5, 0.85, fbm(p.mul(2.5).add(row.mul(0.21)), 2.5, 3)).mul(0.55));
+  col = mix(col, lin(0.035, 0.022, 0.014), knot.mul(0.8));
+  col = col.mul(mix(float(0.25), float(1), seam)).mul(float(1).sub(crackL.mul(0.6)));
+  const rough = float(0.84).sub(knot.mul(0.1));
+  return { h, col, rough };
+}
+
+/** Blockbohlen (Kachel 2 m, 10 Bohlen übereinander) */
+const logs: Recipe = { size: 1024, bump: 5, aoR: 3, aoK: 2.4, mean: [0.12, 0.08, 0.05], make: (p) => woodGrain(p, 10, true) };
+/** Bretter (Kachel 2 m, 11 Bretter) */
+const boards: Recipe = { size: 1024, bump: 3, aoR: 2, aoK: 2.2, mean: [0.12, 0.08, 0.05], make: (p) => woodGrain(p, 11, false) };
+
+/** Holzschindeln (Kachel 2 m, 16 Reihen; v hangabwärts): versetzt, unterschiedlich breit, Flechten und Moos */
+const shingles: Recipe = {
+  size: 1024, bump: 6, aoR: 4, aoK: 3, mean: [0.1, 0.09, 0.075],
+  make: (p) => {
+    const v = p.y.mul(16);
+    const row = floor(v);
+    const t = fract(v);
+    const off = h21(vec2(row, 3.1));
+    const u = p.x.mul(15).add(off).add(sin(p.x.mul(Math.PI * 2 * 3).add(row.mul(1.7))).mul(0.18));
+    const col0 = floor(u);
+    const s = fract(u);
+    const id = h21(vec2(col0, row));
+    const gap = smoothstep(0.06, 0.0, min(s, float(1).sub(s)));
+    // jede Schindel wird nach unten dicker (überlappt die nächste Reihe), Kante mit Schatten
+    const wedge = t.mul(0.75).add(0.1);
+    const grain = sin(p.x.mul(15 * Math.PI * 2 * 7).add(fbm(p.mul(vec2(40, 40)), 40, 2).mul(5))).mul(0.5).add(0.5);
+    const warp = h21(vec2(col0, row.add(9))).mul(0.15);
+    const h = wedge.add(warp).add(grain.mul(0.04)).sub(gap.mul(0.5));
+    let col: N = mix(lin(0.055, 0.047, 0.04), lin(0.17, 0.16, 0.145), id.mul(0.8).add(grain.mul(0.2)));
+    col = col.mul(t.mul(0.35).add(0.75));
+    const moss = smoothstep(0.55, 0.75, fbm(p.mul(4).add(7.7), 4, 4)).mul(smoothstep(0.3, 0.0, t).mul(0.5).add(0.5));
+    col = mix(col, mix(lin(0.06, 0.08, 0.025), lin(0.14, 0.15, 0.06), fbm(p.mul(30), 30, 2)), moss.mul(0.6));
+    const lich = smoothstep(0.8, 0.86, fbm(p.mul(26).add(3.3), 26, 3));
+    col = mix(col, lin(0.3, 0.3, 0.24), lich.mul(0.6));
+    col = col.mul(float(1).sub(gap.mul(0.7)));
+    const rough = float(0.9).sub(lich.mul(0.05));
+    return { h, col, rough };
+  },
+};
+
+/** Bruchsteinmauer (Kachel 2,5 m): unregelmäßige Steine, breite Kalkfugen */
+const masonry: Recipe = {
+  size: 1024, bump: 7, aoR: 4, aoK: 3, mean: [0.22, 0.2, 0.18],
+  make: (p) => {
+    const q = p.add(vec2(fbm(p.mul(5), 5, 3), fbm(p.mul(5).add(4.2), 5, 3)).sub(0.5).mul(0.05));
+    const c = voronoi(q.mul(7), 7);
+    const edge = c.f2.sub(c.f1);
+    const mortar = smoothstep(0.1, 0.03, edge);
+    const bulge = smoothstep(0.0, 0.25, edge).mul(float(1).sub(c.f1.mul(0.5)));
+    const fine = fbm(q.mul(60), 60, 3);
+    const h = bulge.mul(0.65).add(fine.mul(0.15)).sub(mortar.mul(0.3)).add(h21(vec2(c.id, 2.2)).mul(0.1));
+    const tone = h21(vec2(c.id, 8.1));
+    let stone: N = mix(lin(0.17, 0.16, 0.145), lin(0.36, 0.33, 0.29), tone);
+    stone = mix(stone, lin(0.3, 0.22, 0.15), smoothstep(0.8, 0.95, h21(vec2(c.id, 4.4))).mul(0.6));
+    stone = stone.mul(fine.mul(0.35).add(0.8));
+    const mortarCol = mix(lin(0.36, 0.35, 0.32), lin(0.46, 0.45, 0.41), fine);
+    let col: N = mix(stone, mortarCol, mortar);
+    col = mix(col, col.mul(0.6), smoothstep(0.6, 0.85, fbm(q.mul(vec2(6, 6)).add(1.9), 6, 3)).mul(0.4));
+    const rough = mix(float(0.82), float(0.95), mortar);
+    return { h, col, rough };
+  },
+};
+
+const RECIPES: Record<SurfaceId, Recipe> = { asphalt, rock, grass, gravel, snow, plaster, logs, boards, shingles, masonry };
 
 function target(size: number, type: THREE.TextureDataType, mips: boolean): THREE.RenderTarget {
   const rt = new THREE.RenderTarget(size, size, {

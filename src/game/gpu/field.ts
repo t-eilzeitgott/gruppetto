@@ -209,6 +209,7 @@ export class Field {
         mesh.castShadow = false;
         mesh.matrixAutoUpdate = false;
         mesh.updateMatrix();
+        mesh.userData.lv = lv;
         this.group.add(mesh);
         this.merged.push(mesh);
         for (const t of list) { this.group.remove(t.mesh!); t.mesh!.geometry.dispose(); t.mesh = null; t.y0 = null; }
@@ -216,6 +217,14 @@ export class Field {
     }
   }
   private merged: THREE.Mesh[] = [];
+
+  /** Geometrien einer Stufe (zusammengelegte und einzelne Kacheln) */
+  geometries(lv: number): THREE.BufferGeometry[] {
+    const out: THREE.BufferGeometry[] = [];
+    for (const m of this.merged) if (m.userData.lv === lv) out.push(m.geometry);
+    for (const t of this.tiles) if (t.lv === lv && t.mesh) out.push(t.mesh.geometry);
+    return out;
+  }
 
   dispose() {
     for (const t of this.tiles) t.mesh?.geometry.dispose();

@@ -67,5 +67,5 @@ export function instNodes(fade?: [number, number]) {
   if (fade) scale = scale.mul(float(1).sub(smoothstep(fade[0], fade[1], iP.xz.sub(cameraPosition.xz).length())));
   const world: N = rotY(positionGeometry.mul(scale)).add(iP.xyz);
   const nWorld: N = varying(rotY(normalGeometry), 'vInstN');
-  return { world, normal: transformNormalToView(normalize(nWorld)), color: attribute('iC', 'vec4').xyz as N, at: iP.xyz as N };
+  return { world, nWorld, rot: rotY, normal: transformNormalToView(normalize(nWorld)), color: attribute('iC', 'vec4').xyz as N, at: iP.xyz as N, extra: iS.w as N };
 }

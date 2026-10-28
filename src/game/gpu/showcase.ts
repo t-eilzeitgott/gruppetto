@@ -20,6 +20,8 @@ import { Field, type RouteSample } from './field';
 import { Trees } from './trees';
 import { Rider } from './rider';
 import { Grass } from './grass';
+import { ForestEdge } from './forest';
+import { Houses } from './houses';
 import { tsl } from './nodes';
 
 const { cameraPosition, cubeTexture, dot, exp, float, fog, max, mix, normalize, pass, positionView, positionWorld, pow, smoothstep, uniform, uv, vec3 } = tsl;
@@ -53,9 +55,9 @@ export interface ShowcaseOptions {
 
 export type CamMode = 'chase' | 'side' | 'drone' | 'low';
 
-/** Teststrecke: Start nach der Zuschauerzone auf der Passhöhe, Ende vor dem nächsten Abschnitt */
-const Z0 = 150;
-const Z1 = 2540;
+/** Teststrecke: über die Almwiesen mit den vier Kehren hinunter in den Bergwald (dicht ab ~1,6 km und 2,6–3,3 km) */
+const Z0 = 600;
+const Z1 = 3350;
 
 const clamp = (x: number, a: number, b: number) => (x < a ? a : x > b ? b : x);
 const angDiff = (a: number, b: number) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
@@ -72,6 +74,7 @@ export class Showcase {
   private trees: Trees | null = null;
   private rider: Rider | null = null;
   private grass: Grass | null = null;
+  private houses: Houses | null = null;
   private disposed = false;
   private last = 0;
   private avgMs = 1000 / 60;
@@ -148,6 +151,15 @@ export class Showcase {
 
   /** Testhilfe: an eine Stelle der Strecke springen (m) */
   jump(z: number) { this.z = clamp(z, Z0, Z1); this.camInit = false; this.place(0); }
+
+  /** Testhilfe: freie Kamera um einen Punkt (Azimut, Höhe in Grad, Abstand in m); null: zurück zum Fahrer */
+  private free: { at: THREE.Vector3; az: number; el: number; dist: number } | null = null;
+  orbit(at: { x: number; y: number; z: number } | null, az = 30, el = 12, dist = 30, fov = 50) {
+    this.free = at ? { at: new THREE.Vector3(at.x, at.y, at.z), az, el, dist } : null;
+    if (at) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
+  }
+  /** Testhilfe: Platz eines Hauses */
+  house(i: number) { return (this.houses as unknown as { spots: { x: number; y: number; z: number; rot: number }[] } | null)?.spots[i] ?? null; }
 
   /** Testhilfe: Kamera sofort (ohne Überblenden) */
   cut(m: CamMode) { this._cam = m; this.camFrom = null; this.camBlend = 1; if (m === 'side') this.sideSign = this.x > 0 ? -1 : 1; }
@@ -256,10 +268,29 @@ export class Showcase {
       await new Promise((res) => setTimeout(res, 0));
     }
     log(`Landschaft: ${field.done} Kacheln, ${trees.count} Bäume`);
-    await step(0.71, 'Bäume');
+    // Wald bis an die Straße, wo dahinter dichter Wald steht
+    await step(0.71, 'Wald');
+    const forest = new ForestEdge(track, terrain, i0 * SEG, i1 * SEG);
+    forest.measure(trees.allSpots());
+    const edge = forest.fill(trees.allSpots());
+    trees.addSpots(edge);
+    log(`Waldrand: ${edge.length} Bäume, Wald links/rechts auf ${forest.coverage.map((c) => Math.round(c * 100)).join('/')} % der Strecke`);
+    // Häuser: oft entlang der Strecke, auf Wiesen (Bäume am Platz weichen)
+    await step(0.72, 'Häuser');
+    const houses = (this.houses = new Houses(S));
+    houses.place(track, terrain, trees, Z0, Z1);
+    this.scene.add(houses.group);
+    log(`Häuser: ${houses.count} (je ${houses.tris.map((t) => Math.round(t)).join(' / ')} Dreiecke)`);
+    await step(0.73, 'Bäume');
     this.updateCamera(0);
-    trees.update(this.camera.position, true);
     field.merge();
+    for (const g of field.geometries(0)) forest.boost(g, 'aMat');
+    corridor.group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && m.geometry.getAttribute('aW')) forest.boost(m.geometry, 'aW');
+    });
+    trees.update(this.camera.position, true);
+    houses.update(this.camera.position, true);
     await step(0.74, 'Shader werden übersetzt');
     await this.warmup((f) => { this.loadFrac = 0.74 + 0.24 * f; });
     if (this.disposed) return;
@@ -286,6 +317,7 @@ export class Showcase {
     this.scene.traverse((o) => { saved.push([o, o.visible, o.frustumCulled]); o.visible = true; o.frustumCulled = false; });
     this.trees?.warm(true);
     this.grass?.warm();
+    this.houses?.warm(true);
     // 3) Shader im Hintergrund übersetzen (für das Bildformat des Szenendurchgangs), Daten hochladen
     const rt = this.scenePass?.renderTarget ?? null;
     const prev = r.getRenderTarget();
@@ -305,6 +337,8 @@ export class Showcase {
     for (const [o, v, f] of saved) { o.visible = v; o.frustumCulled = f; }
     this.trees?.warm(false);
     this.trees?.update(this.camera.position, true);
+    this.houses?.warm(false);
+    this.houses?.update(this.camera.position, true);
     this.grass?.update(this.camera.position);
     progress(1);
   }
@@ -464,6 +498,13 @@ export class Showcase {
 
   /** Kamera nachführen; beim Wechsel beide Einstellungen mitfahren lassen und weich überblenden */
   private updateCamera(dt: number) {
+    if (this.free) {
+      const f = this.free;
+      const a = (f.az * Math.PI) / 180, e = (f.el * Math.PI) / 180;
+      this.camera.position.set(f.at.x + Math.sin(a) * Math.cos(e) * f.dist, f.at.y + Math.sin(e) * f.dist, f.at.z + Math.cos(a) * Math.cos(e) * f.dist);
+      this.camera.lookAt(f.at);
+      return;
+    }
     const t = this.track!;
     t.world(this.z, this.x, 0, this.w);
     if (!this.camInit) { this.camTh = this.w.th; this.camFrom = null; this.camBlend = 1; }
@@ -503,7 +544,7 @@ export class Showcase {
     const sun = sky.sun;
     const t = this.track!;
     t.world(this.z + 22, 0, 0, this.w);
-    const c = new THREE.Vector3(this.w.x, this.w.y, this.w.z);
+    const c = this.free ? this.free.at.clone() : new THREE.Vector3(this.w.x, this.w.y, this.w.z);
     const d = sky.sunDir;
     const right = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0, 1, 0)).normalize();
     const up = new THREE.Vector3().crossVectors(right, d).normalize();
@@ -553,6 +594,7 @@ export class Showcase {
       this.updateCamera(dt);
       this.updateSun();
       this.trees?.update(this.camera.position, this.wrapped);
+      this.houses?.update(this.camera.position);
       this.wrapped = false;
       this.grass?.update(this.camera.position);
     }
@@ -587,7 +629,7 @@ export class Showcase {
   async snapshot(): Promise<string> {
     const r = this.renderer;
     r.info.reset();
-    if (this.track && this.rider) { this.updateCamera(1); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); }
+    if (this.track && this.rider) { this.updateCamera(1); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); this.houses?.update(this.camera.position, true); }
     const size = new THREE.Vector2();
     r.getDrawingBufferSize(size);
     const rt = new THREE.RenderTarget(size.x, size.y, { depthBuffer: false });
@@ -633,6 +675,7 @@ export class Showcase {
     this.corridor?.dispose();
     this.trees?.dispose();
     this.grass?.dispose();
+    this.houses?.dispose();
     this.sky?.dispose();
     this.frameRT?.dispose();
     this.renderer.dispose();

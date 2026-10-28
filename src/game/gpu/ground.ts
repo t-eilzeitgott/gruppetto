@@ -43,11 +43,13 @@ function shade(S: Surfaces, m: Mix) {
   const meadow = vec3(MEADOW.r, MEADOW.g, MEADOW.b);
   const base = mix(mix(vec3(m.tint.dot(vec3(0.3, 0.55, 0.15))), m.tint, 0.78).mul(0.9), meadow, 0.55);
   const tint = mix(base, base.mul(vec3(1.25, 1.05, 0.62)), dryW.mul(0.55)).mul(macro.x.mul(0.6).add(0.75).clamp(0.7, 1.25));
-  const grassCol = tint.mul(m.detail ? gDet.mul(0.7).add(gC.mul(0.3)) : gC.mul(0.6).add(0.4));
+  // von oben projiziert: an steilen Hängen wäre das Muster senkrecht gestreckt – dort nur die ruhige Grundfarbe
+  const flat = smoothstep(0.5, 0.82, nG.y);
+  const grassCol = tint.mul(m.detail ? mix(gC.mul(0.35).add(0.65), gDet.mul(0.7).add(gC.mul(0.3)), flat) : mix(float(1), gC.mul(0.6).add(0.4), flat));
   let col: N = grassCol;
   let rough: N = m.detail ? gF.rough : float(0.92);
-  let ao: N = m.detail ? gF.ao : float(1);
-  let n: N = m.detail ? gF.n : nG;
+  let ao: N = m.detail ? mix(float(1), gF.ao, flat) : float(1);
+  let n: N = m.detail ? normalize(mix(nG, gF.n, flat)) : nG;
   // Wald: nah Waldboden (Nadeln, Moos), fern Kronendach – auf der feinen Stufe mit dem Abstand übergeblendet, damit
   // ein Wald dort, wo die 3D-Bäume aufhören, nicht als Rechteck anders aussieht
   // Kronendach: Kronen als Buckel (Muster der Wiese, groß), hell besonnt, dunkle Lücken dazwischen

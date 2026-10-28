@@ -104,7 +104,7 @@ function conifer(h: number, tiers: number, branches: number, opt: { inner: numbe
   return M.build();
 }
 
-/** ganz grob (Ferne): zwei gestapelte Kegel, ohne Stamm – 24 Dreiecke */
+/** ganz grob (Ferne): zwei gestapelte Kegel, ohne Stamm und ohne Unterseite – 12 Dreiecke */
 function cones(h: number, w: number, inner: number[], tip: number[]): THREE.BufferGeometry {
   const M = new Mesher();
   const seg = 6;
@@ -116,8 +116,6 @@ function cones(h: number, w: number, inner: number[], tip: number[]): THREE.Buff
       const b1 = [Math.cos(a1) * r * h, y0 * h, Math.sin(a1) * r * h];
       const t = [0, y1 * h, 0];
       M.v(b0, [b0[0], r * h * 0.8, b0[2]], tip, y0); M.v(t, [0, 1, 0], inner.map((v) => v * 1.4), 1); M.v(b1, [b1[0], r * h * 0.8, b1[2]], tip, y0);
-      const c = [0, y0 * h, 0];
-      M.v(b0, [0, -1, 0], inner, y0); M.v(b1, [0, -1, 0], inner, y0); M.v(c, [0, -1, 0], inner, y0);
     }
   }
   return M.build();
@@ -156,8 +154,8 @@ function geometries(): Record<Arch, THREE.BufferGeometry[]> {
   const pine = { inner: [0.012, 0.024, 0.014], tip: [0.04, 0.072, 0.035], droop: 0.32, width: 0.2, sparse: 0.05 };
   const larch = { inner: [0.03, 0.045, 0.018], tip: [0.09, 0.13, 0.045], droop: 0.38, width: 0.18, sparse: 0.22 };
   return {
-    pine: [conifer(12, 13, 10, { ...pine, seed: 3 }), conifer(12, 6, 7, { ...pine, seed: 3 }), cones(12, 0.21, pine.inner.map((v) => v * 0.8), pine.tip.map((v) => v * 0.7))],
-    larch: [conifer(13, 12, 9, { ...larch, seed: 9 }), conifer(13, 6, 6, { ...larch, sparse: 0.1, seed: 9 }), cones(13, 0.19, larch.inner.map((v) => v * 0.8), larch.tip.map((v) => v * 0.7))],
+    pine: [conifer(12, 13, 10, { ...pine, seed: 3 }), conifer(12, 5, 6, { ...pine, seed: 3 }), cones(12, 0.21, pine.inner.map((v) => v * 0.8), pine.tip.map((v) => v * 0.7))],
+    larch: [conifer(13, 12, 9, { ...larch, seed: 9 }), conifer(13, 5, 6, { ...larch, sparse: 0.1, seed: 9 }), cones(13, 0.19, larch.inner.map((v) => v * 0.8), larch.tip.map((v) => v * 0.7))],
     broad: [broadleaf(11, 7, 1, 5), broadleaf(11, 4, 0, 5), broadleaf(11, 1, 0, 5)],
   };
 }
@@ -165,9 +163,9 @@ function geometries(): Record<Arch, THREE.BufferGeometry[]> {
 const archOf = (kind: string): Arch => (kind === 'larch' ? 'larch' : kind === 'pine' || kind === 'pineSnow' ? 'pine' : 'broad');
 
 /** Grenzen der Detailstufen je Baum (m) */
-const LOD_D = [90, 250];
+const LOD_D = [62, 150];
 /** ganz fern: Bäume schrumpfen weg (das Kronendach im Boden bleibt), Zellen dahinter werden nicht gezeichnet */
-const GONE: [number, number] = [1300, 1600];
+const GONE: [number, number] = [850, 1100];
 
 /**
  * Bäume werden in Zellen von 256 m gesammelt (vier Landschaftskacheln) – wenige Zeichenaufrufe. Die Detailstufe
@@ -237,6 +235,36 @@ export class Trees {
     this.count += trees.length;
   }
 
+  /** alle Baumstellen (vor dem Einbauen) */
+  *allSpots(): Generator<TreeSpot> {
+    for (const c of this.cells.values()) yield* c.spots;
+  }
+
+  /** einzelne Bäume dazu (jeder in seine Zelle) */
+  addSpots(list: TreeSpot[]) {
+    for (const t of list) this.addTile([t], t.x, t.z);
+  }
+
+  /** Bäume im Umkreis entfernen (Platz für ein Haus) */
+  clear(x: number, z: number, r: number) {
+    for (const c of this.cells.values()) {
+      if (Math.abs(c.cx - x) > CELL / 2 + r || Math.abs(c.cz - z) > CELL / 2 + r) continue;
+      const n = c.spots.length;
+      c.spots = c.spots.filter((t) => (t.x - x) ** 2 + (t.z - z) ** 2 > r * r);
+      if (c.spots.length !== n) { c.dirty = true; this.count -= n - c.spots.length; }
+    }
+  }
+
+  /** Bäume in der Nähe zählen */
+  countNear(x: number, z: number, r: number): number {
+    let n = 0;
+    for (const c of this.cells.values()) {
+      if (Math.abs(c.cx - x) > CELL / 2 + r || Math.abs(c.cz - z) > CELL / 2 + r) continue;
+      for (const t of c.spots) if ((t.x - x) ** 2 + (t.z - z) ** 2 <= r * r) n++;
+    }
+    return n;
+  }
+
   private rebuild(c: Cell) {
     for (const g of c.groups) for (const l of g.lods) disposeGroup(l);
     c.groups = [];
@@ -256,7 +284,8 @@ export class Trees {
       const xz = new Float32Array(n * 2);
       list.forEach((t, k) => {
         const seed = Math.round(t.x * 13 + t.z * 7);
-        const s = t.s * (a === 'broad' ? 0.9 : 1);
+        // größer als im Spiel: ausgewachsener Bergwald (14–25 m), die Kronen schließen sich
+        const s = t.s * (a === 'broad' ? 1.15 : 1.4);
         const tint = t.tint;
         // leicht unterschiedlich schlank (keine Klone)
         src.set([
@@ -329,6 +358,13 @@ export class Trees {
         this.partition(c, cam, false);
       }
     }
+  }
+
+  /** Prüfhilfe: sichtbare Bäume je Stufe */
+  lodStats(): number[] {
+    const n = [0, 0, 0];
+    for (const c of this.cells.values()) for (const g of c.groups) g.lods.forEach((l, lv) => { if (l.mesh.visible) n[lv] += l.geo.instanceCount; });
+    return n;
   }
 
   /** Vorwärmen: jede Gruppe einmal zeichnen lassen (Daten hochladen); danach neu verteilen */
