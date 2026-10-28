@@ -13,7 +13,7 @@ import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
 import { mistTexture, waterTexture } from './falls3d';
-import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, canopyTex, glowTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
+import { adCell, adsTex, AD_COUNT, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
 import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
 import { buildPeaks, buildPeaksSteps, peakKeepers, peakLight, setPeakOpacity } from './peaks3d';
@@ -79,6 +79,13 @@ const CAM_BACK = 6.2;
 const CAM_UP = 2.75;
 const SPRINT_BACK = 7.4;
 const SPRINT_UP = 3.7;
+/** Fan-Bögen: Masten knapp hinter der Absperrung, Spruchband hoch genug für die hohe Finalkamera */
+const FAN_SPAN = 2 * (EDGE + 0.12);
+const FAN_POLE = 6.1;
+const FAN_Y = 5.35;      // Mitte des Bands an den Masten
+const FAN_SAG = 0.2;     // so weit hängt das Band in der Mitte durch
+const FAN_FIRST = 14;    // erster Bogen 28 m nach dem Anfang einer Zuschauerzone …
+const FAN_EVERY = 44;    // … und bei langen Zonen alle 88 m ein weiterer
 
 const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'bush', 'rock', 'boulder', 'snowpole', 'hay', 'vinerow', 'fence', 'lamp', 'logs', 'palm', 'poplar', 'apple']);
 const BILLBOARD: Record<string, { variants: number; frames: number }> = {
@@ -253,6 +260,10 @@ export class Renderer3D {
   private atlas = new Map<string, AtlasEntry>();
   private bank = new SpriteBank();
   private labelTex = new Map<string, THREE.Texture>();
+  /** Fan-Bögen: Band (Zelle im Atlas) je Stück, null = keiner – hängt nur an der Strecke */
+  private fanCache = new Map<number, number | null>();
+  private fanMat: THREE.MeshLambertMaterial | null = null;
+  private fanGeo: { pole: THREE.BufferGeometry; pennant: THREE.BufferGeometry; cells: ({ front: THREE.BufferGeometry; back: THREE.BufferGeometry } | undefined)[] } | null = null;
   /** Materialien zu den Beschriftungen: je Textur eines (bleiben wie die Texturen bestehen) */
   private labelMat = new Map<string, THREE.Material>();
   private matFor(key: string, make: () => THREE.Material): THREE.Material {
@@ -1115,7 +1126,9 @@ export class Renderer3D {
         this.track = g.track;
         this.terrain?.setTrack(g.track);
         this.cam.init = false; this.runners = []; this.runNext = 0;
-        if (old.names.join('|') !== g.track.names.join('|')) { this.setAds(g.track.names); this.clearChunks(); }
+        // neues Rennen: neue Sprüche auf Schildern und Spruchbändern (nur die Bilder im Atlas – kein Neuaufbau)
+        this.newSigns(g.track.names);
+        if (old.names.join('|') !== g.track.names.join('|')) this.clearChunks();
       } else this.reset(g.track);
     }
     // Änderungen aus dem Welt-Editor (Tagesstrecke und „überall“): sobald geladen, alles neu bauen
@@ -1214,16 +1227,37 @@ export class Renderer3D {
     this.routeEnd = 0;
     this.pre = null;
     this.terrain = new Terrain(track);
-    this.setAds(track.names);
+    this.newSigns(track.names);
     this.clearChunks();
     this.cam.init = false;
     this.runners = [];
     this.runNext = 0;
   }
 
+  /** Startwert der Sprüche auf Pappschildern und Spruchbändern – jedes Rennen ein neuer */
+  private signSeed = 77;
+  private newSigns(names: string[]) {
+    this.signSeed = Math.floor(Math.random() * 0x7fffffff);
+    this.setAds(names);
+    this.setFans(names);
+  }
+
+  /** Spruchbänder der Fan-Bögen (mit den Namen der Runde) */
+  private setFans(names: string[]) {
+    const tex = this.tex(fanAtlas(names, this.signSeed), false);
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    if (!this.fanMat) this.fanMat = new THREE.MeshLambertMaterial({ map: tex });
+    else {
+      const old = this.fanMat.map;
+      this.fanMat.map = tex;
+      this.fanMat.needsUpdate = true;
+      old?.dispose();
+    }
+  }
+
   private setAds(names: string[]) {
     const old = this.mats.ads.map;
-    this.mats.ads.map = this.tex(adsTex(names));
+    this.mats.ads.map = this.tex(adsTex(names, this.signSeed));
     this.mats.ads.map.wrapS = this.mats.ads.map.wrapT = THREE.ClampToEdgeWrapping;
     this.mats.ads.needsUpdate = true;
     old?.dispose();
@@ -1810,6 +1844,7 @@ export class Renderer3D {
     this.chunks.clear();
     this.chunkOld.clear();
     this.cFades = [];
+    this.fanCache.clear();
   }
 
   /** Radlampen erst bei Dunkelheit (und im Tunnel) – nicht schon im Abendlicht der Finals */
@@ -2631,7 +2666,7 @@ export class Renderer3D {
         }
       }
       // Wimpel- und Lichterketten quer über die Gasse
-      if (s.bL && s.bR && s.i % 17 === 9 && !s.banner) this.garland(town, a, s.bL, s.bR);
+      if (s.bL && s.bR && s.i % 17 === 9 && !s.banner && !this.fanNear(s.i)) this.garland(town, a, s.bL, s.bR);
       // --- Sprites/Requisiten (Zuschauer: viele Menschen je Stück – nach jedem nachsehen)
       if (s.sprites) {
         for (const sp of s.sprites) {
@@ -2648,6 +2683,9 @@ export class Renderer3D {
         if (k === 'gate') this.gate(town, group, disp, a, s.banner.text);
         else this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : '#ffffff');
       }
+      // Fan-Bogen mit Spruchband (nicht dort, wo die Bestmarke eines Freundes steht)
+      const fan = this.fanAt(s.i);
+      if (fan !== null && !g.friends.some((f) => Math.abs(Math.floor(f.meters / SEG) - s.i) <= 7)) this.fanArch(group, a, fan);
       for (const f of g.friends) {
         if (Math.floor(f.meters / SEG) !== s.i) continue;
         if (this.soon(2)) { yield; resume(); }
@@ -4036,6 +4074,97 @@ export class Renderer3D {
     group.add(g);
   }
 
+  /**
+   * Fan-Bogen am Anfang von Stück i? Zelle des Spruchbands oder null. In jeder Zuschauerzone 28 m nach ihrem
+   * Anfang einer, bei langen Zonen (Passhöhe, Ortsdurchfahrt, Finale) alle 88 m ein weiterer – nur wo die Zone
+   * weitergeht, und nie dichter als 14 m an anderen Bögen oder Tunneln (Wimpelketten weichen ihm). Nur gerade Stücke: dort
+   * beginnt ein Zuschauergrüppchen, der Mast steht in der Lücke zwischen zweien.
+   */
+  private fanAt(i: number): number | null {
+    const t = this.track;
+    if (!t || i < t.first || (i & 1)) return null;
+    const hit = this.fanCache.get(i);
+    if (hit !== undefined) return hit;
+    if (this.fanCache.size > 5000) this.fanCache.clear();
+    let res: number | null = null;
+    const s = t.seg(i);
+    if (s.crowd && !s.tunnel && !s.banner && !s.hairpin && !(s.bridge > 0)) {
+      let k = 0;
+      while (k < 1500 && i - k - 1 >= t.first && t.seg(i - k - 1).crowd) k++;
+      // erster Bogen auf einem geraden Stück (gerade Zahl), weitere im festen Abstand
+      const k0 = FAN_FIRST + ((i - k + FAN_FIRST) & 1);
+      let ok = k >= k0 && (k - k0) % FAN_EVERY === 0;
+      for (let j = 1; ok && j <= 6; j++) if (!t.seg(i + j).crowd) ok = false;
+      for (let j = -7; ok && j <= 7; j++) {
+        if (i + j < t.first) continue;
+        const o = t.seg(i + j);
+        if (o.banner || o.tunnel || o.portal) ok = false;
+      }
+      if (ok) res = Math.floor(hash(i * 31 + 7) * FAN_CELLS);
+    }
+    this.fanCache.set(i, res);
+    return res;
+  }
+
+  /** Steht ein Fan-Bogen höchstens 8 m von Stück i entfernt? (dann hängt dort keine Wimpelkette) */
+  private fanNear(i: number): boolean {
+    for (let j = -4; j <= 4; j++) if (this.fanAt(i + j) !== null) return true;
+    return false;
+  }
+
+  /** Geteilte Teile der Fan-Bögen: Mast, Wimpel, je Spruchband das durchhängende Tuch (vorn und hinten lesbar) */
+  private fanParts(cell: number) {
+    const fg = (this.fanGeo ??= (() => {
+      const pole = new THREE.CylinderGeometry(0.055, 0.075, FAN_POLE, 8);
+      pole.translate(0, FAN_POLE / 2, 0);
+      // Wimpel an der Mastspitze, weht der Fahrerin entgegen
+      const pennant = new THREE.BufferGeometry();
+      pennant.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, -0.5, 0, 0, -0.25, 0.75], 3));
+      pennant.computeVertexNormals();
+      return { pole, pennant, cells: [] };
+    })());
+    let c = fg.cells[cell];
+    if (!c) {
+      const bw = FAN_SPAN - 0.16;
+      const bh = bw * FAN_ASPECT;
+      const front = new THREE.PlaneGeometry(bw, bh, 16, 1);
+      const pos = front.getAttribute('position');
+      const uv = front.getAttribute('uv');
+      const [u0, v0, u1, v1] = fanCell(cell);
+      for (let k = 0; k < pos.count; k++) {
+        const q = (2 * pos.getX(k)) / bw;
+        pos.setY(k, pos.getY(k) + FAN_Y - FAN_SAG * (1 - q * q));
+        pos.setZ(k, 0.012);
+        uv.setXY(k, u0 + (u1 - u0) * uv.getX(k), v0 + (v1 - v0) * uv.getY(k));
+      }
+      front.computeVertexNormals();
+      const back = front.clone();
+      back.rotateY(Math.PI);
+      c = fg.cells[cell] = { front, back };
+    }
+    return { pole: fg.pole, pennant: fg.pennant, ...c };
+  }
+
+  /** Fan-Bogen: zwei Masten knapp hinter der Absperrung, dazwischen ein Spruchband quer über die Straße */
+  private fanArch(group: THREE.Group, a: Row, cell: number) {
+    if (!this.fanMat) return;
+    const parts = this.fanParts(cell);
+    const poleMat = this.matFor('fan:pole', () => new THREE.MeshLambertMaterial({ color: 0xd8d2c4 }));
+    const flagMat = this.matFor('fan:pennant', () => new THREE.MeshLambertMaterial({ color: 0xff5fa2, side: THREE.DoubleSide }));
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(parts.front, this.fanMat), new THREE.Mesh(parts.back, this.fanMat));
+    for (const sg of [-1, 1]) {
+      const m = new THREE.Mesh(parts.pole, poleMat);
+      m.position.set((sg * FAN_SPAN) / 2, 0, 0);
+      const f = new THREE.Mesh(parts.pennant, flagMat);
+      f.position.set((sg * FAN_SPAN) / 2, FAN_POLE - 0.05, 0);
+      g.add(m, f);
+    }
+    g.position.set(a.x, a.y, a.z);
+    g.rotation.y = -a.th;
+    group.add(g);
+  }
+
   // ------------------------------------------------------------------ Fahrer, Objekte, Partikel
 
   /**
@@ -4073,10 +4202,15 @@ export class Renderer3D {
       const rz = -sg * Math.sin(w.th);
       const bx = -Math.sin(w.th);
       const bz = Math.cos(w.th);
-      const k = 0.25 + r() * 0.45;
-      const j = (r() - 0.5) * 0.5;
+      // Schilder halten Fans den Ankommenden entgegen (schräg, etwa 45°) – so liest man sie schon von Weitem
+      const sign = p.act === Act.sign;
+      const k = sign ? 0.85 + r() * 0.3 : 0.25 + r() * 0.45;
+      const j = (r() - 0.5) * (sign ? 0.16 : 0.5);
       p.yaw = Math.atan2(rx + bx * k, rz + bz * k) + j;
     };
+    // Masten der Fan-Bögen (am Anfang dieses und der nächsten Stücke): dort steht vorn niemand
+    const poles: number[] = [];
+    if (s.crowd) for (let d = 0; d <= 2; d++) if (this.fanAt(s.i + d)) poles.push(d * SEG);
     for (let ri = 0; ri < rows.length; ri++) {
       if (zone === 'tifosi' && ri === 3 && r() < 0.35) continue;
       // Abstände so, dass sich niemand überschneidet – auch nicht mit dem Nachbarabschnitt (alle 4 m)
@@ -4086,11 +4220,19 @@ export class Renderer3D {
       while (u < end) {
         let dx = rows[ri] + (r() - 0.5) * (ri ? 0.2 : 0.06);
         if (EDGE + dx > lim - 0.45) break;
+        if (ri === 0 && poles.some((q) => Math.abs(u - q) < 0.34)) { u += 0.32; continue; }
         const kid = ri === 0 && r() < 0.1;
         if (kid) dx -= 0.06;
         const p = randomPerson(r, zone, { row: ri, kid });
         if (!s.crowd && p.act === Act.lean) p.act = Act.idle; // ohne Absperrung lehnt sich niemand an
-        if (group && r() < 0.12) p.act = Act.sign;
+        if (group && r() < 0.2) p.act = Act.sign;
+        // auch in der ersten Reihe ein paar Schilder – die liest man am besten
+        if (ri === 0 && !kid && !group && r() < 0.05) p.act = Act.sign;
+        if (p.act === Act.sign) {
+          // das große Schild braucht Platz zu beiden Seiten (und keinen Mast mittendrin)
+          if (ri === 0 && poles.some((q) => Math.abs(u + 0.4 - q) < 1.05)) p.act = Act.cheer;
+          else { u += 0.4; if (u >= end) break; }
+        }
         if (ola && p.act !== Act.sign && p.act !== Act.flag && r() < 0.85) {
           p.act = Act.ola;
           // Phase aus dem Ort: die Welle läuft der Straße entlang den Fahrern entgegen
@@ -4100,7 +4242,7 @@ export class Renderer3D {
         out.push(p);
         if (p.act === Act.sign) this.signBoard(p, r);
         // Kind auf den Schultern
-        if (ri > 0 && !kid && r() < 0.05) {
+        if (ri > 0 && !kid && p.act !== Act.sign && r() < 0.05) {
           p.act = Act.hold;
           const c = randomPerson(r, zone, { row: ri, kid: true });
           c.act = Act.sit;
@@ -4112,28 +4254,31 @@ export class Renderer3D {
           out.push(c);
         }
         // Fahnen und Schilder brauchen Platz
-        const wide = p.act === Act.flag ? 0.4 : p.act === Act.sign ? 0.3 : p.act === Act.wave ? 0.12 : 0;
+        const wide = p.act === Act.flag ? 0.4 : p.act === Act.sign ? 0.75 : p.act === Act.wave ? 0.12 : 0;
         u += step[0] + wide + r() * step[1] + (!group && r() < 0.06 ? 0.5 + r() * 0.7 : 0);
       }
     }
   }
 
-  /** Pappschild über dem Kopf eines Fans, zur Straße gedreht; Rückseite Pappe */
+  /**
+   * Pappschild über dem Kopf eines Fans, den ankommenden Fahrern zugedreht; Rückseite Pappe.
+   * Groß (gut 1,6 m × 0,8 m) – kleinere Schilder ließen sich im Vorbeifahren nicht lesen.
+   */
   private signBoard(p: Person, r: () => number) {
     const gb = this.adsGB;
     if (!gb) return;
     const h = p.height;
-    const w = 0.44 + r() * 0.08;
-    const tall = 0.25 + r() * 0.04;
+    const w = 0.78 + r() * 0.1;
+    const tall = w * 0.5; // Seitenverhältnis der Zelle im Atlas (2 : 1)
     const fx = Math.sin(p.yaw);
     const fz = Math.cos(p.yaw);
     const rx = Math.cos(p.yaw);
     const rz = -Math.sin(p.yaw);
     const cx = p.x + fx * 0.36 * h;
     const cz = p.z + fz * 0.36 * h;
-    const y0 = p.y + 1.86 * h;
+    const y0 = p.y + 1.8 * h;
     const y1 = y0 + tall * 2;
-    const tilt = 0.06 * h; // oben etwas nach hinten
+    const tilt = 0.08 * h; // oben etwas nach hinten
     const pt = (sx: number, y: number, back: number) => [cx + rx * sx - fx * back, y, cz + rz * sx - fz * back];
     const [u0, v0, u1, v1] = adCell(Math.floor(r() * SIGN_COUNT), true);
     const card: RGBf = lin('#b08a5a');

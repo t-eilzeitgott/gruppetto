@@ -430,16 +430,52 @@ const ADS: { t: string; s: string; bg: string; fg: string; ac?: string; style?: 
 ];
 export const AD_COUNT = ADS.length;
 
-const SIGNS = ['ALLEZ!', 'FORZA!', 'DAJE!', 'HOPP HOPP', 'VAI VAI!', 'GO GO GO', '♥ GIRO', 'KEINE BREMSE!', 'HALLO MAMA', 'SCHNELLER!', 'BIDON PLS!', 'TOUR27', 'MACH ES!', 'BRAVO!', 'ICH BIN IM TV', 'ALLEZ ALLEZ',
-  'ZIEL IST DA →', 'TRET DOCH!', 'PAPA FÄHRT MIT', 'NUR NOCH 14 KEHREN', 'WO IST DEIN E-BIKE?', 'KUCHEN OBEN!', 'TIPP: PLATZ 1'];
-export const SIGN_COUNT = SIGNS.length;
+/** Vorrat an Sprüchen für die Pappschilder – je Rennen kommt eine neue Auswahl auf die Schilder */
+const SIGN_POOL = ['ALLEZ!', 'FORZA!', 'DAJE!', 'HOPP HOPP', 'VAI VAI!', 'GO GO GO', '♥ GIRO', 'KEINE BREMSE!', 'HALLO MAMA', 'SCHNELLER!',
+  'BIDON PLS!', 'TOUR27', 'MACH ES!', 'BRAVO!', 'ICH BIN IM TV', 'ALLEZ ALLEZ', 'ZIEL IST DA →', 'TRET DOCH!', 'PAPA FÄHRT MIT',
+  'NUR NOCH 14 KEHREN', 'WO IST DEIN E-BIKE?', 'KUCHEN OBEN!', 'TIPP: PLATZ 1', 'SCHALT RUNTER!', 'ICH WILL EIN BIDON', 'OMA FÄHRT SCHNELLER',
+  'BERG? WELCHER BERG?', 'LÄCHELN!', 'DU SCHAFFST DAS', 'KETTE RECHTS!', 'BEINE WIE BUTTER?', 'WATT IST LOS?', 'ATTACKE!', 'NIE MEHR E-BIKE',
+  'WINKEN!', 'HUPEN!', 'SCHÖNE WADEN!', 'NOCH 3 KM (GELOGEN)', 'ICH HAB GETIPPT!', 'AUSSENSEITER!', 'PASTA PARTY', 'PIZZA OBEN',
+  'MEHR WATT!', 'NICHT BREMSEN', 'GEL? HAB ICH!', 'SPRINT!', 'DAI DAI DAI', 'FORZA RAGAZZI', 'VAMOS!', 'GRUPPETTO 4 LIFE'];
+/** mit Namen der Runde: % = Vorname */
+const SIGN_NAMED = ['ALLEZ %', '% ♥', 'FORZA %', 'GO %!', 'VAI %!', '% FÜR GELB', 'HOPP %!', 'WIR ♥ %'];
+/** so viele Schilder hat der Atlas (Zellen 40 … 63) */
+export const SIGN_COUNT = 24;
+
+/** Mischen mit festem Startwert (Fisher-Yates) */
+function shuffled<T>(list: T[], r: Rng): T[] {
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+/**
+ * Sprüche der 24 Pappschilder für ein Rennen: bis zu zehn mit Namen der Runde (immer andere Mitspieler und
+ * Sprüche), der Rest aus dem Vorrat. Derselbe Startwert ergibt dieselben Schilder; jedes Rennen würfelt neu.
+ */
+export function signTexts(names: string[], seed: number): string[] {
+  const r = mulberry32(seed ^ 0x1b873593);
+  const own = shuffled(names, r).slice(0, 5);
+  const named = shuffled(SIGN_NAMED, r);
+  const pool = shuffled(SIGN_POOL, r);
+  const out: string[] = [];
+  for (let i = 0; i < SIGN_COUNT; i++) {
+    if (i < own.length * 2) out.push(named[i % named.length].replace('%', own[Math.floor(i / 2)]));
+    else out.push(pool[(i - own.length * 2) % pool.length]);
+  }
+  return out;
+}
 const BOARDS: [string, string][] = [['#fbfaf5', '#141414'], ['#ffe14d', '#141414'], ['#ff8fc0', '#141414'], ['#d8b07a', '#1a1a1a'], ['#fbfaf5', '#d6249f'], ['#fbfaf5', '#c0392b'], ['#ffffff', '#0b5394']];
 
-/** Atlas mit Banden (oben) und handgeschriebenen Pappschildern (unten); Namen der Runde kommen auf ein paar Schilder */
-export function adsTex(names: string[]): HTMLCanvasElement {
+/**
+ * Atlas mit Banden (oben) und handgeschriebenen Pappschildern (unten); Namen der Runde kommen auf ein paar Schilder.
+ * seed: je Rennen ein neuer – dann stehen andere Sprüche auf den Schildern (die Banden bleiben)
+ */
+export function adsTex(names: string[], seed = 77): HTMLCanvasElement {
   const cv = canvas(1024, 2048);
   const c = cv.getContext('2d')!;
-  const r = mulberry32(77);
+  const r = mulberry32(seed);
+  const texts = signTexts(names, seed);
   const fit = (text: string, weight: string, font: string, max: number, maxW: number) => {
     let fs = max;
     c.font = `${weight} ${fs}px ${font}`;
@@ -476,8 +512,8 @@ export function adsTex(names: string[]): HTMLCanvasElement {
     c.globalAlpha = 1;
     c.restore();
   }
-  // Pappschilder, leicht schief beschrieben
-  const own = names.slice(0, 5);
+  // Pappschilder, leicht schief beschrieben – so groß wie möglich (bei mehreren Wörtern zweizeilig),
+  // dick mit Edding nachgezogen, damit man sie im Vorbeifahren lesen kann
   for (let i = 0; i < SIGN_COUNT; i++) {
     const k = SIGN_BASE + i;
     const x0 = (k % 4) * 256;
@@ -486,24 +522,163 @@ export function adsTex(names: string[]): HTMLCanvasElement {
     c.fillStyle = bg;
     c.fillRect(x0, y0, 256, 128);
     // Pappe: leichte Flecken und Kanten
-    c.globalAlpha = 0.08;
+    c.globalAlpha = 0.07;
     for (let n = 0; n < 40; n++) { c.fillStyle = r() < 0.5 ? '#000' : '#fff'; c.fillRect(x0 + r() * 250, y0 + r() * 122, 3 + r() * 10, 2 + r() * 6); }
-    c.globalAlpha = 0.25;
+    c.globalAlpha = 0.3;
     c.strokeStyle = '#000';
-    c.lineWidth = 3;
-    c.strokeRect(x0 + 1.5, y0 + 1.5, 253, 125);
+    c.lineWidth = 4;
+    c.strokeRect(x0 + 2, y0 + 2, 252, 124);
     c.globalAlpha = 1;
-    let text = SIGNS[i];
-    if (i < own.length * 2 && own.length) {
-      const n = own[Math.floor(i / 2) % own.length];
-      text = i % 2 === 0 ? `ALLEZ ${n}` : `${n} ♥`;
-    }
+    const text = texts[i];
     c.save();
-    c.translate(x0 + 128, y0 + 66);
-    c.rotate((r() - 0.5) * 0.12);
-    c.fillStyle = fg;
-    fit(text, '900', MARKER, 60, 226);
-    c.fillText(text, 0, 0);
+    c.beginPath();
+    c.rect(x0 + 3, y0 + 3, 250, 122);
+    c.clip();
+    c.translate(x0 + 128, y0 + 64);
+    c.rotate((r() - 0.5) * 0.1);
+    paintLines(c, text, 238, 118, 96, MARKER, fg);
+    c.restore();
+  }
+  return cv;
+}
+
+/**
+ * Text so groß wie möglich in ein Feld (Mitte = Ursprung): einzeilig oder an der besten Wortgrenze zweizeilig –
+ * was die größere Schrift ergibt. Füllung plus Kontur in derselben Farbe macht die Striche dicker (Edding, Pinsel).
+ */
+export function paintLines(c: CanvasRenderingContext2D, text: string, maxW: number, maxH: number, maxFs: number, family: string, fg: string) {
+  const font = (fs: number) => `900 ${fs}px ${family}`;
+  const fitW = (t: string, start: number) => fitFont(c, t, maxW, start, 2, 12, font);
+  let lines = [text];
+  let fs = fitW(text, Math.min(maxFs, Math.round(maxH * 0.78)));
+  const words = text.split(' ');
+  if (words.length > 1) {
+    const cap = Math.round(maxH * 0.44);
+    for (let k = 1; k < words.length; k++) {
+      const two = [words.slice(0, k).join(' '), words.slice(k).join(' ')];
+      const wide = c.measureText(two[0]).width > c.measureText(two[1]).width ? two[0] : two[1];
+      const f2 = fitW(wide, cap);
+      // zweizeilig nur, wenn es wirklich größer wird
+      if (f2 > fs * 1.12) { fs = f2; lines = two; }
+    }
+  }
+  c.font = font(fs);
+  c.fillStyle = fg;
+  c.strokeStyle = fg;
+  c.lineJoin = 'round';
+  c.lineWidth = Math.max(2, fs * 0.07);
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  const lh = fs * 0.98;
+  lines.forEach((l, k) => {
+    const y = (k - (lines.length - 1) / 2) * lh + fs * 0.04;
+    c.strokeText(l, 0, y);
+    c.fillText(l, 0, y);
+  });
+}
+
+// ------------------------------------------------------------------ Fan-Bögen
+
+/** Spruchbänder über die Straße: Bettlaken, Giro-Rosa, Gelb, Tricolore-Saum … */
+const FAN_LOOKS: { bg: string; fg: string; edge: string; stripes?: string[] }[] = [
+  { bg: '#fbfaf5', fg: '#d6249f', edge: '#d6249f' },
+  { bg: '#ff5fa2', fg: '#ffffff', edge: '#ffffff' },
+  { bg: '#ffe14d', fg: '#141414', edge: '#141414' },
+  { bg: '#fbfaf5', fg: '#c0392b', edge: '#c0392b', stripes: ['#009246', '#fbfaf5', '#ce2b37'] },
+  { bg: '#141414', fg: '#ffe14d', edge: '#ffe14d' },
+  { bg: '#0b5394', fg: '#ffffff', edge: '#ffe14d' },
+  { bg: '#fbfaf5', fg: '#141414', edge: '#141414', stripes: ['#1b1b1b', '#dd0000', '#ffce00'] },
+];
+
+const FAN_SAYINGS = ['ALLEZ ALLEZ ALLEZ!', 'FORZA GRUPPETTO!', 'HINTEN IST DAS NEUE VORNE', 'KEINE BREMSE, KEINE GNADE', 'WO BLEIBT DER BESENWAGEN?',
+  'E-BIKES BITTE DRAUSSEN LASSEN', 'KUCHEN IM ZIEL!', 'TIPPSCHLUSS 12 UHR!', 'DAJE DAJE DAJE!', 'VAI VAI VAI!', 'TRET DOCH MAL!',
+  'NUR NOCH EINE KEHRE. EHRLICH.', '♥ GIRO ♥', 'WATT? WIR TIPPEN!', 'ALLEZ LES GRUPPETTOS', 'HUPEN FÜR DAS GRUPPETTO!'];
+const FAN_NAMED = ['ALLEZ %!', 'FORZA %!', '% ♥', 'WIR GLAUBEN AN %', '% FOR PRESIDENT', 'HOPP HOPP %!', 'VAI %!', '% IST DER BESTE'];
+
+/** Atlas der Spruchbänder: 1024 × 2048, neun Zeilen zu 224 px (eine je Band, 7,7 m × 1,7 m) */
+export const FAN_CELLS = 9;
+const FAN_ROW = 224;
+/** Höhe : Breite eines Bands im Atlas */
+export const FAN_ASPECT = (FAN_ROW - 4) / 1024;
+
+/** UV-Rechteck [u0, v0, u1, v1] eines Spruchbands */
+export function fanCell(i: number): [number, number, number, number] {
+  const k = ((i % FAN_CELLS) + FAN_CELLS) % FAN_CELLS;
+  const pv = 2 / 2048;
+  return [2 / 1024, 1 - ((k + 1) * FAN_ROW) / 2048 + pv, 1 - 2 / 1024, 1 - (k * FAN_ROW) / 2048 - pv];
+}
+
+/** Die Sprüche der neun Bänder: die ersten vier mit Namen der Runde (wenn es welche gibt), dann Sprüche – je Rennen andere */
+export function fanTexts(names: string[], seed: number): string[] {
+  const r = mulberry32(seed ^ 0x5f3759df);
+  const say = shuffled(FAN_SAYINGS, r);
+  const own = shuffled(names, r).slice(0, 6);
+  const off = Math.floor(r() * FAN_NAMED.length);
+  const out: string[] = [];
+  let n = 0;
+  for (let k = 0; k < FAN_CELLS; k++) {
+    if (own.length && k < 4) out.push(FAN_NAMED[(off + k * 3) % FAN_NAMED.length].replace('%', own[k % own.length]));
+    else out.push(say[n++ % say.length]);
+  }
+  return out;
+}
+
+/** Atlas der Spruchbänder: Stoff mit Falten, gemalter Rand (oder Saum in Landesfarben), riesige Pinselschrift */
+export function fanAtlas(names: string[], seed: number): HTMLCanvasElement {
+  const W = 1024;
+  const cv = canvas(W, 2048);
+  const c = cv.getContext('2d')!;
+  const texts = fanTexts(names, seed);
+  const r = mulberry32(seed ^ 0x2545f491);
+  const look0 = Math.floor(r() * FAN_LOOKS.length);
+  for (let k = 0; k < FAN_CELLS; k++) {
+    const L = FAN_LOOKS[(look0 + k) % FAN_LOOKS.length];
+    const y0 = k * FAN_ROW;
+    const H = FAN_ROW;
+    c.save();
+    c.beginPath();
+    c.rect(0, y0, W, H);
+    c.clip();
+    c.translate(0, y0);
+    c.fillStyle = L.bg;
+    c.fillRect(0, 0, W, H);
+    // Falten: weiche senkrechte Bahnen
+    for (let x = 0; x < W; x += 40 + r() * 50) {
+      const w = 20 + r() * 40;
+      const g = c.createLinearGradient(x, 0, x + w, 0);
+      const dark = r() < 0.5;
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(0.5, dark ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.09)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g;
+      c.fillRect(x, 0, w, H);
+    }
+    if (L.stripes) {
+      const sh = 12;
+      L.stripes.forEach((col, i) => {
+        c.fillStyle = col;
+        c.fillRect(0, 2 + i * sh, W, sh);
+        c.fillRect(0, H - 2 - (L.stripes!.length - i) * sh, W, sh);
+      });
+    } else {
+      // von Hand gemalter Rand
+      c.strokeStyle = L.edge;
+      c.lineWidth = 7;
+      c.lineJoin = 'round';
+      const m = 14;
+      const pts: [number, number][] = [];
+      for (let x = m; x <= W - m; x += 64) pts.push([x, m + (r() - 0.5) * 3]);
+      for (let y = m; y <= H - m; y += 48) pts.push([W - m + (r() - 0.5) * 3, y]);
+      for (let x = W - m; x >= m; x -= 64) pts.push([x, H - m + (r() - 0.5) * 3]);
+      for (let y = H - m; y >= m; y -= 48) pts.push([m + (r() - 0.5) * 3, y]);
+      c.beginPath();
+      pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+      c.closePath();
+      c.stroke();
+    }
+    c.translate(W / 2, H / 2);
+    c.rotate((r() - 0.5) * 0.025);
+    paintLines(c, texts[k], W * 0.88, H * 0.72, 150, MARKER, L.fg);
     c.restore();
   }
   return cv;
