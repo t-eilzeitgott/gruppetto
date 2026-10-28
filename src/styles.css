@@ -2301,3 +2301,10 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   border-radius: 12px; background: rgba(10, 14, 22, 0.78); font-size: 12px; line-height: 1.4;
 }
 .gpu-hint .muted { opacity: 0.65; }
+
+/* Auffangnetz, wenn eine Seite abstürzt (PageBoundary) */
+.page-crash { margin: 24px 16px; padding: 20px; border-radius: 18px; background: var(--surface2); display: grid; gap: 10px; }
+.page-crash h2 { margin: 0; font-size: 19px; }
+.page-crash p { margin: 0; color: var(--muted); line-height: 1.45; }
+.page-crash__detail { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; opacity: 0.8; }
+.page-crash__actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }

@@ -27,6 +27,7 @@ import { Suspense } from 'react';
 import { AkkuPage, BergPage, GamePage, GaragePage, JourneyPage, SprintPage, WorldEditorPage, ZeitfahrenPage, GpuTestPage } from './pages';
 import { AppSkeleton, RouteSkeleton } from '../ui/skeleton';
 import { DemoBanner } from '../ui/Shell';
+import { PageBoundary } from '../ui/PageBoundary';
 
 import { Profile } from '../pages/Profile';
 import { Datenschutz, Impressum } from '../pages/Legal';
@@ -157,7 +158,7 @@ function MemberApp({ me }: { me: ProfileT }) {
 
   return (
     <AppContext.Provider value={ctx}>
-      <Shell hideTabBar={fullScreen} isAdmin={me.is_admin}>{page}</Shell>
+      <Shell hideTabBar={fullScreen} isAdmin={me.is_admin}><PageBoundary key={route.path}>{page}</PageBoundary></Shell>
       {loading ? null : <WarmUp me={me} tour={tour} />}
     </AppContext.Provider>
   );

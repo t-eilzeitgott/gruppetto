@@ -33,6 +33,13 @@ declare module 'react' {
   export const StrictMode: (props: { children?: ReactNode }) => ReactElement;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export type ComponentType<P = any> = (props: P) => ReactElement | null;
+  /** Klassenkomponente – nur für Fehlergrenzen (getDerivedStateFromError / componentDidCatch) */
+  export class Component<P = {}, S = {}> {
+    constructor(props: P);
+    props: Readonly<P> & { key?: Key };
+    state: S;
+    setState(next: Partial<S> | ((prev: S) => Partial<S>)): void;
+  }
   export function createElement<P>(type: ComponentType<P> | string, props?: P | null, ...children: ReactNode[]): ReactElement;
 }
 
