@@ -137,3 +137,23 @@ test('Spiel: Autopilot fährt weit, überholt, sammelt und bekommt Kombos', () =
   assert.ok(g.score.friends >= 100, 'Felix geschlagen');
   assert.ok(g.stats.topKmh > 60);
 });
+
+test('Testfahrt (Admin): Zeitraffer, keine Hindernisse, kein Sturz', () => {
+  const day = '2027-05-09';
+  let over: RunResult | null = null;
+  const mk = (cruise?: number) => new Abfahrt({
+    dayKey: day, names: [], friends: [], kit, best: 0,
+    missions: dailyMissions(day), missionsDone: new Set(), tutorial: false, cruise, onOver: (r) => { over = r; },
+  });
+  const g = mk(3);
+  const n = mk();
+  g.start();
+  n.start();
+  for (let t = 0; t < 40; t += 1 / 60) { g.update(1 / 60); n.update(1 / 60); }
+  assert.equal(over, null);
+  assert.equal(g.phase, 'playing');
+  assert.ok(g.p.z > 1500, `nur ${g.p.z} m`);
+  for (let i = 0; i < Math.floor(g.p.z / 2) + 200; i++) {
+    for (const o of g.track.seg(i).objs ?? []) assert.ok(!Track.HAZARDS.has(o.k), `Hindernis ${o.k} bei Segment ${i}`);
+  }
+});

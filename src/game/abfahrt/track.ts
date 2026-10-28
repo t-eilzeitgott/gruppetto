@@ -189,6 +189,14 @@ export class Track {
   readonly title: string;
   readonly sections: Section[] = [];
   private segs: Seg[] = [];
+  /** Testfahrt (Admin): keine Hindernisse auf der Strecke (Steine, Kühe, Schlaglöcher, Hütchen, Pfützen) */
+  private clear = false;
+  static readonly HAZARDS = new Set(['rock', 'cow', 'pothole', 'cone', 'puddle']);
+  /** Hindernisse entfernen – auch aus schon gebauten Abschnitten (die Strecke selbst bleibt gleich) */
+  dropHazards() {
+    this.clear = true;
+    for (const sg of this.segs) if (sg.objs) sg.objs = sg.objs.filter((o) => !Track.HAZARDS.has(o.k));
+  }
   private base = 0;
   private rng: Rng;
   readonly names: string[];
@@ -1300,6 +1308,7 @@ export class Track {
     const addObj = (o: Obj) => {
       const s = this.segAt(o.z);
       if (s.tunnel && o.k === 'cow') return;
+      if (this.clear && Track.HAZARDS.has(o.k)) return;
       (s.objs ??= []).push(o);
     };
     const free = (i: number) => {

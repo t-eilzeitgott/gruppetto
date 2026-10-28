@@ -95,6 +95,8 @@ export function GamePage() {
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<Abfahrt | null>(null);
+  /** Testfahrt (nur Admin): 0 = normal, 2/3 = Zeitraffer ohne Hindernisse, ohne Wertung */
+  const cruiseRef = useRef(0);
   const rendererRef = useRef<Renderer3D | null>(null);
   const [glError, setGlError] = useState(false);
   const [ui, setUi] = useState<Ui>('ready');
@@ -139,7 +141,8 @@ export function GamePage() {
       best: myBest,
       missions,
       missionsDone: new Set(doneIds),
-      tutorial: (Number(lsGet(LS_TUTORIAL)) || 0) < 4,
+      tutorial: !(playing && cruiseRef.current) && (Number(lsGet(LS_TUTORIAL)) || 0) < 4,
+      cruise: playing && cruiseRef.current ? cruiseRef.current : undefined,
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
@@ -167,6 +170,7 @@ export function GamePage() {
       case 'mission':
         bannerKey.current += 1;
         setBanner({ key: bannerKey.current, title: 'Aufgabe erfüllt', sub: e.text, tone: 'gold' });
+        if (cruiseRef.current) break;
         setDoneIds((d) => {
           const next = d.includes(e.id) ? d : [...d, e.id];
           lsSet(missionKey(day), JSON.stringify(next));
@@ -191,6 +195,8 @@ export function GamePage() {
   const onOver = (r: RunResult) => {
     setResult(r);
     setUi('over');
+    // Testfahrt: nichts speichern, nichts werten
+    if (cruiseRef.current) return;
     const runs = (Number(lsGet(LS_TUTORIAL)) || 0) + 1;
     lsSet(LS_TUTORIAL, String(runs));
     lsSet(LS_COACH, String((Number(lsGet(LS_COACH)) || 0) + 1));
@@ -482,8 +488,9 @@ export function GamePage() {
     };
   };
 
-  const start = () => {
+  const start = (cruise = 0) => {
     if (!stageRef.current) return;
+    cruiseRef.current = me.is_admin ? cruise : 0;
     // Plätze vorher merken für „↑ 2“
     const pos = (list: GameBest[] | undefined) => (list ?? []).findIndex((b) => b.user_id === me.id);
     setPrevRank({ day: pos(today.data), season: pos(season.data) });
@@ -614,7 +621,14 @@ export function GamePage() {
                 </div>
                 <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />
                 <Missions missions={missions} done={doneIds} compact />
-                <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
+                <button type="button" className="btn btn--primary btn--full abf-go" onClick={() => start()}><span>Losfahren</span></button>
+                {me.is_admin ? (
+                  <div className="abf-cruise">
+                    <span className="abf-muted">Testfahrt ohne Hindernisse und Wertung</span>
+                    <button type="button" className="btn btn--secondary btn--sm" onClick={() => start(2)}>2×</button>
+                    <button type="button" className="btn btn--secondary btn--sm" onClick={() => start(3)}>3×</button>
+                  </div>
+                ) : null}
                 <BikeChip bikes={bikes} />
                 <MiniBoard rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} totalM={mine?.total_m ?? 0} />
               </>
@@ -633,7 +647,7 @@ export function GamePage() {
               <Summary
                 bikes={bikes}
                 result={result}
-                record={result.score >= myBest && result.score > 0}
+                record={!cruiseRef.current && result.score >= myBest && result.score > 0}
                 prevRank={prevRank}
                 today={today.data ?? []}
                 season={season.data ?? []}
@@ -641,7 +655,7 @@ export function GamePage() {
                 totalM={(mine?.total_m ?? 0)}
                 missions={missions}
                 done={doneIds}
-                onAgain={start}
+                onAgain={() => start(cruiseRef.current)}
                 onBoard={() => setShowBoard(true)}
               />
             )}

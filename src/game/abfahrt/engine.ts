@@ -127,6 +127,8 @@ export interface GameOptions {
   missions: Mission[];
   missionsDone: Set<string>;
   tutorial: boolean;
+  /** Testfahrt (Admin): Zeitraffer (2 oder 3), keine Hindernisse, kein Sturz – zählt nicht in den Tabellen */
+  cruise?: number;
   onEvent?: (e: GameEvent) => void;
   onOver?: (r: RunResult) => void;
 }
@@ -190,12 +192,14 @@ export class Abfahrt {
     this.friends = opts.friends.map((f) => ({ ...f, passed: false })).sort((a, b) => a.meters - b.meters);
     this.missionsDone = new Set(opts.missionsDone);
     this.track = new Track(opts.dayKey, opts.names);
+    if (opts.cruise) this.track.dropHazards();
     this.rng = mulberry32(this.track.seed ^ 0x5eed);
     this.reset();
   }
 
   reset() {
     this.track = new Track(this.opts.dayKey, this.opts.names);
+    if (this.opts.cruise) this.track.dropHazards();
     this.rng = mulberry32(this.track.seed ^ 0x5eed);
     this.p = {
       z: 6, x: 0.9, vx: 0, v: 0, y: 0, vy: 0, air: false, airT: 0,
@@ -270,7 +274,8 @@ export class Abfahrt {
   // ------------------------------------------------------------ Hauptschleife
 
   update(dtReal: number) {
-    const dt = Math.min(0.05, dtReal) * this.timeScale;
+    // Testfahrt: Zeitraffer (die Welt läuft schneller, die Fahrphysik bleibt gleich)
+    const dt = Math.min(0.05, dtReal) * this.timeScale * (this.phase === 'playing' ? this.opts.cruise ?? 1 : 1);
     this.time += dt;
     this.phaseT += dtReal;
     if (this.keys.left) { this.tx = clamp(this.tx - 6 * dt, -EDGE - 1.2, EDGE + 1.2); this.steered += 6 * dt; }
@@ -940,6 +945,13 @@ export class Abfahrt {
 
   crash(reason: string) {
     if (this.phase !== 'playing') return;
+    // Testfahrt: kein Sturz – zurück auf die Straße
+    if (this.opts.cruise) {
+      this.p.x = clamp(this.p.x, -EDGE + 0.6, EDGE - 0.6);
+      this.tx = clamp(this.tx, -EDGE + 0.6, EDGE - 0.6);
+      this.p.vx = 0;
+      return;
+    }
     this.phase = 'crash';
     this.phaseT = 0;
     this.crashReason = reason;

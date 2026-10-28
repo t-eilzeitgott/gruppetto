@@ -1576,6 +1576,8 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .abf-link { display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; padding: 4px 0; color: var(--accent); font-weight: 600; font-size: 14px; }
 .abf-go { min-height: 50px; font-size: 17px; }
+.abf-cruise { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.abf-cruise > span { flex: 1; min-width: 0; font-size: 13px; line-height: 1.3; }
 
 .abf-profile { position: relative; margin: 0; }
 .abf-profile svg { display: block; width: 100%; height: 74px; }
