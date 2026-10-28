@@ -452,6 +452,25 @@ export class Track {
       this.mountain = cur;
     }
 
+    // Kehren: Innenseite als gemauerte Stützmauer (die Straße ist in den Hang gebaut) – ein Stück davor und
+    // danach taucht sie aus dem Boden auf (hp: Seite der Mauer, hpW: ihre Höhe)
+    const hp = new Array<number>(n).fill(0);
+    const hpW = new Array<number>(n).fill(0);
+    for (let k = 0; k < n; k++) {
+      if (marks[k] !== 1 || (k > 0 && marks[k - 1] === 1)) continue;
+      let b = k;
+      while (b < n && marks[b] === 1) b++;
+      const d = curve[Math.min(n - 1, k + 3)] > 0 ? 1 : -1;
+      const a0 = Math.max(0, k - 12);
+      const b0 = Math.min(n, b + 12);
+      for (let q = a0; q < b0; q++) {
+        const t = (q - a0) / Math.max(1, b0 - 1 - a0);
+        const ends = Math.min(1, (q - a0 + 1) / 5, (b0 - q) / 5);
+        hp[q] = d;
+        hpW[q] = (1.3 + 1.1 * Math.sin(Math.PI * t) + 0.25 * Math.sin(q * 0.9)) * ends;
+      }
+    }
+
     for (let k = 0; k < n; k++) {
       const i = start + k;
       const inTunnel = tunnels.some(([a, b]) => k >= a && k < b);
@@ -481,6 +500,11 @@ export class Track {
       if (hairpinOutside !== 0) {
         const fix = (s: Side): Side => (s.drop && s.barrier === 'none' ? { ...s, barrier: 'rail' } : s);
         if (hairpinOutside < 0) l = fix(l); else rr = fix(rr);
+      }
+      if (hp[k] !== 0 && hpW[k] > 0.3 && p.biome !== 'village' && !hamlet) {
+        const g: Ground = p.biome === 'pass' ? 'rock' : p.biome === 'forest' ? 'forest' : 'meadow';
+        const mauer: Side = { ground: g, tilt: 0.5, barrier: 'none', wall: hpW[k], drop: false, stone: true };
+        if (hp[k] > 0) rr = mauer; else l = mauer;
       }
 
       if (surfaceRun <= 0) {
@@ -524,6 +548,8 @@ export class Track {
       this.th += curve[k] * SEG;
       this.segs.push(seg);
     }
+    // Wände (Fels, Schnee, Mauern) laufen an ihren Enden aus statt mit einer senkrechten Stirnseite zu enden
+    this.taperWalls(start, n);
 
     this.decorate(start, n, p.biome, D, secIndex, marks, curve);
     if (sprint) this.sprintDeco(start, n, secIndex);
@@ -993,6 +1019,29 @@ export class Track {
   }
 
   /** Höhe des Geländes auf der Seite in Abstand dx vom Bankett */
+  /** Wandhöhen an Anfang und Ende jeder Wand über ~7 Stücke ein- und ausblenden (keine Stirnseiten gegen den Himmel) */
+  private taperWalls(start: number, n: number) {
+    for (const which of ['L', 'R'] as const) {
+      let k = 0;
+      while (k < n) {
+        const s0 = this.seg(start + k);
+        if (!(s0[which].wall > 0) || s0.tunnel) { k++; continue; }
+        let b = k;
+        while (b < n && this.seg(start + b)[which].wall > 0 && !this.seg(start + b).tunnel) b++;
+        const len = b - k;
+        for (let q = k; q < b; q++) {
+          const f = Math.min(1, (q - k + 1) / 7, (b - q) / 7);
+          if (f >= 1) continue;
+          const sg = this.seg(start + q);
+          const side = sg[which];
+          sg[which] = { ...side, wall: side.wall * (0.12 + 0.88 * f) };
+        }
+        void len;
+        k = b;
+      }
+    }
+  }
+
   static groundH(side: Side, dx: number): number {
     if (side.wall > 0) return dx < 0.6 ? 0 : side.wall + (dx - 0.6) * side.tilt;
     if (side.ground === 'water') return -1.4;
@@ -1063,6 +1112,16 @@ export class Track {
       if (s.tunnel) {
         s.lamp = i % 6 === 0;
         continue;
+      }
+      // Kehre: oberhalb der Stützmauer Geröll, Büsche und Bäume (die Straße ist in den Hang geschnitten)
+      if (marks[k] === 1) {
+        const inner = curve[k] > 0 ? 1 : -1;
+        if (k % 2 === 0) {
+          const pool: SpriteKind[] = biome === 'pass' ? ['boulder', 'rock', 'rock', 'snowpole'] : biome === 'forest' ? ['pine', 'bush', 'boulder', 'pine'] : ['larch', 'bush', 'boulder', 'rock', 'larch'];
+          const kind = pick(r, pool);
+          const tree = kind === 'larch' || kind === 'pine';
+          put(i, inner, kind, tree ? between(r, 3.5, 7) : between(r, 1.2, 3.2), { s: tree ? between(r, 0.8, 1.1) : between(r, 0.6, 1.0) });
+        }
       }
       // Kehre: Schild vorher, Pfeile außen
       if (marks[k] === 1 && marks[k - 1] !== 1) {
