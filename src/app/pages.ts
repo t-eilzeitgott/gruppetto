@@ -19,3 +19,5 @@ export function prefetchGames() {
 }
 /** Welt-Editor (Admin): 3D-Welt der Minispiele bearbeiten – wird nicht vorab geladen */
 export const WorldEditorPage = lazyPage(() => import('../pages/admin/AdminWorld').then((m) => m.WorldEditorPage));
+/** WebGPU-Test (Admin): Passabfahrt mit dem WebGPU-Renderer – wird nicht vorab geladen */
+export const GpuTestPage = lazyPage(() => import('../pages/admin/AdminGpu').then((m) => m.GpuTestPage));

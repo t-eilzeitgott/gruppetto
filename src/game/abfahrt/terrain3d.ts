@@ -1116,7 +1116,7 @@ export class Terrain {
   }
 
   /** Wie buildTile, aber in Häppchen: liefert zwischendurch die Kontrolle zurück (kein Ruckeln) */
-  *tileSteps(lv: number, tx: number, tz: number): Generator<void, TileData, void> {
+  *tileSteps(lv: number, tx: number, tz: number, withMorph = true): Generator<void, TileData, void> {
     const L = LEVELS[lv];
     const N = L.n;
     const x0 = tx * L.size;
@@ -1142,7 +1142,8 @@ export class Terrain {
     for (let v = 0; v < V * V; v++) { const y = pos[v * 3 + 1]; if (y < minY) minY = y; if (y > maxY) maxY = y; }
     // Übergangsziel: die nächstgröbere Stufe an jeder Ecke (gleiche Rechnung, gleiche Dreiecke). Zum Rand der
     // Stufe hin nimmt die Kachel im Shader stufenlos deren Form und Farben an – der Wechsel ist dann unsichtbar.
-    const morph = lv < LEVELS.length - 1 ? new Float32Array(NV * 20) : null;
+    // (ohne Übergang: der WebGPU-Test zeichnet feste Gebiete je Stufe und braucht kein Übergangsziel)
+    const morph = withMorph && lv < LEVELS.length - 1 ? new Float32Array(NV * 20) : null;
     let cg: Grid | null = null;
     let cV = 0;
     let cA: VertexArrays | null = null;

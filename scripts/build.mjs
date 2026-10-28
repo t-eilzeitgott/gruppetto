@@ -4,7 +4,7 @@
 import * as esbuild from 'esbuild';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, resolve } from 'node:path';
 
 const serve = process.argv.includes('--serve');
 const outdir = 'dist';
@@ -29,6 +29,13 @@ const result = await esbuild.build({
   splitting: true,
   jsx: 'automatic',
   alias: { three: './vendor/three/three.module.js' },
+  // WebGPU-Renderer und TSL (nur der WebGPU-Test lädt sie): teilen sich three.core.js mit dem WebGL-Teil
+  plugins: [{
+    name: 'three-webgpu',
+    setup(b) {
+      b.onResolve({ filter: /^three\/(webgpu|tsl)$/ }, (a) => ({ path: resolve(`vendor/three/three.${a.path.slice(6)}.js`) }));
+    },
+  }],
   legalComments: 'none',
   metafile: true,
   logLevel: 'info',

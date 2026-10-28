@@ -2259,3 +2259,34 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   .wed-bottom { left: 50%; right: auto; transform: translateX(-50%); width: min(700px, calc(100vw - 150px)); }
   .wed-tools { transform: translateY(-50%); }
 }
+
+/* ---------------------------------------------------------------- WebGPU-Test (Admin) */
+.gpu-root { position: fixed; inset: 0; background: #0b0f16; color: #fff; overflow: hidden; touch-action: none; }
+.gpu-canvas { position: absolute; inset: 0; }
+.gpu-back {
+  position: absolute; top: calc(env(safe-area-inset-top) + 10px); left: 12px; width: 40px; height: 40px; border-radius: 20px;
+  border: 0; background: rgba(10, 14, 22, 0.45); color: #fff; display: grid; place-items: center; backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.gpu-back svg { transform: rotate(180deg); }
+.gpu-hud {
+  position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: 12px; display: grid; gap: 1px; padding: 7px 10px;
+  border-radius: 10px; background: rgba(10, 14, 22, 0.5); font: 500 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right; border: 0; color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.gpu-hud strong { font-size: 15px; font-weight: 700; }
+.gpu-hud--off { padding: 6px 10px; font-size: 12px; }
+.gpu-cam {
+  position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 14px); transform: translateX(-50%); padding: 6px 12px;
+  border-radius: 999px; background: rgba(10, 14, 22, 0.45); font-size: 12px; pointer-events: none; white-space: nowrap;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.gpu-load { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.gpu-load span { padding: 10px 16px; border-radius: 12px; background: rgba(10, 14, 22, 0.6); font-size: 14px; max-width: 80vw; text-align: center; }
+.gpu-load--err span { background: rgba(160, 30, 40, 0.85); }
+.gpu-hint {
+  position: absolute; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 52px); padding: 10px 12px;
+  border-radius: 12px; background: rgba(10, 14, 22, 0.62); font-size: 12px; line-height: 1.4;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.gpu-hint .muted { opacity: 0.65; }

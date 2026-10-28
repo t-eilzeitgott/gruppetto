@@ -43,6 +43,7 @@ function Sections({ tour }: { tour: Tour }) {
     { to: '/admin/mitglieder', icon: 'user', title: 'Mitglieder & Einladung', sub: 'Einladungscode, Admins, Pro' },
     { to: '/admin/akku', icon: 'zap', title: 'Minispiel „Akku leer!“', sub: 'Prototyp · nur für Admins sichtbar' },
     { to: '/admin/welt', icon: 'mountain', title: 'Welt-Editor', sub: 'Durch die 3D-Welten fliegen, Requisiten und Gelände ändern, Notizen für Claude' },
+    { to: '/admin/gpu', icon: 'zap', title: 'WebGPU-Test', sub: 'Passabfahrt mit neuer Grafik-Technik – Vergleich zum Spiel' },
   ];
   return (
     <ul className="list admin-list">

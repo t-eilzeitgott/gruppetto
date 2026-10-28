@@ -13,7 +13,11 @@
     "isolatedModules": true,
     "noEmit": true,
     "types": [],
-    "paths": { "three": ["./vendor/three/types/index.d.ts"] }
+    "paths": {
+      "three": ["./vendor/three/types/index.d.ts"],
+      "three/webgpu": ["./vendor/three/types/src/Three.WebGPU.d.ts"],
+      "three/tsl": ["./vendor/three/types/src/Three.TSL.d.ts"]
+    }
   },
   "include": ["src"]
 }
