@@ -2911,6 +2911,40 @@ export class Renderer3D {
       if (sg > 0) terr.quad(A0, A1, B1, B0, col, [uv(A0), uv(A1), uv(B1), uv(B0)]);
       else terr.quad(A1, A0, B0, B1, col, [uv(A1), uv(A0), uv(B0), uv(B1)]);
     }
+    // Widerlager: grenzt das Profil an ein Viadukt, bliebe seine Stirnseite offen (von der Brücke aus ein
+    // schwarzer Keil unter einer schwebenden Böschung). Gemauerte Stirnwand vom Profil bis in den Graben.
+    const t = this.track!;
+    const prevB = a.seg.i > t.first ? t.seg(a.seg.i - 1).bridge : 0;
+    const nextB = b.seg.bridge;
+    if (prevB > 0 || nextB > 0) {
+      const row = prevB > 0 ? a : b;
+      const pr = prevB > 0 ? pa : pb;
+      // bis unter die tiefste Stelle des Grabens (am Brückenende ist die Rampe schon fast ausgelaufen)
+      let maxB = Math.max(prevB, nextB);
+      for (let j = row.seg.i - 40; j <= row.seg.i + 40; j++) maxB = Math.max(maxB, t.seg(Math.max(t.first, j)).bridge);
+      const deep = -(maxB + 3);
+      const st = shadeF(lin('#b8ae9c'), 0.9);
+      const uvS = 1.8;
+      for (let k = 0; k < pr.o.length - 1; k++) {
+        const x0 = sg * (EDGE + pr.o[k]);
+        const x1 = sg * (EDGE + pr.o[k + 1]);
+        const T0 = P(row, x0, pr.h[k] - 0.04);
+        const T1 = P(row, x1, pr.h[k + 1] - 0.04);
+        const D0 = P(row, x0, deep);
+        const D1 = P(row, x1, deep);
+        const uv = [[x0 / uvS, pr.h[k] / uvS], [x1 / uvS, pr.h[k + 1] / uvS], [x1 / uvS, deep / uvS], [x0 / uvS, deep / uvS]];
+        // beidseitig: man sieht sie von der Brücke und aus dem Graben
+        mas.quad(T0, T1, D1, D0, st, uv);
+        mas.quad(T1, T0, D0, D1, st, [uv[1], uv[0], uv[3], uv[2]]);
+      }
+      // Stück zwischen Fahrbahnrand und Profilbeginn (unter dem Bankett)
+      const E0 = P(row, sg * EDGE, -0.04);
+      const E1 = P(row, sg * (EDGE + pr.o[0]), pr.h[0] - 0.04);
+      const F0 = P(row, sg * EDGE, deep);
+      const F1 = P(row, sg * (EDGE + pr.o[0]), deep);
+      mas.quad(E0, E1, F1, F0, st);
+      mas.quad(E1, E0, F0, F1, st);
+    }
     // Schürze am Rand: schließt die Fuge zur Landschaft, aus jeder Richtung
     const ka = pa.o.length - 1;
     const kb = pb.o.length - 1;
@@ -2999,8 +3033,25 @@ export class Renderer3D {
       let deep = s;
       for (let j = s.i - 24; j <= s.i + 24; j++) { const q = t.seg(Math.max(t.first, j)); if (q.bridge > deep.bridge) deep = q; }
       const yw = deep.y - deep.bridge - 0.9;
-      const W = Math.min(40, 4 + (s.bridge - 2.5) * 6);
-      const A0 = P(a, -W, 0); const A1 = P(a, W, 0); const B0 = P(b, -W, 0); const B1 = P(b, W, 0);
+      const Wmax = Math.min(40, 4 + (s.bridge - 2.5) * 6);
+      // je Seite nur bis zur Grabenwand: dahinter fällt das Gelände oft weiter ab (zur nächsten Serpentine) –
+      // dort schwebte die Wasserfläche sonst sichtbar über der Wiese
+      const T = this.terrain!;
+      const reg = this.region!;
+      // −1: kein Ufer gefunden (das Gelände fällt unter den Wasserspiegel) – dann kein Bach
+      const reach = (sg: number) => {
+        for (let d = EDGE + 2; d <= Wmax; d += 2) {
+          const q = P(a, sg * d, 0);
+          const h = T.heightIn(reg, q[0], q[2]);
+          if (h > yw + 2.5) return Math.min(Wmax, d + 3);
+          if (h < yw - 0.5) return -1;
+        }
+        return -1;
+      };
+      const WL = reach(-1);
+      const WR = reach(1);
+      if (WL < 0 || WR < 0) return;
+      const A0 = P(a, -WL, 0); const A1 = P(a, WR, 0); const B0 = P(b, -WL, 0); const B1 = P(b, WR, 0);
       for (const q of [A0, A1, B0, B1]) q[1] = yw;
       water.quad(A0, A1, B1, B0, [1, 1, 1]);
     }

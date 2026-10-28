@@ -89,6 +89,9 @@ const CANOPY = 12;
 export const LIM_MAX = EDGE + 12;
 /** Bis hierhin (ab Straßenmitte) bleibt das Höhenfeld sicher unter der Straße – je nach Gitterweite */
 const clampR = (cell: number) => EDGE + cell * 1.45 + 1;
+/** Graben unter einem Viadukt: volle Tiefe bis BR_IN (m ab Straßenmitte), bis BR_OUT ausgelaufen */
+const BR_IN = 15;
+const BR_OUT = 34;
 
 const kindOf = (s: Side, tunnel: boolean): number => {
   if (tunnel) return K_TUNNEL;
@@ -260,6 +263,8 @@ class Samples {
 }
 
 /** Straßensegmente eines Gebiets, nach Zellen sortiert (schnelle Umkreissuche) */
+/** Zahlen je Straßenstück in SegGrid.buf: x, z, y, rx, rz, Tunnel, Portal, Korridor links/rechts, Grabentiefe (Viadukt) */
+const SEGW = 10;
 interface SegGrid { buf: Float64Array; n: number; x0: number; z0: number; cs: number; nx: number; nz: number; start: Int32Array; order: Int32Array }
 export interface Region { cand: Int32Array; sg: SegGrid }
 
@@ -644,6 +649,7 @@ export class Terrain {
     let nLimR = LIM_MAX;
     let inside = false;
     let raise = -Infinity;
+    let carve = Infinity;
     const ci = Math.floor((x - sg.x0) / sg.cs);
     const cj = Math.floor((z - sg.z0) / sg.cs);
     for (let jj = cj - 1; jj <= cj + 1; jj++) {
@@ -652,11 +658,17 @@ export class Terrain {
         if (ii < 0 || ii >= sg.nx) continue;
         const cidx = jj * sg.nx + ii;
         for (let q = sg.start[cidx]; q < sg.start[cidx + 1]; q++) {
-          const b = sg.order[q] * 9;
+          const b = sg.order[q] * SEGW;
           const dx = x - segs[b];
           const dz = z - segs[b + 1];
           const d2 = dx * dx + dz * dz;
-          if (d2 > R * R) continue;
+          if (d2 > R * R && !(segs[b + 9] > 0 && d2 < BR_OUT * BR_OUT)) continue;
+          if (d2 > R * R) {
+            // nur der Graben eines Viadukts reicht so weit
+            const br = segs[b + 9];
+            carve = Math.min(carve, segs[b + 2] - br - 0.6 + (1 - sstep(BR_OUT, BR_IN, Math.sqrt(d2))) * (br + 0.6 + 40));
+            continue;
+          }
           // Tunnelportal: direkt an der Felswand fehlt das Gelände (die Wand deckt die Fuge),
           // dahinter liegt Berg über der Röhre – dort gilt keine Klemme unter die Straße
           const portal = segs[b + 6];
@@ -672,6 +684,13 @@ export class Terrain {
             if (tun === 1) maxOver = Math.max(maxOver, segs[b + 2] + 8.5);
             else if (tun === 0) minUnder = Math.min(minUnder, segs[b + 2] - 1.1);
           }
+          // Viadukt: darunter und seitlich davon ein Graben (sonst zieht eine nahe Serpentine das Gelände wieder
+          // hoch und die Bögen stecken in der Wiese)
+          const br = segs[b + 9];
+          if (br > 0 && d2 < BR_OUT * BR_OUT) {
+            const w = sstep(BR_OUT, BR_IN, Math.sqrt(d2));
+            carve = Math.min(carve, segs[b + 2] - br - 0.6 + (1 - w) * (br + 0.6 + 40));
+          }
           if (d2 < nd2 && segs[b + 5] === 0) {
             nd2 = d2;
             nLat = dx * segs[b + 3] + dz * segs[b + 4];
@@ -681,6 +700,7 @@ export class Terrain {
         }
       }
     }
+    if (carve < o.h) { o.h = carve; o.near = true; }
     if (inside) { minUnder = Infinity; maxOver = Math.max(maxOver, raise); }
     // unter der Straße und über dem Tunnel zugleich: nur an Portalen möglich – dort aussparen
     if (minUnder < Infinity && maxOver > -Infinity) o.skip = true;
@@ -725,7 +745,7 @@ export class Terrain {
     return this.heightAt(x, z, r.cand, r.sg, 4).h;
   }
 
-  private segBuf = new Float64Array(9 * 256);
+  private segBuf = new Float64Array(SEGW * 256);
   /** Segmente in einem Rechteck (+ Rand) als flache Zahlenliste */
   private segsNear(x0: number, z0: number, x1: number, z1: number, m = 40): SegGrid {
     const S = this.s;
@@ -751,15 +771,16 @@ export class Terrain {
           for (let d = -3; d <= 3 && deep; d++) if (!t.seg(Math.max(t.first, i + d)).tunnel) deep = false;
           tun = deep ? 1 : 2;
         }
-        if (len + 9 > list.length) { const nb = new Float64Array(list.length * 2); nb.set(list); list = this.segBuf = nb; }
+        if (len + SEGW > list.length) { const nb = new Float64Array(list.length * 2); nb.set(list); list = this.segBuf = nb; }
         list[len] = s.wx; list[len + 1] = s.wz; list[len + 2] = Math.min(s.y, s.y + s.grade * SEG); list[len + 3] = Math.cos(s.th); list[len + 4] = Math.sin(s.th);
         list[len + 5] = tun; list[len + 6] = s.portal; list[len + 7] = lL; list[len + 8] = lR;
-        len += 9;
+        list[len + 9] = s.bridge;
+        len += SEGW;
       }
     }
     // nach Zellen sortieren (Zellgröße = Suchradius, dann reichen die 3×3 Nachbarzellen)
     const buf = list.slice(0, len);
-    const n = len / 9;
+    const n = len / SEGW;
     const cs = m;
     const gx0 = x0 - m;
     const gz0 = z0 - m;
@@ -768,8 +789,8 @@ export class Terrain {
     const cellOf = new Int32Array(n);
     const count = new Int32Array(nx * nz + 1);
     for (let k = 0; k < n; k++) {
-      const ii = Math.min(nx - 1, Math.max(0, Math.floor((buf[k * 9] - gx0) / cs)));
-      const jj = Math.min(nz - 1, Math.max(0, Math.floor((buf[k * 9 + 1] - gz0) / cs)));
+      const ii = Math.min(nx - 1, Math.max(0, Math.floor((buf[k * SEGW] - gx0) / cs)));
+      const jj = Math.min(nz - 1, Math.max(0, Math.floor((buf[k * SEGW + 1] - gz0) / cs)));
       cellOf[k] = jj * nx + ii;
       count[cellOf[k] + 1]++;
     }
@@ -1413,7 +1434,7 @@ function segDist(sg: SegGrid | null, x: number, z: number): number {
       if (ii < 0 || ii >= sg.nx) continue;
       const c = jj * sg.nx + ii;
       for (let q = sg.start[c]; q < sg.start[c + 1]; q++) {
-        const b = sg.order[q] * 9;
+        const b = sg.order[q] * SEGW;
         const d = Math.hypot(x - sg.buf[b], z - sg.buf[b + 1]);
         if (d < best) best = d;
       }
