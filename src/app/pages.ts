@@ -16,3 +16,5 @@ export const AkkuPage = lazyPage(() => import('../pages/Akku').then((m) => m.Akk
 export function prefetchGames() {
   void GamePage.preload().then(() => SprintPage.preload()).then(() => BergPage.preload()).then(() => GaragePage.preload()).catch(() => undefined);
 }
+/** Welt-Editor (Admin): 3D-Welt der Minispiele bearbeiten – wird nicht vorab geladen */
+export const WorldEditorPage = lazyPage(() => import('../pages/admin/AdminWorld').then((m) => m.WorldEditorPage));

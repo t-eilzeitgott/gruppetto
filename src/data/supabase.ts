@@ -498,6 +498,31 @@ export class SupabaseSource implements DataSource {
     await schemaCheck(() => this.rest(`tours?id=eq.${encodeURIComponent(tourId)}`, { method: 'PATCH', body: { sync_mode: mode }, prefer: 'return=minimal' }));
   }
 
+  async loadWorldEdits(key: string): Promise<unknown | null> {
+    const rows = await this.rest<{ data: unknown }[]>(`world_edits?key=eq.${encodeURIComponent(key)}&select=data`);
+    return rows[0]?.data ?? null;
+  }
+
+  async saveWorldEdits(key: string, data: unknown | null): Promise<void> {
+    if (data === null) {
+      await this.rest(`world_edits?key=eq.${encodeURIComponent(key)}`, { method: 'DELETE' });
+      return;
+    }
+    await this.rest('world_edits?on_conflict=key', {
+      method: 'POST',
+      body: { key, data, updated_by: this.currentUser()?.id ?? null, updated_at: new Date().toISOString() },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+    });
+  }
+
+  async listWorldEdits(): Promise<{ key: string; updated_at: string }[]> {
+    try {
+      return await this.rest<{ key: string; updated_at: string }[]>('world_edits?select=key,updated_at&order=updated_at.desc');
+    } catch {
+      return [];
+    }
+  }
+
   async setStageSyncPaused(stageId: number, paused: boolean): Promise<void> {
     await schemaCheck(() => this.rpc('admin_set_stage_sync_paused', { p_stage: stageId, p_paused: paused }));
   }

@@ -132,6 +132,11 @@ export interface DataSource {
   loadSyncStatus(tourId: string, stageIds: number[]): Promise<SyncStatus>;
   setSyncMode(tourId: string, mode: SyncMode): Promise<void>;
   setStageSyncPaused(stageId: number, paused: boolean): Promise<void>;
+
+  // Welt-Editor (Admin): Änderungen je Tagesstrecke der Minispiele
+  loadWorldEdits(key: string): Promise<unknown | null>;
+  saveWorldEdits(key: string, data: unknown | null): Promise<void>;
+  listWorldEdits(): Promise<{ key: string; updated_at: string }[]>;
 }
 
 export type { Stage };

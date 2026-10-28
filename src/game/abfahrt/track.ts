@@ -9,6 +9,7 @@ import { STYLE, type Lang } from './facade';
 import type { StageRef } from './stageRef';
 import { finaleGrade, type FinaleSpec } from './finale';
 import { LOOKS, pickWeighted, type Region } from './region';
+import { applyEditsRange, type WorldEdits } from './worldEdits';
 
 export const SEG = 2;            // Segmentlänge in m
 export const ROAD_HALF = 2.8;    // halbe Fahrbahnbreite in m
@@ -66,6 +67,8 @@ export interface Sprite {
   v: number;        // Variante
   f: boolean;       // gespiegelt
   text?: string;
+  /** im Welt-Editor gesetzt (Kennung der Änderung) */
+  eid?: string;
 }
 
 export type ObjKind = 'bidon' | 'gold' | 'pothole' | 'rock' | 'cow' | 'cone' | 'puddle';
@@ -112,6 +115,8 @@ export interface Seg {
   tunnel: boolean;
   portal: 0 | 1 | 2;
   sprites: Sprite[] | null;
+  /** Requisiten der Strecke selbst, bevor der Welt-Editor Änderungen anwendet (undefined = noch unberührt) */
+  sprites0?: Sprite[] | null;
   objs: Obj[] | null;
   decals: Decal[] | null;
   banner: Banner | null;
@@ -200,6 +205,43 @@ export class Track {
   /** Testfahrt (Admin): keine Hindernisse auf der Strecke (Steine, Kühe, Schlaglöcher, Hütchen, Pfützen) */
   private clear = false;
   static readonly HAZARDS = new Set(['rock', 'cow', 'pothole', 'cone', 'puddle']);
+  /** Änderungen aus dem Welt-Editor (Admin): gesetzte und entfernte Requisiten – wirken beim Bau jedes Abschnitts */
+  private edits_: WorldEdits | null = null;
+  get edits(): WorldEdits | null { return this.edits_; }
+  set edits(e: WorldEdits | null) {
+    this.edits_ = e;
+    applyEditsRange(this, e, this.first, this.length);
+  }
+  /** Änderungen erneut auf einen Bereich (Streckenmeter) anwenden, z. B. nach einer neuen Requisite */
+  reapplyEdits(z0: number, z1: number) {
+    applyEditsRange(this, this.edits_, Math.floor(z0 / SEG), Math.ceil(z1 / SEG) + 1);
+  }
+
+  /**
+   * Nächste Stelle der (schon gebauten) Strecke zu einem Weltpunkt: Streckenmeter z, seitliche Lage x (rechts +)
+   * und Abstand in der Draufsicht. Für den Welt-Editor (Kamera, Setzen von Requisiten).
+   */
+  nearest(wx: number, wz: number, from = this.first, to = this.length): { z: number; x: number; d: number } {
+    let best = Infinity;
+    let bi = Math.max(from, this.first);
+    const end = Math.min(to, this.length);
+    for (let i = Math.max(from, this.first); i < end; i++) {
+      const s = this.segs[i - this.base];
+      const dx = wx - s.wx;
+      const dz = wz - s.wz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < best) { best = d2; bi = i; }
+    }
+    const s = this.segs[bi - this.base] ?? this.segs[0];
+    // entlang der Fahrtrichtung (0 = −z) projizieren, seitlich = rechts
+    const fx = Math.sin(s.th);
+    const fz = -Math.cos(s.th);
+    const dx = wx - s.wx;
+    const dz = wz - s.wz;
+    const t = Math.max(-SEG, Math.min(SEG * 2, dx * fx + dz * fz));
+    const x = dx * Math.cos(s.th) + dz * Math.sin(s.th);
+    return { z: bi * SEG + t, x, d: Math.hypot(dx - fx * t, dz - fz * t) };
+  }
   /** Hindernisse entfernen – auch aus schon gebauten Abschnitten (die Strecke selbst bleibt gleich) */
   dropHazards() {
     this.clear = true;
@@ -633,6 +675,7 @@ export class Track {
     if (sprint) this.sprintDeco(start, n, secIndex);
     else if (mountain) this.mountainDeco(start, n);
     else this.items(start, n, p.biome, D);
+    if (this.edits_) applyEditsRange(this, this.edits_, start, start + n);
   }
 
   /**
@@ -1156,6 +1199,8 @@ export class Track {
   private add(i: number, sp: Sprite) {
     const s = this.seg(i);
     (s.sprites ??= []).push(sp);
+    // Welt-Editor: der Vorrat der Originale wächst mit (sonst fiele die Requisite beim nächsten Anwenden weg)
+    if (s.sprites0 !== undefined) (s.sprites0 ??= []).push(sp);
   }
 
   private decal(i: number, d: Decal) {

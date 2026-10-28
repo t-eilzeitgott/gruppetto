@@ -918,3 +918,19 @@ create policy stage_sync_admin on public.stage_sync
 drop policy if exists sync_log_admin on public.sync_log;
 create policy sync_log_admin on public.sync_log
   for select to authenticated using (public.is_admin());
+
+-- ---------------------------------------------------------------------
+-- 8. Welt-Editor (Admin → Welt): Änderungen an einer Tagesstrecke der Minispiele
+-- key = „<spiel>:<tag>“ (z. B. abfahrt:2026-10-28), data = JSON (siehe src/game/abfahrt/worldEdits.ts).
+-- Nur Admins lesen und schreiben; der Export dient als Vorlage für die Streckengeneratoren.
+-- ---------------------------------------------------------------------
+create table if not exists public.world_edits (
+  key        text primary key,
+  data       jsonb not null,
+  updated_by uuid references public.profiles (id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+alter table public.world_edits enable row level security;
+drop policy if exists world_edits_admin on public.world_edits;
+create policy world_edits_admin on public.world_edits
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());

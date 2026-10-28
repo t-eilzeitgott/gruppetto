@@ -17,6 +17,7 @@ import { BIOME_PALETTES, mixRGB, type RGB } from './palette';
 import { lin255, type RGBf } from './models3d';
 import { LOOKS, pickWeighted, type RegionLook } from './region';
 import { MARK_CELL, markCandidate, nearMark, type Landmark } from './landmarks3d';
+import { bumpAt, type TerrainBump } from './worldEdits';
 
 // ------------------------------------------------------------------ Rauschen
 
@@ -286,6 +287,8 @@ export class Terrain {
   }
   /** Gebiete, deren Höhen sich beim letzten Fensterwechsel geändert haben (x0, z0, x1, z1) */
   private dirty: number[][] = [];
+  /** Hügel und Mulden aus dem Welt-Editor (Weltkoordinaten) – wirken vor den Klemmen an der Straße */
+  bumps: TerrainBump[] = [];
 
   /** Landschaftsbild der Gegend (Bäume, Wiesen- und Feldfarben im Tal) */
   private look: RegionLook;
@@ -626,6 +629,8 @@ export class Terrain {
     if (sp > 0) o.h += ((ridged(x / 430 + 5.3, z / 430 - 2.1) - 0.42) * 95 + (ridged(x / 170 - 1.7, z / 170 + 4.2) - 0.42) * 26) * sp;
     // Seegrund, zum Ufer hin weich ansteigend (keine senkrechten Wände rund um den See)
     if (wb > 0) o.h += (o.lakeY - 6 - Math.min(20, dr * 0.05) - o.h) * wb;
+    // Welt-Editor: Hügel und Mulden (vor den Klemmen – die Straße bleibt frei)
+    if (this.bumps.length) o.h += bumpAt(this.bumps, x, z);
     if (!sg || sg.n === 0) return o;
     const CR = clampR(cell);
     if (dr > CR + 30) return o;

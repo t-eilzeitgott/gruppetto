@@ -125,6 +125,29 @@ export class DemoSource implements DataSource {
 
   private heightProfiles = new Map<number, ProfilePoint[]>();
 
+  // Welt-Editor: im Demo-Modus nur im Browser gespeichert
+  async loadWorldEdits(key: string): Promise<unknown | null> {
+    try { const t = localStorage.getItem(`gruppetto.world.${key}`); return t ? JSON.parse(t) : null; } catch { return null; }
+  }
+
+  async saveWorldEdits(key: string, data: unknown | null): Promise<void> {
+    try {
+      if (data === null) localStorage.removeItem(`gruppetto.world.${key}`);
+      else localStorage.setItem(`gruppetto.world.${key}`, JSON.stringify(data));
+    } catch { /* egal */ }
+  }
+
+  async listWorldEdits(): Promise<{ key: string; updated_at: string }[]> {
+    const out: { key: string; updated_at: string }[] = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i) ?? '';
+        if (k.startsWith('gruppetto.world.')) out.push({ key: k.slice(16), updated_at: '' });
+      }
+    } catch { /* egal */ }
+    return out;
+  }
+
   async loadStageProfile(stageId: number): Promise<StageProfileData | null> {
     await wait(80);
     if (this.heightProfiles.has(stageId)) return { points: this.heightProfiles.get(stageId)! };

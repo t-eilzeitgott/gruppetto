@@ -9,6 +9,8 @@ import * as THREE from 'three';
 import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
 import { SpriteBank, cloud, roadArrow, roadText, warmRoadText } from './sprites';
+import { EditorMarkers, type Marker } from './editor3d';
+import type { TerrainBump } from './worldEdits';
 import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, canopyTex, fallTex, glowTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
 import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
@@ -289,8 +291,86 @@ export class Renderer3D {
   // Kamera
   private cam = { x: 0, y: 0, z: 0, th: 0, init: false, fov: 70, pack: 0 };
   playerScreen = { x: 0, y: 0, s: 60 };
-  /** nur für Tests: feste Kamera [x, y, z, Blickziel x, y, z] */
+  /** nur für Tests und den Welt-Editor: feste Kamera [x, y, z, Blickziel x, y, z] */
   debugCam: number[] | null = null;
+  /** Welt-Editor: den eigenen Fahrer nicht zeigen */
+  hidePlayer = false;
+  /** Welt-Editor: Hügel und Mulden – gelten auch nach einem Streckenwechsel */
+  private bumps: TerrainBump[] = [];
+  private markers: EditorMarkers | null = null;
+  private ray = new THREE.Raycaster();
+  private rayV = new THREE.Vector2();
+
+  /** Welt-Editor: Hügel und Mulden setzen; betroffene Kacheln werden neu gebaut */
+  setBumps(list: TerrainBump[], changed?: TerrainBump[]) {
+    this.bumps = list;
+    if (this.terrain) this.terrain.bumps = list;
+    for (const b of changed ?? list) this.invalidateTerrain(b.x - b.r - 2, b.z - b.r - 2, b.x + b.r + 2, b.z + b.r + 2);
+  }
+
+  /** Welt-Editor: Kacheln in einem Gebiet (Weltkoordinaten) neu bauen */
+  invalidateTerrain(x0: number, z0: number, x1: number, z1: number) {
+    for (const t of this.tiles.values()) {
+      const b = t.box;
+      if (b[0] < x1 && b[2] > x0 && b[1] < z1 && b[3] > z0) t.stale = true;
+    }
+  }
+
+  /** Welt-Editor: Straßenabschnitte zwischen zwei Streckenmetern neu bauen (die alten stehen, bis die neuen da sind) */
+  invalidateChunks(z0: number, z1: number) {
+    const k0 = Math.max(0, Math.floor(z0 / SEG / CH));
+    const k1 = Math.floor(z1 / SEG / CH);
+    for (let k = k0; k <= k1; k++) {
+      const c = this.chunks.get(k);
+      if (!c) continue;
+      this.chunks.delete(k);
+      const prev = this.chunkOld.get(k);
+      if (prev) this.dropChunk(prev);
+      this.chunkOld.set(k, c);
+    }
+    if (this.chunkGen && this.chunkGen.k >= k0 && this.chunkGen.k <= k1) this.chunkGen = null;
+  }
+
+  /** Welt-Editor: Marker (Notizen, Hügel, gesetzte Requisiten) */
+  setMarkers(list: Marker[]) {
+    if (!this.markers) {
+      this.markers = new EditorMarkers();
+      this.scene.add(this.markers.group);
+    }
+    this.markers.set(list);
+  }
+
+  /**
+   * Welt-Editor: Weltpunkt unter einer Bildschirmposition (0…1 von links oben) – Landschaft, Straße und
+   * Requisiten; Himmel, Wolken, Fahrer und Marker zählen nicht. null = nichts getroffen.
+   */
+  pick(u: number, v: number): { x: number; y: number; z: number } | null {
+    this.rayV.set(u * 2 - 1, -(v * 2 - 1));
+    this.ray.setFromCamera(this.rayV, this.camera);
+    this.ray.far = 6000;
+    const hits = this.ray.intersectObjects(this.scene.children, true);
+    for (const h of hits) {
+      let o: THREE.Object3D | null = h.object;
+      let skip = !(o as THREE.Mesh).isMesh;
+      while (o && !skip) { if (o.userData.nopick || o === this.sky || o === this.valley) skip = true; o = o.parent; }
+      if (skip) continue;
+      return { x: h.point.x, y: h.point.y, z: h.point.z };
+    }
+    return null;
+  }
+
+  /** Welt-Editor: Geländehöhe an einem Weltpunkt (null, solange keine Strecke da ist) */
+  groundY(x: number, z: number): number | null {
+    return this.terrain ? this.terrain.groundAt(x, z) : null;
+  }
+
+  /** Welt-Editor: Kamera (Position und Blickziel 20 m voraus) für Notizen */
+  cameraPose(): [number, number, number, number, number, number] {
+    const p = this.camera.position;
+    const d = new THREE.Vector3();
+    this.camera.getWorldDirection(d);
+    return [p.x, p.y, p.z, p.x + d.x * 20, p.y + d.y * 20, p.z + d.z * 20];
+  }
   /** Prüfmodus für Löcher: Himmel unter dem Horizont und die tiefe Rückfallfläche werden magenta */
   set debugHoles(on: boolean) {
     this.skyMat.uniforms.uHoles.value = on ? 1 : 0;
@@ -382,6 +462,7 @@ export class Renderer3D {
         }`,
     });
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(5000, 32, 16), this.skyMat);
+    this.sky.userData.nopick = true;
     this.sky.renderOrder = -10;
     this.scene.add(this.sky);
 
@@ -389,6 +470,7 @@ export class Renderer3D {
     // Talboden: nur noch Rückfallfläche tief unten (die Landschaft kommt aus dem Höhenfeld)
     this.valleyMat = new THREE.MeshBasicMaterial({ color: 0xcfe0ea, fog: true }) as unknown as THREE.MeshLambertMaterial;
     this.valley = new THREE.Mesh(new THREE.PlaneGeometry(30000, 30000), this.valleyMat);
+    this.valley.userData.nopick = true;
     this.valley.rotation.x = -Math.PI / 2;
     this.scene.add(this.valley);
 
@@ -418,6 +500,8 @@ export class Renderer3D {
     this.sprMat = spriteMaterial(this.crowdU, this.crowdAtlas);
     this.rs = new RiderSprites(this.peakU, this.msaa);
     this.scene.add(this.rs.mesh);
+    this.rs.mesh.userData.nopick = true;
+    this.skyLife.group.userData.nopick = true;
     // Landmarken (auf der mittleren Stufe) folgen deren Übergang zur gröbsten
     const mU = this.morphU[1];
     this.markMat.onBeforeCompile = (sh) => {
@@ -1109,6 +1193,7 @@ export class Renderer3D {
     this.routeEnd = 0;
     this.pre = null;
     this.terrain = new Terrain(track);
+    this.terrain.bumps = this.bumps;
     this.setAds(track.names);
     this.clearChunks();
     this.cam.init = false;
@@ -4030,10 +4115,12 @@ export class Renderer3D {
       if (this.player) this.scene.remove(this.player.group);
       this.player = new RiderModel(p.kit, this.shadowTex, 1);
       this.playerKit = kitKey;
+      this.player.group.userData.nopick = true;
       this.scene.add(this.player.group);
       this.warmUp(this.player.group);
     }
     const pm = this.player;
+    pm.group.visible = !this.hidePlayer;
     const roadY = track.heightAt(p.z);
     const air = Math.max(0, p.y - roadY);
     track.world(p.z, p.x, 0, w);
@@ -4506,7 +4593,7 @@ export class Renderer3D {
   }
 
   dispose() {
-    try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); } catch { /* Kontext evtl. schon weg */ }
+    try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); this.markers?.dispose(); } catch { /* Kontext evtl. schon weg */ }
     try { this.gl.dispose(); } catch { /* egal */ }
     // Kontext sofort freigeben: iOS erlaubt nur wenige gleichzeitig – sonst bleibt ein späteres Spiel schwarz
     try { this.gl.forceContextLoss(); } catch { /* egal */ }
