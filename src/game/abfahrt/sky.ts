@@ -10,18 +10,17 @@
  *
  * Stimmungen (Mood): Bedeckung und Schleier nach dem Tag (jeder Tag ein anderer Himmel – Schäfchenwolken, hohe
  * Türme, ein paar Cirren im Abendlicht); dazu eine Gewitterfront (dunkle Decke mit hellen Rissen, Regenvorhänge
- * am Horizont, Blitze, die Himmel und Landschaft kurz erhellen) und Hochnebel (flache graue Decke) für das
- * Wetter der Fahrt (weather.ts).
+ * am Horizont) und Hochnebel (flache graue Decke) für das Wetter der Fahrt (weather.ts).
  */
 import * as THREE from 'three';
-import { hashStr, mulberry32 } from './rng';
+import { mulberry32 } from './rng';
 
 export interface SkyMood {
   /** Bedeckung der Quellwolken 0 … 1 */
   cover: number;
   /** Schleierwolken 0 … 1 */
   cirrus: number;
-  /** Gewitterfront 0 … 1: dunkle Decke, Regenvorhänge, Blitze */
+  /** Gewitterfront 0 … 1: dunkle Decke, Regenvorhänge */
   storm: number;
   /** Hochnebel 0 … 1: flache, graue, geschlossene Decke ohne Struktur */
   overcast: number;
@@ -48,7 +47,7 @@ export const SKY_VERT = 'varying vec3 vDir; void main(){ vDir = normalize(positi
 export const SKY_FRAG = `
 uniform vec3 top; uniform vec3 horizon; uniform vec3 below; uniform vec3 sunDir; uniform vec3 sunCol; uniform float sunSize; uniform float uHoles;
 uniform sampler2D uNoise;
-uniform float uTime, uSeed, uCover, uCirrus, uStorm, uOvercast, uTowers, uFlash, uStars, uWarm;
+uniform float uTime, uSeed, uCover, uCirrus, uStorm, uOvercast, uTowers, uStars, uWarm;
 varying vec3 vDir;
 
 float hash21( vec2 p ) { p = fract( p * vec2( 123.34, 456.21 ) ); p += dot( p, p + 45.32 ); return fract( p.x * p.y ); }
@@ -173,12 +172,6 @@ void main(){
 		c += vec3( 0.9, 0.93, 1.0 ) * star * uStars * ( 0.5 + 0.5 * hash21( sc.zx ) ) * 1.6;
 	}
 
-	/* --- Blitz: erhellt die Decke von innen, am hellsten in der Nähe des Einschlags (Richtung uSeed) */
-	if ( uFlash > 0.001 ) {
-		float near = 0.5 + 0.5 * cos( atan( d.x, d.z ) - uSeed * 2.3 );
-		c += vec3( 0.75, 0.82, 1.0 ) * uFlash * ( 0.25 + 0.75 * alpha ) * ( 0.35 + 0.65 * near * near );
-	}
-
 	gl_FragColor = vec4( c, 1.0 );
 	#include <tonemapping_fragment>
 	#include <colorspace_fragment>
@@ -190,28 +183,6 @@ export function skyUniforms(noise: THREE.Texture): Record<string, THREE.IUniform
     sunDir: { value: new THREE.Vector3(0, 0.3, -1).normalize() }, sunCol: { value: new THREE.Color() }, sunSize: { value: 1 },
     uHoles: { value: 0 }, uNoise: { value: noise },
     uTime: { value: 0 }, uSeed: { value: 0 }, uCover: { value: 0.4 }, uCirrus: { value: 0.5 }, uStorm: { value: 0 }, uOvercast: { value: 0 },
-    uTowers: { value: 0.5 }, uFlash: { value: 0 }, uStars: { value: 0 }, uWarm: { value: 0 },
+    uTowers: { value: 0.5 }, uStars: { value: 0 }, uWarm: { value: 0 },
   };
-}
-
-/** Blitze einer Front: unregelmäßig alle paar Sekunden, oft als Doppelschlag; Helligkeit 0 … 1, klingt schnell ab */
-export class Lightning {
-  private next = 4;
-  private t = 0;
-  private flash = 0;
-  private rng = mulberry32(hashStr('blitz'));
-  /** Helligkeit dieses Bildes */
-  update(dt: number, storm: number): number {
-    if (storm < 0.3) { this.flash = 0; this.next = Math.max(this.next, 2); return 0; }
-    this.t += dt;
-    this.flash *= Math.exp(-dt * 14);
-    if (this.t >= this.next) {
-      this.t = 0;
-      const r = this.rng();
-      // Doppelschlag: kurz darauf noch einer
-      this.next = this.flash > 0.05 || r < 0.35 ? 0.12 + this.rng() * 0.25 : 5 + this.rng() * 14 * (1.3 - storm);
-      this.flash = Math.min(1, this.flash + 0.55 + this.rng() * 0.45);
-    }
-    return this.flash * storm;
-  }
 }

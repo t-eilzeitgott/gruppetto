@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, TT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB } from './palette';
 import { SpriteBank, roadArrow, roadText, warmRoadText } from './sprites';
-import { Lightning, SKY_FRAG, SKY_VERT, dailyMood, skyUniforms, type SkyMood } from './sky';
+import { SKY_FRAG, SKY_VERT, dailyMood, skyUniforms, type SkyMood } from './sky';
 import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
@@ -207,11 +207,9 @@ export class Renderer3D {
   private peakU = peakLight();
   private valley: THREE.Mesh;
   private valleyMat: THREE.MeshLambertMaterial;
-  /** Himmel: Stimmung des Tages (Wolken, Front, Hochnebel), vom Wetter überstimmbar; Blitze der Front */
+  /** Himmel: Stimmung des Tages (Wolken, Front, Hochnebel), vom Wetter überstimmbar */
   private mood: SkyMood = dailyMood(0);
   private moodOverride: Partial<SkyMood> | null = null;
-  private lightning = new Lightning();
-  private flash = 0;
   /** Adler, Gleitschirme, Ballon, Fernsehhubschrauber */
   private skyLife = new SkyLife();
   private leaderV = new THREE.Vector3();
@@ -2026,14 +2024,11 @@ export class Renderer3D {
     (u.below.value as THREE.Color).copy(fogC);
     (u.sunDir.value as THREE.Vector3).copy(sd);
     (u.sunCol.value as THREE.Color).copy(sunC).multiplyScalar(L.sunY > -0.1 ? 1 : 0);
-    // Wolken: Stimmung des Tages, vom Wetter der Fahrt überstimmt; Blitze einer Front erhellen auch die Landschaft
+    // Wolken: Stimmung des Tages, vom Wetter der Fahrt überstimmt
     const M = { ...this.mood, ...(this.moodOverride ?? {}) };
     u.uTime.value = this.time.value;
     u.uCover.value = M.cover; u.uCirrus.value = M.cirrus; u.uStorm.value = M.storm; u.uOvercast.value = M.overcast; u.uTowers.value = M.towers;
     u.uStars.value = L.stars; u.uWarm.value = Math.max(0, Math.min(1, (L.t - 0.3) / 0.4));
-    this.flash = this.lightning.update(dt, M.storm);
-    u.uFlash.value = this.flash;
-    if (this.flash > 0.01) { this.hemi.intensity *= 1 + this.flash * 1.2; this.fill.intensity *= 1 + this.flash * 2; }
     this.mats.facade.emissiveIntensity = L.lights * 1.25;
     this.mats.sign.emissiveIntensity = L.lights * 0.75;
     const dusk = Math.max(0, Math.min(1, (L.lights - 0.08) / 0.4));
