@@ -40,7 +40,8 @@ export class FpsMeter {
       e.className = 'fps-meter';
       e.setAttribute('aria-hidden', 'true');
       e.textContent = '– fps';
-      this.parent.append(e);
+      // direkt in den Körper der Seite (fest am Bildschirm, unabhängig von Größe und Lage der Spielfläche)
+      document.body.append(e);
       this.el = e;
     }
     const el = this.el;
