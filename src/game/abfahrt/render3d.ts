@@ -24,6 +24,7 @@ import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, 
 import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
 import { mulberry32 } from './rng';
 import { ATMO } from './grade';
+import { viewRange, viewRangeVersion } from './viewRange';
 import { setGlossEnv } from './gloss';
 import { apIn, apOut, apQ, appearify, appearifyTree, setAp } from './appear';
 import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
@@ -32,10 +33,8 @@ import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprite
  * Bäume lösen sich zwischen TREE_FADE und TREE_GONE weich auf; das Kronendach der Landschaft hebt sich schon
  * vorher (ab CAN_NEAR bis CAN_FULL) – die Wipfel ragen aus ihm heraus, bis nur noch das Dach bleibt
  */
-const TREE_FADE = 400;
-const TREE_GONE = 500;
-const CAN_NEAR = 300;
-const CAN_FULL = 640;
+/** Bäume und Kronendach: Abstände kommen aus der Sichtweite (viewRange.ts) als Uniform */
+const VR0 = viewRange();
 
 const TREES = TREE_KINDS;
 
@@ -45,8 +44,8 @@ const TREES = TREE_KINDS;
  * an. Am Rand ihres Gebiets ist sie ihr gleich – kommen dort Kacheln hinzu oder fallen weg, sieht man nichts.
  * Der Mittelpunkt liegt nur wenig voraus: in Kehren schwenkt er so kaum (die Berge in der Ferne bleiben ruhig).
  */
-const MORPH: [number, number][] = [[300, 412], [1200, 1520]];
-const MORPH_AHEAD = [96, 0];
+const MORPH: [number, number][] = [[...VR0.morph[0]], [...VR0.morph[1]]];
+const MORPH_AHEAD = [Math.round(VR0.morph[0][1] * 0.23), 0];
 /** kleinster Ring, mit dem eine Stufe bei schneller Fahrt schon weiterrückt */
 const RING_MIN = [2, 2, 1];
 
@@ -64,7 +63,7 @@ function texMean(cv: HTMLCanvasElement, srgb: boolean, ch = 0): number {
 }
 
 const CH = 40;            // Segmente je Abschnitt (80 m)
-const AHEAD = 560;        // so weit voraus wird gebaut (m)
+let AHEAD = VR0.ahead;        // so weit voraus wird gebaut (m, aus der Sichtweite)
 const BEHIND = 30;
 const CAM_BACK = 6.2;
 const CAM_UP = 2.75;
@@ -305,6 +304,24 @@ export class Renderer3D {
   }
   private holeMode = false;
   private holeU = { value: 0 };
+  /** Sichtweite: Abstände der Bäume (Ausblenden) und des Kronendachs (Heben, Farbe) als Uniforms */
+  private treeFadeU = { value: new THREE.Vector2(VR0.fade, VR0.gone) };
+  private canU = { value: new THREE.Vector4(VR0.canNear, VR0.canFull, VR0.gone - 10, 0) };
+  private range = VR0;
+  private rangeVer = 0;
+  /** Sichtweite übernehmen (live: Ringe wachsen/schrumpfen über die übliche Ringpflege) */
+  private applyRange() {
+    if (this.rangeVer === viewRangeVersion()) return;
+    this.rangeVer = viewRangeVersion();
+    const r = viewRange();
+    this.range = r;
+    LEVELS.forEach((L, lv) => { L.ring = r.rings[lv]; });
+    MORPH[0] = [...r.morph[0]]; MORPH[1] = [...r.morph[1]];
+    MORPH_AHEAD[0] = Math.round(r.morph[0][1] * 0.23);
+    AHEAD = r.ahead;
+    this.treeFadeU.value.set(r.fade, r.gone);
+    this.canU.value.set(r.canNear, r.canFull, r.gone - 10, 0);
+  }
   /** Shader-Programme, die nicht übersetzt haben (0 = alles in Ordnung) */
   shaderErrors = 0;
   private w = { x: 0, y: 0, z: 0, th: 0 };
@@ -397,7 +414,7 @@ export class Renderer3D {
     this.crowdAtlas = bakeCrowdAtlas(this.gl);
     this.treeAtlas = bakeTreeAtlas(this.gl);
     // mit Kantenglättung (Normalfall) blenden die Bäume über sie weich aus
-    this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, [TREE_FADE, TREE_GONE], this.msaa, this.morphU[0]);
+    this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, this.treeFadeU, this.msaa, this.morphU[0]);
     this.sprMat = spriteMaterial(this.crowdU, this.crowdAtlas);
     this.rs = new RiderSprites(this.peakU, this.msaa);
     this.scene.add(this.rs.mesh);
@@ -606,7 +623,7 @@ export class Renderer3D {
       uRelief: { value: this.reliefTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canCv, 2) },
       uForA: { value: new THREE.Color().setRGB(...lin255(30, 60, 34)) }, uForB: { value: new THREE.Color().setRGB(...lin255(56, 88, 46)) },
       uSnow: { value: new THREE.Color().setRGB(...lin255(240, 245, 250)) },
-      uTime: this.time, uSunDir: this.peakU.uSunDir,
+      uTime: this.time, uSunDir: this.peakU.uSunDir, uCanD: this.canU,
     };
     // Wolkenschatten: großflächige, langsam ziehende Flecken (gleiches Rauschen, gleiche Zeit in allen Materialien)
     const CLOUD = (pos: string) => `{ float cloud = smoothstep(0.5, 0.82, texture2D(uRelief, (${pos} + uTime * vec2(6.0, 2.5)) / 700.0).r); diffuseColor.rgb *= 1.0 - 0.3 * cloud; }`;
@@ -620,7 +637,7 @@ export class Renderer3D {
       if (morph) sh.uniforms.uMorph = this.morphU[lv];
       const MD = morph ? '#define TMORPH\n' : '';
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', `#include <common>\n${MD}attribute vec4 aMat;\nattribute vec3 aRock;\nattribute float aCan;\nattribute vec2 aNz;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;
+        .replace('#include <common>', `#include <common>\n${MD}uniform vec4 uCanD;\nattribute vec4 aMat;\nattribute vec3 aRock;\nattribute float aCan;\nattribute vec2 aNz;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;
           #ifdef TMORPH
           attribute vec4 aC0;\nattribute vec4 aC1;\nattribute vec4 aC2;\nattribute vec4 aC3;\nattribute vec4 aC4;\nuniform vec4 uMorph;\nvarying float vMk;
           #endif`)
@@ -640,7 +657,7 @@ export class Renderer3D {
           #else
             float canH = aCan;
           #endif
-          { vec3 cw = (modelMatrix * vec4(transformed, 1.0)).xyz; transformed.y += canH * smoothstep(${CAN_NEAR.toFixed(1)}, ${CAN_FULL.toFixed(1)}, distance(cw.xz, cameraPosition.xz)); }`)
+          { vec3 cw = (modelMatrix * vec4(transformed, 1.0)).xyz; transformed.y += canH * smoothstep(uCanD.x, uCanD.y, distance(cw.xz, cameraPosition.xz)); }`)
         .replace('#include <project_vertex>', `#include <project_vertex>
           #ifdef TMORPH
             vMat = mix(aMat, aC3, mk);\nvRk = mix(aRock, aC4.rgb, mk);\nvNz = mix(aNz, aC0.zw, mk);
@@ -649,7 +666,7 @@ export class Renderer3D {
           #endif
           vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\n#define SPLAT_U\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
+        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\n#define SPLAT_U\nuniform vec4 uCanD;\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
         .replace('#include <color_fragment>', `
           // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
           // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen.
@@ -743,7 +760,7 @@ export class Renderer3D {
             // dunkler (sonst liest man einen Hangwald als Loch im Berg)
             vec3 fc = mix(uForA, uForB, nz2.r * 0.6 + nzF * 0.4) * (0.42 + crown * 0.9) * (1.0 + 0.4 * crownL);
             fc = mix(fc, uForA * vec3(0.72, 0.7, 0.58), smoothstep(0.78, 0.45, fnT.y) * 0.22);
-            float canopy = smoothstep(${CAN_NEAR.toFixed(1)}, ${(TREE_GONE - 10).toFixed(1)}, camD);
+            float canopy = smoothstep(uCanD.x, uCanD.z, camD);
             fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, 0.45 + 0.55 * canopy);
             // Schichtung: wellige waagrechte Lagen (Sedimentbänder) – nur in der Nähe: weiter weg würden daraus
             // Höhenlinien über den ganzen Berg (gerade Streifen); an steilen Flächen kräftig, sonst schwach
@@ -980,6 +997,7 @@ export class Renderer3D {
 
   /** dt: Spielzeit dieses Bildes (s); raw: echter Abstand zum vorigen Bild (s), für das Budget beim Nachladen */
   draw(g: RaceView, dt: number, raw = dt) {
+    this.applyRange();
     const d0 = performance.now();
     // Größenwechsel genau hier: die Leinwand wird gleich danach neu bemalt
     if (this.pendingResize) this.resize();
@@ -1312,7 +1330,7 @@ export class Renderer3D {
     // Der Nahbereich (feine und mittlere Stufe) entsteht aber sofort vollständig: sonst schneidet die
     // grobe Stufe (ohne Straßenklemmen) durch Straße und Zuschauer
     // auf der Startkarte großzügig: dort soll die Welt komplett stehen, bevor es losgeht
-    const budget = this.idleBuild ? 30 : startup ? 12 : Math.max(1.2, Math.min(3.5, this.room() * 0.62));
+    const budget = this.idleBuild ? 30 : startup ? 12 : Math.max(1.2, Math.min(this.range.budget, this.room() * 0.62));
     // Korridorbreiten der Strecke vorab in kleinen Portionen (die Kacheln fragen sie dann nur noch ab)
     T.prefetchLim(t0 + (this.idleBuild ? 6 : 0.3));
     if (fresh) {
@@ -1709,7 +1727,7 @@ export class Renderer3D {
     this.fog.color.copy(fogC);
     // klare Bergluft: Nahes knackig, Fernes sanft im Dunst
     // Luftperspektive: Fernes verblasst deutlich – gibt den Bergen Tiefe statt einer Wand
-    this.fog.density = 0.00085 + L.hazeAmt * 0.0002;
+    this.fog.density = (0.00085 + L.hazeAmt * 0.0002) * this.range.fog;
     const tint = new THREE.Color().setRGB(L.tint[0] / 255, L.tint[1] / 255, L.tint[2] / 255, THREE.SRGBColorSpace);
     // abends etwas weniger Licht – aber die Strecke bleibt gut lesbar
     const dayK = 1 - L.lights * 0.45;
@@ -2245,7 +2263,7 @@ export class Renderer3D {
     // danach mit Zeitbudget je Bild (nächste zuerst), auf der Startkarte großzügiger; der Bau gibt an der
     // Zeitgrenze von selbst ab (feine Häppchen)
     const t0 = performance.now();
-    let budget = this.idleBuild ? 12 : Math.max(0.8, Math.min(2.2, this.room() * 0.38));
+    let budget = this.idleBuild ? 12 : Math.max(0.8, Math.min(this.range.chunkBudget, this.room() * 0.38));
     // knapp vor dem Fahrer fehlt noch etwas: dann zügig (sonst müsste es gleich am Stück entstehen – ein Ruckler)
     {
       let k = from;

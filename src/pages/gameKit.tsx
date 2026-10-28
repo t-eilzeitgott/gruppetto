@@ -4,6 +4,8 @@
  */
 import { useEffect, useState } from 'react';
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
+import { RANGES, setViewRange, viewRange, type RangeId } from '../game/abfahrt/viewRange';
+import { Segmented } from '../ui/kit';
 
 export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 export const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
@@ -65,6 +67,24 @@ export function useCountUp(target: number) {
     return () => cancelAnimationFrame(raf);
   }, [target]);
   return v;
+}
+
+/** Sichtweite im Pausenmenü: wie weit und wie schnell Details geladen werden */
+export function RangePicker() {
+  const [v, setV] = useState<RangeId>(() => viewRange().id);
+  const hint: Record<RangeId, string> = {
+    eco: 'Kurze Sicht, schont Akku und ältere Geräte',
+    normal: 'Ausgewogen',
+    far: 'Weite Sicht, mehr Bäume',
+    max: 'Maximale Sicht – braucht ein starkes Gerät',
+  };
+  return (
+    <div className="abf-range">
+      <span className="abf-range__label">Sichtweite</span>
+      <Segmented label="Sichtweite" value={v} options={RANGES.map((r) => ({ value: r.id, label: r.label }))} onChange={(id) => { setViewRange(id); setV(id); }} />
+      <span className="abf-range__hint">{hint[v]}</span>
+    </div>
+  );
 }
 
 /** Schalter im Pausenmenü: Bildrate unten links anzeigen */

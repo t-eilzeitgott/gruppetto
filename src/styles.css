@@ -1255,6 +1255,12 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   color: rgba(255, 255, 255, 0.5); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); white-space: nowrap;
 }
 .fps-meter.is-slow { color: rgba(255, 196, 120, 0.75); }
+/* Sichtweite im Pausenmenü */
+.abf-range { display: flex; flex-direction: column; gap: 6px; width: 100%; padding-top: 6px; }
+.abf-range__label { font-size: 15px; font-weight: 600; }
+.abf-range .segmented { width: 100%; }
+.abf-range .segmented__item { flex: 1; min-width: 0; padding-left: 4px; padding-right: 4px; white-space: nowrap; }
+.abf-range__hint { font-size: 13px; line-height: 1.3; opacity: 0.7; }
 /* Schalter im Pausenmenü */
 .abf-switch {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; padding: 4px 2px 0;

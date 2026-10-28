@@ -476,7 +476,7 @@ export interface TreeLightU {
  * msaa: Durchsichtigkeit über die Kantenglättung (4 Stufen je Bildpunkt, dazwischen gerastert – wirkt wie echtes
  * Überblenden); ohne Kantenglättung ein Raster je Bildpunkt.
  */
-export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: [number, number], msaa = true, morph?: { value: THREE.Vector4 }): THREE.ShaderMaterial {
+export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: { value: THREE.Vector2 }, msaa = true, morph?: { value: THREE.Vector4 }): THREE.ShaderMaterial {
   const m = new THREE.ShaderMaterial({
     fog: true,
     defines: msaa ? { BB_A2C: '' } : {},
@@ -495,6 +495,7 @@ attribute vec4 aT3; // Farbe
 attribute vec4 aT4; // Umriss: halbe Breiten
 uniform float uTime;
 uniform vec4 uMorph;
+uniform vec2 uFade;
 varying vec2 vUv;
 varying vec3 vTint;
 varying vec3 vR;
@@ -509,7 +510,7 @@ void main() {
   P.y += aT3.w * smoothstep(uMorph.z, uMorph.w, max(abs(P.x - uMorph.x), abs(P.z - uMorph.y)));
   vec2 toC = cameraPosition.xz - P.xz;
   float d = max(length(toC), 0.01);
-  vFade = 1.0 - smoothstep(${fade[0].toFixed(1)}, ${fade[1].toFixed(1)}, d);
+  vFade = 1.0 - smoothstep(uFade.x, uFade.y, d);
   float s = aT0.w;
   if (vFade <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 dC = toC / d;
@@ -593,6 +594,7 @@ void main() {
   m.uniforms.uN.value = atlas.normal;
   m.uniforms.uTime = time;
   if (morph) m.uniforms.uMorph = morph;
+  m.uniforms.uFade = fade;
   for (const k of ['uSunDir', 'uSunC', 'uSkyC', 'uGroundC', 'uFillDir', 'uFillC'] as const) m.uniforms[k] = light[k];
   Object.assign(m.uniforms, ATMO);
   return m;
