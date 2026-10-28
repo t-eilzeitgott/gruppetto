@@ -939,9 +939,47 @@ export function cloud(seed: number): HTMLCanvasElement {
 }
 
 /** Text als Straßenmalerei (weiß, leicht verwittert), lang gezogen für die Perspektive */
-export function roadText(text: string): HTMLCanvasElement {
-  const W = 512;
+/** Verwitterung (abgeplatzte Farbe) einmal malen; jede Schrift nimmt einen anderen Ausschnitt */
+let weatherCv: HTMLCanvasElement | null = null;
+/** Vorlage schon beim Start malen (nicht erst bei der ersten Schrift auf der Straße) */
+export function warmRoadText() { weather(); }
+function weather(): HTMLCanvasElement {
+  if (weatherCv) return weatherCv;
+  const W = 1024;
   const H = 512;
+  const cv = canvas(W, H);
+  const c = cv.getContext('2d')!;
+  const r = mulberry32(4711);
+  // wie vorher je Schrift: 1600 Tupfer auf 512 × 512 (hier halb so hoch gestaucht, siehe roadText) – direkt in die
+  // Pixel geschrieben (6400 einzelne Pfade zu zeichnen dauerte spürbar)
+  const img = c.createImageData(W, H);
+  const px = img.data;
+  for (let i = 0; i < 6400; i++) {
+    const a = Math.round((0.15 + r() * 0.45) * 255);
+    const cx = r() * W;
+    const cy = r() * H;
+    const rx = 0.6 + r() * 1.6;
+    const ry = (0.6 + r() * 1.6) / 2;
+    for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, Math.ceil(cy + ry)); y++) {
+      for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(W - 1, Math.ceil(cx + rx)); x++) {
+        const dx = (x + 0.5 - cx) / rx;
+        const dy = (y + 0.5 - cy) / ry;
+        if (dx * dx + dy * dy > 1) continue;
+        const o = (y * W + x) * 4 + 3;
+        // übereinander: wie mehrfaches Abtragen
+        px[o] = 255 - Math.round(((255 - px[o]) * (255 - a)) / 255);
+      }
+    }
+  }
+  c.putImageData(img, 0, 0);
+  weatherCv = cv;
+  return cv;
+}
+
+export function roadText(text: string): HTMLCanvasElement {
+  // halb so hoch wie breit, die Schrift nur 1,1-fach gestreckt: dasselbe Bild auf der Straße, ein Viertel der Arbeit
+  const W = 512;
+  const H = 256;
   const cv = canvas(W, H);
   const c = cv.getContext('2d')!;
   c.fillStyle = 'rgba(255,255,255,0.92)';
@@ -952,13 +990,13 @@ export function roadText(text: string): HTMLCanvasElement {
   while (c.measureText(text).width > W * 0.94 && fs > 40) { fs -= 6; c.font = `900 ${fs}px ${FONT}`; }
   c.save();
   c.translate(W / 2, H / 2);
-  c.scale(1, 2.2);
+  c.scale(1, 1.1);
   c.fillText(text, 0, 0);
   c.restore();
-  // verwittern
+  // verwittern: ein Ausschnitt der gemeinsamen Vorlage (je Schrift ein anderer)
   c.globalCompositeOperation = 'destination-out';
-  const r = mulberry32(hashText(text));
-  for (let i = 0; i < 1600; i++) { c.fillStyle = `rgba(0,0,0,${(0.15 + r() * 0.45).toFixed(2)})`; c.beginPath(); c.arc(r() * W, r() * H, 0.6 + r() * 1.6, 0, Math.PI * 2); c.fill(); }
+  const h = hashText(text);
+  c.drawImage(weather(), -(h % 512), -((h >>> 9) % 256));
   return cv;
 }
 

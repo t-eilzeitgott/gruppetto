@@ -11,7 +11,7 @@
  * Kämpfersteinen, Gesims und einer Marmortafel mit Namen und Länge.
  */
 import * as THREE from 'three';
-import { GB, lin, type RGBf } from './models3d';
+import { FArr, GB, lin, type RGBf } from './models3d';
 import { TSIGN } from './tex3d';
 
 /** Wandfläche (seitlich ab Mitte), Kämpfer (Beginn des Gewölbes), Scheitel */
@@ -49,21 +49,21 @@ interface Corner { p: number[]; u: number; v: number; lat: number; h: number; z:
  * Leuchtenabstands nahe am Abschnitt): kleine Zahlen bleiben auf Handy-Grafikchips genau – große flimmern.
  */
 export class TB {
-  p: number[] = [];
-  c: number[] = [];
-  u: number[] = [];
-  t: number[] = [];
-  n: number[] = [];
-  k: number[] = [];
+  p = new FArr();
+  c = new FArr();
+  u = new FArr();
+  t = new FArr();
+  n = new FArr();
+  k = new FArr(64);
   base = 0;
   get empty() { return this.p.length === 0; }
-  private v(q: Corner, col: RGBf, k: number, n: number[]) {
-    this.p.push(q.p[0], q.p[1], q.p[2]);
-    this.c.push(col[0], col[1], col[2]);
-    this.u.push(q.u, q.v);
-    this.t.push(q.lat, q.h, q.z - this.base, q.dp);
-    this.n.push(n[0], n[1], n[2]);
-    this.k.push(k);
+  private v(q: Corner, col: RGBf, k: number, nx: number, ny: number, nz: number) {
+    this.p.push3(q.p[0], q.p[1], q.p[2]);
+    this.c.push3(col[0], col[1], col[2]);
+    this.u.push2(q.u, q.v);
+    this.t.push4(q.lat, q.h, q.z - this.base, q.dp);
+    this.n.push3(nx, ny, nz);
+    this.k.push1(k);
   }
   private tri(a: Corner, b: Corner, c: Corner, col: RGBf, k: number) {
     // Normale aus der Lage in der Röhre (Seite ist egal: das Licht nimmt den Betrag)
@@ -72,8 +72,7 @@ export class TB {
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     const l = Math.hypot(nx, ny, nz) || 1;
     nx /= l; ny /= l; nz /= l;
-    const n = [nx, ny, nz];
-    this.v(a, col, k, n); this.v(b, col, k, n); this.v(c, col, k, n);
+    this.v(a, col, k, nx, ny, nz); this.v(b, col, k, nx, ny, nz); this.v(c, col, k, nx, ny, nz);
   }
   /** k: 0 schlicht, 1 mit Textur (Bruchteile mischen), 2 leuchtend (ohne Licht) */
   quad(a: Corner, b: Corner, c: Corner, d: Corner, col: RGBf, k: number) {
@@ -82,12 +81,12 @@ export class TB {
   }
   build(): THREE.BufferGeometry {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.u, 2));
-    g.setAttribute('aT', new THREE.Float32BufferAttribute(this.t, 4));
-    g.setAttribute('aN', new THREE.Float32BufferAttribute(this.n, 3));
-    g.setAttribute('aK', new THREE.Float32BufferAttribute(this.k, 1));
+    g.setAttribute('position', new THREE.BufferAttribute(this.p.take(), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(this.c.take(), 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(this.u.take(), 2));
+    g.setAttribute('aT', new THREE.BufferAttribute(this.t.take(), 4));
+    g.setAttribute('aN', new THREE.BufferAttribute(this.n.take(), 3));
+    g.setAttribute('aK', new THREE.BufferAttribute(this.k.take(), 1));
     g.computeBoundingSphere();
     return g;
   }

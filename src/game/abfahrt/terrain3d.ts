@@ -97,32 +97,39 @@ const kindOf = (s: Side, tunnel: boolean): number => {
   return K_FLAT;
 };
 
-/** Querprofil eines Straßenstücks: Höhe relativ zur Straße im Abstand e ab Bankettkante */
-function profile(kind: number, tilt: number, wall: number, e: number, b: number, floorRel: number, ridgeRel: number, lakeRel: number, lakeW: number, depth: number): number {
+/**
+ * Kommazahlen für profile() (Eingaben 0–7, Ergebnis 8). Über ein Feld statt als Argumente: so legt der Aufruf
+ * keine Zahlenobjekte an – die Funktion läuft tausendfach je Bild, der Müll löste sonst häufige Speicherbereinigungen
+ * (spürbare Ruckler) aus.
+ */
+const PF = new Float64Array(9);
+/** Querprofil eines Straßenstücks: Höhe relativ zur Straße im Abstand e ab Bankettkante (Eingaben in PF, Ergebnis PF[8]) */
+function profile(kind: number, b: number): void {
+  const tilt = PF[0], wall = PF[1], e = PF[2], floorRel = PF[3], ridgeRel = PF[4], lakeRel = PF[5], lakeW = PF[6], depth = PF[7];
   switch (kind) {
     case K_UP: {
       const lin = tilt * Math.min(e, 30) + Math.max(0, e - 30) * S_UP[b];
-      return smin(lin, ridgeRel, 60);
+      { PF[8] = smin(lin, ridgeRel, 60); return; }
     }
     case K_WALL: {
       const lin = (e < 0.6 ? wall * (e / 0.6) : wall + 0.4 * Math.min(1, (e - 0.6) / 1.2) + tilt * Math.max(0, e - 1.8)) + Math.max(0, e - 30) * S_UP[b];
-      return smin(lin, Math.max(ridgeRel, wall + 24), 60);
+      { PF[8] = smin(lin, Math.max(ridgeRel, wall + 24), 60); return; }
     }
     case K_TUNNEL: {
       // Berg über dem Tunnel: am Portal gut 10 m, nach innen steil ansteigend (Felsrücken statt Erdwall).
       // Bergseitig steigt er weiter an, talseitig fällt er zum Tal hin ab (sonst stünde dort eine Wand)
       const top = 13 + Math.min(depth * 1.25, 80);
-      if (tilt < -0.03) return smax(top - Math.max(0, e - 4) * 0.8, floorRel, 20);
-      return smin(top + 0.5 * e, Math.max(ridgeRel, 60), 40);
+      if (tilt < -0.03) { PF[8] = smax(top - Math.max(0, e - 4) * 0.8, floorRel, 20); return; }
+      { PF[8] = smin(top + 0.5 * e, Math.max(ridgeRel, 60), 40); return; }
     }
     case K_FLAT: {
       const lin = 0.13 + Math.min(e, 40) * 0.07 + Math.max(0, e - 40) * S_UP[b];
-      return smin(lin, ridgeRel, 60);
+      { PF[8] = smin(lin, ridgeRel, 60); return; }
     }
     case K_WATER: {
-      if (e < 6) return lakeRel * sstep(0, 6, e);
-      if (e < lakeW) return lakeRel;
-      return smin(lakeRel + (e - lakeW) * 0.42, ridgeRel, 60);
+      if (e < 6) { PF[8] = lakeRel * sstep(0, 6, e); return; }
+      if (e < lakeW) { PF[8] = lakeRel; return; }
+      { PF[8] = smin(lakeRel + (e - lakeW) * 0.42, ridgeRel, 60); return; }
     }
     case K_DROP: {
       const k = Math.max(0.6, -tilt);
@@ -135,14 +142,14 @@ function profile(kind: number, tilt: number, wall: number, e: number, b: number,
       else near = -k * (26 + (e - 18) * 0.9);
       const eF = 18 + Math.max(0, (-26 * k - floorRel) / (0.9 * k));
       const v = smax(near, floorRel, 18);
-      return smin(v + Math.max(0, e - eF - 420) * 0.42, ridgeRel, 60);
+      { PF[8] = smin(v + Math.max(0, e - eF - 420) * 0.42, ridgeRel, 60); return; }
     }
     default: { // K_DOWN
       const t30 = tilt * 30;
       const lin = tilt * Math.min(e, 30) - Math.max(0, e - 30) * S_DOWN[b];
       const eF = 30 + Math.max(0, (t30 - floorRel) / S_DOWN[b]);
       const v = smax(lin, floorRel, 22);
-      return smin(v + Math.max(0, e - eF - 420) * 0.42, ridgeRel, 60);
+      { PF[8] = smin(v + Math.max(0, e - eF - 420) * 0.42, ridgeRel, 60); return; }
     }
   }
 }
@@ -214,7 +221,7 @@ class Samples {
 
 /** Straßensegmente eines Gebiets, nach Zellen sortiert (schnelle Umkreissuche) */
 interface SegGrid { buf: Float64Array; n: number; x0: number; z0: number; cs: number; nx: number; nz: number; start: Int32Array; order: Int32Array }
-export interface Region { cand: number[]; sg: SegGrid }
+export interface Region { cand: Int32Array; sg: SegGrid }
 
 /** Ergebnis der Höhenberechnung an einem Punkt */
 interface HPoint { h: number; water: number; lakeY: number; floor: number; b: number; dRoad: number; skip: boolean; near: boolean; ridge: number; floorMin: number }
@@ -230,6 +237,14 @@ export class Terrain {
   private rawLimCache = new Map<number, [number, number]>();
   /** Fensterwechsel zählen: Kacheln kennen so den Stand, mit dem sie gebaut wurden */
   version = 0;
+  /**
+   * Zeitgrenze für den Bau in Häppchen (performance.now()): ist sie überschritten, gibt der Bau an der nächsten
+   * Stelle die Kontrolle ab – so bleibt jedes Bild in seinem Zeitbudget (Infinity: am Stück, z. B. in Tests)
+   */
+  deadline = Infinity;
+  private late(): boolean {
+    return this.deadline !== Infinity && performance.now() > this.deadline;
+  }
   /** Gebiete, deren Höhen sich beim letzten Fensterwechsel geändert haben (x0, z0, x1, z1) */
   private dirty: number[][] = [];
 
@@ -414,16 +429,20 @@ export class Terrain {
     return d;
   }
 
-  /** Proben-Indizes im Umkreis r um (cx, cz) */
-  private near(cx: number, cz: number, r: number, out: number[]) {
-    out.length = 0;
+  private nearBuf = new Int32Array(1024);
+  /** Proben-Indizes im Umkreis r um (cx, cz) – als eigenes Int32Array (kein Zahlenlisten-Müll) */
+  private near(cx: number, cz: number, r: number): Int32Array {
     const S = this.s;
     const r2 = r * r;
+    if (this.nearBuf.length < S.n) this.nearBuf = new Int32Array(S.n * 2);
+    const b = this.nearBuf;
+    let k = 0;
     for (let q = 0; q < S.n; q++) {
       const dx = S.x[q] - cx;
       const dz = S.z[q] - cz;
-      if (dx * dx + dz * dz < r2) out.push(q);
+      if (dx * dx + dz * dz < r2) b[k++] = q;
     }
+    return b.slice(0, k);
   }
 
   // ---------------------------------------------------------------- Höhe
@@ -434,7 +453,7 @@ export class Terrain {
    * Großform an (x, z): gewichtetes Mittel der Querprofile aller Straßenstücke im Umkreis
    * (ohne Kleinformen und ohne Klemmen) – glatt, darf darum auch gröber gerechnet und interpoliert werden.
    */
-  private base(x: number, z: number, cand: number[]): HPoint {
+  private base(x: number, z: number, cand: Int32Array): HPoint {
     const S = this.s;
     const o = this.hp;
     o.skip = false;
@@ -473,7 +492,9 @@ export class Terrain {
       const y = S.y[q];
       const fl = S.floor[q];
       const lk = S.lake[q];
-      let p = profile(kind, tilt, wall, e, S.b[q], fl - y, fl + ridgeH - y, lk - y, S.lakeW[q], S.dep[q]);
+      PF[0] = tilt; PF[1] = wall; PF[2] = e; PF[3] = fl - y; PF[4] = fl + ridgeH - y; PF[5] = lk - y; PF[6] = S.lakeW[q]; PF[7] = S.dep[q];
+      profile(kind, S.b[q]);
+      let p = PF[8];
       // weiter draußen gehen alle Querprofile in dieselbe freie Berglandschaft über – sonst stünde am Rand
       // des Einflussbereichs eine Wand (Talseiten steigen so zu Bergen auf der Gegenseite an)
       // auch vor und hinter einem Straßenstück (seitlicher Abstand klein, wirklicher Abstand groß) – sonst
@@ -605,7 +626,7 @@ export class Terrain {
     return o;
   }
 
-  private heightAt(x: number, z: number, cand: number[], sg: SegGrid | null, cell = 4): HPoint {
+  private heightAt(x: number, z: number, cand: Int32Array, sg: SegGrid | null, cell = 4): HPoint {
     return this.finish(x, z, this.base(x, z, cand), sg, cell);
   }
 
@@ -621,8 +642,7 @@ export class Terrain {
 
   /** Rechenbereich vorbereiten (für viele Abfragen in einem Gebiet, z. B. ein Streckenabschnitt) */
   region(x0: number, z0: number, x1: number, z1: number): Region {
-    const cand: number[] = [];
-    this.near((x0 + x1) / 2, (z0 + z1) / 2, Math.hypot(x1 - x0, z1 - z0) / 2 + R_INF + 10, cand);
+    const cand = this.near((x0 + x1) / 2, (z0 + z1) / 2, Math.hypot(x1 - x0, z1 - z0) / 2 + R_INF + 10);
     return { cand, sg: this.segsNear(x0, z0, x1, z1, clampR(4) + 24) };
   }
 
@@ -631,11 +651,13 @@ export class Terrain {
     return this.heightAt(x, z, r.cand, r.sg, 4).h;
   }
 
+  private segBuf = new Float64Array(9 * 256);
   /** Segmente in einem Rechteck (+ Rand) als flache Zahlenliste */
   private segsNear(x0: number, z0: number, x1: number, z1: number, m = 40): SegGrid {
     const S = this.s;
     const t = this.track;
-    const list: number[] = [];
+    let list = this.segBuf;
+    let len = 0;
     for (let q = 0; q < S.n; q++) {
       const sx = S.x[q];
       const sz = S.z[q];
@@ -645,7 +667,9 @@ export class Terrain {
         const i = i0 + j;
         if (i < t.first) continue;
         const s: Seg = t.seg(i);
-        const [lL, lR] = s.tunnel ? [0, 0] : this.lim(i);
+        let lL = 0;
+        let lR = 0;
+        if (!s.tunnel) { const lm = this.lim(i); lL = lm[0]; lR = lm[1]; }
         // 1 = Tunnel (Berg darüber), 2 = Tunnelende nahe am Portal (keine Klemme), 0 = offene Straße
         let tun = 0;
         if (s.tunnel) {
@@ -653,12 +677,15 @@ export class Terrain {
           for (let d = -3; d <= 3 && deep; d++) if (!t.seg(Math.max(t.first, i + d)).tunnel) deep = false;
           tun = deep ? 1 : 2;
         }
-        list.push(s.wx, s.wz, Math.min(s.y, s.y + s.grade * SEG), Math.cos(s.th), Math.sin(s.th), tun, s.portal, lL, lR);
+        if (len + 9 > list.length) { const nb = new Float64Array(list.length * 2); nb.set(list); list = this.segBuf = nb; }
+        list[len] = s.wx; list[len + 1] = s.wz; list[len + 2] = Math.min(s.y, s.y + s.grade * SEG); list[len + 3] = Math.cos(s.th); list[len + 4] = Math.sin(s.th);
+        list[len + 5] = tun; list[len + 6] = s.portal; list[len + 7] = lL; list[len + 8] = lR;
+        len += 9;
       }
     }
     // nach Zellen sortieren (Zellgröße = Suchradius, dann reichen die 3×3 Nachbarzellen)
-    const buf = Float64Array.from(list);
-    const n = list.length / 9;
+    const buf = list.slice(0, len);
+    const n = len / 9;
     const cs = m;
     const gx0 = x0 - m;
     const gz0 = z0 - m;
@@ -727,16 +754,15 @@ export class Terrain {
     const cRG = new Float32Array(GC * GC);
     // Straßenproben je Block von 8×8 Stützpunkten (statt für die ganze Kachel): deutlich weniger Rechnerei
     const BLK = 8;
-    const blocks = new Map<number, number[]>();
+    const blocks = new Map<number, Int32Array>();
     const candAt = (i: number, j: number) => {
       const key = Math.floor(j / BLK) * 4096 + Math.floor(i / BLK);
       let c = blocks.get(key);
       if (!c) {
-        c = [];
         const span = (BLK - 1) * step * cell;
         const bx = x0 + (Math.floor(i / BLK) * BLK * step - off) * cell + span / 2;
         const bz = z0 + (Math.floor(j / BLK) * BLK * step - off) * cell + span / 2;
-        this.near(bx, bz, span * 0.72 + R_INF + 1, c);
+        c = this.near(bx, bz, span * 0.72 + R_INF + 1);
         blocks.set(key, c);
       }
       return c;
@@ -746,9 +772,10 @@ export class Terrain {
         const p = this.base(x0 + (i * step - off) * cell, z0 + (j * step - off) * cell, candAt(i, j));
         const k = j * GC + i;
         cH[k] = p.h; cW[k] = p.water; cLY[k] = p.lakeY; cFL[k] = p.floor; cB[k] = p.b; cDR[k] = p.dRoad; cRG[k] = p.ridge;
+        if ((i & 1) === 1 && this.late()) yield;
       }
       // kleine Schritte: ein Schritt soll ein Bild nicht spürbar verlängern
-      if (lv > 0 || j % 2 === 1) yield;
+      if (this.late()) yield;
     }
     const hp = this.hp;
     for (let j = 0; j < G; j++) {
@@ -762,9 +789,14 @@ export class Terrain {
         const u = fi - ii;
         const v = fj - jj;
         const k00 = jj * GC + ii;
-        const lerp4 = (A: Float32Array) => A[k00] * (1 - u) * (1 - v) + A[k00 + 1] * u * (1 - v) + A[k00 + GC] * (1 - u) * v + A[k00 + GC + 1] * u * v;
-        hp.h = lerp4(cH); hp.water = lerp4(cW); hp.lakeY = lerp4(cLY); hp.floor = lerp4(cFL);
-        hp.dRoad = lerp4(cDR); hp.ridge = lerp4(cRG);
+        const w00 = (1 - u) * (1 - v), w10 = u * (1 - v), w01 = (1 - u) * v, w11 = u * v;
+        const k10 = k00 + 1, k01 = k00 + GC, k11 = k00 + GC + 1;
+        hp.h = cH[k00] * w00 + cH[k10] * w10 + cH[k01] * w01 + cH[k11] * w11;
+        hp.water = cW[k00] * w00 + cW[k10] * w10 + cW[k01] * w01 + cW[k11] * w11;
+        hp.lakeY = cLY[k00] * w00 + cLY[k10] * w10 + cLY[k01] * w01 + cLY[k11] * w11;
+        hp.floor = cFL[k00] * w00 + cFL[k10] * w10 + cFL[k01] * w01 + cFL[k11] * w11;
+        hp.dRoad = cDR[k00] * w00 + cDR[k10] * w10 + cDR[k01] * w01 + cDR[k11] * w11;
+        hp.ridge = cRG[k00] * w00 + cRG[k10] * w10 + cRG[k01] * w01 + cRG[k11] * w11;
         hp.b = cB[(jj + (v > 0.5 ? 1 : 0)) * GC + ii + (u > 0.5 ? 1 : 0)];
         const p = this.finish(x, z, hp, sgr, cell);
         const k = j * G + i;
@@ -778,8 +810,10 @@ export class Terrain {
         NR[k] = p.near ? 1 : 0;
         SF[k] = p.floorMin;
         RG[k] = p.ridge;
+        // an der Straße (Klemmen) teuer: oft nachsehen
+        if ((i & 1) === 1 && this.late()) yield;
       }
-      if (j % 3 === 2) yield;
+      if (this.late()) yield;
     }
     const cols = this.colorsFor(lv);
     // Kronendach: In der Ferne ragt der Wald als Fläche über den Boden (statt einzelner Bäume) – mit leicht welliger
@@ -796,6 +830,7 @@ export class Terrain {
         const f = this.forestAt(x, z, H[k] - FL[k], (H[k + 1] - H[k - 1]) / (2 * cell), (H[k + G] - H[k - G]) / (2 * cell), cols[BI[k]]);
         if (f > 0) CAN[k] = f * CANOPY * (0.8 + 0.4 * vnoise(x / 37, z / 37)) * sstep(45, 90, DR[k]);
       }
+      if (this.late()) yield;
     }
     return { lv, G, cell, x0, z0, sgr, H, W, LY, FL, BI, DR, SK, NR, SF, RG, CAN };
   }
@@ -808,6 +843,7 @@ export class Terrain {
     const { G, cell, x0, z0, H, W, LY, FL, BI, CAN } = g;
     const cols = this.colorsFor(g.lv);
     const tmp: RGBf = [0, 0, 0];
+    const tmpR: RGBf = [0, 0, 0];
     const mix = (p: RGBf, q: RGBf, t: number, out: RGBf) => { out[0] = p[0] + (q[0] - p[0]) * t; out[1] = p[1] + (q[1] - p[1]) * t; out[2] = p[2] + (q[2] - p[2]) * t; return out; };
     const { pos, nor, col, mat, nzA, rck, can, uvs } = a;
     for (let j = 0; j < V; j++) {
@@ -842,7 +878,7 @@ export class Terrain {
         nzA[v * 2] = Math.max(0, Math.min(1, 0.5 + (fbm(x / 170 - 4.7, z / 170 + 8.2, 2) - 0.5) * 1.7));
         nzA[v * 2 + 1] = Math.max(0, Math.min(1, 0.5 + (fbm(x / 170 + 2.9, z / 170 - 6.4, 2) - 0.5) * 1.7));
         let c: RGBf;
-        const rc = mix(C.rock, C.rockDark, n2 * 0.8 + steep * 0.3, [0, 0, 0]);
+        const rc = mix(C.rock, C.rockDark, n2 * 0.8 + steep * 0.3, tmpR);
         rck[v * 3] = rc[0]; rck[v * 3 + 1] = rc[1]; rck[v * 3 + 2] = rc[2];
         if (wet > 0.5 && y < LY[k] - 0.5) {
           c = mix(C.sand, C.lakeBed, sstep(0, 6, LY[k] - y), tmp);
@@ -860,7 +896,7 @@ export class Terrain {
         const shadeV = 0.94 + (n2 - 0.5) * 0.1;
         col[v * 3] = c[0] * shadeV; col[v * 3 + 1] = c[1] * shadeV; col[v * 3 + 2] = c[2] * shadeV;
       }
-      if (j % 8 === 7) yield;
+      if (this.late()) yield;
     }
   }
 
@@ -904,10 +940,19 @@ export class Terrain {
       const cNV = cV * cV;
       cA = { pos: new Float32Array(cNV * 3), nor: new Float32Array(cNV * 3), col: new Float32Array(cNV * 3), mat: new Float32Array(cNV * 4), nzA: new Float32Array(cNV * 2), rck: new Float32Array(cNV * 3), can: new Float32Array(cNV), uvs: null };
       yield* this.vertexSteps(cg, cV, cA);
-      for (let v = 0; v < V * V; v++) this.coarseAt(pos[v * 3], pos[v * 3 + 2], cg, cV, cA, morph, v);
+      for (let v = 0; v < V * V; v++) {
+        this.coarseAt(pos[v * 3], pos[v * 3 + 2], cg, cV, cA, morph, v);
+        if ((v & 31) === 31 && this.late()) yield;
+      }
     }
+    if (this.late()) yield;
     // Dreiecke (ohne die ausgesparten Stellen an Tunnelportalen)
-    const idx: number[] = [];
+    const idxA = NV < 65536 ? new Uint16Array(N * N * 6 + 4 * N * 12) : new Uint32Array(N * N * 6 + 4 * N * 12);
+    let ni = 0;
+    const push6 = (a: number, b: number, c: number, d: number, e: number, f: number) => {
+      idxA[ni] = a; idxA[ni + 1] = b; idxA[ni + 2] = c; idxA[ni + 3] = d; idxA[ni + 4] = e; idxA[ni + 5] = f;
+      ni += 6;
+    };
     for (let j = 0; j < N; j++) {
       for (let i = 0; i < N; i++) {
         const a = j * V + i;
@@ -917,8 +962,8 @@ export class Terrain {
         const ka = (j + 1) * G + (i + 1);
         if (SK[ka] || SK[ka + 1] || SK[ka + G] || SK[ka + G + 1]) continue;
         // Diagonale entlang der kleineren Höhendifferenz (weniger Knicke)
-        if (Math.abs(H[ka] - H[ka + G + 1]) < Math.abs(H[ka + 1] - H[ka + G])) idx.push(a, c, d, a, d, b);
-        else idx.push(a, c, b, b, c, d);
+        if (Math.abs(H[ka] - H[ka + G + 1]) < Math.abs(H[ka + 1] - H[ka + G])) push6(a, c, d, a, d, b);
+        else push6(a, c, b, b, c, d);
       }
     }
     // Schürzen an allen vier Rändern: verdecken Ritzen zu Nachbarn und zur gröberen Stufe
@@ -950,8 +995,8 @@ export class Terrain {
         const kb = this.gridK(b, V, G);
         if (SK[ka] || SK[kb]) continue;
         // beide Seiten, damit die Schürze aus jeder Richtung deckt
-        idx.push(a, low[q], b, b, low[q], low[q + 1]);
-        idx.push(a, b, low[q], b, low[q + 1], low[q]);
+        push6(a, low[q], b, b, low[q], low[q + 1]);
+        push6(a, b, low[q], b, low[q + 1], low[q]);
       }
     };
     const rowS: number[] = [];
@@ -974,7 +1019,7 @@ export class Terrain {
       const ib = new THREE.InterleavedBuffer(morph.subarray(0, vn * 20), 20);
       for (let q = 0; q < 5; q++) geo.setAttribute(`aC${q}`, new THREE.InterleavedBufferAttribute(ib, 4, q * 4));
     }
-    geo.setIndex(idx);
+    geo.setIndex(new THREE.BufferAttribute(idxA.slice(0, ni), 1));
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
     // Kronendach wird im Shader angehoben: Grenzen entsprechend weiter (sonst fehlt am Kachelrand mal ein Stück)
@@ -990,10 +1035,7 @@ export class Terrain {
       for (let j = 0; j < N; j++) {
         for (let i = 0; i < N; i++) {
           const ka = (j + 1) * G + (i + 1);
-          const ks = [ka, ka + 1, ka + G, ka + G + 1];
-          let wet = 0;
-          for (const k of ks) wet += W[k] > 0.35 ? 1 : 0;
-          if (wet < 1) continue;
+          if (W[ka] <= 0.35 && W[ka + 1] <= 0.35 && W[ka + G] <= 0.35 && W[ka + G + 1] <= 0.35) continue;
           const ly = (LY[ka] + LY[ka + 1] + LY[ka + G] + LY[ka + G + 1]) / 4;
           const xa = x0 + i * cell;
           const za = z0 + j * cell;
@@ -1053,7 +1095,7 @@ export class Terrain {
           const dy = this.coarseDy(x, z, y, cg, cV, cA);
           trees.push({ kind, x, y: y - 0.35, z, s: 0.75 + h2(i + tx * 77, j + tz * 91) * 0.65, rot: r1 * Math.PI * 2, tint: 0.82 + r2 * 0.32, dy });
         }
-        if (j % 8 === 7) yield;
+        if (this.late()) yield;
       }
     }
     yield;
@@ -1117,6 +1159,7 @@ export class Terrain {
       const i0 = Math.round(x0 / MARK_CELL);
       const j0 = Math.round(z0 / MARK_CELL);
       for (let j = 0; j < n; j++) {
+        if (this.late()) yield;
         for (let i = 0; i < n; i++) {
           const c = markCandidate(i0 + i, j0 + j, NOISE_SEED);
           if (!c) continue;
@@ -1217,17 +1260,16 @@ export class Terrain {
       wd = u + w - 1; wb = 1 - w; wc = 1 - u; wa = 0;
     }
     const o = v * 20;
-    const L = (A: Float32Array, n: number, q: number) => A[ia * n + q] * wa + A[ib * n + q] * wb + A[ic * n + q] * wc + A[id * n + q] * wd;
-    out[o] = L(a.pos, 3, 1);
-    out[o + 1] = L(a.can, 1, 0);
-    out[o + 2] = L(a.nzA, 2, 0);
-    out[o + 3] = L(a.nzA, 2, 1);
-    for (let q = 0; q < 3; q++) out[o + 4 + q] = L(a.nor, 3, q);
+    out[o] = lerpC(a.pos, 3, 1, ia, ib, ic, id, wa, wb, wc, wd);
+    out[o + 1] = lerpC(a.can, 1, 0, ia, ib, ic, id, wa, wb, wc, wd);
+    out[o + 2] = lerpC(a.nzA, 2, 0, ia, ib, ic, id, wa, wb, wc, wd);
+    out[o + 3] = lerpC(a.nzA, 2, 1, ia, ib, ic, id, wa, wb, wc, wd);
+    for (let q = 0; q < 3; q++) out[o + 4 + q] = lerpC(a.nor, 3, q, ia, ib, ic, id, wa, wb, wc, wd);
     out[o + 7] = 0;
-    for (let q = 0; q < 3; q++) out[o + 8 + q] = L(a.col, 3, q);
+    for (let q = 0; q < 3; q++) out[o + 8 + q] = lerpC(a.col, 3, q, ia, ib, ic, id, wa, wb, wc, wd);
     out[o + 11] = 0;
-    for (let q = 0; q < 4; q++) out[o + 12 + q] = L(a.mat, 4, q);
-    for (let q = 0; q < 3; q++) out[o + 16 + q] = L(a.rck, 3, q);
+    for (let q = 0; q < 4; q++) out[o + 12 + q] = lerpC(a.mat, 4, q, ia, ib, ic, id, wa, wb, wc, wd);
+    for (let q = 0; q < 3; q++) out[o + 16 + q] = lerpC(a.rck, 3, q, ia, ib, ic, id, wa, wb, wc, wd);
     out[o + 19] = 0;
   }
 
@@ -1254,6 +1296,11 @@ export class Terrain {
     this.colorCache.set(lv, out);
     return out;
   }
+}
+
+/** gewichtetes Mittel aus vier Ecken (Feld A mit n Werten je Ecke, Wert q) */
+function lerpC(A: Float32Array, n: number, q: number, ia: number, ib: number, ic: number, id: number, wa: number, wb: number, wc: number, wd: number): number {
+  return A[ia * n + q] * wa + A[ib * n + q] * wb + A[ic * n + q] * wc + A[id * n + q] * wd;
 }
 
 /** Abstand zum nächsten Segment-Anfangspunkt im Raster (3×3 Nachbarzellen) */

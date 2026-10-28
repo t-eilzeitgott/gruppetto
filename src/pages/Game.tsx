@@ -278,12 +278,12 @@ export function GamePage() {
         // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
         if (uiRef.current === 'playing' && !low) {
           const nq = gov.frame(raw, renderer.quality);
-          if (nq !== null) { renderer.quality = nq; renderer.resize(); }
+          if (nq !== null) renderer.setQuality(nq); // wirkt direkt vor dem nächsten Bild (kein schwarzes Bild)
         }
         raf = requestAnimationFrame(loop);
       };
       raf = requestAnimationFrame(loop);
-      const onResize = () => { renderer.resize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
+      const onResize = () => { renderer.requestResize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
       const onVis = () => {
         if (document.hidden && uiRef.current === 'playing') setUi('paused');
         if (!document.hidden && renderer.lost) rebuild();

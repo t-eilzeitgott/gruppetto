@@ -111,6 +111,15 @@ export const PEAK_R1 = 15000;
 
 /** Bergring für eine Landschaft (Größe und Charakter je Tal) */
 export function buildPeaks(biome: BiomeId, L: PeakLight): THREE.Mesh {
+  const it = buildPeaksSteps(biome, L);
+  for (;;) {
+    const r = it.next();
+    if (r.done) return r.value;
+  }
+}
+
+/** wie buildPeaks, in Schritten (ein Ring je Schritt): beim Landschaftswechsel kein langes Bild */
+export function* buildPeaksSteps(biome: BiomeId, L: PeakLight): Generator<void, THREE.Mesh, void> {
   const pal = BIOME_PALETTES[biome];
   let seed = 7;
   for (const ch of biome) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
@@ -157,9 +166,11 @@ export function buildPeaks(biome: BiomeId, L: PeakLight): THREE.Mesh {
   };
   const NA = 420;
   const NR = 34;
-  const pos: number[] = [];
-  const rid: number[] = [];
-  const nz1: number[] = [];
+  const W = NA + 1;
+  const pos = new Float32Array(NR * W * 3);
+  const rid = new Float32Array(NR * W);
+  const nz1 = new Float32Array(NR * W * 3);
+  let v = 0;
   for (let i = 0; i < NR; i++) {
     const t = i / (NR - 1);
     const r = PEAK_R0 * Math.pow(PEAK_R1 / PEAK_R0, t);
@@ -176,26 +187,51 @@ export function buildPeaks(biome: BiomeId, L: PeakLight): THREE.Mesh {
       const ridge = ridged(wx / 2600 + 11, wz / 2600 - 7);
       const massif = 0.5 + 0.5 * noise(x / 6500 + 3, z / 6500 + 5);
       const hgt = -420 + c.amp * 1.5 * env * massif * (0.1 + Math.pow(ridge, c.sharp) * 1.3);
-      pos.push(x, hgt, z);
-      rid.push(Math.min(1, ridge));
-      nz1.push(noise(x / 3100 + 1.7, z / 3100 - 2.2), noise(x / 3100 - 5.1, z / 3100 + 0.4), noise(x / 3100 + 3.3, z / 3100 + 6.1));
+      pos[v * 3] = x; pos[v * 3 + 1] = hgt; pos[v * 3 + 2] = z;
+      rid[v] = Math.min(1, ridge);
+      nz1[v * 3] = noise(x / 3100 + 1.7, z / 3100 - 2.2);
+      nz1[v * 3 + 1] = noise(x / 3100 - 5.1, z / 3100 + 0.4);
+      nz1[v * 3 + 2] = noise(x / 3100 + 3.3, z / 3100 + 6.1);
+      v++;
     }
+    yield;
   }
-  const idx: number[] = [];
-  const W = NA + 1;
+  const idx = new Uint16Array((NR - 1) * NA * 6);
+  let k = 0;
   for (let i = 0; i < NR - 1; i++) {
     for (let j = 0; j < NA; j++) {
       const a = i * W + j;
       const b = a + W;
-      idx.push(a, a + 1, b, a + 1, b + 1, b);
+      idx[k++] = a; idx[k++] = a + 1; idx[k++] = b; idx[k++] = a + 1; idx[k++] = b + 1; idx[k++] = b;
     }
   }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('aR', new THREE.Float32BufferAttribute(rid, 1));
-  geo.setAttribute('aN1', new THREE.Float32BufferAttribute(nz1, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aR', new THREE.BufferAttribute(rid, 1));
+  geo.setAttribute('aN1', new THREE.BufferAttribute(nz1, 3));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  yield;
+  // Normalen aus den Nachbarn im Gitter (Ring × Winkel) – wie gemittelte Flächennormalen, aber in Schritten
+  const nor = new Float32Array(NR * W * 3);
+  const P = (ii: number, jj: number, q: number) => pos[(ii * W + jj) * 3 + q];
+  for (let i = 0; i < NR; i++) {
+    const i0 = Math.max(0, i - 1);
+    const i1 = Math.min(NR - 1, i + 1);
+    for (let j = 0; j <= NA; j++) {
+      const jm = j === 0 ? NA - 1 : j - 1;
+      const jp = j === NA ? 1 : j + 1;
+      const ax = P(i, jp, 0) - P(i, jm, 0), ay = P(i, jp, 1) - P(i, jm, 1), az = P(i, jp, 2) - P(i, jm, 2);
+      const bx = P(i1, j, 0) - P(i0, j, 0), by = P(i1, j, 1) - P(i0, j, 1), bz = P(i1, j, 2) - P(i0, j, 2);
+      let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+      if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      const l = Math.hypot(nx, ny, nz) || 1;
+      const o = (i * W + j) * 3;
+      nor[o] = nx / l; nor[o + 1] = ny / l; nor[o + 2] = nz / l;
+    }
+    if ((i & 7) === 7) yield;
+  }
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  yield;
   const own = {
     uRock: { value: lin(mixRGB(pal.far, [134, 130, 124], 0.6)) },
     uRockD: { value: lin(mixRGB(pal.far, [78, 76, 74], 0.62)) },
@@ -206,19 +242,40 @@ export function buildPeaks(biome: BiomeId, L: PeakLight): THREE.Mesh {
     uAmp: { value: c.amp }, uSnow: { value: c.snow }, uTree: { value: c.tree }, uOpacity: { value: 1 },
     uR0: { value: PEAK_R0 }, uR1: { value: PEAK_R1 },
   };
-  const mat = new THREE.ShaderMaterial({
-    uniforms: { ...L, ...own },
-    vertexShader: VERT,
-    fragmentShader: FRAG,
-    transparent: true,
-    fog: false,
-    toneMapped: true,
-  });
+  const mat = peakMaterial(L, own, true);
   const mesh = new THREE.Mesh(geo, mat);
   // nach der Landschaft zeichnen: verdeckte Bildpunkte fallen dann früh weg (die Berge sind meist nur ein Streifen)
   mesh.renderOrder = 10;
   mesh.frustumCulled = false;
   return mesh;
+}
+
+function peakMaterial(L: PeakLight, own: Record<string, THREE.IUniform>, transparent: boolean): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...L, ...own },
+    vertexShader: VERT,
+    fragmentShader: FRAG,
+    transparent,
+    fog: false,
+    toneMapped: true,
+  });
+}
+
+/**
+ * Stellvertreter beider Spielarten (beim Überblenden durchsichtig, sonst nicht) – bleiben die ganze Zeit bestehen:
+ * Sonst gibt three.js die Programme frei, sobald der alte Berg beim Landschaftswechsel verschwindet, und der neue
+ * müsste sie mitten im Rennen neu übersetzen (spürbares Stocken).
+ */
+export function peakKeepers(L: PeakLight): THREE.ShaderMaterial[] {
+  const own = {
+    uRock: { value: [0, 0, 0] }, uRockD: { value: [0, 0, 0] }, uForest: { value: [0, 0, 0] }, uMeadow: { value: [0, 0, 0] },
+    uSnowC: { value: [0, 0, 0] }, uSnowS: { value: [0, 0, 0] }, uAmp: { value: 1 }, uSnow: { value: 0 }, uTree: { value: 0 }, uOpacity: { value: 1 },
+    uR0: { value: PEAK_R0 }, uR1: { value: PEAK_R1 },
+  };
+  const t = peakMaterial(L, own, true);
+  const o = peakMaterial(L, own, false);
+  o.depthWrite = true;
+  return [t, o];
 }
 
 export function setPeakOpacity(m: THREE.Mesh, a: number) {

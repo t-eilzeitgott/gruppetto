@@ -111,17 +111,60 @@ export function lin255(r: number, g: number, b: number): RGBf {
   return [tmpColor.r, tmpColor.g, tmpColor.b];
 }
 
+/**
+ * Wachsende Zahlenreihe auf einem Float32Array (verdoppelt sich bei Bedarf). Beim Bauen entsteht so kein
+ * Berg aus Zahlenlisten, und die Speicherbereinigung muss halbfertige Geometrie nicht umkopieren – das
+ * spart spürbare Pausen beim Fahren.
+ */
+export class FArr {
+  a: Float32Array;
+  length = 0;
+  constructor(cap = 192) { this.a = new Float32Array(cap); }
+  private grow(k: number) {
+    const b = new Float32Array(Math.max(this.a.length * 2, this.length + k));
+    b.set(this.a.subarray(0, this.length));
+    this.a = b;
+  }
+  push1(x: number) {
+    if (this.length + 1 > this.a.length) this.grow(1);
+    this.a[this.length++] = x;
+  }
+  push2(x: number, y: number) {
+    if (this.length + 2 > this.a.length) this.grow(2);
+    const a = this.a;
+    const n = this.length;
+    a[n] = x; a[n + 1] = y;
+    this.length = n + 2;
+  }
+  push3(x: number, y: number, z: number) {
+    if (this.length + 3 > this.a.length) this.grow(3);
+    const a = this.a;
+    const n = this.length;
+    a[n] = x; a[n + 1] = y; a[n + 2] = z;
+    this.length = n + 3;
+  }
+  push4(x: number, y: number, z: number, w: number) {
+    if (this.length + 4 > this.a.length) this.grow(4);
+    const a = this.a;
+    const n = this.length;
+    a[n] = x; a[n + 1] = y; a[n + 2] = z; a[n + 3] = w;
+    this.length = n + 4;
+  }
+  /** fertige Werte als eigenes Array passender Größe */
+  take(): Float32Array { return this.a.slice(0, this.length); }
+}
+
 /** Baukasten für nicht-indizierte Geometrie mit Vertexfarben und optional UVs */
 export class GB {
-  p: number[] = [];
-  c: number[] = [];
-  u: number[] = [];
+  p = new FArr();
+  c = new FArr();
+  u = new FArr(128);
   uv = false;
   get empty() { return this.p.length === 0; }
   vert(x: number, y: number, z: number, col: RGBf, s = 0, t = 0) {
-    this.p.push(x, y, z);
-    this.c.push(col[0], col[1], col[2]);
-    this.u.push(s, t);
+    this.p.push3(x, y, z);
+    this.c.push3(col[0], col[1], col[2]);
+    if (this.uv) this.u.push2(s, t);
   }
   tri(a: number[], b: number[], c: number[], col: RGBf, ua?: number[], ub?: number[], uc?: number[]) {
     this.vert(a[0], a[1], a[2], col, ua?.[0], ua?.[1]);
@@ -178,38 +221,61 @@ export class GB {
    * gewendet, dass sie zur Seite von hint zeigen – gemittelt wird dann nur Gleichgerichtetes.
    */
   buildSmooth(hint: THREE.Vector3 | null): THREE.BufferGeometry {
-    const p = this.p;
-    const swap = (a: number[], i: number, j: number, n: number) => { for (let k = 0; k < n; k++) { const t = a[i * n + k]; a[i * n + k] = a[j * n + k]; a[j * n + k] = t; } };
-    const e1 = new THREE.Vector3();
-    const e2 = new THREE.Vector3();
-    const fn = new THREE.Vector3();
-    const acc = new Map<string, number[]>();
-    const keys: string[] = [];
-    const key = (i: number) => `${Math.round(p[i * 3] * 8)},${Math.round(p[i * 3 + 1] * 8)},${Math.round(p[i * 3 + 2] * 8)}`;
-    for (let t = 0; t < p.length / 9; t++) {
-      const a = t * 3;
-      e1.set(p[(a + 1) * 3] - p[a * 3], p[(a + 1) * 3 + 1] - p[a * 3 + 1], p[(a + 1) * 3 + 2] - p[a * 3 + 2]);
-      e2.set(p[(a + 2) * 3] - p[a * 3], p[(a + 2) * 3 + 1] - p[a * 3 + 1], p[(a + 2) * 3 + 2] - p[a * 3 + 2]);
-      fn.crossVectors(e1, e2);
-      if (hint && fn.dot(hint) < 0) { swap(p, a + 1, a + 2, 3); swap(this.c, a + 1, a + 2, 3); swap(this.u, a + 1, a + 2, 2); fn.negate(); }
-      for (let k = 0; k < 3; k++) {
-        const kk = key(a + k);
-        keys.push(kk);
-        const v = acc.get(kk);
-        if (v) { v[0] += fn.x; v[1] += fn.y; v[2] += fn.z; } else acc.set(kk, [fn.x, fn.y, fn.z]);
+    const p = this.p.a;
+    const c = this.c.a;
+    const u = this.u.a;
+    const n = this.p.length / 3;
+    const swap = (a: Float32Array, i: number, j: number, k: number) => { for (let q = 0; q < k; q++) { const t = a[i * k + q]; a[i * k + q] = a[j * k + q]; a[j * k + q] = t; } };
+    // Flächennormalen (Dreiecke zur Seite von hint wenden)
+    const fn = new Float32Array(n);
+    for (let a = 0; a < n; a += 3) {
+      const ax = p[a * 3], ay = p[a * 3 + 1], az = p[a * 3 + 2];
+      const e1x = p[a * 3 + 3] - ax, e1y = p[a * 3 + 4] - ay, e1z = p[a * 3 + 5] - az;
+      const e2x = p[a * 3 + 6] - ax, e2y = p[a * 3 + 7] - ay, e2z = p[a * 3 + 8] - az;
+      let nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+      if (hint && nx * hint.x + ny * hint.y + nz * hint.z < 0) {
+        swap(p, a + 1, a + 2, 3); swap(c, a + 1, a + 2, 3);
+        if (this.uv) swap(u, a + 1, a + 2, 2);
+        nx = -nx; ny = -ny; nz = -nz;
       }
+      fn[a] = nx; fn[a + 1] = ny; fn[a + 2] = nz;
     }
-    const g = this.build();
-    const nrm = g.getAttribute('normal') as THREE.BufferAttribute;
-    keys.forEach((kk, i) => { const v = acc.get(kk)!; const l = Math.hypot(v[0], v[1], v[2]) || 1; nrm.setXYZ(i, v[0] / l, v[1] / l, v[2] / l); });
+    // gleiche Lage (auf 1/8 m) = ein Eckpunkt: je Ecke ihr Vertreter (Streuwerte mit Kette, ohne Zeichenketten)
+    const rep = new Int32Array(n);
+    const chain = new Int32Array(n);
+    const head = new Map<number, number>();
+    for (let i = 0; i < n; i++) {
+      const x = Math.round(p[i * 3] * 8), y = Math.round(p[i * 3 + 1] * 8), z = Math.round(p[i * 3 + 2] * 8);
+      const h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791)) | 0;
+      const h0 = head.get(h);
+      let j = h0 ?? -1;
+      while (j >= 0 && (Math.round(p[j * 3] * 8) !== x || Math.round(p[j * 3 + 1] * 8) !== y || Math.round(p[j * 3 + 2] * 8) !== z)) j = chain[j];
+      if (j < 0) { j = i; chain[i] = h0 ?? -1; head.set(h, i); }
+      rep[i] = j;
+    }
+    const acc = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const t = i - (i % 3);
+      const r = rep[i] * 3;
+      acc[r] += fn[t]; acc[r + 1] += fn[t + 1]; acc[r + 2] += fn[t + 2];
+    }
+    const g = this.build(false);
+    const nrm = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const r = rep[i] * 3;
+      const x = acc[r], y = acc[r + 1], z = acc[r + 2];
+      const l = Math.hypot(x, y, z) || 1;
+      nrm[i * 3] = x / l; nrm[i * 3 + 1] = y / l; nrm[i * 3 + 2] = z / l;
+    }
+    g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
     return g;
   }
-  build(): THREE.BufferGeometry {
+  build(normals = true): THREE.BufferGeometry {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
-    if (this.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(this.u, 2));
-    g.computeVertexNormals();
+    g.setAttribute('position', new THREE.BufferAttribute(this.p.take(), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(this.c.take(), 3));
+    if (this.uv) g.setAttribute('uv', new THREE.BufferAttribute(this.u.take(), 2));
+    if (normals) g.computeVertexNormals();
     g.computeBoundingSphere();
     return g;
   }

@@ -8,11 +8,11 @@
 import * as THREE from 'three';
 import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
-import { SpriteBank, cloud, roadArrow, roadText } from './sprites';
+import { SpriteBank, cloud, roadArrow, roadText, warmRoadText } from './sprites';
 import { adCell, adsTex, AD_COUNT, SIGN_COUNT, asphaltTex, bannerTex, canopyTex, fallTex, glowTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
 import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
-import { buildPeaks, peakLight, setPeakOpacity } from './peaks3d';
+import { buildPeaks, buildPeaksSteps, peakKeepers, peakLight, setPeakOpacity } from './peaks3d';
 import { FAC_B, FAC_H, FAC_W, TB, portalFacade, tunnelMaterial, tunnelName, tunnelRing, tunnelUniforms, type TunnelUniforms } from './tunnel3d';
 import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
 import { GB, alphaTex, lin, lin255, propGeometries, type Prop3D, type RGBf } from './models3d';
@@ -25,7 +25,8 @@ import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, 
 import { mulberry32 } from './rng';
 import './grade';
 import { setGlossEnv } from './gloss';
-import { apIn, apOut, appearify, appearifyTree, setAp } from './appear';
+import { apIn, apOut, apQ, appearify, appearifyTree, setAp } from './appear';
+import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
 
 /**
  * Bäume lösen sich zwischen TREE_FADE und TREE_GONE weich auf; das Kronendach der Landschaft hebt sich schon
@@ -91,10 +92,20 @@ const rgbLin = (c: RGB): RGBf => lin255(c[0], c[1], c[2]);
 interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg }
 interface CrowdBatch { near: THREE.Mesh[]; mid: THREE.Mesh[]; spr: THREE.Mesh | null; c: THREE.Vector3; r: number; lod: number }
 interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[] }
+/** angestoßene Shader (bis sie fertig sind) */
+interface Warm { progs: object[]; t: number }
 /** Bauteile der Häuser eines Abschnitts */
 interface Town { facade: GB; tiles: GB; plain: GB; signs: GB; lanterns: number[]; bulbs: number[] }
 interface Runner { z: number; x: number; v: number; go: boolean; p: Person; act: number; yaw: number; flag: boolean }
-interface Tile { lv: number; key: string; objs: THREE.Object3D[]; geos: THREE.BufferGeometry[]; tsrc: TreeSource | null; box: [number, number, number, number]; stale?: boolean; out?: boolean }
+/** Reihenfolge des Nachladens (Stufe, größter Ring): beim Start erst der Nahbereich, dann die Ferne */
+const ORDER_START: [number, number][] = [[0, 1], [1, 1], [2, 9], [1, 9], [0, 9]];
+const ORDER_RIDE: [number, number][] = [[0, 9], [1, 9], [2, 9]];
+/** Schlüssel einer Kachel als Zahl (Stufe, Spalte, Zeile) – keine Zeichenketten in den Schleifen je Bild */
+const TK = 16384;
+const tkey = (lv: number, i: number, j: number) => (lv * TK + (i + TK / 2)) * TK + (j + TK / 2);
+const tkI = (k: number) => (Math.floor(k / TK) % TK) - TK / 2;
+const tkJ = (k: number) => (k % TK) - TK / 2;
+interface Tile { lv: number; key: number; objs: THREE.Object3D[]; geos: THREE.BufferGeometry[]; tsrc: TreeSource | null; box: [number, number, number, number]; stale?: boolean; out?: boolean }
 /** Überblendung einer neu gebauten Kachel: die neue (inc) erscheint, die alte (out) geht – je Bildpunkt genau eine */
 interface TileFade { lv: number; a: number; dur: number; inc: Tile[]; out: Tile[] }
 interface AtlasEntry { u0: number; v0: number; u1: number; v1: number; w: number; h: number; du: number }
@@ -132,6 +143,8 @@ export class Renderer3D {
   private mtn: THREE.Mesh | null = null;
   private mtnOld: THREE.Mesh | null = null;
   private mtnBiome: BiomeId | null = null;
+  /** Berge der nächsten Landschaft im Bau (in Schritten) */
+  private mtnGen: { biome: BiomeId; it: Generator<void, THREE.Mesh, void> } | null = null;
   private mtnFade = 1;
   /** Licht für die Berge am Horizont (eigener Shader) */
   private peakU = peakLight();
@@ -146,7 +159,7 @@ export class Renderer3D {
   private terrain: Terrain | null = null;
   /** Rechenbereich der Landschaft für den gerade gebauten Abschnitt */
   private region: Region | null = null;
-  private tiles = new Map<string, Tile>();
+  private tiles = new Map<number, Tile>();
   /** Bäume: Bildvorrat, Bildbäume je Kachel/Abschnitt, nahe 3D-Bäume */
   private treeAtlas!: TreeAtlas;
   private bbMat!: THREE.ShaderMaterial;
@@ -174,7 +187,7 @@ export class Renderer3D {
   private terrFwd = new THREE.Vector3(0, 0, -1);
   private terrDir = new THREE.Vector3();
   /** Kachel im Bau (wird über mehrere Bilder verteilt fertiggestellt) */
-  private pending: { key: string; lv: number; gen: Generator<void, TileData, void>; ver: number } | null = null;
+  private pending: { key: number; lv: number; gen: Generator<void, Tile, void>; ver: number } | null = null;
 
   // Materialien
   private mats!: {
@@ -194,6 +207,13 @@ export class Renderer3D {
   private atlas = new Map<string, AtlasEntry>();
   private bank = new SpriteBank();
   private labelTex = new Map<string, THREE.Texture>();
+  /** Materialien zu den Beschriftungen: je Textur eines (bleiben wie die Texturen bestehen) */
+  private labelMat = new Map<string, THREE.Material>();
+  private matFor(key: string, make: () => THREE.Material): THREE.Material {
+    let m = this.labelMat.get(key);
+    if (!m) { m = make(); this.labelMat.set(key, m); }
+    return m;
+  }
   private shadowTex!: THREE.Texture;
   private time = { value: 0 };
   /** Licht in den Tunnelröhren (Leuchten, Tageslicht an den Portalen) */
@@ -203,6 +223,11 @@ export class Renderer3D {
 
   // Dynamisches
   private riders = new Map<number, RiderModel>();
+  /** Fahrer in der Ferne als 2D-Bilder (ein Zeichenaufruf für alle) */
+  private rs!: RiderSprites;
+  /** ab wo Bilder statt 3D-Fahrer (m; zum Prüfen änderbar) */
+  spriteNear = SPRITE_NEAR;
+  spriteFar = SPRITE_FAR;
   private player: RiderModel | null = null;
   private playerKit = '';
   private objPool: Map<string, THREE.Object3D[]> = new Map();
@@ -329,6 +354,8 @@ export class Renderer3D {
     // mit Kantenglättung (Normalfall) blenden die Bäume über sie weich aus
     this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, [TREE_FADE, TREE_GONE], this.msaa, this.morphU[0]);
     this.sprMat = spriteMaterial(this.crowdU, this.crowdAtlas);
+    this.rs = new RiderSprites(this.peakU, this.msaa);
+    this.scene.add(this.rs.mesh);
     // Landmarken (auf der mittleren Stufe) folgen deren Übergang zur gröbsten
     const mU = this.morphU[1];
     this.markMat.onBeforeCompile = (sh) => {
@@ -781,24 +808,47 @@ export class Renderer3D {
 
   warm() { /* Grafiken entstehen im Konstruktor */ }
 
+  /**
+   * Größe der Leinwand sofort anpassen. Achtung: Das leert die Leinwand – ohne Zeichnen direkt danach sähe man ein
+   * schwarzes Bild. Während der Fahrt darum setQuality/requestResize (wirkt direkt vor dem nächsten Zeichnen).
+   */
   resize() {
+    this.pendingResize = false;
     const rect = this.gl.domElement.getBoundingClientRect();
     const W = Math.max(100, Math.round(rect.width));
     const H = Math.max(100, Math.round(rect.height));
     // höchstens 1,4-fache Pixeldichte: mit Kantenglättung auf Retina kaum sichtbar, spart aber viel Füllrate
     const dpr = Math.min(1.4, window.devicePixelRatio || 1) * this.quality;
-    this.W = W;
-    this.H = H;
-    this.gl.setPixelRatio(dpr);
-    this.gl.setSize(W, H, false);
+    const cv = this.gl.domElement;
+    // unverändert: nichts anfassen (jedes Setzen der Größe leert die Leinwand)
+    if (W !== this.W || H !== this.H || dpr !== this.gl.getPixelRatio() || cv.width !== Math.floor(W * dpr) || cv.height !== Math.floor(H * dpr)) {
+      this.W = W;
+      this.H = H;
+      this.gl.setPixelRatio(dpr);
+      this.gl.setSize(W, H, false);
+    }
     const odpr = Math.min(1.5, window.devicePixelRatio || 1);
     this.overlayDirty = true;
-    this.overlayCv.width = Math.round(W * odpr);
-    this.overlayCv.height = Math.round(H * odpr);
-    this.overlay.setTransform(odpr, 0, 0, odpr, 0, 0);
+    const ow = Math.round(W * odpr);
+    const oh = Math.round(H * odpr);
+    if (this.overlayCv.width !== ow || this.overlayCv.height !== oh) {
+      this.overlayCv.width = ow;
+      this.overlayCv.height = oh;
+      this.overlay.setTransform(odpr, 0, 0, odpr, 0, 0);
+    }
     this.camera.aspect = W / H;
     this.camera.updateProjectionMatrix();
     // (Schatten bleiben aus – nie zur Laufzeit umschalten, das kompiliert alle Shader neu)
+  }
+
+  /** Größe/Auflösung erst unmittelbar vor dem nächsten Zeichnen anpassen (kein leeres, schwarzes Bild dazwischen) */
+  private pendingResize = false;
+  requestResize() { this.pendingResize = true; }
+  /** neue Auflösungsstufe (wirkt mit dem nächsten Bild) */
+  setQuality(q: number) {
+    if (q === this.quality) return;
+    this.quality = q;
+    this.pendingResize = true;
   }
 
   // ------------------------------------------------------------------ Bild
@@ -809,10 +859,24 @@ export class Renderer3D {
   private idleBuild = false;
   /** Rechenzeit für Landschaft und Abschnitte im letzten Bild (ms) */
   private work = 0;
+  /**
+   * Rechenzeit des Bildes ohne Nachladen (geglättet, ms) und ob zuletzt Bilder ausgefallen sind: das Nachladen
+   * bekommt nur, was im Bild übrig bleibt – auf langsamen Geräten und in vollen Szenen weniger je Bild (dafür über
+   * mehr Bilder verteilt), statt das Bild zu verlängern.
+   */
+  private baseMs = 5;
+  private room(): number {
+    let r = 12.5 - this.baseMs;
+    if (this.lastDt > 0.021) r *= 0.5;
+    return r;
+  }
   /** Entsteht gerade Landschaft? (dann zählt das Bild nicht für die Qualitätsregelung) */
   get busy(): boolean { return this.work > 3 || !!this.pending || !this.boxSet.every(Boolean); }
 
   draw(g: RaceView, dt: number) {
+    const d0 = performance.now();
+    // Größenwechsel genau hier: die Leinwand wird gleich danach neu bemalt
+    if (this.pendingResize) this.resize();
     this.lastDt = dt;
     this.idleBuild = g.phase === 'ready' || g.phase === 'countdown';
     this.time.value += dt;
@@ -853,6 +917,13 @@ export class Renderer3D {
     const biome = track.sections[seg.sec].biome;
 
     this.updateLight(g, biome, seg, dt);
+    if (!this.warmGroup) this.warmAll();
+    if (!this.rs.ready && this.rs.bakeStep(this.gl, performance.now() + (this.idleBuild ? 8 : 1.5))) {
+      // Material jetzt übersetzen (nicht erst, wenn der erste Fahrer in die Ferne rückt)
+      this.rs.mesh.visible = true;
+      this.gl.compile(this.scene, this.camera);
+      this.rs.mesh.visible = false;
+    }
     // Landschaftsproben zuerst: die Abschnitte fragen beim Bau nach Geländehöhen
     if (this.terrain?.window(Math.max(0, p.z - 520), p.z + 3000)) {
       // neue oder weggefallene Straßenstücke ändern die Höhen ringsum: betroffene Kacheln neu bauen
@@ -882,6 +953,8 @@ export class Renderer3D {
     this.updateParticles(g);
     this.gl.render(this.scene, this.camera);
     this.drawOverlay(g);
+    const rest = performance.now() - d0 - this.work;
+    this.baseMs += (Math.min(30, rest) - this.baseMs) * 0.08;
   }
 
   /** Himmel: Flieger; in den Finals der Hubschrauber über der Spitze des Feldes */
@@ -972,12 +1045,16 @@ export class Renderer3D {
   /** herausgefallene Kacheln entfernen, sobald sie alle ganz die Form der gröberen Stufe haben */
   private dropMorphed() {
     for (let lv = 0; lv < LEVELS.length - 1; lv++) {
-      const out = [...this.tiles.values()].filter((t) => t.lv === lv && t.out);
-      if (!out.length) continue;
       const m = this.morphU[lv].value;
-      const done = out.every((t) => Math.max(t.box[0] - m.x, m.x - t.box[2], t.box[1] - m.y, m.y - t.box[3]) >= m.w + 1);
-      if (!done) continue;
-      for (const t of out) { this.dropTile(t); this.tiles.delete(t.key); }
+      let any = false;
+      let done = true;
+      for (const t of this.tiles.values()) {
+        if (t.lv !== lv || !t.out) continue;
+        any = true;
+        if (Math.max(t.box[0] - m.x, m.x - t.box[2], t.box[1] - m.y, m.y - t.box[3]) < m.w + 1) { done = false; break; }
+      }
+      if (!any || !done) continue;
+      for (const t of [...this.tiles.values()]) if (t.lv === lv && t.out) { this.dropTile(t); this.tiles.delete(t.key); }
       this.lvBoxA[lv].copy(this.lvBox[lv]);
     }
   }
@@ -1082,8 +1159,10 @@ export class Renderer3D {
       else this.terrFwd.lerp(this.terrDir, 0.03).normalize();
     }
     const fw = this.terrFwd;
-    // Mittelpunkt je Stufe: ein Stück voraus (die gröbste Stufe bleibt mittig – ihr Neubau ist teuer)
-    const mid = LEVELS.map((Lv, lv) => { const k = lv === 0 ? 0.75 : lv === 1 ? 0.5 : 0; return [cp.x + fw.x * Lv.size * k, cp.z + fw.z * Lv.size * k]; });
+    // Mittelpunkt je Stufe: die Kamera selbst. Die Ringe hängen so nur vom Ort ab, nicht von der Blickrichtung –
+    // in Kehren dreht sich die Kamera, ohne dass Kacheln neu gebaut werden müssen. (Voraus reicht die feinste
+    // Stufe trotzdem weit genug: ihr Übergang endet spätestens 254 m voraus, ihr Gebiet frühestens nach 256 m.)
+    const mid = LEVELS.map(() => [cp.x, cp.z]);
     this.updateMorph(MORPH_AHEAD.map((k) => [cp.x + fw.x * k, cp.z + fw.z * k]), dt, jump);
     this.dropMorphed();
     // nach einem Sprung passen die alten Kacheln nicht mehr zur Strecke (sie stünden als Berge im Bild):
@@ -1095,7 +1174,7 @@ export class Renderer3D {
     // Der Nahbereich (feine und mittlere Stufe) entsteht aber sofort vollständig: sonst schneidet die
     // grobe Stufe (ohne Straßenklemmen) durch Straße und Zuschauer
     // auf der Startkarte großzügig: dort soll die Welt komplett stehen, bevor es losgeht
-    const budget = this.idleBuild ? 30 : startup ? 12 : 4;
+    const budget = this.idleBuild ? 30 : startup ? 12 : Math.max(1.2, Math.min(4, this.room() * 0.62));
     if (fresh) {
       this.pending = null;
       for (const lv of [0, 1]) {
@@ -1103,40 +1182,43 @@ export class Renderer3D {
         const cx = Math.floor(mid[lv][0] / Lv.size);
         const cz = Math.floor(mid[lv][1] / Lv.size);
         for (let j = cz - 1; j <= cz + 1; j++) {
-          for (let i = cx - 1; i <= cx + 1; i++) if (!this.tiles.has(`${lv}:${i}:${j}`)) this.buildTile(T, lv, i, j, t0, Infinity);
+          for (let i = cx - 1; i <= cx + 1; i++) if (!this.tiles.has(tkey(lv, i, j))) this.buildTile(T, lv, i, j, t0, Infinity);
         }
       }
     }
     // angefangene Kachel weiterbauen (nach einem Fensterwechsel neu beginnen: die Proben haben sich geändert)
     if (this.pending && this.pending.ver !== T.version) {
-      const [, i, j] = this.pending.key.split(':').map(Number);
-      this.pending = { ...this.pending, gen: T.tileSteps(this.pending.lv, i, j), ver: T.version };
+      const k = this.pending.key;
+      this.pending = { ...this.pending, gen: this.tileGen(T, this.pending.lv, k), ver: T.version };
     }
+    // der Bau gibt an der Zeitgrenze von selbst ab (feine Häppchen): kein Bild wird spürbar länger
+    T.deadline = t0 + budget;
     while (this.pending && performance.now() - t0 < budget) {
       const r = this.pending.gen.next();
-      if (r.done) { this.putTile(this.pending.key, this.tileObjects(r.value, this.pending.lv, this.pending.key)); this.pending = null; }
+      if (r.done) { this.putTile(this.pending.key, r.value); this.pending = null; }
     }
     const centers = LEVELS.map((Lv, lv) => [Math.floor(mid[lv][0] / Lv.size), Math.floor(mid[lv][1] / Lv.size)]);
-    const ringOf = (lv: number, key: string) => {
-      const [, i, j] = key.split(':').map(Number);
-      return Math.max(Math.abs(i - centers[lv][0]), Math.abs(j - centers[lv][1]));
-    };
+    const ringOf = (lv: number, key: number) => Math.max(Math.abs(tkI(key) - centers[lv][0]), Math.abs(tkJ(key) - centers[lv][1]));
     // 1) fehlende Kacheln: beim Start erst der Nahbereich, dann die Ferne (damit nie Leere sichtbar ist),
     //    danach der Rest; nächste zuerst
-    const order: [number, number][] = startup ? [[0, 1], [1, 1], [2, 9], [1, 9], [0, 9]] : [[0, 9], [1, 9], [2, 9]];
+    const order = startup ? ORDER_START : ORDER_RIDE;
     let out = !!this.pending;
     for (const [lv, maxR] of order) {
       if (out) break;
       const Lv = LEVELS[lv];
       const [cx, cz] = centers[lv];
-      const want: [number, number, number][] = [];
       const R = Math.min(maxR, Lv.ring);
+      // meist ist alles da: erst nachsehen (ohne Listen anzulegen), dann sortiert bauen
+      let missing = false;
+      for (let j = cz - R; j <= cz + R && !missing; j++) for (let i = cx - R; i <= cx + R; i++) if (!this.tiles.has(tkey(lv, i, j))) { missing = true; break; }
+      if (!missing) continue;
+      const want: [number, number, number][] = [];
       for (let j = cz - R; j <= cz + R; j++) {
         for (let i = cx - R; i <= cx + R; i++) want.push([i, j, (i + 0.5 - cp.x / Lv.size) ** 2 + (j + 0.5 - cp.z / Lv.size) ** 2]);
       }
       want.sort((a, b) => a[2] - b[2]);
       for (const [i, j] of want) {
-        if (this.tiles.has(`${lv}:${i}:${j}`)) continue;
+        if (this.tiles.has(tkey(lv, i, j))) continue;
         if (!this.buildTile(T, lv, i, j, t0, budget)) { out = true; break; }
       }
     }
@@ -1148,7 +1230,7 @@ export class Renderer3D {
       let rc = -1;
       for (let r = 0; r <= Lv.ring; r++) {
         let ok = true;
-        for (let j = cz - r; j <= cz + r && ok; j++) for (let i = cx - r; i <= cx + r && ok; i++) if (!this.tiles.has(`${lv}:${i}:${j}`)) ok = false;
+        for (let j = cz - r; j <= cz + r && ok; j++) for (let i = cx - r; i <= cx + r && ok; i++) if (!this.tiles.has(tkey(lv, i, j))) ok = false;
         if (!ok) break;
         rc = r;
       }
@@ -1157,9 +1239,9 @@ export class Renderer3D {
         if (rc >= 0) this.lvBox[lv].set((cx - rc) * Lv.size, (cz - rc) * Lv.size, (cx + rc + 1) * Lv.size, (cz + rc + 1) * Lv.size);
         else this.lvBox[lv].set(1e9, 1e9, -1e9, -1e9);
         this.lvBoxA[lv].copy(this.lvBox[lv]);
-        for (const [key, t] of this.tiles) {
+        for (const t of this.tiles.values()) {
           if (t.lv !== lv) continue;
-          const vis = ringOf(lv, key) <= rc;
+          const vis = ringOf(lv, t.key) <= rc;
           for (const o of t.objs) o.visible = vis;
           if (t.tsrc) t.tsrc.on = vis;
         }
@@ -1179,8 +1261,9 @@ export class Renderer3D {
       }
       // Ring vollständig: Überzähliges entfernen (außer was noch übergeht)
       if (rc === Lv.ring) {
-        for (const [key, t] of this.tiles) {
-          if (t.lv === lv && !t.out && ringOf(lv, key) > Lv.ring) { this.dropTile(t); this.tiles.delete(key); }
+        for (const t of this.tiles.values()) {
+          // (Löschen während des Durchlaufs ist bei Map erlaubt)
+          if (t.lv === lv && !t.out && ringOf(lv, t.key) > Lv.ring) { this.dropTile(t); this.tiles.delete(t.key); }
         }
       }
     }
@@ -1191,7 +1274,7 @@ export class Renderer3D {
       const [cx, cz] = centers[lv];
       for (let j = cz - Lv.ring; j <= cz + Lv.ring; j++) {
         for (let i = cx - Lv.ring; i <= cx + Lv.ring; i++) {
-          if (!this.tiles.get(`${lv}:${i}:${j}`)?.stale) continue;
+          if (!this.tiles.get(tkey(lv, i, j))?.stale) continue;
           if (!this.buildTile(T, lv, i, j, t0, budget)) return;
         }
       }
@@ -1201,17 +1284,19 @@ export class Renderer3D {
   /** Kachel beginnen und im Rahmen des Budgets fertigbauen (sonst im nächsten Bild weiter); true = fertig */
   private buildTile(T: Terrain, lv: number, i: number, j: number, t0: number, budget: number): boolean {
     if (performance.now() - t0 > budget) return false;
-    const key = `${lv}:${i}:${j}`;
-    this.pending = { key, lv, gen: T.tileSteps(lv, i, j), ver: T.version };
+    const key = tkey(lv, i, j);
+    this.pending = { key, lv, gen: this.tileGen(T, lv, key), ver: T.version };
+    T.deadline = t0 + budget;
     while (this.pending && performance.now() - t0 < budget) {
       const r = this.pending.gen.next();
-      if (r.done) { this.putTile(key, this.tileObjects(r.value, lv, key)); this.pending = null; }
+      if (r.done) { this.putTile(key, r.value); this.pending = null; }
     }
+    T.deadline = Infinity;
     return !this.pending;
   }
 
   /** fertige Kachel einsetzen (eine veraltete mit gleichem Schlüssel verschwindet erst jetzt) */
-  private putTile(key: string, t: Tile) {
+  private putTile(key: number, t: Tile) {
     const old = this.tiles.get(key);
     this.tiles.set(key, t);
     if (!old) return;
@@ -1234,8 +1319,17 @@ export class Renderer3D {
     this.dropTile(old);
   }
 
-  private tileObjects(d: TileData, lv: number, key: string): Tile {
-    const [, tx, tz] = key.split(':').map(Number);
+  /** Kachel ganz in Häppchen: Landschaft rechnen, dann die Objekte dazu bauen */
+  private *tileGen(T: Terrain, lv: number, key: number): Generator<void, Tile, void> {
+    const d = yield* T.tileSteps(lv, tkI(key), tkJ(key));
+    return yield* this.tileObjects(d, lv, key);
+  }
+
+  private *tileObjects(d: TileData, lv: number, key: number): Generator<void, Tile, void> {
+    const T = this.terrain!;
+    const late = () => T.deadline !== Infinity && performance.now() > T.deadline;
+    const tx = tkI(key);
+    const tz = tkJ(key);
     const size = LEVELS[lv].size;
     let tsrc: TreeSource | null = null;
     const objs: THREE.Object3D[] = [];
@@ -1266,17 +1360,10 @@ export class Renderer3D {
       const bm = new THREE.Mesh(bg, this.bbMat);
       bm.userData.bb = true;
       objs.push(bm);
-      this.treeSrc.add(tsrc);
     }
     if (d.falls) {
-      if (!this.fallMat) {
-        const t = alphaTex(fallTex(), [235, 244, 250]);
-        t.wrapS = t.wrapT = THREE.RepeatWrapping;
-        // beidseitig in einem Durchgang (sonst zeichnet three.js durchsichtige Flächen zweimal und baut das Material jedes Mal neu auf)
-        this.fallMat = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, color: new THREE.Color(0.95, 0.97, 1) });
-      }
       geos.push(d.falls);
-      const fm = new THREE.Mesh(d.falls, this.fallMat);
+      const fm = new THREE.Mesh(d.falls, this.fallMaterial());
       fm.renderOrder = 3;
       objs.push(fm);
     }
@@ -1299,9 +1386,12 @@ export class Renderer3D {
         const p0 = new THREE.Vector3();
         const sc = new THREE.Vector3();
         let o = 0;
+        let nm = 0;
         for (const t of d.marks) {
           const g = this.markGeo[t.kind as Landmark];
           if (!g) continue;
+          // viele Ecken: zwischendurch nachsehen, ob die Zeit des Bildes um ist
+          if ((++nm & 3) === 0 && late()) yield;
           const P = g.getAttribute('position');
           const C = g.getAttribute('color');
           const ix = g.index;
@@ -1327,7 +1417,11 @@ export class Renderer3D {
         objs.push(new THREE.Mesh(mg, this.markMat));
       }
     }
+    if (late()) yield;
     for (const o of objs) { appearifyTree(o); o.matrixAutoUpdate = false; o.updateMatrix(); this.scene.add(o); }
+    // neue Shader (z. B. der erste Wasserfall) gleich anstoßen: sichtbar wird die Kachel meist erst einige Bilder später
+    for (const o of objs) this.warmUp(o);
+    if (tsrc) this.treeSrc.add(tsrc);
     return { lv, key, objs, geos, tsrc, box: [tx * size, tz * size, (tx + 1) * size, (tz + 1) * size] };
   }
 
@@ -1510,14 +1604,32 @@ export class Renderer3D {
     const cp = this.camera.position;
     this.sky.position.copy(cp);
     this.valley.position.set(cp.x, cp.y - 1400, cp.z);
-    if (biome !== this.mtnBiome) {
-      if (this.mtnOld) { this.scene.remove(this.mtnOld); this.mtnOld.geometry.dispose(); (this.mtnOld.material as THREE.Material).dispose(); }
-      this.mtnOld = this.mtn;
-      this.peakU.uNoise.value ??= this.noiseMap;
-      this.mtn = buildPeaks(biome, this.peakU);
-      this.scene.add(this.mtn);
-      this.mtnFade = this.mtnOld ? 0 : 1;
-      this.mtnBiome = biome;
+    this.peakU.uNoise.value ??= this.noiseMap;
+    // neue Landschaft: ihre Berge entstehen über einige Bilder (ein Ring je Schritt), dann überblenden
+    // zurück in die Landschaft, deren Berge schon stehen: angefangenen Bau verwerfen
+    if (biome === this.mtnBiome) this.mtnGen = null;
+    else if (this.mtnGen?.biome !== biome) {
+      this.mtnGen = this.mtn ? { biome, it: buildPeaksSteps(biome, this.peakU) } : null;
+      if (!this.mtn) {
+        this.mtn = buildPeaks(biome, this.peakU);
+        this.scene.add(this.mtn);
+        this.mtnFade = 1;
+        this.mtnBiome = biome;
+      }
+    }
+    if (this.mtnGen) {
+      const t0 = performance.now();
+      let r = this.mtnGen.it.next();
+      while (!r.done && performance.now() - t0 < 1.2) r = this.mtnGen.it.next();
+      if (r.done) {
+        if (this.mtnOld) { this.scene.remove(this.mtnOld); this.mtnOld.geometry.dispose(); (this.mtnOld.material as THREE.Material).dispose(); }
+        this.mtnOld = this.mtn;
+        this.mtn = r.value;
+        this.scene.add(this.mtn);
+        this.mtnFade = 0;
+        this.mtnBiome = this.mtnGen.biome;
+        this.mtnGen = null;
+      }
     }
     this.mtnFade = Math.min(1, this.mtnFade + dt / 2.5);
     for (const [m, a] of [[this.mtn, this.mtnFade], [this.mtnOld, 1 - this.mtnFade]] as [THREE.Mesh | null, number][]) {
@@ -1545,24 +1657,158 @@ export class Renderer3D {
 
   /** Abschnitt im Bau (in Schritten) */
   private chunkGen: { k: number; it: Generator<void, Chunk, void> } | null = null;
+  /** Zeitgrenze für den Bau in Häppchen (performance.now(); Infinity: am Stück) */
+  private deadline = Infinity;
+  private late(): boolean {
+    return this.deadline !== Infinity && performance.now() > this.deadline;
+  }
 
   /** Abschnitte, die gerade ein- oder ausgeblendet werden */
   private cFades: { c: Chunk; a: number; dur: number; out: boolean }[] = [];
   /** ersetzte Abschnitte (z. B. neue Bestmarken-Bögen): bleiben stehen, bis der Nachfolger eingeblendet ist */
   private chunkOld = new Map<number, Chunk>();
 
-  /** fertigen Abschnitt einsetzen; fade: weich einblenden (ein ersetzter Vorgänger blendet gegengleich aus) */
-  private addChunk(k: number, c: Chunk, fade: boolean) {
+  /**
+   * fertigen Abschnitt einsetzen; fade: weich einblenden (ein ersetzter Vorgänger blendet gegengleich aus).
+   * wait: braucht er neue Shader, erscheint er erst, wenn sie fertig übersetzt sind (im Hintergrund) – sonst
+   * stockte das erste Bild mit ihm, bis der Grafiktreiber fertig ist.
+   */
+  private addChunk(k: number, c: Chunk, fade: boolean, wait = false) {
     appearifyTree(c.group);
     this.chunks.set(k, c);
     this.scene.add(c.group);
-    const old = this.chunkOld.get(k);
-    if (old) {
-      this.chunkOld.delete(k);
-      this.fadeChunk(old, true);
-      fade = true;
+    const show = () => {
+      const old = this.chunkOld.get(k);
+      if (old) {
+        this.chunkOld.delete(k);
+        this.fadeChunk(old, true);
+        fade = true;
+      }
+      if (fade) this.fadeChunk(c, false);
+    };
+    const w = wait ? this.warmUp(c.group) : null;
+    if (w) {
+      c.group.visible = false;
+      this.chunkWarm.set(c, { w, show });
+      return;
     }
-    if (fade) this.fadeChunk(c, false);
+    show();
+  }
+
+  /** Abschnitte, deren Shader noch übersetzt werden (unsichtbar bis dahin) */
+  private chunkWarm = new Map<Chunk, { w: Warm; show: () => void }>();
+
+  private updateChunkWarm(cur: number) {
+    for (const [c, e] of this.chunkWarm) {
+      // gleich unter dem Fahrer: nicht länger warten
+      const urgent = c.idx <= cur + 1;
+      if (!urgent && !this.warmPending(e.w)) continue;
+      this.chunkWarm.delete(c);
+      if (this.chunks.get(c.idx) !== c) continue;
+      c.group.visible = true;
+      e.show();
+    }
+  }
+
+  /** Wasserfälle: fließende Gischt (einmal angelegt) */
+  private fallMaterial(): THREE.MeshBasicMaterial {
+    if (!this.fallMat) {
+      const t = alphaTex(fallTex(), [235, 244, 250]);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      // beidseitig in einem Durchgang (sonst zeichnet three.js durchsichtige Flächen zweimal und baut das Material jedes Mal neu auf)
+      this.fallMat = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, color: new THREE.Color(0.95, 0.97, 1) });
+    }
+    return this.fallMat;
+  }
+
+  /**
+   * Einmal zu Beginn (Startkarte): die Shader aller Dinge der Strecke anstoßen – Dörfer, Tunnel, Pflaster, Seen,
+   * Schilder, Wasserfälle. Der Grafiktreiber übersetzt sie im Hintergrund; sonst stockte das Spiel beim ersten
+   * Dorf oder Tunnel für einen Moment.
+   */
+  private warmGroup: THREE.Group | null = null;
+  private warmAll() {
+    const g = new THREE.Group();
+    // Ob die Geometrie Normalen hat, gehört zum Shader (three.js r186): je Material die passende Sorte
+    const geo = new THREE.PlaneGeometry(1, 1);
+    const pgeo = new THREE.BufferGeometry();
+    pgeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+    const noNormals = new Set<THREE.Material>([this.mats.tunWall, this.mats.tunRoad, this.mats.tunMarks, this.bbMat, this.sprMat, this.markMat, this.fallMaterial()]);
+    const tex = this.noiseMap;
+    // Beschriftungen (Malereien, Schilder, Tafeln, Bögen) entstehen erst unterwegs – je Art ein Stellvertreter
+    const labels: THREE.Material[] = [
+      new THREE.MeshLambertMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, opacity: 0.9 }),
+      new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide }),
+      new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide }),
+      new THREE.MeshLambertMaterial({ map: tex }),
+      new THREE.MeshLambertMaterial({ color: 0x9aa0a8 }),
+    ];
+    const mats: THREE.Material[] = [...Object.values(this.mats), ...this.terrMats, ...this.waterMats, this.markMat, this.crowdMat, this.sprMat, this.bbMat, this.fallMaterial(), ...labels];
+    for (const m of mats) {
+      if (!(m as THREE.ShaderMaterial).isShaderMaterial) appearify(m);
+      if ((m as THREE.PointsMaterial).isPointsMaterial) { g.add(new THREE.Points(pgeo, m)); continue; }
+      g.add(new THREE.Mesh(noNormals.has(m) ? pgeo : geo, m));
+    }
+    // Fahrer als Bilder (ihr Shader wird gebraucht, sobald der Vorrat fertig ist – auch mitten im Rennen)
+    g.add(new THREE.Mesh(this.rs.mesh.geometry, this.rs.mesh.material));
+    // Berge am Horizont: beide Spielarten am Leben halten (Landschaftswechsel tauscht ihr Material)
+    this.peakU.uNoise.value ??= this.noiseMap;
+    for (const m of peakKeepers(this.peakU)) g.add(new THREE.Mesh(geo, m));
+    // Requisiten: je Art ein Zeichenaufruf mit eigener Farbe je Exemplar
+    const im = new THREE.InstancedMesh(geo, this.mats.props, 1);
+    im.receiveShadow = true;
+    im.castShadow = true;
+    im.setColorAt(0, new THREE.Color());
+    g.add(im);
+    this.warmUp(g);
+    // (nicht wegwerfen: sonst gäbe three.js die eben übersetzten Programme wieder frei)
+    this.warmGroup = g;
+    warmRoadText();
+  }
+
+  /**
+   * Kennung, was den Shader eines Objekts bestimmt (ungefähr wie three.js' Programmschlüssel, aber billig): schon
+   * gesehene Kombinationen brauchen kein compile() – das kostet je Objekt Rechenzeit, auch wenn nichts Neues entsteht
+   */
+  private progSeen = new Set<string>();
+  private progSig(o: THREE.Object3D, m: THREE.Material): string {
+    const mm = m as THREE.Material & { map?: unknown; emissiveMap?: unknown; vertexColors?: boolean; flatShading?: boolean };
+    const oo = o as THREE.Object3D & { isInstancedMesh?: boolean; isPoints?: boolean; instanceColor?: unknown; geometry?: THREE.BufferGeometry };
+    const at = oo.geometry?.attributes;
+    return `${m.type}|${m.customProgramCacheKey().length > 200 ? m.uuid : m.customProgramCacheKey()}|${!!mm.map}|${!!mm.emissiveMap}|${!!mm.vertexColors}|${m.transparent}|${m.alphaTest > 0}|${m.side}|${!!mm.flatShading}|${m.alphaToCoverage}|${!!oo.isInstancedMesh}|${!!oo.isPoints}|${!!oo.instanceColor}|${!!at?.normal}|${at?.color?.itemSize ?? 0}`;
+  }
+
+  /** Arbeit des Grafiktreibers (Shader) für neue Objekte vorab anstoßen */
+  private parallel: boolean | null = null;
+  private warmUp(o: THREE.Object3D): Warm | null {
+    let fresh = false;
+    o.traverse((x) => {
+      const ms = (x as THREE.Mesh).material;
+      if (!ms) return;
+      for (const m of Array.isArray(ms) ? ms : [ms]) {
+        const k = this.progSig(x, m);
+        if (this.progSeen.has(k)) continue;
+        this.progSeen.add(k);
+        fresh = true;
+      }
+    });
+    if (!fresh) return null;
+    const info = this.gl.info.programs;
+    const n0 = info ? info.length : 0;
+    this.gl.compile(o, this.camera, this.scene);
+    const list = info ? info.slice(n0) : [];
+    if (!list.length) return null;
+    this.parallel ??= !!this.gl.extensions.get('KHR_parallel_shader_compile');
+    // ohne Rückmeldung des Treibers: nicht warten (sonst bliebe es unsichtbar)
+    if (!this.parallel) return null;
+    return { progs: list, t: performance.now() };
+  }
+
+  /** true, solange noch ein Shader übersetzt wird (höchstens 4 s) */
+  private warmPending(w: Warm): boolean {
+    if (performance.now() - w.t > 4000) return false;
+    w.progs = w.progs.filter((p) => !(p as { isReady?: () => boolean }).isReady?.());
+    return w.progs.length > 0;
   }
 
   private fadeChunk(c: Chunk, out: boolean) {
@@ -1611,14 +1857,23 @@ export class Renderer3D {
     }
     // der Abschnitt unter dem Fahrer und der nächste müssen stehen (z. B. nach einem Sprung): sofort bauen
     const cur = Math.floor(z / SEG / CH);
+    this.updateChunkWarm(cur);
     for (let k = Math.max(from, cur); k <= Math.min(to, cur + 1); k++) {
       if (this.chunks.has(k)) continue;
       if (this.chunkGen?.k === k) this.chunkGen = null;
       this.addChunk(k, this.buildChunk(g, k), false);
     }
-    // danach mit Zeitbudget je Bild (nächste zuerst), auf der Startkarte großzügiger
+    // danach mit Zeitbudget je Bild (nächste zuerst), auf der Startkarte großzügiger; der Bau gibt an der
+    // Zeitgrenze von selbst ab (feine Häppchen)
     const t0 = performance.now();
-    const budget = this.idleBuild ? 12 : 2.5;
+    let budget = this.idleBuild ? 12 : Math.max(0.8, Math.min(2.5, this.room() * 0.38));
+    // knapp vor dem Fahrer fehlt noch etwas: dann zügig (sonst müsste es gleich am Stück entstehen – ein Ruckler)
+    {
+      let k = from;
+      while (k <= to && this.chunks.has(k)) k++;
+      if (k <= cur + 3) budget = Math.max(budget, 2.5);
+    }
+    this.deadline = t0 + budget;
     while (performance.now() - t0 < budget) {
       if (!this.chunkGen) {
         let k = from;
@@ -1629,10 +1884,11 @@ export class Renderer3D {
       const r = this.chunkGen.it.next();
       if (r.done) {
         // weit voraus fertig: weich einblenden (in Kehren liegt er oft schon im Bild)
-        this.addChunk(this.chunkGen.k, r.value, true);
+        this.addChunk(this.chunkGen.k, r.value, true, true);
         this.chunkGen = null;
       }
     }
+    this.deadline = Infinity;
   }
 
   private row(z: number, seg: Seg): Row {
@@ -1779,9 +2035,14 @@ export class Renderer3D {
         this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : '#ffffff');
       }
       for (const f of g.friends) if (Math.floor(f.meters / SEG) === s.i) this.arch(group, disp, a, { kind: 'arch', text: f.userId === 'me' ? 'Deine Bestmarke' : `Bestmarke ${f.name}`, sub: fmtKm(f.meters) }, f.color);
-      if (s.portal === 1) this.portal(portal, mas, roof, group, disp, a, P, sec(s).biome, 1);
-      if (s.portal === 2) this.portal(portal, mas, roof, group, disp, b, P, sec(s).biome, -1);
-      if (r % 4 === 3) {
+      if (s.portal) {
+        // Portal in Häppchen (die Felswand braucht viele Höhenabfragen)
+        yield* this.portalSteps(portal, mas, roof, group, disp, s.portal === 1 ? a : b, P, sec(s).biome, s.portal === 1 ? 1 : -1);
+        this.region = region;
+        this.adsGB = ads;
+        this.cTrees = cTrees;
+      }
+      if (this.late()) {
         yield;
         // zwischendurch kann anderes gelaufen sein: gemeinsamen Bauzustand wiederherstellen
         this.region = region;
@@ -1804,36 +2065,46 @@ export class Renderer3D {
       mesh.castShadow = cast;
       group.add(mesh);
     };
-    add(surf.asphalt, this.mats.asphalt);
-    add(surf.fresh, this.mats.fresh);
-    add(surf.cobble, this.mats.cobble);
-    add(surf.gravel, this.mats.gravel);
-    add(verge, this.mats.verge);
-    add(marks, this.mats.marks, 1);
-    // Gelände neben der Straße weich schattiert (keine harten Kanten zwischen den Bändern)
-    if (!terr.empty) {
-      const geo = terr.buildSmooth(null);
-      disp.push(geo);
-      const mesh = new THREE.Mesh(geo, this.mats.terrain);
-      mesh.receiveShadow = true;
-      group.add(mesh);
+    // Zusammenbau in Häppchen: nach jedem Teil nachsehen, ob die Zeit des Bildes um ist
+    const parts: (() => void)[] = [
+      () => add(surf.asphalt, this.mats.asphalt),
+      () => add(surf.fresh, this.mats.fresh),
+      () => add(surf.cobble, this.mats.cobble),
+      () => add(surf.gravel, this.mats.gravel),
+      () => add(verge, this.mats.verge),
+      () => add(marks, this.mats.marks, 1),
+      // Gelände neben der Straße weich schattiert (keine harten Kanten zwischen den Bändern)
+      () => {
+        if (terr.empty) return;
+        const geo = terr.buildSmooth(null);
+        disp.push(geo);
+        const mesh = new THREE.Mesh(geo, this.mats.terrain);
+        mesh.receiveShadow = true;
+        group.add(mesh);
+      },
+      () => add(portal, this.mats.portal, 0, true),
+      () => add(bar, this.mats.barrier, 0, true),
+      () => add(water, this.mats.water, 2),
+      () => {
+        for (const [tb, m] of [[tunWall, this.mats.tunWall], [tunRoad, this.mats.tunRoad], [tunMarks, this.mats.tunMarks]] as [TB, THREE.Material][]) {
+          if (tb.empty) continue;
+          const geo = tb.build();
+          disp.push(geo);
+          group.add(new THREE.Mesh(geo, m));
+        }
+      },
+      () => add(tunSigns, this.mats.tunSign),
+      () => add(mas, this.mats.masonry, 0, true),
+      () => add(facade, this.mats.facade, 0, true),
+      () => add(roof, this.mats.roof, 0, true),
+      () => add(tiles, this.mats.tiles, 0, true),
+      () => add(signGB, this.mats.sign, 0),
+      () => add(ads, this.mats.ads, 0, true),
+    ];
+    for (const f of parts) {
+      f();
+      if (this.late()) yield;
     }
-    add(portal, this.mats.portal, 0, true);
-    add(bar, this.mats.barrier, 0, true);
-    add(water, this.mats.water, 2);
-    for (const [tb, m] of [[tunWall, this.mats.tunWall], [tunRoad, this.mats.tunRoad], [tunMarks, this.mats.tunMarks]] as [TB, THREE.Material][]) {
-      if (tb.empty) continue;
-      const geo = tb.build();
-      disp.push(geo);
-      group.add(new THREE.Mesh(geo, m));
-    }
-    add(tunSigns, this.mats.tunSign);
-    add(mas, this.mats.masonry, 0, true);
-    add(facade, this.mats.facade, 0, true);
-    add(roof, this.mats.roof, 0, true);
-    add(tiles, this.mats.tiles, 0, true);
-    add(signGB, this.mats.sign, 0);
-    add(ads, this.mats.ads, 0, true);
     if (!bill.empty) {
       const geo = bill.build();
       geo.setAttribute('aAnim', new THREE.Float32BufferAttribute(anim, 3));
@@ -1855,6 +2126,7 @@ export class Renderer3D {
       this.treeSrc.add(csrc);
     }
     for (const [kind, list] of inst) {
+      if (this.late()) yield;
       const geo = this.props[kind];
       if (!geo) continue;
       const im = new THREE.InstancedMesh(geo, this.mats.props, list.m.length);
@@ -1871,6 +2143,7 @@ export class Renderer3D {
     const sprGeos: THREE.BufferGeometry[] = [];
     for (const list of people) {
       if (!list.length) continue;
+      if (this.late()) yield;
       const c = new THREE.Vector3();
       for (const pp of list) { c.x += pp.x; c.y += pp.y; c.z += pp.z; }
       c.divideScalar(list.length);
@@ -2179,17 +2452,18 @@ export class Renderer3D {
    * Gelände – so sieht man nirgends an ihr vorbei. dir = 1: Einfahrt (Vorbau zeigt zur Anfahrt),
    * dir = −1: Ausfahrt (Vorbau zeigt in Fahrtrichtung).
    */
-  private portal(gb: GB, mas: GB, trim: GB, group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], a: Row, P: (r: Row, x: number, h: number) => number[], biome: BiomeId, dir: 1 | -1) {
+  private *portalSteps(gb: GB, mas: GB, trim: GB, group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], a: Row, P: (r: Row, x: number, h: number) => number[], biome: BiomeId, dir: 1 | -1): Generator<void, void, void> {
     const pal = BIOME_PALETTES[biome];
     // Felswand: eigene Geometrie mit weichen Normalen (sonst sieht man jedes Dreieck des Reliefs)
     const outer = gb;
     gb = new GB();
     const x = EDGE - 0.35;
     const T = this.terrain!;
-    const reg = this.region!;
+    const W = 40;
+    // eigener, kleiner Rechenbereich (nur die Wand): viel weniger Straßenstücke je Höhenabfrage als im ganzen Abschnitt
+    const reg = T.region(a.x - W - 8, a.z - W - 8, a.x + W + 8, a.z + W + 8);
     const fx = Math.sin(a.th);
     const fz = -Math.cos(a.th);
-    const W = 40;
     const NI = 40;           // Spalten (2 m)
     const NJ = 16;           // Zeilen (je Spalte vom Fuß bis zur Oberkante)
     const lat = (i: number) => -W + (2 * W * i) / NI;
@@ -2205,6 +2479,7 @@ export class Renderer3D {
       const minTop = al < FAC_W + 2 ? FAC_H + 2.4 : al < 26 ? FAC_H + 2.4 - (al - FAC_W - 2) * 0.35 : -Infinity;
       tops.push(Math.max(minTop, ht + 2.2, al < 26 ? hb + 0.8 : -Infinity));
       bots.push(Math.min(-9, ht - 6));
+      if (this.late()) yield;
     }
     // Knoten: Lage in der Wand (Seite, Höhe) und Relief (+ in den Berg hinein)
     const hAt = (i: number, j: number) => bots[i] + ((tops[i] - bots[i]) * j) / NJ;
@@ -2223,6 +2498,7 @@ export class Renderer3D {
         nodes.push([q[0] + fx * r * dir, q[1], q[2] + fz * r * dir, l, h]);
       }
     }
+    if (this.late()) yield;
     const N = (i: number, j: number) => nodes[i * (NJ + 1) + j];
     // Gesteinsfarbe: Lagen nach Höhe, etwas Rauschen
     const rock = rgbLin(mixRGB(pal.rock, [168, 160, 148], 0.25));
@@ -2254,6 +2530,7 @@ export class Renderer3D {
         else { gb.tri(A, B, D, col); gb.tri(B, C, D, shadeF(col, 0.96)); }
       }
     }
+    if (this.late()) yield;
     // Rahmen zwischen Treppenrand der ausgesparten Zellen und der Tunnelöffnung (ohne Relief an der Öffnung)
     const cols = [...top.keys()].filter((i) => top[i] >= 0);
     if (cols.length) {
@@ -2289,20 +2566,23 @@ export class Renderer3D {
         gb.tri([A[0], A[1], A[2]], [B[0], B[1], B[2]], [C[0], C[1], C[2]], colAt(0, cy, i * 17 + k));
       }
     }
+    if (this.late()) yield;
     // gemauerte Fassade mit Bogen, davor die Inschrift
     const { plaque } = portalFacade(mas, trim, a, P, dir);
+    if (this.late()) yield;
     const t = this.track!;
     const [t0, t1, len] = this.tunnelOf(dir > 0 ? a.seg.i : a.seg.i - 1);
     const name = tunnelName(t.lang, t0 * 7 + t1 * 13 + t.seed);
     const key = `plaque:${name}:${len}`;
     let tex = this.labelTex.get(key);
-    if (!tex) { tex = this.tex(plaqueTex(name, `m ${Math.round(len / 2) * 2}`), false); this.labelTex.set(key, tex); }
+    if (!tex) { tex = this.tex(plaqueTex(name, `m ${Math.round(len / 2) * 2}`), false); this.labelTex.set(key, tex); if (this.late()) yield; }
     const pg = new GB();
     pg.uv = true;
     pg.quad(plaque[0], plaque[1], plaque[2], plaque[3], [1, 1, 1], [[0, 0], [1, 0], [1, 1], [0, 1]]);
     const geo = pg.build();
-    const mat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
-    disp.push(geo, mat);
+    const t2 = tex;
+    const mat = this.matFor(`plaque|${key}`, () => new THREE.MeshLambertMaterial({ map: t2, side: THREE.DoubleSide }));
+    disp.push(geo);
     group.add(new THREE.Mesh(geo, mat));
     if (!gb.empty) {
       const rg = gb.buildSmooth(new THREE.Vector3(-fx * dir, 0.25, -fz * dir));
@@ -2676,10 +2956,11 @@ export class Renderer3D {
       let tex = this.labelTex.get(key);
       const img = this.bank.label(sp.k, sp.text ?? '', sub);
       if (!tex) { tex = this.tex(img.img, false); this.labelTex.set(key, tex); }
-      const mat = new THREE.MeshLambertMaterial({ map: tex, alphaTest: 0.5, side: THREE.DoubleSide });
+      const t2 = tex;
+      const mat = this.matFor(`sign|${key}`, () => new THREE.MeshLambertMaterial({ map: t2, alphaTest: 0.5, side: THREE.DoubleSide }));
       const geo = new THREE.PlaneGeometry(img.w, img.h);
       geo.translate(0, img.h / 2, 0);
-      disp.push(mat, geo);
+      disp.push(geo);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(px, py, pz);
       mesh.rotation.y = -a.th;
@@ -2730,8 +3011,9 @@ export class Renderer3D {
         this.labelTex.set(key, tex);
       }
       const geo = gb.build();
-      const mat = new THREE.MeshLambertMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, opacity: 0.9 });
-      disp.push(geo, mat);
+      const t2 = tex;
+      const mat = this.matFor(`decal|${key}`, () => new THREE.MeshLambertMaterial({ map: t2, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, opacity: 0.9 }));
+      disp.push(geo);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.renderOrder = 2;
       group.add(mesh);
@@ -3004,6 +3286,7 @@ export class Renderer3D {
       this.player = new RiderModel(p.kit, this.shadowTex, 1);
       this.playerKit = kitKey;
       this.scene.add(this.player.group);
+      this.warmUp(this.player.group);
     }
     const pm = this.player;
     const roadY = track.heightAt(p.z);
@@ -3028,6 +3311,9 @@ export class Renderer3D {
     // in den Rennfinals das ganze Feld; Fahrer zwischen Kamera und Spieler werden durchsichtig
     const sprint = track.kind !== 'descent';
     const list = g.opps.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, sprint ? 32 : 14);
+    const cp = this.camera.position;
+    const rsOn = this.rs.ready;
+    this.rs.begin();
     for (const o of list) {
       seen.add(o.id);
       let m = this.riders.get(o.id);
@@ -3035,11 +3321,28 @@ export class Renderer3D {
       if (!m) {
         m = new RiderModel(o.kit, this.shadowTex);
         if (sprint) m.prepareFade();
+        appearifyTree(m.group);
+        // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen
+        this.warmUp(m.group);
         this.riders.set(o.id, m);
         this.scene.add(m.group);
       }
       m.group.visible = true;
-      this.placeOpp(m, o, track);
+      // in der Ferne ein 2D-Bild statt des 3D-Fahrers – dazwischen gerastert überblendet (je Bildpunkt genau einer)
+      track.world(o.z, o.x, 0, this.w);
+      const dc = Math.hypot(this.w.x - cp.x, this.w.y - cp.y, this.w.z - cp.z);
+      let sa = 0;
+      if (rsOn && spriteable(o.kit)) {
+        const t = Math.max(0, Math.min(1, (dc - this.spriteNear) / (this.spriteFar - this.spriteNear)));
+        sa = apQ(t * t * (3 - 2 * t));
+      }
+      this.placeOpp(m, o, track, sa < 1);
+      m.setSprite(sa >= 1);
+      m.setBodyAp(sa > 0 && sa < 1 ? apOut(sa) : undefined);
+      if (sa > 0) {
+        const tk = Math.max(0, Math.min(1, o.tuck - o.brake * 0.6));
+        this.rs.add(this.w.x, this.w.y, this.w.z, m.group.rotation.y, o.lean, o.pedal, tk, o.stand ?? 0, sa, o.kit);
+      }
       // weit weg (Kamera): kleine Teile weglassen – erst, wenn sie sich im Shader schon aufgelöst haben
       const fh = RiderModel.FAR_HIDE;
       m.setFar(this.camera.position.distanceToSquared(m.group.position) > (m.isFar ? (fh - 1) ** 2 : fh * fh));
@@ -3063,6 +3366,7 @@ export class Renderer3D {
         m.fade(block ? 0.28 : 1, this.lastDt);
       }
     }
+    this.rs.end();
     // alle Fahrer vorab anlegen (ausgeblendet), damit beim Auftauchen nichts gebaut werden muss –
     // in den Finals immer, sonst in Ruhe auf der Startkarte
     if (sprint || this.idleBuild) {
@@ -3070,6 +3374,9 @@ export class Renderer3D {
         if (this.riders.has(o.id)) continue;
         const m = new RiderModel(o.kit, this.shadowTex);
         if (sprint) m.prepareFade();
+        appearifyTree(m.group);
+        // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen
+        this.warmUp(m.group);
         m.group.visible = false;
         this.riders.set(o.id, m);
         this.scene.add(m.group);
@@ -3085,12 +3392,13 @@ export class Renderer3D {
     }
   }
 
-  private placeOpp(m: RiderModel, o: Opp, track: Track) {
+  private placeOpp(m: RiderModel, o: Opp, track: Track, pose = true) {
     const w = this.w;
     track.world(o.z, o.x, 0, w);
     m.group.position.set(w.x, w.y, w.z);
     m.group.rotation.y = -w.th;
-    m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.bikeLight(), roll: o.z / 0.34, stand: o.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0 });
+    // nur als Bild zu sehen: Haltung nicht rechnen
+    if (pose) m.pose({ lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, light: this.bikeLight(), roll: o.z / 0.34, stand: o.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0 });
   }
 
   private poolGet(kind: string, make: () => THREE.Object3D): THREE.Object3D {
@@ -3148,6 +3456,10 @@ export class Renderer3D {
       glowB: new THREE.MeshBasicMaterial({ color: 0x59a6ff, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending }),
       glowG: new THREE.MeshBasicMaterial({ color: 0xffc23a, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending }),
     };
+    // alle gleich übersetzen lassen (im Hintergrund) – nicht erst, wenn die erste Pfütze auftaucht
+    const warm = new THREE.Group();
+    for (const m of Object.values(this.objMat)) { appearify(m); warm.add(new THREE.Mesh(this.objGeo.disc, m)); }
+    this.warmUp(warm);
   }
 
   private updateObjects(g: RaceView) {

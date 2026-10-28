@@ -14,6 +14,7 @@ import { alphaTex, lin, type RGBf } from './models3d';
 import { BIKE_BB, bikeBuild, type BikeFit } from './bike3d';
 import { FAR1, LambertFarMaterial, glossFarMat, glossMat } from './gloss';
 import { headBuild, shoeBuild } from './gear3d';
+import { appearify, setAp } from './appear';
 
 /**
  * Haltung: Schräglage, Kurbelwinkel, geduckt, bremsen, Licht, Radumdrehung, Wiegetritt (0–1) und dessen Art:
@@ -543,6 +544,27 @@ export class RiderModel {
     this.kitKey = riderKitKey(kit);
   }
 
+  /** In der Ferne zeigt ein 2D-Bild den Fahrer (riderSprites): Körper und Rad nicht zeichnen – der Schatten bleibt */
+  setSprite(on: boolean) {
+    this.body.visible = !on;
+    if (this.trailer) this.trailer.visible = !on;
+  }
+  get isSprite() { return !this.body.visible; }
+
+  /** weiches Aus-/Einblenden von Körper und Rad (appear.ts; der Schatten bleibt unberührt) */
+  setBodyAp(code: number | undefined) {
+    setAp(this.body, code);
+    if (this.trailer) setAp(this.trailer, code);
+  }
+
+  /** Nur zum Zeichnen des Bildvorrats: Schatten, Lampe, Speichen und Schleier weglassen (die Felgen bleiben) */
+  prepareBake() {
+    this.shadow.visible = false;
+    this.lamp.visible = false;
+    for (const m of this.spokes) m.visible = false;
+    for (const m of this.blurs) m.visible = false;
+  }
+
   /** Detailstufe nach Abstand: weit weg die kleinen Teile weglassen (halb so viele Zeichenaufrufe).
    *  Sie sind dort schon unsichtbar (aufgelöst bis FAR1) – das Weglassen selbst sieht man nicht */
   get isFar() { return this.far; }
@@ -569,7 +591,7 @@ export class RiderModel {
       if (!m.isMesh || Array.isArray(m.material)) return;
       const src = m.material as THREE.Material;
       let c = cache.get(src);
-      if (!c) { c = src.clone(); c.transparent = true; cache.set(src, c); list.push(c); }
+      if (!c) { c = src.clone(); c.transparent = true; appearify(c); cache.set(src, c); list.push(c); }
       m.material = c;
     });
     this.fadeMats = list;
