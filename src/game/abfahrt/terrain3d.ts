@@ -1521,6 +1521,18 @@ interface ColorSet {
   fieldy: number; forestThr: number; treeLine: number; rockLine: number; snowLine: number; meadowTrees: number;
 }
 
+/**
+ * Wiesengrün natürlich: weniger gesättigt, Blau nicht zu knapp – die Tonwertkurve (grade.ts) zieht den kleinsten
+ * Kanal nach unten, kräftiges Gelbgrün kam so mit Blau fast null als Neongrün auf den Schirm. Abstufungen
+ * zwischen den Gegenden (Toskana trockener, Pyrenäen satter) bleiben erhalten.
+ */
+export function grassy(c: RGB, sat = GRASS_SAT): RGB {
+  const l = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+  return [(l + (c[0] - l) * sat) * GRASS_K[0], (l + (c[1] - l) * sat) * GRASS_K[1], (l + (c[2] - l) * sat) * GRASS_K[2]];
+}
+const GRASS_SAT = 0.38;
+const GRASS_K: RGB = [0.97, 0.93, 0.9];
+
 function colorSet(b: BiomeId, look: RegionLook): ColorSet {
   const p = BIOME_PALETTES[b];
   const L = (c: RGB) => lin255(c[0], c[1], c[2]);
@@ -1529,26 +1541,26 @@ function colorSet(b: BiomeId, look: RegionLook): ColorSet {
   const mid: RGB = low ? mixRGB(p.ground.meadow[0], look.meadow, 0.7) : p.ground.meadow[0];
   const fieldC: RGB = low ? look.field : [196, 176, 92];
   const base = {
-    meadow: L(mid),
-    meadow2: L(mixRGB(mid, [150, 170, 70], 0.25)),
+    meadow: L(grassy(mid)),
+    meadow2: L(grassy(mixRGB(mid, [150, 170, 70], 0.25))),
     forest: L([46, 82, 44]),
     forest2: L([58, 96, 50]),
     rock: L(mixRGB(p.rock, [178, 176, 170], 0.45)),
     rockDark: L(mixRGB(p.rockDark, [132, 130, 126], 0.4)),
     snow: L([240, 245, 250]),
     field: L(fieldC),
-    field2: L(mixRGB(fieldC, [120, 160, 70], 0.5)),
+    field2: L(grassy(mixRGB(fieldC, [120, 160, 70], 0.5), 0.7)),
     sand: L([196, 186, 160]),
     lakeBed: L(mixRGB(p.water, [40, 90, 110], 0.4)),
   };
   switch (b) {
     // Höhen in Metern über dem Talboden (eine Abfahrt beginnt gut 250 m darüber)
-    case 'pass': return { ...base, meadow: L([136, 168, 82]), meadow2: L([122, 154, 76]), fieldy: 0, forestThr: 0.5, treeLine: 195, rockLine: 245, snowLine: 330, meadowTrees: 0.02 };
+    case 'pass': return { ...base, meadow: L(grassy([136, 168, 82])), meadow2: L(grassy([122, 154, 76])), fieldy: 0, forestThr: 0.5, treeLine: 195, rockLine: 245, snowLine: 330, meadowTrees: 0.02 };
     case 'alpine': return { ...base, fieldy: 0.25, forestThr: 0.48, treeLine: 195, rockLine: 250, snowLine: 335, meadowTrees: 0.03 };
     case 'forest': return { ...base, fieldy: 0.15, forestThr: 0.38, treeLine: 200, rockLine: 255, snowLine: 340, meadowTrees: 0.05 };
     case 'village': return { ...base, fieldy: 1, forestThr: 0.48, treeLine: 195, rockLine: 255, snowLine: 340, meadowTrees: 0.04 };
     case 'lake': return { ...base, fieldy: look.dry ? 0.8 : 0.6, forestThr: look.dry ? 0.56 : 0.48, treeLine: 200, rockLine: look.dry ? 230 : 260, snowLine: 345, meadowTrees: look.dry ? 0.06 : 0.04 };
-    case 'vineyard': return { ...base, meadow: L(mixRGB([150, 170, 80], look.meadow, 0.6)), field: L(mixRGB([200, 184, 98], look.field, 0.6)), field2: L(mixRGB([128, 150, 62], look.field, 0.3)), fieldy: 1, forestThr: look.dry ? 0.66 : 0.58, treeLine: 300, rockLine: 420, snowLine: 9999, meadowTrees: 0.05 };
+    case 'vineyard': return { ...base, meadow: L(grassy(mixRGB([150, 170, 80], look.meadow, 0.6))), field: L(mixRGB([200, 184, 98], look.field, 0.6)), field2: L(grassy(mixRGB([128, 150, 62], look.field, 0.3), 0.7)), fieldy: 1, forestThr: look.dry ? 0.66 : 0.58, treeLine: 300, rockLine: 420, snowLine: 9999, meadowTrees: 0.05 };
   }
 }
 

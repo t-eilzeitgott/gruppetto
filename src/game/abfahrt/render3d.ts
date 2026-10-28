@@ -13,7 +13,7 @@ import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
 import { mistTexture, waterTexture } from './falls3d';
-import { adCell, adsTex, AD_COUNT, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
+import { adCell, adsTex, AD_COUNT, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
 import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
 import { buildPeaks, buildPeaksSteps, peakKeepers, peakLight, setPeakOpacity } from './peaks3d';
@@ -23,7 +23,7 @@ import { GB, alphaTex, lin, lin255, propGeometries, type Prop3D, type RGBf } fro
 import { RiderModel, riderKitKey, type RiderPose } from './rider3d';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
-import { LEVELS, LIM_MAX, Terrain, type Region, type TileData } from './terrain3d';
+import { LEVELS, LIM_MAX, Terrain, grassy, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
 import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
 import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
@@ -624,6 +624,43 @@ export class Renderer3D {
     return t;
   }
 
+  /**
+   * Wiesentextur (tex3d.grassTex): Farbe im RGB (sRGB), Blütenmaske im Alpha – als Datentextur, damit die
+   * Farbe unter der Maske nicht verloren geht (Leinwände speichern sie vormultipliziert). Dazu der Mittelwert
+   * je Kanal (linear): durch ihn geteilt ist die Textur im Mittel 1 und ändert die Helligkeit nicht – in der
+   * Ferne (kleinste Mipmaps) passt sie so von selbst zu den gröberen Stufen ohne Textur.
+   */
+  private grassTexture(): { tex: THREE.Texture; mean: THREE.Vector3 } {
+    const { rgb, flower } = grassTex();
+    const w = rgb.width;
+    const h = rgb.height;
+    const a = rgb.getContext('2d')?.getImageData?.(0, 0, w, h)?.data;
+    const m = flower.getContext('2d')?.getImageData?.(0, 0, w, h)?.data;
+    const out = new Uint8Array(w * h * 4).fill(128);
+    const sum = [0, 0, 0];
+    const lin = (v: number) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    if (a && m) {
+      for (let i = 0; i < w * h * 4; i += 4) {
+        out[i] = a[i]; out[i + 1] = a[i + 1]; out[i + 2] = a[i + 2]; out[i + 3] = m[i];
+        // Mittelwert ohne Blüten (die mischt der Shader über die Maske ein)
+        const k = 1 - m[i] / 255;
+        sum[0] += lin(a[i]) * k; sum[1] += lin(a[i + 1]) * k; sum[2] += lin(a[i + 2]) * k;
+      }
+    }
+    let wsum = 0;
+    if (m) for (let i = 0; i < w * h * 4; i += 4) wsum += 1 - m[i] / 255;
+    const mean = wsum > 0 ? new THREE.Vector3(sum[0] / wsum, sum[1] / wsum, sum[2] / wsum) : new THREE.Vector3(0.2, 0.2, 0.2);
+    const t = new THREE.DataTexture(out, w, h, THREE.RGBAFormat);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.magFilter = THREE.LinearFilter;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.generateMipmaps = true;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = Math.min(2, this.gl.capabilities.getMaxAnisotropy());
+    t.needsUpdate = true;
+    return { tex: t, mean };
+  }
+
   private initMaterials() {
     this.noiseMap = this.dataTex(noiseTex(), 1);
     const L = (opts: THREE.MeshLambertMaterialParameters) => new THREE.MeshLambertMaterial(opts);
@@ -703,7 +740,9 @@ export class Renderer3D {
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
     // Weltkoordinaten statt UV – waagrechte Lagen laufen so über alle Flächen hinweg
     const rockMap = this.tex(rockTex());
-    const rockU = { uRock: { value: rockMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uCanD: this.canU };
+    const grass = this.grassTexture();
+    const grassU = { uGrass: { value: grass.tex }, uGrassMean: { value: grass.mean } };
+    const rockU = { uRock: { value: rockMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uCanD: this.canU, ...grassU };
     const rockify = (sh: THREE.WebGLProgramParametersWithUniforms) => {
       Object.assign(sh.uniforms, rockU);
       sh.vertexShader = sh.vertexShader
@@ -712,7 +751,7 @@ export class Renderer3D {
       // (uRelief und uTime erklärt auf der feinsten Landschaftsstufe schon der Landschafts-Shader – nicht doppelt,
       // sonst übersetzt der Shader nicht und die Stufe bleibt unsichtbar)
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uRock;\n#ifndef SPLAT_U\nuniform sampler2D uRelief;\nuniform float uTime;\nuniform vec4 uCanD;\n#endif\nvarying vec3 vRockP;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uRock;\n#ifndef SPLAT_U\nuniform sampler2D uRelief;\nuniform float uTime;\nuniform vec4 uCanD;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\n#endif\nvarying vec3 vRockP;')
         .replace('#include <map_fragment>', `
           #ifdef USE_MAP
             vec4 sampledDiffuseColor = texture2D(map, vMapUv);
@@ -722,6 +761,22 @@ export class Renderer3D {
             #endif
           #else
             vec4 sampledDiffuseColor = vec4(1.0);
+          #endif
+          #if !defined(SPLAT_U) && defined(USE_COLOR)
+          {
+            // Hänge neben der Straße: grüne Flächen (Eckpunktfarbe deutlich grün) bekommen dieselbe Wiese wie
+            // die Landschaft dahinter – Flecken, Büschel, Blüten; Fels, Schnee, Felder und Kies bleiben
+            // (Texturen immer lesen – in einer Verzweigung stimmten die Mipmaps an ihrem Rand nicht)
+            float gw = smoothstep(0.012, 0.05, vColor.g - max(vColor.r, vColor.b));
+            vec3 nzg = texture2D(uRelief, vRockP.xz / 33.0).rgb;
+            vec3 gm = mix(vec3(0.92, 0.98, 1.04), vec3(1.06, 1.02, 0.92), smoothstep(0.3, 0.72, nzg.r)) * (0.92 + 0.16 * nzg.g);
+            vec4 g1 = texture2D(uGrass, vRockP.xz / 4.2);
+            vec3 g2 = texture2D(uGrass, mat2(0.8, -0.6, 0.6, 0.8) * vRockP.xz / 21.0 + 0.37).rgb;
+            gm *= g1.rgb / uGrassMean * mix(vec3(1.0), g2 / uGrassMean, 0.65);
+            sampledDiffuseColor.rgb *= mix(vec3(1.0), gm, gw);
+            // Blüten: Farbe statt Tönung (geteilt durch die Eckpunktfarbe, die danach noch multipliziert wird)
+            sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, g1.rgb * 0.5 / max(vColor.rgb, vec3(0.02)), g1.a * 0.75 * gw);
+          }
           #endif
           ${gfxOn('details') ? `{
             // Steilheit und Projektionsrichtung aus der weichen Eckennormale (je Dreieck wäre die Textur an jeder
@@ -759,9 +814,10 @@ export class Renderer3D {
     const canCv = canopyTex();
     const canMean = texMean(canCv, false);
     const splatU = {
+      ...grassU,
       // ohne anisotrope Filterung: großflächig, fein genug ohne – und auf schwachen Grafikchips teuer
       uRelief: { value: this.reliefTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canCv, 2) },
-      uForA: { value: new THREE.Color().setRGB(...lin255(30, 60, 34)) }, uForB: { value: new THREE.Color().setRGB(...lin255(56, 88, 46)) },
+      uForA: { value: new THREE.Color().setRGB(...lin255(32, 58, 38)) }, uForB: { value: new THREE.Color().setRGB(...lin255(58, 86, 52)) },
       uSnow: { value: new THREE.Color().setRGB(...lin255(240, 245, 250)) },
       uTime: this.time, uSunDir: this.peakU.uSunDir, uCanD: this.canU,
     };
@@ -806,7 +862,7 @@ export class Renderer3D {
           #endif
           vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${MD}${gfxOn('details') ? '#define TDETAIL\n' : ''}#define TLV ${lv}\n#define SPLAT_U\nuniform vec4 uCanD;\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
+        .replace('#include <common>', `#include <common>\n${MD}${gfxOn('details') ? '#define TDETAIL\n' : ''}#define TLV ${lv}\n#define SPLAT_U\nuniform vec4 uCanD;\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
         .replace('#include <color_fragment>', `
           // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
           // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen.
@@ -816,7 +872,7 @@ export class Renderer3D {
             vec3 fnT = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
             float camD = distance(vTW, cameraPosition);
             float big = vMat.w;
-            #if TLV < 2 && defined(TDETAIL)
+            #if TLV < 2
               // mittleres Rauschen: r, Höhe g, Steigung von g in b/a (je Texel ×4)
               vec4 nz2 = texture2D(uRelief, vTW.xz / 33.0);
               #if TLV == 1 && defined(TMORPH)
@@ -831,7 +887,26 @@ export class Renderer3D {
             float nzF = texture2D(uRelief, vTW.xz / 300.0).r;
             // Wiesen: Flecken heller/dunkler, mal saftiger, mal trockener (gelblicher)
             vec3 tCol = vColor.rgb * (0.92 + 0.16 * big);
-            tCol = mix(tCol, tCol * vec3(1.1, 1.02, 0.78), smoothstep(0.55, 0.85, big) * 0.5);
+            tCol = mix(tCol, tCol * vec3(1.08, 1.02, 0.9), smoothstep(0.55, 0.85, big) * 0.5);
+            // Wiese aus der Nähe: Büschel, Flecken, Erde, Blüten (zwei Maßstäbe, gedreht gegeneinander – kein
+            // sichtbares Kachelmuster); in der Ferne mitteln die Mipmaps die Textur zu 1
+            #if TLV < 2
+            {
+              // mittelgroße Flecken (33 m): mal satter und kühler, mal trockener und gelber
+              tCol *= mix(vec3(0.92, 0.98, 1.04), vec3(1.06, 1.02, 0.92), smoothstep(0.3, 0.72, nz2.r)) * (0.92 + 0.16 * nz2.g);
+              vec4 g1 = texture2D(uGrass, vTW.xz / 4.2);
+              vec3 g2 = texture2D(uGrass, mat2(0.8, -0.6, 0.6, 0.8) * vTW.xz / 21.0 + 0.37).rgb;
+              vec3 gt = g1.rgb / uGrassMean * mix(vec3(1.0), g2 / uGrassMean, 0.65);
+              float fl = g1.a;
+              #if TLV == 1 && defined(TMORPH)
+                gt = mix(gt, vec3(1.0), vMk);
+                fl *= 1.0 - vMk;
+              #endif
+              tCol *= gt;
+              // Blüten behalten ihre Farbe (etwas gedämpft im Licht der Wiese)
+              tCol = mix(tCol, g1.rgb * 0.5, fl * 0.75);
+            }
+            #endif
             // Fels: Gewicht, Rauschen und die Steilheit dieser Fläche
             float rk = smoothstep(0.42, 0.64, vMat.y + (big - 0.5) * 0.4 + (nz2.r - 0.5) * 0.22 + (1.0 - fnT.y) * 0.3);
             float far = smoothstep(60.0, 220.0, camD);
@@ -903,7 +978,8 @@ export class Renderer3D {
             vec3 fc = mix(uForA, uForB, nz2.r * 0.6 + nzF * 0.4) * (0.42 + crown * 0.9) * (1.0 + 0.4 * crownL);
             fc = mix(fc, uForA * vec3(0.72, 0.7, 0.58), smoothstep(0.78, 0.45, fnT.y) * 0.22);
             float canopy = smoothstep(uCanD.x, uCanD.z, camD);
-            fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, 0.45 + 0.55 * canopy);
+            // nah: Waldboden aus Nadeln und Moos (bräunlich-oliv statt sattem Grün)
+            fc = mix(vec3(0.042, 0.048, 0.026), fc, 0.45 + 0.55 * canopy);
             // Schichtung: wellige waagrechte Lagen (Sedimentbänder) – nur in der Nähe: weiter weg würden daraus
             // Höhenlinien über den ganzen Berg (gerade Streifen); an steilen Flächen kräftig, sonst schwach
             #if TLV < 2 && defined(TDETAIL)
@@ -2953,7 +3029,12 @@ export class Renderer3D {
     };
     const gcol = (g: Side['ground'], k: number) => {
       const base = pal.ground[g === 'rock' ? 'rock' : g][0];
-      return shadeF(rgbLin(base), 0.92 + n(k + 30) * 0.16);
+      // Grün wie in der Landschaft (terrain3d.grassy): sonst neongrüne Streifen neben der Straße
+      const c = g === 'meadow' ? grassy(base)
+        // Waldboden: Nadeln und Moos, bräunlich-oliv
+        : g === 'forest' ? mixRGB(grassy(base, 0.5), [72, 66, 46], 0.35)
+          : g === 'vines' || g === 'sunflower' ? grassy(base, 0.72) : base;
+      return shadeF(rgbLin(c), 0.92 + n(k + 30) * 0.16);
     };
     const rock = (k: number) => shadeF(rgbLin(pal.rock), 0.85 + n(k + 50) * 0.2);
     // Alle Profile haben 9 Punkte (0–4: Nahzone/Wandfläche, 5–8: Hang), damit Übergänge sauber verbinden

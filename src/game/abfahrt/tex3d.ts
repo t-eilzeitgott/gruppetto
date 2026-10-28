@@ -938,6 +938,93 @@ export function canopyTex(): HTMLCanvasElement {
 }
 
 /**
+ * Wiese von oben (Farbe, wird durch ihren Mittelwert geteilt und mit der Eckpunktfarbe multipliziert): Büschel
+ * aus Halmen in mehreren Grüntönen, dunkle satte und helle trockene Flecken, Lücken mit Erde, einzelne
+ * trockene Halme – dazu wenige Blüten (weiß, gelb, violett) mit eigener Maske, die ihre Farbe behalten.
+ * Nahtlos, 256 Texel auf gut 4 m.
+ */
+export function grassTex(): { rgb: HTMLCanvasElement; flower: HTMLCanvasElement } {
+  const S = 256;
+  const cv = canvas(S, S);
+  const c = cv.getContext('2d')!;
+  const fv = canvas(S, S);
+  const f = fv.getContext('2d')!;
+  const r = mulberry32(71);
+  const TAU = Math.PI * 2;
+  c.fillStyle = 'rgb(116,134,74)';
+  c.fillRect(0, 0, S, S);
+  f.fillStyle = '#000';
+  f.fillRect(0, 0, S, S);
+  // weiche Flecken: satt und dunkel, trocken und hell, kühl
+  const blobs: [string, number][] = [['78,104,50', 0.32], ['158,156,94', 0.24], ['94,122,82', 0.22], ['128,140,70', 0.2]];
+  for (let i = 0; i < 90; i++) {
+    const [col, al] = blobs[Math.floor(r() * blobs.length)];
+    const rad = 8 + r() * 30;
+    wrapDraw(S, r() * S, r() * S, (x, y) => {
+      const g = c.createRadialGradient(x, y, 0, x, y, rad);
+      g.addColorStop(0, `rgba(${col},${al})`);
+      g.addColorStop(1, `rgba(${col},0)`);
+      c.fillStyle = g;
+      c.beginPath(); c.arc(x, y, rad, 0, TAU); c.fill();
+    });
+  }
+  // Erde zwischen den Büscheln
+  for (let i = 0; i < 160; i++) {
+    c.fillStyle = `rgba(${r() < 0.5 ? '72,62,42' : '58,66,40'},${(0.25 + r() * 0.3).toFixed(2)})`;
+    const sz = 1 + r() * 2;
+    wrapDraw(S, r() * S, r() * S, (x, y) => c.fillRect(x, y, sz, sz));
+  }
+  // Büschel: Halme strahlenförmig von einem Punkt (von oben gesehen), dunkel innen, hell an den Spitzen
+  const blade = ['52,80,34', '70,100,44', '96,124,58', '124,146,70', '150,164,86', '172,176,104'];
+  for (let i = 0; i < 420; i++) {
+    const n = 5 + Math.floor(r() * 9);
+    const base = r() * (blade.length - 2);
+    const sx = r() * S;
+    const sy = r() * S;
+    wrapDraw(S, sx, sy, (x, y) => {
+      for (let k = 0; k < n; k++) {
+        const a = r() * TAU;
+        const len = 2.5 + r() * 6;
+        const tone = blade[Math.min(blade.length - 1, Math.floor(base + r() * 2.6))];
+        c.strokeStyle = `rgba(${tone},${(0.5 + r() * 0.4).toFixed(2)})`;
+        c.lineWidth = 0.7 + r() * 0.8;
+        c.beginPath();
+        c.moveTo(x, y);
+        c.quadraticCurveTo(x + Math.cos(a) * len * 0.6 + (r() - 0.5) * 2, y + Math.sin(a) * len * 0.6 + (r() - 0.5) * 2, x + Math.cos(a) * len, y + Math.sin(a) * len);
+        c.stroke();
+      }
+    });
+  }
+  // einzelne trockene Halme
+  for (let i = 0; i < 140; i++) {
+    const a = r() * TAU;
+    const len = 4 + r() * 7;
+    c.strokeStyle = `rgba(${r() < 0.6 ? '186,178,118' : '160,150,96'},${(0.45 + r() * 0.35).toFixed(2)})`;
+    c.lineWidth = 0.6 + r() * 0.5;
+    wrapDraw(S, r() * S, r() * S, (x, y) => { c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); c.stroke(); });
+  }
+  grain(c, S, r, 16);
+  // Blüten in kleinen Gruppen: Farbe ins Bild, Stärke in die Maske
+  const flowers = ['236,232,214', '232,200,72', '168,136,200', '226,176,62', '200,170,214'];
+  for (let g = 0; g < 22; g++) {
+    const col = flowers[Math.floor(r() * flowers.length)];
+    const gx = r() * S;
+    const gy = r() * S;
+    const n = 1 + Math.floor(r() * 3);
+    for (let k = 0; k < n; k++) {
+      const rad = 0.6 + r() * 0.6;
+      wrapDraw(S, gx + (r() - 0.5) * 18, gy + (r() - 0.5) * 18, (x, y) => {
+        c.fillStyle = `rgb(${col})`;
+        c.beginPath(); c.arc(x, y, rad, 0, TAU); c.fill();
+        f.fillStyle = '#fff';
+        f.beginPath(); f.arc(x, y, rad, 0, TAU); f.fill();
+      });
+    }
+  }
+  return { rgb: cv, flower: fv };
+}
+
+/**
  * Lichtschein für additive Darstellung: Farbe in der Mitte, zum Rand schwarz – ganz ohne Durchsichtigkeit.
  * (Verläufe ins Durchsichtige bekommen auf manchen Handys beim Hochladen farbiges Rauschen in den Rand.)
  */
