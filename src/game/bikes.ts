@@ -6,7 +6,7 @@
  *
  * Freigeschaltet wird der Reihe nach: Am Anfang hat man nur das Teamrad, jedes weitere Rad hat eine Aufgabe,
  * die erst zählt, wenn das Rad davor freigeschaltet ist. Gezählt werden die eigenen Läufe aller Minispiele
- * seit Eröffnung der Garage (gilt so auf jedem Gerät).
+ * (auch die Fahrten im Zeitfahren) seit Eröffnung der Garage (gilt so auf jedem Gerät).
  */
 import type { GameBest, GameId } from '../data/source';
 
@@ -250,7 +250,7 @@ export interface BikeStats {
 /** eigene Werte aus den Bestenlisten der Spiele (seit Eröffnung der Garage) */
 export function bikeStats(boards: Partial<Record<GameId, GameBest[] | undefined>>, meId: string): BikeStats {
   const s: BikeStats = { runs: 0, meters: 0 };
-  for (const g of ['abfahrt', 'sprint', 'berg'] as GameId[]) {
+  for (const g of ['abfahrt', 'sprint', 'berg', 'zeitfahren'] as GameId[]) {
     const me = boards[g]?.find((b) => b.user_id === meId);
     if (!me) continue;
     s.runs += me.runs;

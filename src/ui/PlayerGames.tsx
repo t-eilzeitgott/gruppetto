@@ -6,7 +6,7 @@
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
-import { GAMES, type GameInfo } from '../game/games';
+import { GAMES, fmtBest, type GameInfo } from '../game/games';
 import { Link } from './kit';
 import { GameBadge } from './GameIcon';
 
@@ -30,7 +30,9 @@ export function PlayerGames({ userId, isMe }: { userId: string; isMe: boolean })
     return { game, best: idx >= 0 ? rows[idx] : null, place: idx + 1, players: rows.length };
   });
   const played = entries.filter((e) => e.best && e.best.runs > 0);
-  const top = played.reduce<Entry | null>((a, e) => (!a || e.best!.best > a.best!.best ? e : a), null);
+  // Allzeit-Highscore nur aus den Punktespielen (Zeiten sind keine Punkte); wer nur Zeitfahren fährt, zeigt seine Bestzeit
+  const points = played.filter((e) => e.game.scoring === 'points');
+  const top = (points.length ? points : played).reduce<Entry | null>((a, e) => (!a || e.best!.best > a.best!.best ? e : a), null);
   const runs = played.reduce((n, e) => n + e.best!.runs, 0);
 
   return (
@@ -43,8 +45,8 @@ export function PlayerGames({ userId, isMe }: { userId: string; isMe: boolean })
           <div className="pg-best">
             <GameBadge game={top.game.id} size={40} />
             <div className="pg-best__main">
-              <span className="pg-best__label">Allzeit-Highscore</span>
-              <strong className="pg-best__score">{nf(top.best!.best)}</strong>
+              <span className="pg-best__label">{top.game.scoring === 'time' ? 'Bestzeit' : 'Allzeit-Highscore'}</span>
+              <strong className="pg-best__score">{fmtBest(top.game, top.best!.best)}</strong>
               <span className="pg-best__sub">{top.game.name} · {top.place}. von {top.players} · {runs === 1 ? '1 Lauf' : `${nf(runs)} Läufe`} insgesamt</span>
             </div>
           </div>
@@ -59,7 +61,7 @@ export function PlayerGames({ userId, isMe }: { userId: string; isMe: boolean })
                       {e.best ? `${e.place}. von ${e.players} · ${e.best.runs === 1 ? '1 Lauf' : `${nf(e.best.runs)} Läufe`}` : 'noch nicht gefahren'}
                     </span>
                   </span>
-                  <span className={e.best ? 'points' : 'points muted'}>{e.best ? nf(e.best.best) : '–'}</span>
+                  <span className={e.best ? 'points' : 'points muted'}>{e.best ? fmtBest(e.game, e.best.best) : '–'}</span>
                 </Link>
               </li>
             ))}

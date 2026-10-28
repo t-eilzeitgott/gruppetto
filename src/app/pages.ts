@@ -7,6 +7,7 @@ import { lazyPage } from './lazy';
 export const GamePage = lazyPage(() => import('../pages/Game').then((m) => m.GamePage));
 export const SprintPage = lazyPage(() => import('../pages/Sprint').then((m) => m.SprintPage));
 export const BergPage = lazyPage(() => import('../pages/Berg').then((m) => m.BergPage));
+export const ZeitfahrenPage = lazyPage(() => import('../pages/Zeitfahren').then((m) => m.ZeitfahrenPage));
 export const GaragePage = lazyPage(() => import('../pages/Garage').then((m) => m.GaragePage));
 export const JourneyPage = lazyPage(() => import('../pages/Journey').then((m) => m.JourneyPage));
 /** Prototyp „Akku leer!“ – vorerst nur im Admin-Bereich (2D, klein, wird nicht vorab geladen) */
@@ -14,7 +15,7 @@ export const AkkuPage = lazyPage(() => import('../pages/Akku').then((m) => m.Akk
 
 /** Spiele und Garage im Hintergrund laden (nacheinander, nur einmal) */
 export function prefetchGames() {
-  void GamePage.preload().then(() => SprintPage.preload()).then(() => BergPage.preload()).then(() => GaragePage.preload()).catch(() => undefined);
+  void ZeitfahrenPage.preload().then(() => GamePage.preload()).then(() => SprintPage.preload()).then(() => BergPage.preload()).then(() => GaragePage.preload()).catch(() => undefined);
 }
 /** Welt-Editor (Admin): 3D-Welt der Minispiele bearbeiten – wird nicht vorab geladen */
 export const WorldEditorPage = lazyPage(() => import('../pages/admin/AdminWorld').then((m) => m.WorldEditorPage));

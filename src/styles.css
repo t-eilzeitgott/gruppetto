@@ -1760,6 +1760,90 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 }
 .brg-profile__finish { position: absolute; right: 4px; bottom: 4px; font-size: 11.5px; font-weight: 700; color: var(--muted); }
 
+/* Zeitfahren */
+/* Uhr unter der Rennleiste: große Rennzeit, daneben der Abstand zur Bestzeit an dieser Stelle */
+.tt-clock {
+  align-self: center; display: inline-flex; align-items: baseline; gap: 10px; padding: 5px 14px 6px; border-radius: 999px; color: #fff;
+  background: rgba(12, 14, 20, 0.72); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 6px 18px rgba(0, 0, 0, 0.22);
+  animation: hud-in 0.45s 0.12s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.tt-clock b { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+.tt-clock__gap { font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; opacity: 0.9; white-space: nowrap; }
+.tt-clock__gap:empty { display: none; }
+.tt-clock__gap.is-ahead { color: #5fe08a; }
+.tt-clock__gap.is-behind { color: #ffb4a8; }
+/* Streckenleiste: Höhenprofil mit Zwischenzeit-Marken und den Punkten aller Fahrer */
+.tt-strip {
+  position: relative; align-self: center; width: min(100%, 340px); height: 34px; border-radius: 12px; overflow: visible;
+  background: rgba(12, 14, 20, 0.58); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  animation: hud-in 0.45s 0.16s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.tt-strip svg { position: absolute; inset: 2px 8px; width: calc(100% - 16px); height: 30px; display: block; overflow: visible; }
+.tt-strip__area { fill: rgba(255, 255, 255, 0.14); }
+.tt-strip__line { fill: none; stroke: rgba(255, 255, 255, 0.75); stroke-width: 1.5; stroke-linejoin: round; }
+.tt-strip__split { stroke: #ffd23f; stroke-width: 1; stroke-dasharray: 2 2; opacity: 0.8; }
+.tt-strip__dots { position: absolute; inset: 2px 8px; }
+.tt-strip__dot {
+  position: absolute; left: 0; top: 0; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #fff;
+  box-shadow: 0 0 0 1.5px rgba(12, 14, 20, 0.85); opacity: 0.9;
+}
+.tt-strip__dot.is-mine { background: var(--accent) !important; opacity: 0.6; }
+.tt-strip__dot.is-me { width: 12px; height: 12px; margin: -6px 0 0 -6px; background: #fff; box-shadow: 0 0 0 2.5px var(--accent), 0 2px 6px rgba(0, 0, 0, 0.4); opacity: 1; z-index: 1; }
+.abf--tt .hud-banner { margin-top: 2px; }
+.tt-count span { animation-duration: 0.6s; }
+/* Startkarte: Profil mit Côte und Stationen */
+.tt-profile { padding-top: 18px; }
+.tt-profile svg { height: 32px; }
+.tt-profile__split { stroke: #ffd23f; stroke-width: 1; stroke-dasharray: 2 2; }
+.tt-profile__cote {
+  position: absolute; top: 0; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 999px; background: var(--surface2); font-size: 11.5px; font-weight: 700; white-space: nowrap; max-width: 60%;
+}
+.tt-profile__cote span { overflow: hidden; text-overflow: ellipsis; }
+.tt-profile__mark { position: absolute; bottom: 0; transform: translateX(-50%); padding: 0 4px; border-radius: 6px; background: var(--bg); font-size: 10px; font-weight: 800; letter-spacing: 0.04em; line-height: 1.3; color: #c99a00; }
+.tt-profile__start, .tt-profile__finish { position: absolute; bottom: 4px; font-size: 11.5px; font-weight: 700; color: var(--muted); max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-profile__start { left: 4px; }
+.tt-profile__finish { right: 4px; }
+/* Heißer Stuhl */
+.tt-hot { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 13px; background: var(--surface); }
+.tt-hot__seat { flex: none; width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: rgba(255, 90, 60, 0.14); color: #e5484d; }
+.tt-hot__main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tt-hot__label { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.tt-hot__who { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 14px; }
+.tt-hot__who strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-hot__who b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tt-hot__me { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; padding-left: 10px; border-left: 1px solid var(--line); }
+.tt-hot__me strong { font-size: 17px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; color: var(--accent); }
+.tt-hot__me small { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Geister des Tages */
+.tt-ghosts { display: flex; flex-direction: column; gap: 4px; }
+.tt-ghosts__label { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.tt-ghosts__list { display: flex; flex-direction: column; gap: 1px; max-height: 160px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.tt-ghosts__list li { display: flex; align-items: center; gap: 8px; min-height: 26px; font-size: 13.5px; }
+.tt-ghosts__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tt-ghosts__bike { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-ghosts__bike svg { flex: none; }
+.tt-ghosts__list b { font-variant-numeric: tabular-nums; font-size: 13px; white-space: nowrap; }
+/* Ergebnis */
+.tt-time strong { font-size: 54px; }
+.tt-warn { font-size: 12.5px; color: var(--neg, #e5484d); }
+.tt-splits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 0; }
+.tt-splits div { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 4px; border-radius: 12px; background: var(--surface); min-width: 0; }
+.tt-splits dt { color: var(--muted); font-size: 11.5px; }
+.tt-splits dd { margin: 0; font-weight: 700; font-size: 16px; font-variant-numeric: tabular-nums; }
+.tt-splits small { font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); }
+.tt-splits small.is-ahead, .tt-sectors .is-ahead { color: #1f9d55; }
+.tt-splits small.is-behind, .tt-sectors b.is-behind { color: #e5484d; }
+.tt-sectors { display: flex; flex-direction: column; gap: 6px; }
+.tt-sectors li { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: center; column-gap: 8px; row-gap: 1px; font-size: 13px; }
+.tt-sectors__name { grid-row: 1 / 3; font-weight: 600; }
+.tt-sectors__bar { position: relative; height: 6px; border-radius: 3px; background: var(--surface2); overflow: hidden; }
+.tt-sectors__bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: #e5484d; }
+.tt-sectors__bar i.is-ahead { background: #1f9d55; width: 100% !important; }
+.tt-sectors li b { grid-column: 3; grid-row: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tt-sectors li small { grid-column: 2 / 4; grid-row: 2; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.tt-podium li b { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 14px; }
+
 /* Startseite: Spielkarte */
 .game-card { display: flex; flex-direction: column; gap: 12px; text-decoration: none; color: inherit; }
 .games-card { padding: 0; gap: 0; overflow: hidden; }
@@ -1813,7 +1897,11 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 }
 .game-card__head { display: flex; align-items: center; gap: 14px; }
 .game-card__main { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
-.game-card__title { font-size: 19px; letter-spacing: -0.02em; }
+.game-card__title { font-size: 19px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; }
+/* neues Spiel: „Neu“ am Titel und ein Leuchten des Symbols, bis man es gespielt hat */
+.game-card.is-new .game-icon { animation: games-glow 2.6s ease-in-out infinite; }
+.game-card.is-new .game-card__title .game-new { animation: bike-pill 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .game-card.is-new .game-icon, .game-card.is-new .game-card__title .game-new { animation: none; } }
 .game-card__route { font-size: 13.5px; }
 .game-card__meta { font-size: 13.5px; color: var(--accent); font-weight: 600; }
 .game-board { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 14px; background: var(--surface2); }

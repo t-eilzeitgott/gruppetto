@@ -6,7 +6,7 @@
  * 3D-Fahrer und eine 2D-Ebene für Punkte-Popups.
  */
 import * as THREE from 'three';
-import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
+import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, TT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB, type Light } from './palette';
 import { SpriteBank, cloud, roadArrow, roadText, warmRoadText } from './sprites';
 import { EditorMarkers, type Marker } from './editor3d';
@@ -1596,7 +1596,7 @@ export class Renderer3D {
     if (!this.pre) {
       const t = g.track;
       // Abfahrt: 7 km (so weit fährt kaum jemand), Finals: die ganze Strecke
-      this.routeEnd = t.kind === 'descent' ? 7000 : t.kind === 'sprint' ? SPRINT_FINISH + 400 : MOUNTAIN_FINISH + 400;
+      this.routeEnd = t.kind === 'descent' ? 7000 : t.kind === 'sprint' ? SPRINT_FINISH + 400 : t.kind === 'tt' ? TT_FINISH + 400 : MOUNTAIN_FINISH + 400;
       const w = this.w2;
       const keys: number[] = [];
       const seen = new Set<number>();
@@ -1862,7 +1862,7 @@ export class Renderer3D {
     const t = this.track!;
     const v = hash(t.seed);
     if (t.kind === 'descent') return 0.1 + v * 0.08 + 0.56 * smooth01(g.p.z / 7500);
-    const fin = t.kind === 'sprint' ? SPRINT_FINISH : MOUNTAIN_FINISH;
+    const fin = t.kind === 'sprint' ? SPRINT_FINISH : t.kind === 'tt' ? TT_FINISH : MOUNTAIN_FINISH;
     const a = 0.16 + v * 0.12;
     const b = 0.62 + hash(t.seed + 7) * 0.05;
     return a + (b - a) * smooth01(g.p.z / fin);
@@ -1985,8 +1985,8 @@ export class Renderer3D {
     // die Kamera steht immer direkt hinter ihm, er bleibt in der Bildmitte – auch in Kehren
     const yaw = w.th + Math.atan2(p.vx, Math.max(5, p.v)) * 0.3;
     // Rennfinale: höher und weiter hinten (Motorradkamera), damit man über das Feld schaut –
-    // im Bergfinale bergab wieder die nahe Abfahrtskamera (weich überblendet)
-    const wantPack = track.kind === 'sprint' || (track.kind === 'mountain' && p.z < MOUNTAIN_TOP + 25) ? 1 : 0;
+    // im Bergfinale bergab wieder die nahe Abfahrtskamera (weich überblendet); Zeitfahren: dazwischen (Geister voraus)
+    const wantPack = track.kind === 'sprint' || (track.kind === 'mountain' && p.z < MOUNTAIN_TOP + 25) ? 1 : track.kind === 'tt' ? 0.4 : 0;
     if (!cam.init || g.phase === 'ready' || g.phase === 'countdown') cam.pack = wantPack;
     else cam.pack += (wantPack - cam.pack) * Math.min(1, dt * 1.2);
     const back = CAM_BACK + (SPRINT_BACK - CAM_BACK) * cam.pack;
@@ -2681,7 +2681,7 @@ export class Renderer3D {
         const k = s.banner.kind;
         if (this.soon(2)) { yield; resume(); }
         if (k === 'gate') this.gate(town, group, disp, a, s.banner.text);
-        else this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : '#ffffff');
+        else this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' || k === 'start' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : k === 'split' ? '#ffd23f' : '#ffffff');
       }
       // Fan-Bogen mit Spruchband (nicht dort, wo die Bestmarke eines Freundes steht)
       const fan = this.fanAt(s.i);
@@ -4044,7 +4044,7 @@ export class Renderer3D {
   }
 
   private arch(group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], a: Row, banner: Banner | { kind: string; text: string; sub?: string }, color: string) {
-    const light = color === '#ffffff';
+    const light = color === '#ffffff' || color === '#ffd23f';
     const main = banner.kind === 'gpm' ? `GPM · ${banner.text}` : banner.kind === 'welcome' ? `Benvenuti a ${banner.text}` : banner.text;
     const key = `arch:${main}:${banner.sub ?? ''}:${color}`;
     let tex = this.labelTex.get(key);
@@ -4379,7 +4379,7 @@ export class Renderer3D {
   }
 
   /** Namensschilder im Bild: Position, Deckkraft (weich ein- und ausgeblendet) */
-  private tagView = new Map<number, { x: number; y: number; text: string; mate: boolean; a: number; on: boolean }>();
+  private tagView = new Map<number, { x: number; y: number; text: string; mate: boolean; a: number; on: boolean; sub?: string; color?: string }>();
   private tagV = new THREE.Vector3();
 
   private updateRiders(g: RaceView) {
@@ -4444,7 +4444,8 @@ export class Renderer3D {
       track.world(o.z, o.x, 0, this.w);
       const dc = Math.hypot(this.w.x - cp.x, this.w.y - cp.y, this.w.z - cp.z);
       let sa = 0;
-      if (rsOn && spriteable(o.kit)) {
+      // Geister bleiben immer das 3D-Modell (halbdurchsichtig) – kein Bild in der Ferne
+      if (rsOn && !o.ghost && spriteable(o.kit)) {
         const t = Math.max(0, Math.min(1, (dc - this.spriteNear) / (this.spriteFar - this.spriteNear)));
         sa = apQ(t * t * (3 - 2 * t));
       }
@@ -4469,6 +4470,8 @@ export class Renderer3D {
           tv.y = (-v.y * 0.5 + 0.5) * this.H;
           tv.text = tag.text;
           tv.mate = !!tag.mate;
+          tv.sub = tag.sub;
+          tv.color = tag.color;
           tv.on = true;
           this.tagView.set(o.id, tv);
         }
@@ -4476,7 +4479,11 @@ export class Renderer3D {
       if (sprint) {
         const dz = o.z - p.z;
         const block = dz < 0.8 && dz > -SPRINT_BACK - 1 && Math.abs(o.x - p.x) < 1.05 + Math.max(0, -dz) * 0.06;
-        m.fade(block ? 0.28 : 1, this.lastDt);
+        // Geist (Zeitfahren): seine eigene Deckkraft, davor noch durchsichtiger
+        const target = o.ghost !== undefined ? o.ghost : 1;
+        m.fade(block ? Math.min(0.28, target) : target, o.ghost !== undefined && o.ghost <= 0.01 ? 1 : this.lastDt);
+        m.group.visible = target > 0.005;
+        (m.shadow.material as THREE.MeshBasicMaterial).opacity = 0.55 * Math.min(1, target + 0.2);
       }
     }
     this.rs.end();
@@ -4833,15 +4840,18 @@ export class Renderer3D {
     c.globalAlpha = 1;
   }
 
-  private drawTag(c: CanvasRenderingContext2D, t: { x: number; y: number; text: string; mate: boolean; a: number }) {
+  private drawTag(c: CanvasRenderingContext2D, t: { x: number; y: number; text: string; mate: boolean; a: number; sub?: string; color?: string }) {
     const font = '-apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
     c.save();
     c.globalAlpha = t.a * 0.95;
     c.font = `700 12px ${font}`;
     const label = t.text;
     const tw = c.measureText(label).width;
-    const dot = t.mate ? 12 : 0;
-    const w = tw + 18 + dot;
+    c.font = `700 11px ${font}`;
+    const sw = t.sub ? c.measureText(t.sub).width + 7 : 0;
+    c.font = `700 12px ${font}`;
+    const dot = t.mate || t.color ? 12 : 0;
+    const w = tw + 18 + dot + sw;
     const h = 22;
     const x = Math.max(8, Math.min(this.W - 8 - w, t.x - w / 2));
     const y = t.y - h - 8 - (1 - t.a) * 6;
@@ -4864,8 +4874,8 @@ export class Renderer3D {
     c.lineTo(px, y + h + 5);
     c.closePath();
     c.fill();
-    if (t.mate) {
-      c.fillStyle = this.accent;
+    if (t.mate || t.color) {
+      c.fillStyle = t.color ?? this.accent;
       c.beginPath();
       c.arc(x + 12, y + h / 2, 3.5, 0, Math.PI * 2);
       c.fill();
@@ -4874,6 +4884,12 @@ export class Renderer3D {
     c.textAlign = 'left';
     c.textBaseline = 'middle';
     c.fillText(label, x + 9 + dot, y + h / 2 + 0.5);
+    if (t.sub) {
+      // Zeitabstand: grün, wenn man vorn liegt (Minus), sonst in Weiß gedämpft
+      c.font = `700 11px ${font}`;
+      c.fillStyle = t.sub.startsWith('−') ? '#5fe08a' : 'rgba(255,255,255,0.75)';
+      c.fillText(t.sub, x + 9 + dot + tw + 7, y + h / 2 + 0.5);
+    }
     c.restore();
   }
 

@@ -92,7 +92,8 @@ export interface Decal {
 }
 
 export interface Banner {
-  kind: 'gpm' | 'sprint' | 'welcome' | 'arch' | 'flamme' | 'finish' | 'gate';
+  /** … 'start': Startbogen des Zeitfahrens, 'split': Zwischenzeit-Station */
+  kind: 'gpm' | 'sprint' | 'welcome' | 'arch' | 'flamme' | 'finish' | 'gate' | 'start' | 'split';
   text: string;
   sub?: string;
 }
@@ -176,8 +177,8 @@ const WORDS: Record<Lang, { finish: string; last: string; gpm: string }> = {
   es: { finish: 'Meta', last: 'Último km', gpm: 'Puerto' },
 };
 
-/** Art der Strecke: endlose Passabfahrt, Sprintfinale oder Bergfinale (Schlussanstieg, Abfahrt, Ziel) */
-export type TrackKind = 'descent' | 'sprint' | 'mountain';
+/** Art der Strecke: endlose Passabfahrt, Sprintfinale, Bergfinale (Schlussanstieg, Abfahrt, Ziel) oder Zeitfahren */
+export type TrackKind = 'descent' | 'sprint' | 'mountain' | 'tt';
 /** Sprintfinale: Ziellinie nach so vielen Metern (Start = 2,4 km vor dem Ziel) */
 export const SPRINT_FINISH = 2400;
 /** Bergfinale: Gipfel (Bergwertung) und Ziel im Tal (Meter ab Start) */
@@ -185,6 +186,23 @@ export const MOUNTAIN_TOP = 900;
 export const MOUNTAIN_FINISH = 2000;
 /** Abschnittslängen (Segmente): Wald und Almen bergauf bis zum Gipfel, Passhöhe und Almen bergab, Zielort */
 const MOUNTAIN_SECS = [200, MOUNTAIN_TOP / SEG - 200, 170, 220];
+/**
+ * Zeitfahren: 3 km ab der Startrampe im Startort, welliges Tal, Côte (Kuppe bei TT_TOP), Abfahrt, Zielort;
+ * Zwischenzeiten bei 1 und 2 km. Die Strecke hängt nur vom Tag ab (nie von Rundfahrt, Namen oder Gegend),
+ * damit die Geister aller Mitspieler auf genau derselben Straße fahren.
+ */
+export const TT_FINISH = 3000;
+export const TT_TOP = 1500;
+export const TT_SPLITS = [1000, 2000];
+/** Abschnittslängen (Segmente): Startort, Tal, Côte bis zur Kuppe, Abfahrt; der Zielort reicht bis 250 m hinter die Linie */
+const TT_SECS = [120, 400, 230, 250];
+/** Erfundene Côtes für das Zeitfahren, nach Landessprache (ohne echten Anstieg der Etappe) */
+const TT_CLIMBS: Record<Lang, string[]> = {
+  fr: ['Côte de Saint-Roch', 'Côte des Vignes', 'Côte du Moulin', 'Côte de la Croix', 'Côte du Château', 'Côte de Bellevue'],
+  it: ['Salita del Castello', 'Salita di San Martino', 'Muro di Sant’Anna', 'Salita delle Vigne', 'Salita della Madonnina', 'Muro del Mulino'],
+  es: ['Alto del Castillo', 'Alto de la Ermita', 'Alto de las Viñas', 'Alto del Molino', 'Alto de la Cruz', 'Repecho de San Juan'],
+  en: ['Castle Hill', 'Mill Hill', 'Church Bank', 'Beacon Hill', 'Windmill Rise', 'Chapel Brow'],
+};
 const SPRINT_MARKS: { z: number; kind: Banner['kind']; text: string }[] = [
   { z: SPRINT_FINISH - 2000, kind: 'arch', text: '2 km' },
   { z: SPRINT_FINISH - 1000, kind: 'flamme', text: '' },
@@ -304,7 +322,7 @@ export class Track {
     this.finale = kind === 'sprint' ? this.ref?.finale ?? null : null;
     this.region = kind === 'descent' ? 'dolomiten' : this.ref?.region ?? (kind === 'mountain' ? 'dolomiten' : 'po');
     if (kind === 'mountain' && this.ref?.climb?.grad) this.climbScale = Math.max(0.92, Math.min(1.1, this.ref.climb.grad / 7.8));
-    this.seed = hashStr(`${kind === 'sprint' ? 'sprint' : kind === 'mountain' ? 'berg' : 'abfahrt'}:${dayKey}`);
+    this.seed = hashStr(`${kind === 'sprint' ? 'sprint' : kind === 'mountain' ? 'berg' : kind === 'tt' ? 'zeitfahren' : 'abfahrt'}:${dayKey}`);
     this.rng = mulberry32(this.seed);
     this.names = names.map((n) => n.trim().split(/\s+/)[0]?.toUpperCase()).filter((n): n is string => !!n && n.length <= 10);
     this.passOrder = shuffle(this.rng, PASSES);
@@ -314,9 +332,36 @@ export class Track {
     const first = this.plan[0];
     const end = this.plan.find((p, i) => i > 0 && (p.biome === 'village' || p.biome === 'lake' || p.biome === 'vineyard'));
     const pass = this.plan.find((p) => p.biome === 'pass');
+    const ttEnd = kind === 'tt' ? this.plan[4] : null;
     this.title = kind === 'sprint' ? `Sprintfinale in ${end?.name ?? 'der Stadt'}`
       : kind === 'mountain' ? (Track.same(pass?.name ?? '', end?.name ?? '') ? pass!.name : `${pass?.name ?? 'Pass'} → ${end?.name ?? 'Tal'}`)
-        : `${first.name} → ${end?.name ?? 'Tal'}`;
+        : kind === 'tt' ? (Track.same(first.name, ttEnd?.name ?? '') ? `Zeitfahren in ${ttEnd?.name ?? first.name}` : `${first.name} → ${ttEnd?.name ?? 'Ziel'}`)
+          : `${first.name} → ${end?.name ?? 'Tal'}`;
+  }
+
+  /**
+   * Zeitfahren: Steigung an Streckenmeter z. Startrampe, flach durch den Startort, welliges Tal, Côte
+   * (4,5 % → 8,5 % → flacher zur Kuppe), über die Kuppe in die Abfahrt (−6,5 %), auslaufend in den Zielort, flach ins Ziel.
+   * wave: kleine Wellen (±2,5 %) – im Tal und an der Côte etwas, in den Orten kaum.
+   */
+  static ttGrade(z: number, wave = 0): number {
+    const TWO_PI = Math.PI * 2;
+    const smooth = (t: number) => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
+    const valley = (zz: number) => 0.03 * Math.sin((TWO_PI * (zz - 240)) / 400) + 0.012 * Math.sin((TWO_PI * (zz - 240)) / 170 + 1);
+    const climb = (zz: number) => 0.045 + 0.04 * Math.sin((Math.PI * (zz - 1040)) / 400);
+    if (z < 14) return -0.09;
+    if (z < 40) return -0.09 + 0.086 * ((z - 14) / 26);
+    if (z < 240) return -0.004 + wave * 0.15;
+    // Übergänge weich (kein Knick an den Abschnittsgrenzen)
+    if (z < 280) return -0.004 + (valley(z) - -0.004) * smooth((z - 240) / 40) + wave * 0.3;
+    if (z < 1040) return valley(z) + wave * 0.3;
+    if (z < 1080) return valley(z) + (climb(z) - valley(z)) * smooth((z - 1040) / 40) + wave * 0.5;
+    if (z < TT_TOP - 60) return climb(z) + wave * 0.5;
+    if (z < TT_TOP) return climb(TT_TOP - 60) * ((TT_TOP - z) / 60);
+    if (z < TT_TOP + 60) return -0.065 * ((z - TT_TOP) / 60);
+    if (z < 1880) return -0.065 + wave;
+    if (z < 2000) return -0.065 + 0.058 * ((z - 1880) / 120);
+    return -0.004 + wave * 0.15;
   }
 
   /** gleicher Ort? (Bergankunft: „Grand Colombier“ als Pass und Ziel) */
@@ -327,11 +372,18 @@ export class Track {
     return !!x && !!y && (x.includes(y) || y.includes(x));
   }
 
-  /** Name des Zielorts (Sprint- und Bergfinale) */
+  /** Name des Zielorts (Sprint- und Bergfinale, Zeitfahren) */
   get finishTown(): string {
+    if (this.kind === 'tt') return this.places[4] ?? '';
     if (this.kind === 'mountain') return this.sections[4]?.name ?? this.plan.find((p) => p.biome === 'village')?.name ?? '';
     return this.sections[1]?.name ?? this.plan.find((p) => p.biome === 'village')?.name ?? '';
   }
+
+  /** Ortsnamen der geplanten Abschnitte (Zeitfahren: Startort, Tal, Côte, Abfahrt, Zielort) */
+  readonly places: string[] = [];
+  /** Zeitfahren: Startort und Côte (Name des Anstiegs) */
+  get startTown(): string { return this.places[0] ?? ''; }
+  get climbName(): string { return this.places[2] ?? 'Côte'; }
 
   /** Bergfinale: Name und Höhe des Passes (Bergwertung) */
   get summit(): { name: string; alt: number } {
@@ -401,6 +453,28 @@ export class Track {
       this.descentNo += 1;
       return;
     }
+    if (this.kind === 'tt') {
+      // Startort, welliges Tal (See oder Weinberge), Côte durch den Wald, Abfahrt durch die Weinberge, Zielort; danach Auslauf.
+      // Die Zufallszahlen werden immer in derselben Reihenfolge verbraucht – echte Ortsnamen ersetzen nur den Text.
+      if (this.descentNo === 0) {
+        const from = (this.ref?.from ?? '').trim().slice(0, 24);
+        const start = pick(r, VILLAGES);
+        const lower: BiomeId = chance(r, 0.5) ? 'lake' : 'vineyard';
+        const valley = lower === 'lake' ? pick(r, LAKES) : pick(r, HILLS);
+        const climbIdx = Math.floor(r() * TT_CLIMBS.it.length);
+        const climb = this.ref?.climb?.name?.slice(0, 30) || TT_CLIMBS[this.lang][climbIdx];
+        const hills = pick(r, HILLS.filter((h) => h !== valley));
+        const finish = pick(r, VILLAGES.filter((v) => v !== start));
+        this.plan.push({ biome: 'village', name: from || start, alt: 250, descent: 0 });
+        this.plan.push({ biome: lower, name: valley, alt: 245, descent: 0 });
+        this.plan.push({ biome: 'forest', name: climb, alt: 240, descent: 0 });
+        this.plan.push({ biome: 'vineyard', name: hills, alt: 275, descent: 0 });
+        this.plan.push({ biome: 'village', name: this.town || finish, alt: 245, descent: 0 });
+        this.places.push(...this.plan.map((p) => p.name));
+      } else this.plan.push({ biome: 'village', name: this.places[4] ?? pick(r, VILLAGES), alt: 245, descent: 0 });
+      this.descentNo += 1;
+      return;
+    }
     if (this.kind === 'sprint') {
       // flach durchs Tal (See oder Weinberge), dann in die Zielstadt; danach Auslauf
       if (this.descentNo === 0) {
@@ -442,14 +516,17 @@ export class Track {
     const D = difficulty(start * SEG);
     const sprint = this.kind === 'sprint';
     const mountain = this.kind === 'mountain';
-    /** Rennfinale (Sprint oder Berg): feste Längen, keine Hindernisse, keine Tunnel */
-    const race = sprint || mountain;
+    const tt = this.kind === 'tt';
+    /** Rennen (Sprint, Berg, Zeitfahren): feste Längen, keine Hindernisse, keine Tunnel */
+    const race = sprint || mountain || tt;
     const secIndex = this.sections.length;
     let n = Math.round(LENGTH[p.biome] * between(r, 0.9, 1.12));
     // Sprintfinale: 1,2 km Anfahrt, Zielstadt bis 250 m hinter die Linie, dann Auslauf
     if (sprint) n = secIndex === 0 ? 600 : secIndex === 1 ? SPRINT_FINISH / SEG - 600 + 125 : 300;
     // Bergfinale: Gipfel genau bei MOUNTAIN_TOP, Ziel 250 m vor dem Ende des Zielorts
     if (mountain) n = secIndex < 4 ? MOUNTAIN_SECS[secIndex] : secIndex === 4 ? MOUNTAIN_FINISH / SEG - MOUNTAIN_SECS.reduce((a, b) => a + b, 0) + 125 : 300;
+    // Zeitfahren: Kuppe genau bei TT_TOP, Ziel 250 m vor dem Ende des Zielorts
+    if (tt) n = secIndex < 4 ? TT_SECS[secIndex] : secIndex === 4 ? TT_FINISH / SEG - TT_SECS.reduce((a, b) => a + b, 0) + 125 : 300;
     const last = !race && this.plan.length === 0;   // letzter Abschnitt der Abfahrt → Tunnel zum nächsten Pass
     this.sections.push({ biome: p.biome, start, end: start + n, name: p.name, alt: p.alt, descent: p.descent });
 
@@ -476,6 +553,10 @@ export class Track {
     for (let k = 0; k < n; k++) {
       if (grade[k] !== 0) continue;
       const wave = 0.016 * Math.sin((start + k) / 37 + ph1) + 0.009 * Math.sin((start + k) / 13 + ph2);
+      if (tt) {
+        grade[k] = Track.ttGrade((start + k) * SEG, wave);
+        continue;
+      }
       if (mountain) {
         // bergauf 7–10 % (oben am steilsten), über die Passhöhe, bergab, flache Zielgerade
         const z = (start + k) * SEG;
@@ -526,8 +607,10 @@ export class Track {
     const bridge = new Array<number>(n).fill(0);
     // eigener Zufallsstrom: die übrige Strecke (Hindernisse, Deko) bleibt dieselbe wie ohne Brücke
     const rb = mulberry32((this.seed * 7 + start * 131 + 17) >>> 0);
-    // Sprint: auf der Anfahrt eine Flussbrücke in die Stadt (am Wasser fast immer)
-    const wantBridge = race ? sprint && secIndex === 0 && chance(rb, this.finale?.waterfront ? 0.9 : 0.55) : chance(rb, 0.6);
+    // Sprint: auf der Anfahrt eine Flussbrücke in die Stadt (am Wasser fast immer); Zeitfahren: im Tal
+    const wantBridge = sprint ? secIndex === 0 && chance(rb, this.finale?.waterfront ? 0.9 : 0.55)
+      : tt ? secIndex === 1 && chance(rb, 0.75)
+        : race ? false : chance(rb, 0.6);
     if (p.biome !== 'village' && wantBridge) {
       const BL = 16;      // Brücke (Segmente)
       const RL = 12;      // Rampen davor und danach (der Graben läuft aus)
@@ -691,9 +774,62 @@ export class Track {
     this.decorate(start, n, p.biome, D, secIndex, marks, curve);
     if (sprint) this.sprintDeco(start, n, secIndex);
     else if (mountain) this.mountainDeco(start, n);
+    else if (tt) this.ttDeco(start, n, secIndex);
     else this.items(start, n, p.biome, D);
     if (this.global_) { deriveForSection(this, this.global_, start, start + n); this.bumps_ = null; }
     if (this.edits_ || this.global_) applyEditsRange(this, this.edits_, start, start + n);
+  }
+
+  /**
+   * Zeitfahren: Startbogen mit Publikum, Zwischenzeit-Stationen bei 1 und 2 km, Côte-Schild auf der Kuppe,
+   * Flamme Rouge am Ortseingang, Ziel mit dichtem Publikum. Eigener Zufall je Abschnitt – die Straße bleibt gleich.
+   */
+  private ttDeco(start: number, n: number, sec: number) {
+    const r = mulberry32((this.seed ^ Math.imul(start + 11, 0x27d4eb2f)) >>> 0);
+    const inSec = (i: number) => i >= start && i < start + n;
+    const W = WORDS[this.lang];
+    // die Station bei 2 km ist zugleich die Flamme Rouge (ein Kilometer bis ins Ziel)
+    const marks: { z: number; kind: Banner['kind']; text: string; sub?: string }[] = [
+      { z: 10, kind: 'start', text: 'Start', sub: this.places[0] ?? '' },
+      ...TT_SPLITS.map((z, i) => ({ z, kind: 'split' as const, text: `Zwischenzeit ${i + 1}`, sub: TT_FINISH - z === 1000 ? W.last : `${z / 1000} km` })),
+      { z: TT_TOP, kind: 'arch', text: this.climbName, sub: this.lang === 'fr' ? 'Sommet' : this.lang === 'it' ? 'Cima' : this.lang === 'es' ? 'Cima' : 'Summit' },
+    ];
+    for (const m of marks) {
+      const i = Math.round(m.z / SEG);
+      if (inSec(i)) this.seg(i).banner = { kind: m.kind, text: m.text, sub: m.sub };
+    }
+    const iF = TT_FINISH / SEG;
+    if (inSec(iF)) {
+      this.seg(iF).banner = { kind: 'finish', text: W.finish, sub: this.sections[sec].name };
+      this.decal(iF, { k: 'zebra', x: 0, w: ROAD_HALF, len: 1 });
+      this.decal(iF - 9, { k: 'text', x: 0, w: ROAD_HALF * 0.95, len: 6, text: W.finish.toUpperCase() });
+    }
+    // Startlinie unter dem Bogen und Zeitnahme-Streifen an den Stationen
+    if (inSec(5)) this.decal(5, { k: 'zebra', x: 0, w: ROAD_HALF, len: 1 });
+    for (const z of TT_SPLITS) { const i = z / SEG; if (inSec(i)) this.decal(i, { k: 'grid', x: 0, w: ROAD_HALF, len: 1 }); }
+    for (let i = start; i < start + n; i++) {
+      const s = this.seg(i);
+      if (s.tunnel) continue;
+      const z = i * SEG;
+      const toFin = TT_FINISH - z;
+      const atStart = z < 110;
+      const atTop = Math.abs(z - TT_TOP) < 90;
+      const atSplit = TT_SPLITS.some((sz) => Math.abs(z - sz) < 28);
+      const finish = toFin > -120 && toFin < 420;
+      if (!atStart && !atTop && !atSplit && !finish) continue;
+      if (!s.crowd) this.crowdZone(s);
+      const every = finish ? (toFin < 200 ? 1 : 2) : atStart ? (z < 40 ? 1 : 2) : 2;
+      if (i % every === 0) {
+        for (const sg of [-1, 1]) this.add(i, { k: 'crowd', x: sg * (EDGE + 0.3), h: 0, s: 1, v: Math.floor(r() * 4), f: chance(r, 0.5) });
+      }
+      if (i % 10 === 0) this.add(i, { k: 'flagpole', x: (chance(r, 0.5) ? -1 : 1) * (EDGE + 2.6), h: 0, s: 1, v: Math.floor(r() * 4), f: false });
+    }
+    // Namen der Mitspieler an der Côte auf der Straße
+    for (let i = Math.max(start, 1040 / SEG + 20); i < Math.min(start + n, TT_TOP / SEG - 10); i += 41) {
+      const useName = this.names.length > 0 && chance(r, 0.7);
+      const w = useName ? `ALLEZ ${pick(r, this.names)}` : pick(r, WRITINGS_BY[this.lang]);
+      this.decal(i, { k: 'text', x: 0, w: ROAD_HALF * 0.9, len: 6, text: w });
+    }
   }
 
   /**
@@ -837,13 +973,24 @@ export class Track {
             : this.sections.length <= 2 ? [['straight', 0.2], ['curve', 0.28], ['tight', 0.12], ['hairpin', 0.4]]
               : [['straight', 0.2], ['curve', 0.24], ['tight', 0.14], ['sbend', 0.08], ['hairpin', 0.34]];
     }
-    // Zielgerade: die letzten 600 m vor dem Ziel (und dahinter) schnurgerade; im Bergfinale 300 m
+    // Zeitfahren: keine Kehren, keine Kuppen – flüssige Kurven, in den Orten enge Ecken, in der Abfahrt zählt die Linie
+    const tt = this.kind === 'tt';
+    if (tt) {
+      const sec = this.sections.length;
+      W[biome] = sec === 1 ? [['straight', 0.4], ['curve', 0.35], ['tight', 0.25]]
+        : sec === 2 ? [['straight', 0.3], ['curve', 0.4], ['sweep', 0.3]]
+          : sec === 3 ? [['straight', 0.25], ['curve', 0.45], ['tight', 0.3]]
+            : sec === 4 ? [['straight', 0.22], ['curve', 0.4], ['tight', 0.38]]
+              : [['straight', 0.45], ['curve', 0.35], ['tight', 0.2]];
+    }
+    // Zielgerade: die letzten 600 m vor dem Ziel (und dahinter) schnurgerade; im Bergfinale 300 m, im Zeitfahren 250 m
     // echtes Finale: ab der letzten Kurve gerade, davor die Kurven des Streckentexts an ihrer Stelle
     const fin = sprint ? this.finale : null;
     const lastCorner = fin?.lastCorner ?? null;
     const straightFrom = sprint && lastCorner !== null ? Math.max(0, (SPRINT_FINISH - lastCorner) / SEG - start)
       : sprint && this.sections.length === 2 ? SPRINT_FINISH / SEG - 300 - start
-        : mountain && this.sections.length === 5 ? MOUNTAIN_FINISH / SEG - 150 - start : Infinity;
+        : mountain && this.sections.length === 5 ? MOUNTAIN_FINISH / SEG - 150 - start
+          : tt && this.sections.length === 5 ? TT_FINISH / SEG - 125 - start : Infinity;
     /** geplante Kurven: Segment, an dem die Kurve endet, Richtung, Anzahl */
     const script = (fin?.corners ?? [])
       .map((c) => ({ end: (SPRINT_FINISH - c.at) / SEG - start, dir: c.dir, n: c.n }))
@@ -943,8 +1090,8 @@ export class Track {
 
     // erste Passhöhe des Tages: langes Gipfelstück, dann sanfte Kurven zwischen Schneewänden
     const opening = this.sections.length === 1;
-    // Bergfinale: kurzer Anlauf, dann gleich Serpentinen
-    const first = opening ? (mountain ? 26 : 70) : mountain ? 12 : 24;
+    // Bergfinale: kurzer Anlauf, dann gleich Serpentinen; Zeitfahren: Startrampe und 80 m gerade durch den Ort
+    const first = opening ? (mountain ? 26 : tt ? 40 : 70) : mountain ? 12 : 24;
     take(pickClear([[straight(first)], ...escapes(first)]));
     while (len < Math.min(n - 40, straightFrom)) {
       let room = Infinity;
@@ -965,7 +1112,7 @@ export class Track {
       let kind = choose();
       // vor einer geplanten Kurve keine engen Ecken aus dem Zufall
       if (script.length && (kind === 'tight' || kind === 'sbend')) kind = 'curve';
-      if (opening && len < (mountain ? 40 : 200) && (kind === 'hairpin' || kind === 'tight' || kind === 'crest')) kind = 'curve';
+      if (opening && len < (mountain ? 40 : tt ? 70 : 200) && (kind === 'hairpin' || kind === 'tight' || kind === 'crest')) kind = 'curve';
       // Kehre nur aus einem Schenkel heraus, der ungefähr in Sollrichtung liegt
       if (kind === 'hairpin' && Math.abs(wrap(head - this.goal)) > (mountain ? 0.75 : 0.55)) kind = 'curve';
       let pcs: Piece[];
@@ -983,7 +1130,9 @@ export class Track {
         }
         case 'tight': {
           dir = back();
-          pcs = capLeg([{ curve: ramp(dir * between(r, 0.016, 0.023) * scale * (sprint ? 0.75 : 1), 6, Math.round(between(r, 10, 18)), 6) }]);
+          // Zeitfahren: in der Abfahrt richtig enge Ecken (mit 70 km/h geht es nur gebremst), sonst etwas weicher
+          const ttDown = tt && this.sections.length === 4;
+          pcs = capLeg([{ curve: ramp(dir * between(r, 0.016, 0.023) * scale * (sprint ? 0.75 : tt ? (ttDown ? 1.15 : 0.85) : 1), 6, Math.round(ttDown ? between(r, 12, 22) : between(r, 10, 18)), 6) }]);
           break;
         }
         case 'sbend': {
@@ -1096,6 +1245,8 @@ export class Track {
     // Sprint: Pflaster in der Altstadt – mit echtem Streckentext nur dort, wo er es nennt (finaleSurface)
     if (this.kind === 'sprint') return biome === 'village' && !this.finale && k < n * 0.25 && chance(r, 0.5) ? 'cobble' : chance(r, 0.4) ? 'fresh' : 'asphalt';
     if (this.kind === 'mountain') return chance(r, 0.45) ? 'fresh' : 'asphalt';
+    // Zeitfahren: glatter Belag – kein Pflaster, kein Schotter (die Zeiten sollen von der Fahrt abhängen)
+    if (this.kind === 'tt') return chance(r, 0.4) ? 'fresh' : 'asphalt';
     switch (biome) {
       case 'village': return k > n * 0.25 && k < n * 0.8 && chance(r, 0.6) ? 'cobble' : 'asphalt';
       case 'vineyard': return chance(r, 0.35) ? 'gravel' : chance(r, 0.3) ? 'fresh' : 'asphalt';
@@ -1200,6 +1351,7 @@ export class Track {
     let want = false;
     if (this.kind === 'mountain') { want = sec === 1; len = 40; }
     else if (this.kind === 'sprint') { want = sec === 0; len = 70; }
+    else if (this.kind === 'tt') { want = sec === 1; len = 50; }
     else { want = biome === 'alpine' && chance(r, 0.55); len = 50; }
     if (!want || n < len + 60) return null;
     const ok = (k: number) => marks[k] === 0 && Math.abs(curve[k]) < (this.kind === 'mountain' ? 0.02 : 0.012);
@@ -1268,7 +1420,9 @@ export class Track {
   }
 
   private decorate(start: number, n: number, biome: BiomeId, _D: number, sec: number, marks: number[], curve: number[]) {
-    const r = this.rng;
+    // Zeitfahren: eigener Zufall für die Deko – die Gegend (Palmen, Apfelreihen) darf die Straße der nächsten
+    // Abschnitte nicht verändern, denn die Geister aller Mitspieler fahren auf genau dieser Strecke
+    const r = this.kind === 'tt' ? mulberry32((this.seed ^ Math.imul(start + 3, 0x85ebca6b)) >>> 0) : this.rng;
     // Bäume der Gegend in den Tälern (Pappeln, Zypressen, Oliven, Palmen, Apfelbäume)
     const look = LOOKS[this.region];
     const vt = (): SpriteKind => pickWeighted(look.valley, r()) as SpriteKind;
@@ -1296,10 +1450,12 @@ export class Track {
       put(start + 26, this.mountain, 'rifugio', between(r, 12, 18), { s: 1 });
     }
     if (biome === 'village' && this.kind !== 'descent') {
-      put(start + 18, 1, 'townSign', 0.9, { s: 1, f: false, text: name });
+      // Zeitfahren: im Startort steht statt Ortsschild und Stadttor der Startbogen (ttDeco)
+      const startTown = this.kind === 'tt' && sec === 0;
+      if (!startTown) put(start + 18, 1, 'townSign', 0.9, { s: 1, f: false, text: name });
       // Zielstadt (Sprint- und Bergfinale): Stadttor am Ortseingang, Piazza mit Brunnen, Schirmen und Laternen
       {
-        if (Math.abs(curve[24]) < 0.01) S(start + 24).banner = { kind: 'gate', text: name };
+        if (!startTown && Math.abs(curve[24]) < 0.01) S(start + 24).banner = { kind: 'gate', text: name };
         const pz = this.sections[sec].piazza;
         if (pz) {
           const mid = Math.round((pz[0] + pz[1]) / 2);

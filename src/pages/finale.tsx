@@ -305,8 +305,10 @@ export function HowTo({ items }: { items: [string, string][] }) {
 
 // ------------------------------------------------------------------ Bestenlisten
 
-export function FinaleMini({ rows, label, members, meId, onOpen, empty }: {
+export function FinaleMini({ rows, label, members, meId, onOpen, empty, fmt = nf }: {
   rows: GameBest[]; label: string; members: Profile[]; meId: string; onOpen: () => void; empty: string;
+  /** Bestwert anzeigen (Punkte; im Zeitfahren eine Zeit) */
+  fmt?: (best: number) => string;
 }) {
   const myIdx = rows.findIndex((r) => r.user_id === meId);
   const shown = rows.slice(0, 3).map((r, i) => ({ r, i }));
@@ -326,7 +328,7 @@ export function FinaleMini({ rows, label, members, meId, onOpen, empty }: {
                 <span className="abf-top__rank">{i + 1}</span>
                 <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={22} />
                 <span className="abf-top__name">{r.user_id === meId ? 'Du' : m?.display_name ?? 'Jemand'}</span>
-                <strong>{nf(r.best)}</strong>
+                <strong>{fmt(r.best)}</strong>
               </li>
             );
           })}
@@ -336,10 +338,12 @@ export function FinaleMini({ rows, label, members, meId, onOpen, empty }: {
   );
 }
 
-export function FinaleBoard({ title, rows, board, setBoard, members, meId, onBack, unit }: {
+export function FinaleBoard({ title, rows, board, setBoard, members, meId, onBack, unit, fmt = nf }: {
   title: string; rows: GameBest[]; board: Board; setBoard: (b: Board) => void; members: Profile[]; meId: string; onBack: () => void;
   /** Läufe benennen: „1 Sprint“ / „3 Sprints“ */
   unit: [string, string];
+  /** Bestwert anzeigen (Punkte; im Zeitfahren eine Zeit) */
+  fmt?: (best: number) => string;
 }) {
   return (
     <section className="abf-board" aria-label="Bestenliste">
@@ -360,7 +364,7 @@ export function FinaleBoard({ title, rows, board, setBoard, members, meId, onBac
                   <span className="person-row__name">{m?.display_name ?? 'Ehemaliges Mitglied'}{r.user_id === meId ? ' (du)' : ''}</span>
                   <span className="person-row__sub">{r.runs === 1 ? `1 ${unit[0]}` : `${r.runs} ${unit[1]}`}</span>
                 </span>
-                <span className="points">{nf(r.best)}</span>
+                <span className="points">{fmt(r.best)}</span>
               </li>
             );
           })}

@@ -94,9 +94,9 @@ export interface WorldEdits {
 }
 
 /** Spielkennung der Strecke (wie in games.ts) */
-export type WorldGame = 'abfahrt' | 'sprint' | 'berg';
-export const GAME_KIND: Record<WorldGame, TrackKind> = { abfahrt: 'descent', sprint: 'sprint', berg: 'mountain' };
-export const KIND_GAME: Record<TrackKind, WorldGame> = { descent: 'abfahrt', sprint: 'sprint', mountain: 'berg' };
+export type WorldGame = 'abfahrt' | 'sprint' | 'berg' | 'zeitfahren';
+export const GAME_KIND: Record<WorldGame, TrackKind> = { abfahrt: 'descent', sprint: 'sprint', berg: 'mountain', zeitfahren: 'tt' };
+export const KIND_GAME: Record<TrackKind, WorldGame> = { descent: 'abfahrt', sprint: 'sprint', mountain: 'berg', tt: 'zeitfahren' };
 
 export const editsKey = (game: WorldGame, dayKey: string) => `${game}:${dayKey}`;
 

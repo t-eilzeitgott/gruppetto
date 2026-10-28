@@ -162,6 +162,7 @@ export function writeRing(els: Els, last: Record<string, string>, s: RingState) 
 /** einzelne Momente „präsentiert von …“ – wie in der Übertragung */
 function sponsorFor(title: string): string | null {
   if (/flamme rouge|letzter kilometer/i.test(title)) return 'LANTERNE ROUGE';
+  if (/^zwischenzeit/i.test(title)) return 'TICKTACK & SPEICHE';
   if (/^gipfel|bergwertung/i.test(title)) return 'HUNGERAST';
   if (/zielsprint|jetzt antreten/i.test(title)) return 'TICKTACK & SPEICHE';
   if (/^abfahrt/i.test(title)) return 'KETTENFETT';

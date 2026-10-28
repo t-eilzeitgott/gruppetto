@@ -149,9 +149,38 @@ create table if not exists public.game_scores (
 create index if not exists game_scores_game_idx on public.game_scores (game, score desc);
 alter table public.game_scores add column if not exists meters int check (meters is null or (meters >= 0 and meters < 1000000));
 create index if not exists game_scores_time_idx on public.game_scores (game, created_at);
--- Spiele nachträglich erweitern (Sprintfinale, Bergfinale)
+-- Spiele nachträglich erweitern (Sprintfinale, Bergfinale, Zeitfahren – dort ist score = 1.000.000 − Millisekunden)
 alter table public.game_scores drop constraint if exists game_scores_game_check;
-alter table public.game_scores add constraint game_scores_game_check check (game in ('abfahrt', 'sprint', 'berg'));
+alter table public.game_scores add constraint game_scores_game_check check (game in ('abfahrt', 'sprint', 'berg', 'zeitfahren'));
+
+-- Zeitfahren: die beste Fahrt des Tages je Mitglied als Geist – Zeit, Zwischenzeiten, gewähltes Rad und die
+-- Fahrspur (alle 0,25 s Rennzeit: Streckenmeter ×10, seitliche Lage in cm, Haltung), siehe src/game/tt.ts
+create table if not exists public.tt_ghosts (
+  user_id    uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  day        date not null,
+  time_ms    int  not null check (time_ms > 0 and time_ms < 3600000),
+  bike       text not null default 'allround',
+  splits     int[] not null default '{}',
+  trace      jsonb not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, day),
+  constraint tt_ghosts_trace_size check (pg_column_size(trace) < 120000)
+);
+create index if not exists tt_ghosts_day_idx on public.tt_ghosts (day, time_ms);
+
+-- Nur eine schnellere Fahrt ersetzt die gespeicherte (zwei Geräte, langsame Verbindung)
+create or replace function public.tt_ghosts_keep_best()
+returns trigger language plpgsql as $$
+begin
+  if new.time_ms >= old.time_ms then
+    return null;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists tt_ghosts_keep_best on public.tt_ghosts;
+create trigger tt_ghosts_keep_best before update on public.tt_ghosts
+  for each row execute function public.tt_ghosts_keep_best();
 
 -- Wertungsstand nach einer Etappe (z. B. Gesamtwertung Top 10) – sichtbar mit dem Ergebnis
 create table if not exists public.stage_standings (
@@ -531,6 +560,7 @@ alter table public.favorite_cyclists enable row level security;
 alter table public.stage_standings   enable row level security;
 alter table public.stage_profiles    enable row level security;
 alter table public.game_scores       enable row level security;
+alter table public.tt_ghosts         enable row level security;
 alter table public.stages            enable row level security;
 alter table public.stage_tips        enable row level security;
 alter table public.stage_results     enable row level security;
@@ -573,6 +603,14 @@ create policy game_scores_select on public.game_scores
 drop policy if exists game_scores_insert on public.game_scores;
 create policy game_scores_insert on public.game_scores
   for insert to authenticated with check (user_id = auth.uid() and public.is_member());
+
+-- Geister: Mitglieder sehen alle, jeder schreibt nur seine eigene Fahrt
+drop policy if exists tt_ghosts_select on public.tt_ghosts;
+create policy tt_ghosts_select on public.tt_ghosts
+  for select to authenticated using (public.is_member() or public.is_admin());
+drop policy if exists tt_ghosts_write on public.tt_ghosts;
+create policy tt_ghosts_write on public.tt_ghosts
+  for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member());
 
 -- Bestenliste: beste Punktzahl, weiteste Strecke und Gesamtstrecke je Mitglied (optional ab einem Zeitpunkt)
 drop function if exists public.game_leaderboard(text);

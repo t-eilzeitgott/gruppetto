@@ -1,7 +1,7 @@
 /**
  * Startseite: alle Minispiele in einer Karte. Wischen nach links/rechts wechselt das Spiel,
- * jedes zeigt seine eigene Bestenliste. Das selbst meistgespielte Spiel steht vorn, bei Gleichstand das zur Etappe passende.
- * Darüber der Eingang zur Radgarage.
+ * jedes zeigt seine eigene Bestenliste. Ein neues, noch nicht gespieltes Spiel steht ganz vorn (mit „Neu“ und Leuchten),
+ * sonst das selbst meistgespielte, bei Gleichstand das zur Etappe passende. Darüber der Eingang zur Radgarage.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../app/context';
@@ -10,7 +10,7 @@ import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import type { Stage, StageKind } from '../lib/types';
-import { GAMES, gameOrderByPlays, type GameInfo } from '../game/games';
+import { GAMES, fmtBest, gameOrderByPlays, isNewGame, type GameInfo } from '../game/games';
 import type { GameId } from '../data/source';
 import { Track } from '../game/abfahrt/track';
 import { overtaken, type Seen } from '../lib/overtaken';
@@ -57,12 +57,12 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
   const boards = GAMES.map((g) => useQuery<GameBest[]>(`game:${g.id}:season`, () => source.gameLeaderboard(g.id))); // eslint-disable-line react-hooks/rules-of-hooks
   const loaded = boards.every((q) => q.data);
   const runsKey = loaded ? boards.map((q) => q.data!.find((b) => b.user_id === me.id)?.runs ?? 0).join(',') : '';
-  const games = useMemo(() => {
-    if (!runsKey) return gameOrderByPlays(stageKind, null);
+  const runs = useMemo(() => {
+    if (!runsKey) return null;
     const n = runsKey.split(',').map(Number);
-    const runs = Object.fromEntries(GAMES.map((g, i) => [g.id, n[i]])) as Partial<Record<GameId, number>>;
-    return gameOrderByPlays(stageKind, runs);
-  }, [stageKind, runsKey]);
+    return Object.fromEntries(GAMES.map((g, i) => [g.id, n[i]])) as Partial<Record<GameId, number>>;
+  }, [runsKey]);
+  const games = useMemo(() => gameOrderByPlays(stageKind, runs), [stageKind, runs]);
   const scroller = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState(0);
   // Spiele, in denen man gerade überholt wurde (Punkt unten pulsiert)
@@ -92,7 +92,7 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
       <JourneyTeaser />
       <section className={cx('card games-card', games.length > 1 && active < games.length - 1 && 'has-more', !swiped && games.length > 1 && 'nudge')} aria-label="Minispiele">
         <div className="games-scroller" ref={scroller} onScroll={onScroll}>
-          {games.map((g) => <GameSlide key={g.id} game={g} tourName={tourName} stages={stages} onAlert={onAlert} />)}
+          {games.map((g) => <GameSlide key={g.id} game={g} tourName={tourName} stages={stages} onAlert={onAlert} fresh={isNewGame(g, runs)} />)}
         </div>
         {games.length > 1 ? (
           <div className="games-dots" role="tablist" aria-label="Spiel wählen">
@@ -158,7 +158,7 @@ function JourneyTeaser() {
   );
 }
 
-function GameSlide({ game, tourName, stages, onAlert }: { game: GameInfo; tourName: string | null; stages: Stage[] | null; onAlert: (id: string, on: boolean) => void }) {
+function GameSlide({ game, tourName, stages, onAlert, fresh }: { game: GameInfo; tourName: string | null; stages: Stage[] | null; onAlert: (id: string, on: boolean) => void; fresh: boolean }) {
   const { me } = useApp();
   const members = useMembers().data ?? [];
   const day = berlinDayKey();
@@ -167,16 +167,18 @@ function GameSlide({ game, tourName, stages, onAlert }: { game: GameInfo; tourNa
   const today = useQuery<GameBest[]>(`game:${game.id}:day:${day}`, () => source.gameLeaderboard(game.id, since));
   const sprint = game.id === 'sprint';
   const berg = game.id === 'berg';
-  // echte Vorlage: Ziel der nächsten Flachetappe bzw. Schlussanstieg der nächsten Bergetappe
+  const tt = game.id === 'zeitfahren';
+  // echte Vorlage: Ziel der nächsten Flachetappe, Schlussanstieg der nächsten Bergetappe, nächstes Einzelzeitfahren
   const sub = useMemo(() => {
-    if (sprint || berg) {
-      const ref = stageRef(sprint ? 'sprint' : 'mountain', tourName, stages, day);
+    if (sprint || berg || tt) {
+      const ref = stageRef(sprint ? 'sprint' : berg ? 'mountain' : 'tt', tourName, stages, day);
       const pre = ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : '';
       if (sprint) return `${pre}${new Track(day, [], 'sprint', ref).title.replace('Sprintfinale in ', 'Ziel in ')}`;
+      if (tt) return `${pre}${new Track(day, [], 'tt', ref).title} · 3 km`;
       return `${pre}${new Track(day, [], 'mountain', ref).title}`;
     }
     return new Track(day).title;
-  }, [day, sprint, berg, tourName, stages]);
+  }, [day, sprint, berg, tt, tourName, stages]);
   const useToday = (today.data?.length ?? 0) > 0;
   const rows = (useToday ? today.data : season.data) ?? [];
   const myIdx = rows.findIndex((b) => b.user_id === me.id);
@@ -190,11 +192,11 @@ function GameSlide({ game, tourName, stages, onAlert }: { game: GameInfo; tourNa
     : byNames.length === 1 ? `${byNames[0]} hat dich überholt`
       : `${byNames.slice(0, -1).join(', ')} und ${byNames[byNames.length - 1]} haben dich überholt`;
   return (
-    <Link to={game.path} className={cx('games-slide game-card', alert && 'is-overtaken')} ariaLabel={`Minispiel ${game.name} öffnen${alert ? ` – ${alertText}` : ''}`} onNavigate={ack}>
+    <Link to={game.path} className={cx('games-slide game-card', alert && 'is-overtaken', fresh && 'is-new')} ariaLabel={`Minispiel ${game.name} öffnen${fresh ? ' – neu' : ''}${alert ? ` – ${alertText}` : ''}`} onNavigate={ack}>
       <span className="game-card__head">
         <GameBadge game={game.id} size={48} />
         <span className="game-card__main">
-          <strong className="game-card__title">{game.name}</strong>
+          <strong className="game-card__title">{game.name}{fresh ? <span className="game-new">Neu</span> : null}</strong>
           <span className="muted game-card__route">{sub}</span>
           {alert ? (
             <span className="game-alert" role="status">
@@ -218,13 +220,13 @@ function GameSlide({ game, tourName, stages, onAlert }: { game: GameInfo; tourNa
                 <span className="game-board__rank">{i + 1}</span>
                 <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={24} />
                 <span className="game-board__name">{r.user_id === me.id ? 'Du' : m?.display_name ?? 'Jemand'}</span>
-                <strong>{r.best.toLocaleString('de-DE')}</strong>
+                <strong>{fmtBest(game, r.best)}</strong>
               </span>
             );
           })}
         </span>
       ) : (
-        <span className="game-card__meta">{sprint || berg ? 'Hol dir den ersten Tagessieg' : 'Fahr die erste Bestmarke der Runde'}</span>
+        <span className="game-card__meta">{tt ? 'Fahr die erste Zeit des Tages – die Geister der Runde warten' : sprint || berg ? 'Hol dir den ersten Tagessieg' : 'Fahr die erste Bestmarke der Runde'}</span>
       )}
     </Link>
   );

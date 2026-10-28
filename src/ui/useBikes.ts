@@ -1,5 +1,5 @@
 /**
- * Räder: Freischalt-Stand aus den eigenen Läufen aller drei Minispiele seit Eröffnung der Garage,
+ * Räder: Freischalt-Stand aus den eigenen Läufen aller Minispiele seit Eröffnung der Garage,
  * gewähltes Rad (auf dem Gerät gespeichert) und die neu freigeschalteten Räder, die in der Garage noch
  * nicht angesehen wurden. Nach jedem gespeicherten Lauf werden die Listen der Spiele neu geladen
  * (invalidate('game:…') trifft auch diese Abfragen).
@@ -32,8 +32,9 @@ export function useBikes(): Bikes {
   const a = useQuery<GameBest[]>('game:abfahrt:garage', () => source.gameLeaderboard('abfahrt', GARAGE_START));
   const s = useQuery<GameBest[]>('game:sprint:garage', () => source.gameLeaderboard('sprint', GARAGE_START));
   const b = useQuery<GameBest[]>('game:berg:garage', () => source.gameLeaderboard('berg', GARAGE_START));
-  const loaded = !!(a.data && s.data && b.data);
-  const stats = useMemo(() => bikeStats({ abfahrt: a.data, sprint: s.data, berg: b.data }, me.id), [a.data, s.data, b.data, me.id]);
+  const z = useQuery<GameBest[]>('game:zeitfahren:garage', () => source.gameLeaderboard('zeitfahren', GARAGE_START));
+  const loaded = !!(a.data && s.data && b.data && z.data);
+  const stats = useMemo(() => bikeStats({ abfahrt: a.data, sprint: s.data, berg: b.data, zeitfahren: z.data }, me.id), [a.data, s.data, b.data, z.data, me.id]);
   const progress = useMemo(() => bikeProgress(stats), [stats]);
   const [sel, setSel] = useState(selectedBike);
   const [seenTick, setSeenTick] = useState(0);

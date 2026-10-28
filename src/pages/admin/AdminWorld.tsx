@@ -38,7 +38,7 @@ const TOOLS: { id: Tool; label: string; hint: string }[] = [
   { id: 'note', label: 'Notiz', hint: 'Antippen setzt eine Notiz mit deinem Blick' },
   { id: 'delete', label: 'Löschen', hint: 'Antippen entfernt die Requisite, Notiz oder Geländeänderung daneben' },
 ];
-const GAME_LABEL: Record<WorldGame, string> = { abfahrt: 'Abfahrt', sprint: 'Sprint', berg: 'Berg' };
+const GAME_LABEL: Record<WorldGame, string> = { abfahrt: 'Abfahrt', sprint: 'Sprint', berg: 'Berg', zeitfahren: 'Zeitfahren' };
 const SPEEDS = [0.5, 1, 2, 5, 12];
 
 interface Cam { x: number; y: number; z: number; yaw: number; pitch: number }
@@ -83,7 +83,7 @@ export function WorldEditorPage() {
   const [game, setGame] = useState<WorldGame>('abfahrt');
   const [day, setDay] = useState(() => berlinDayKey());
   const names = useMemo(() => (members.data ?? []).map((x) => x.display_name ?? '').filter(Boolean), [members.data]);
-  const ref = useMemo(() => (game === 'abfahrt' ? null : stageRef(game === 'sprint' ? 'sprint' : 'mountain', tour?.name, tourData.data?.stages, day)), [game, tour?.name, tourData.data, day]);
+  const ref = useMemo(() => (game === 'abfahrt' ? null : stageRef(game === 'sprint' ? 'sprint' : game === 'berg' ? 'mountain' : 'tt', tour?.name, tourData.data?.stages, day)), [game, tour?.name, tourData.data, day]);
   const track = useMemo(() => new Track(day, names, GAME_KIND[game], ref), [day, names, game, ref]);
   const key = editsKey(game, day);
 
@@ -773,7 +773,7 @@ export function WorldEditorPage() {
         <div className="abf-layer" onClick={() => setSheet('none')}>
           <div className="abf-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="abf-title">Strecke</h2>
-            <Segmented label="Spiel" value={game} options={[{ value: 'abfahrt', label: 'Abfahrt' }, { value: 'sprint', label: 'Sprint' }, { value: 'berg', label: 'Berg' }]} onChange={(g) => setGame(g)} />
+            <Segmented label="Spiel" value={game} options={[{ value: 'abfahrt', label: 'Abfahrt' }, { value: 'sprint', label: 'Sprint' }, { value: 'berg', label: 'Berg' }, { value: 'zeitfahren', label: 'Zeit' }]} onChange={(g) => setGame(g)} />
             <div className="wed-row wed-dayrow">
               <button type="button" className="wed-chip" onClick={() => setDay(addDays(day, -1))} aria-label="Vortag">◀</button>
               <input type="date" value={day} onChange={(e) => { if (e.target.value) setDay(e.target.value); }} className="wed-date" />

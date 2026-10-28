@@ -253,6 +253,26 @@ select pg_temp.expect_eq((select best_m from public.game_leaderboard('abfahrt') 
 select pg_temp.expect_eq((select total_m from public.game_leaderboard('abfahrt') limit 1)::int, 1900, 'Bestenliste: Gesamtstrecke');
 select pg_temp.expect_eq((select count(*) from public.game_leaderboard('abfahrt', now() + interval '1 hour'))::int, 0, 'Bestenliste: Zeitfilter');
 select pg_temp.expect_error($q$ insert into public.game_scores (game, score, meters) values ('abfahrt', 10, -5) $q$, 'check');
+-- Zeitfahren: Zeit als Punktzahl (1.000.000 − ms), Geist je Tag – nur die schnellere Fahrt ersetzt die gespeicherte
+insert into public.game_scores (game, score, meters) values ('zeitfahren', 1000000 - 224300, 3000);
+insert into public.tt_ghosts (day, time_ms, bike, splits, trace) values (current_date, 224300, 'aero', '{77900,159300}', '[0,30,0,35,28,0]');
+insert into public.tt_ghosts (day, time_ms, bike, splits, trace) values (current_date, 230000, 'zeit', '{}', '[0,0,0]')
+  on conflict (user_id, day) do update set time_ms = excluded.time_ms, bike = excluded.bike, splits = excluded.splits, trace = excluded.trace;
+select pg_temp.expect_eq((select time_ms from public.tt_ghosts where day = current_date), 224300, 'Geist: langsamere Fahrt ersetzt nicht');
+select pg_temp.expect_eq((select count(*) from public.tt_ghosts where day = current_date and bike = 'aero'), 1, 'Geist: Rad bleibt');
+insert into public.tt_ghosts (day, time_ms, bike, splits, trace) values (current_date, 221000, 'zeit', '{76000,157000}', '[0,0,0,36,10,1]')
+  on conflict (user_id, day) do update set time_ms = excluded.time_ms, bike = excluded.bike, splits = excluded.splits, trace = excluded.trace;
+select pg_temp.expect_eq((select time_ms from public.tt_ghosts where day = current_date), 221000, 'Geist: schnellere Fahrt ersetzt');
+select pg_temp.expect_error($q$ insert into public.tt_ghosts (user_id, day, time_ms, trace) values ('00000000-0000-0000-0000-00000000000a', current_date, 100000, '[0,0,0]') $q$, 'row-level security');
+select pg_temp.expect_error($q$ insert into public.tt_ghosts (day, time_ms, trace) values (current_date - 1, 0, '[0,0,0]') $q$, 'check');
+commit;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+select pg_temp.expect_eq((select count(*) from public.tt_ghosts where day = current_date), 1, 'Geister: Mitglied sieht fremde Fahrten');
+update public.tt_ghosts set time_ms = 1 where day = current_date;
+select pg_temp.expect_eq((select time_ms from public.tt_ghosts where day = current_date), 221000, 'Geister: fremde Fahrt nicht änderbar');
 commit;
 
 -- ---------- Anonym ----------

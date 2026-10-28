@@ -72,9 +72,37 @@ export function BergIcon({ size = 44 }: { size?: number }) {
   );
 }
 
+/** Symbol des Zeitfahrens: Stoppuhr über der Strecke, Zeitnahme-Streifen und der Auflieger-Fahrer als Punkt */
+export function ZeitIcon({ size = 44 }: { size?: number }) {
+  const id = `gz-${useId().replace(/:/g, '')}`;
+  return (
+    <svg className="game-icon" width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="var(--gi-top, #ff7ab6)" />
+          <stop offset="1" stopColor="var(--gi-bottom, #7b2cbf)" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="12" fill={`url(#${id})`} />
+      <path d="M20 48 L26 30 L32 30 L44 48 Z" fill="rgba(0,0,0,0.22)" />
+      <path d="M2 48 L18 31 L22 31 L10 48 Z" fill="rgba(0,0,0,0.12)" />
+      <path d="M29 36 h6" stroke="rgba(255,255,255,0.75)" strokeWidth="1.6" strokeDasharray="2 2" />
+      <path d="M31 42 h8" stroke="rgba(255,255,255,0.75)" strokeWidth="1.6" strokeDasharray="2 2" />
+      <circle cx="24" cy="20" r="11.5" fill="#ffffff" />
+      <circle cx="24" cy="20" r="9" fill="none" stroke="var(--gi-bottom, #7b2cbf)" strokeWidth="1.4" opacity="0.5" />
+      <path d="M24 20 V13.2" stroke="#16171a" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M24 20 L29.2 23" stroke="#e5484d" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="24" cy="20" r="1.6" fill="#16171a" />
+      <path d="M21 6.5 h6 M24 6.5 v2.5" stroke="#ffffff" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M33 10.5 l2.4 2.4" stroke="#ffffff" strokeWidth="2.4" strokeLinecap="round" />
+      <circle cx="28.5" cy="33.5" r="2.6" fill="#ffd23f" stroke="#fff" strokeWidth="1" />
+    </svg>
+  );
+}
+
 /** Symbol eines Minispiels nach seiner Kennung (für Bestenliste und Spielübersicht) */
 export function GameBadge({ game, size = 20 }: { game: GameId; size?: number }) {
-  return game === 'sprint' ? <SprintIcon size={size} /> : game === 'berg' ? <BergIcon size={size} /> : <GameIcon size={size} />;
+  return game === 'sprint' ? <SprintIcon size={size} /> : game === 'berg' ? <BergIcon size={size} /> : game === 'zeitfahren' ? <ZeitIcon size={size} /> : <GameIcon size={size} />;
 }
 
 /** Symbol von „Akku leer!“: leerer Akku, getroffen */

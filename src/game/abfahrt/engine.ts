@@ -42,6 +42,8 @@ export interface Opp {
   stand?: number;
   /** Drehzahl der Kurbel (rad/s), siehe motion.ts */
   cad?: number;
+  /** Geist (Zeitfahren): halbdurchsichtig mit dieser Deckkraft (0 = unsichtbar) */
+  ghost?: number;
 }
 
 export interface Particle {
@@ -80,8 +82,8 @@ export function standings(opps: Entrant[], me: { z: number; v: number }, meFinT:
 }
 
 /** Was die 3D-Darstellung von einem Rennen braucht (Abfahrt und Sprintfinale) */
-/** Namensschild über einem Fahrer im Bild (wie die Fahrerkennung in der Übertragung) */
-export interface RiderTag { id: number; text: string; mate?: boolean }
+/** Namensschild über einem Fahrer im Bild (wie die Fahrerkennung in der Übertragung); sub: Zusatz (Zeitabstand), color: Farbpunkt */
+export interface RiderTag { id: number; text: string; mate?: boolean; sub?: string; color?: string }
 
 export interface RaceView {
   /** Namensschilder (z. B. das Hinterrad, an dem du gerade fährst) */

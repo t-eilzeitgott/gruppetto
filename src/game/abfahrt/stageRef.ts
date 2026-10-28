@@ -1,5 +1,5 @@
 /**
- * Echte Vorlagen für Sprint- und Bergfinale: Etappe, Zielort, Schlussanstieg (Name, Gipfelhöhe,
+ * Echte Vorlagen für Sprint- und Bergfinale und das Zeitfahren: Etappe, Zielort, Schlussanstieg (Name, Gipfelhöhe,
  * Länge, Steigung) und die Landessprache für Schilder und Straßenmalereien.
  * Quelle ist die gewählte Rundfahrt (heutige oder nächste passende Etappe); hat sie (noch) keine
  * Etappen, kommt täglich ein anderes Finale aus dem offiziellen Plan der Tour de France 2027.
@@ -11,7 +11,7 @@ import { parseFinale, type FinaleSpec } from './finale';
 import { LOOKS, regionOf, type Region } from './region';
 import { berlinDayKey, hashStr } from './rng';
 
-export type FinaleKind = 'sprint' | 'mountain';
+export type FinaleKind = 'sprint' | 'mountain' | 'tt';
 
 export interface StageRef {
   lang: Lang;
@@ -53,7 +53,7 @@ function forcedRegion(): Region | null {
   return m && m[1] in LOOKS ? (m[1] as Region) : null;
 }
 
-const fits = (kind: FinaleKind, k: StageKind) => (kind === 'sprint' ? k === 'flat' || k === 'hilly' : k === 'mountain');
+const fits = (kind: FinaleKind, k: StageKind) => (kind === 'sprint' ? k === 'flat' || k === 'hilly' : kind === 'tt' ? k === 'itt' : k === 'mountain');
 const clean = (s: string) => s.replace(/\s*\(.*?\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
 
 function lastClimb(climbs: Climb[] | undefined): Climb | null {
@@ -63,7 +63,8 @@ function lastClimb(climbs: Climb[] | undefined): Climb | null {
 }
 
 function make(kind: FinaleKind, tour: string, s: { number: number; date: string; from: string; to: string; km: number | null; climbs?: Climb[]; finale?: string | null; kind?: StageKind }, preview: boolean): StageRef {
-  const climb = kind === 'mountain' ? lastClimb(s.climbs) : null;
+  // Zeitfahren: der (letzte) Anstieg der Etappe gibt der Côte ihren Namen
+  const climb = kind === 'mountain' || kind === 'tt' ? lastClimb(s.climbs) : null;
   const town = clean(s.to) || s.to;
   return {
     lang: langOf(tour, `${s.from} ${s.to}`),
@@ -85,7 +86,7 @@ function make(kind: FinaleKind, tour: string, s: { number: number; date: string;
 export function stageRef(kind: FinaleKind, tourName: string | null | undefined, stages: Stage[] | null | undefined, dayKey: string): StageRef | null {
   const key = (iso: string) => berlinDayKey(new Date(iso));
   const list = (stages ?? [])
-    .filter((s) => fits(kind, s.kind) && s.arrival && (kind === 'sprint' || (s.climbs?.length ?? 0) > 0))
+    .filter((s) => fits(kind, s.kind) && s.arrival && (kind !== 'mountain' || (s.climbs?.length ?? 0) > 0))
     .sort((a, b) => a.number - b.number);
   const st = list.find((s) => key(s.starts_at) >= dayKey);
   if (st && tourName) {
@@ -94,7 +95,7 @@ export function stageRef(kind: FinaleKind, tourName: string | null | undefined, 
   // Vorschau: offizieller Plan der Tour de France 2027, jeden Tag ein anderes Finale
   const t = SEASON_2027.find((x) => x.stages.some((s) => fits(kind, s.kind) && s.to));
   if (!t) return null;
-  const cand = t.stages.filter((s) => fits(kind, s.kind) && s.to && (kind === 'sprint' || (s.climbs?.length ?? 0) > 0));
+  const cand = t.stages.filter((s) => fits(kind, s.kind) && s.to && (kind !== 'mountain' || (s.climbs?.length ?? 0) > 0));
   if (!cand.length) return null;
   const upcoming = cand.filter((s) => s.date >= dayKey);
   const pool = upcoming.length ? upcoming : cand;

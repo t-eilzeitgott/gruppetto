@@ -41,7 +41,9 @@ const result = await esbuild.build({
 });
 
 const outputs = Object.keys(result.metafile.outputs);
-const js = outputs.find((f) => f.endsWith('.js') && result.metafile.outputs[f].entryPoint);
+// das Hauptskript: der Eintrag zu src/main.tsx (auch Chunks für import() tragen einen entryPoint – nicht der erste beste)
+const js = outputs.find((f) => f.endsWith('.js') && /(^|\/)main\.tsx$/.test(result.metafile.outputs[f].entryPoint ?? ''))
+  ?? outputs.find((f) => /\/app-[^/]+\.js$/.test(f));
 const css = outputs.find((f) => f.endsWith('.css') && f.includes('app-'));
 const rel = (p) => p.replace(`${outdir}/`, '');
 

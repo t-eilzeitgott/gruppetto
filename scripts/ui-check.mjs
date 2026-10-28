@@ -108,6 +108,19 @@ const PAGES = [
     await p.waitForSelector('.abf-summary', { timeout: 20000 });
     await p.waitForTimeout(1700);
   }],
+  ['tt', `?demo&${GFX}#/spiel/zeitfahren`],
+  ['tt-board', `?demo&${GFX}#/spiel/zeitfahren`, async (p) => { await p.click('.abf-link'); }],
+  ['tt-hud', `?demo&${GFX}#/spiel/zeitfahren`, async (p) => { await p.click('text=Auf die Rampe'); await runGame(p, 12); }],
+  ['tt-over', `?demo&${GFX}#/spiel/zeitfahren`, async (p) => {
+    await p.click('text=Auf die Rampe');
+    // ganze Fahrt durchrechnen: an der Côte und auf den letzten 400 m drücken
+    await p.evaluate(() => {
+      const g = window.__abfahrt.engine();
+      for (let i = 0; i < 30 * 600 && g.phase !== 'over'; i++) { g.key('up', (g.p.z > 1040 && g.p.z < 1500) || g.p.z > 2600); g.update(1 / 30); }
+    });
+    await p.waitForSelector('.abf-summary', { timeout: 20000 });
+    await p.waitForTimeout(600);
+  }],
   ['player', '?demo#/spieler/u-felix'],
   ['player-me', '?demo#/spieler/u-christoph'],
   ['profile', '?demo#/profil'],

@@ -1,5 +1,5 @@
 /**
- * Europareise: eigene Kilometer und die der ganzen Runde aus den Bestenlisten der drei Minispiele
+ * Europareise: eigene Kilometer und die der ganzen Runde aus den Bestenlisten aller Minispiele
  * (dieselben Abfragen wie die Radgarage – nichts wird doppelt geladen).
  */
 import { useMemo } from 'react';
@@ -23,10 +23,11 @@ export function useJourney(): Journey {
   const a = useQuery<GameBest[]>('game:abfahrt:garage', () => source.gameLeaderboard('abfahrt', GARAGE_START));
   const s = useQuery<GameBest[]>('game:sprint:garage', () => source.gameLeaderboard('sprint', GARAGE_START));
   const b = useQuery<GameBest[]>('game:berg:garage', () => source.gameLeaderboard('berg', GARAGE_START));
-  const loaded = !!(a.data && s.data && b.data);
+  const z = useQuery<GameBest[]>('game:zeitfahren:garage', () => source.gameLeaderboard('zeitfahren', GARAGE_START));
+  const loaded = !!(a.data && s.data && b.data && z.data);
   return useMemo(() => {
     const per = new Map<string, { meters: number; runs: number }>();
-    for (const rows of [a.data, s.data, b.data]) {
+    for (const rows of [a.data, s.data, b.data, z.data]) {
       for (const r of rows ?? []) {
         const e = per.get(r.user_id) ?? { meters: 0, runs: 0 };
         e.meters += r.total_m;
@@ -38,5 +39,5 @@ export function useJourney(): Journey {
     const mine = per.get(me.id)?.meters ?? 0;
     const all = riders.reduce((acc, r) => acc + r.meters, 0);
     return { loaded, me: journeyAt(mine), group: journeyAt(all), riders };
-  }, [a.data, s.data, b.data, me.id, loaded]);
+  }, [a.data, s.data, b.data, z.data, me.id, loaded]);
 }
