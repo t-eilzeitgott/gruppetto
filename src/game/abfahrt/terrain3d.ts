@@ -10,6 +10,9 @@
  */
 import * as THREE from 'three';
 import { EDGE, MOUNTAIN_FINISH, SEG, type BiomeId, type Seg, type Side, type Track } from './track';
+
+/** Asphalt (linear) für Straßenbänder in der Landschaft */
+const ASPHALT: RGBf = [0.035, 0.036, 0.04];
 import { BIOME_PALETTES, mixRGB, type RGB } from './palette';
 import { lin255, type RGBf } from './models3d';
 import { MARK_CELL, markCandidate, nearMark, type Landmark } from './landmarks3d';
@@ -200,6 +203,10 @@ interface Grid {
   lv: number; G: number; cell: number; x0: number; z0: number; sgr: SegGrid | null;
   H: Float32Array; W: Float32Array; LY: Float32Array; FL: Float32Array; BI: Uint8Array; DR: Float32Array;
   SK: Uint8Array; NR: Uint8Array; SF: Float32Array; RG: Float32Array; CAN: Float32Array;
+  /** Straßenband (0–1): die Landschaft zeigt die Straße selbst als Asphaltstreifen, solange das Straßenstück dort noch nicht gebaut ist */
+  RD: Float32Array;
+  /** Einschnitt der Straße (0–1, breiter Saum): dort kein Fels an den steilen Klemmwänden – sonst eine helle Kerbe im Hang */
+  CT: Float32Array;
 }
 /** Eckwerte einer Kachel (oder ihres Übergangsziels) */
 interface VertexArrays {
@@ -255,7 +262,7 @@ interface SegGrid { buf: Float64Array; n: number; x0: number; z0: number; cs: nu
 export interface Region { cand: Int32Array; sg: SegGrid }
 
 /** Ergebnis der Höhenberechnung an einem Punkt */
-interface HPoint { h: number; water: number; lakeY: number; floor: number; b: number; dRoad: number; skip: boolean; near: boolean; ridge: number; floorMin: number }
+interface HPoint { h: number; water: number; lakeY: number; floor: number; b: number; dRoad: number; skip: boolean; near: boolean; ridge: number; floorMin: number; road: number; cut: number }
 
 export class Terrain {
   track: Track;
@@ -499,7 +506,7 @@ export class Terrain {
 
   // ---------------------------------------------------------------- Höhe
 
-  private hp: HPoint = { h: 0, water: 0, lakeY: 0, floor: 0, b: 0, dRoad: 1e9, skip: false, near: false, ridge: 0, floorMin: -Infinity };
+  private hp: HPoint = { h: 0, water: 0, lakeY: 0, floor: 0, b: 0, dRoad: 1e9, skip: false, near: false, ridge: 0, floorMin: -Infinity, road: 0, cut: 0 };
 
   /**
    * Großform an (x, z): gewichtetes Mittel der Querprofile aller Straßenstücke im Umkreis
@@ -597,6 +604,8 @@ export class Terrain {
   private finish(x: number, z: number, o: HPoint, sg: SegGrid | null, cell: number): HPoint {
     o.skip = false;
     o.near = false;
+    o.road = 0;
+    o.cut = 0;
     o.floorMin = -Infinity;
     const dr = o.dRoad;
     // Kleinere Formen: Kuppen, Rinnen – in Straßennähe zurückhaltend
@@ -672,6 +681,9 @@ export class Terrain {
       // unter dem Korridor bleiben (sonst flimmern zwei Flächen übereinander)
       const lim = nLat < 0 ? nLimL : nLimR;
       const a = Math.abs(nLat);
+      // die Straße selbst als Asphaltband in der Landschaft (ohne Straßenstück sah man sonst einen Graben als Loch)
+      o.road = sstep(EDGE + 1.6, EDGE - 0.2, a);
+      o.cut = sstep(CR + 14, EDGE + 1, a);
       const k = sstep(lim + 2.5, lim - 1, a);
       if (k > 0) { o.h -= 1.4 * k; o.near = true; }
     }
@@ -790,6 +802,8 @@ export class Terrain {
     const DR = new Float32Array(G * G);
     const SK = new Uint8Array(G * G);
     const NR = new Uint8Array(G * G);
+    const RD = new Float32Array(G * G);
+    const CT = new Float32Array(G * G);
     const RG = new Float32Array(G * G);
     const SF = new Float32Array(G * G);
     // Großform: auf der feinsten Stufe nur jeden zweiten Punkt rechnen und dazwischen interpolieren.
@@ -861,6 +875,8 @@ export class Terrain {
         DR[k] = p.dRoad;
         SK[k] = p.skip ? 1 : 0;
         NR[k] = p.near ? 1 : 0;
+        RD[k] = p.road;
+        CT[k] = p.cut;
         SF[k] = p.floorMin;
         RG[k] = p.ridge;
         // an der Straße (Klemmen) teuer: oft nachsehen
@@ -885,7 +901,7 @@ export class Terrain {
       }
       if (this.late()) yield;
     }
-    return { lv, G, cell, x0, z0, sgr, H, W, LY, FL, BI, DR, SK, NR, SF, RG, CAN };
+    return { lv, G, cell, x0, z0, sgr, H, W, LY, FL, BI, DR, SK, NR, SF, RG, CAN, RD, CT };
   }
 
   /**
@@ -899,6 +915,8 @@ export class Terrain {
     const tmpR: RGBf = [0, 0, 0];
     const mix = (p: RGBf, q: RGBf, t: number, out: RGBf) => { out[0] = p[0] + (q[0] - p[0]) * t; out[1] = p[1] + (q[1] - p[1]) * t; out[2] = p[2] + (q[2] - p[2]) * t; return out; };
     const { pos, nor, col, mat, nzA, rck, can, uvs } = a;
+    const RD = g.RD;
+    const CT = g.CT;
     for (let j = 0; j < V; j++) {
       for (let i = 0; i < V; i++) {
         const k = (j + 1) * G + (i + 1);
@@ -943,9 +961,14 @@ export class Terrain {
           c = mix(C.meadow, C.meadow2, n2, tmp);
           if (field > 0) c = mix(c, (Math.floor(x / 37 + n1 * 4) + Math.floor(z / 29)) % 3 === 0 ? C.field : C.field2, field * 0.85, c);
           const forest = sstep(C.forestThr, C.forestThr + 0.08, n1 + (n2 - 0.5) * 0.12) * sstep(C.treeLine + 25, C.treeLine - 15, above) * (1 - steep);
-          const rocky = Math.max(steep, sstep(C.rockLine - 20, C.rockLine + 60, above + (n1 - 0.5) * 40) * 0.85);
+          const rocky = Math.max(steep * (1 - 0.9 * CT[k]), sstep(C.rockLine - 20, C.rockLine + 60, above + (n1 - 0.5) * 40) * 0.85);
           const snow = sstep(C.snowLine - 25, C.snowLine + 15, above + (n2 - 0.5) * 50 + (n1 - 0.5) * 60) * sstep(0.5, 0.74, ny);
           mat[v * 4] = forest; mat[v * 4 + 1] = rocky; mat[v * 4 + 2] = snow;
+          const rd = RD[k];
+          if (rd > 0) {
+            c = mix(c, ASPHALT, rd, c);
+            mat[v * 4] *= 1 - rd; mat[v * 4 + 1] *= 1 - rd; mat[v * 4 + 2] *= 1 - rd;
+          }
         }
         const shadeV = 0.94 + (n2 - 0.5) * 0.1;
         col[v * 3] = c[0] * shadeV; col[v * 3 + 1] = c[1] * shadeV; col[v * 3 + 2] = c[2] * shadeV;
