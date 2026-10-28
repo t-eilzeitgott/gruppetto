@@ -32,10 +32,10 @@ import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprite
  * Bäume lösen sich zwischen TREE_FADE und TREE_GONE weich auf; das Kronendach der Landschaft hebt sich schon
  * vorher (ab CAN_NEAR bis CAN_FULL) – die Wipfel ragen aus ihm heraus, bis nur noch das Dach bleibt
  */
-const TREE_FADE = 195;
-const TREE_GONE = 250;
-const CAN_NEAR = 150;
-const CAN_FULL = 330;
+const TREE_FADE = 400;
+const TREE_GONE = 500;
+const CAN_NEAR = 300;
+const CAN_FULL = 640;
 
 const TREES = TREE_KINDS;
 
@@ -47,6 +47,8 @@ const TREES = TREE_KINDS;
  */
 const MORPH: [number, number][] = [[300, 412], [1200, 1520]];
 const MORPH_AHEAD = [96, 0];
+/** kleinster Ring, mit dem eine Stufe bei schneller Fahrt schon weiterrückt */
+const RING_MIN = [2, 2, 1];
 
 const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
 
@@ -596,7 +598,7 @@ export class Renderer3D {
       uRelief: { value: this.reliefTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canCv, 2) },
       uForA: { value: new THREE.Color().setRGB(...lin255(30, 60, 34)) }, uForB: { value: new THREE.Color().setRGB(...lin255(56, 88, 46)) },
       uSnow: { value: new THREE.Color().setRGB(...lin255(240, 245, 250)) },
-      uTime: this.time,
+      uTime: this.time, uSunDir: this.peakU.uSunDir,
     };
     // Wolkenschatten: großflächige, langsam ziehende Flecken (gleiches Rauschen, gleiche Zeit in allen Materialien)
     const CLOUD = (pos: string) => `{ float cloud = smoothstep(0.5, 0.82, texture2D(uRelief, (${pos} + uTime * vec2(6.0, 2.5)) / 700.0).r); diffuseColor.rgb *= 1.0 - 0.3 * cloud; }`;
@@ -639,7 +641,7 @@ export class Renderer3D {
           #endif
           vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\n#define SPLAT_U\nuniform float uTime;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
+        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\n#define SPLAT_U\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
         .replace('#include <color_fragment>', `
           // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
           // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen.
@@ -706,21 +708,29 @@ export class Renderer3D {
             // Kronen: auf der feinen und mittleren Stufe aus der Textur (Mipmaps glätten sie in der Ferne von
             // selbst), auf der gröbsten ihr Mittelwert (gleiche Helligkeit an der Grenze)
             float crown = ${canMean.toFixed(4)};
+            // Kronen mit Licht- und Schattenseite: das Kronendach ein Stück zur Sonne hin verschoben gelesen –
+            // wo die Krone höher ist als die Nachbarin Richtung Sonne, liegt sie im Licht, sonst im Schatten
+            float crownL = 0.0;
             #if TLV < 2
               vec2 cuv = vTW.xz / 10.0;
               vec2 cux = dFdx(cuv);
               vec2 cuy = dFdy(cuv);
-              if (fo > 0.01) crown = textureGrad(uCanopy, cuv, cux, cuy).r;
+              if (fo > 0.01) {
+                crown = textureGrad(uCanopy, cuv, cux, cuy).r;
+                float c2 = textureGrad(uCanopy, cuv + normalize(uSunDir.xz + vec2(1e-4)) * 0.3, cux, cuy).r;
+                crownL = clamp((crown - c2) * 2.5, -1.0, 1.0);
+              }
               #if TLV == 1 && defined(TMORPH)
                 crown = mix(crown, ${canMean.toFixed(4)}, vMk);
+                crownL *= 1.0 - vMk;
               #endif
             #endif
             // Waldfarbe: Kronendach mit großflächig hellerem und dunklerem Bestand; an steilen Hängen nur wenig
             // dunkler (sonst liest man einen Hangwald als Loch im Berg)
-            vec3 fc = mix(uForA, uForB, nz2.r * 0.6 + nzF * 0.4) * (0.5 + crown * 0.72);
+            vec3 fc = mix(uForA, uForB, nz2.r * 0.6 + nzF * 0.4) * (0.42 + crown * 0.9) * (1.0 + 0.4 * crownL);
             fc = mix(fc, uForA * vec3(0.72, 0.7, 0.58), smoothstep(0.78, 0.45, fnT.y) * 0.22);
             float canopy = smoothstep(${CAN_NEAR.toFixed(1)}, ${(TREE_GONE - 10).toFixed(1)}, camD);
-            fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, canopy);
+            fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, 0.45 + 0.55 * canopy);
             // Schichtung: wellige waagrechte Lagen (Sedimentbänder) – nur in der Nähe: weiter weg würden daraus
             // Höhenlinien über den ganzen Berg (gerade Streifen); an steilen Flächen kräftig, sonst schwach
             #if TLV < 2
@@ -1368,7 +1378,11 @@ export class Renderer3D {
         if (rc === Lv.ring) this.boxSet[lv] = true;
       } else {
         // neuer Ring vollständig: neue Kacheln zeigen, herausfallende bleiben bis zum vollständigen Übergang
-        if (rc === Lv.ring) {
+        // (bei schneller Fahrt kommt der ganze Ring nicht nach: sobald die Kamera die Mitte des alten Gebiets
+        // verlassen hat, reicht ein kleinerer vollständiger Ring – sonst stünde die grobe Stufe direkt neben der Straße)
+        const bx0 = this.lvBox[lv];
+        const left = Math.abs((bx0.x + bx0.z) / 2 / Lv.size - 0.5 - cx) >= 1 || Math.abs((bx0.y + bx0.w) / 2 / Lv.size - 0.5 - cz) >= 1;
+        if (rc === Lv.ring || (left && rc >= RING_MIN[lv])) {
           const nb = this.boxTmp.set((cx - rc) * Lv.size, (cz - rc) * Lv.size, (cx + rc + 1) * Lv.size, (cz + rc + 1) * Lv.size);
           if (!nb.equals(this.lvBox[lv])) this.ringChange(lv, nb);
         }

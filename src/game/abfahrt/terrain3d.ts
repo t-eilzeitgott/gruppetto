@@ -1136,7 +1136,8 @@ export class Terrain {
           const hx = (H[k + 1] - H[k - 1]) / (2 * cell);
           const hz = (H[k + G] - H[k - G]) / (2 * cell);
           const ny = 1 / Math.hypot(hx, 1, hz);
-          if (ny < 0.72) continue;
+          // auch an steilen Hängen (bis ~57°): sonst stünde dort Waldfarbe ohne einen einzigen Baum
+          if (ny < 0.54) continue;
           const above = y - FL[k];
           if (above > C.treeLine + 18) continue;
           const n1 = fbm(x / 230, z / 230, 3);
