@@ -698,6 +698,19 @@ export class Renderer3D {
             fc = mix(fc, uForA * vec3(0.72, 0.7, 0.58), smoothstep(0.78, 0.45, fnT.y) * 0.7);
             float canopy = smoothstep(${CAN_NEAR.toFixed(1)}, ${(TREE_GONE - 10).toFixed(1)}, camD);
             fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, canopy);
+            // Schichtung: wellige waagrechte Lagen (Sedimentbänder) – so liest man eine Felswand auch von weitem;
+            // an steilen Flächen kräftig, auf flacherem Fels schwach
+            {
+              float lay = sin(vTW.y * 0.72 + (nz2.r - 0.5) * 3.2 + (big - 0.5) * 2.5 + vTW.x * 0.004);
+              float band = smoothstep(-0.25, 0.55, lay);
+              rc *= mix(0.84, 1.1, band) * (1.0 - 0.25 * wallW) + 0.25 * wallW * mix(0.72, 1.16, band);
+            }
+            // Schutthalde am Fuß: wo Fels in Wiese übergeht, graubraunes Geröll statt eines harten Saums
+            {
+              vec3 scree = mix(vRk, vec3(0.31, 0.28, 0.24) * (0.75 + 0.5 * nz2.r), 0.55);
+              float sc = smoothstep(0.22, 0.4, vMat.y + (big - 0.5) * 0.4 + (nz2.g - 0.5) * 0.2) * (1.0 - rk) * (1.0 - fo);
+              tCol = mix(tCol, scree, sc * 0.65);
+            }
             tCol = mix(tCol, fc, fo);
             tCol = mix(tCol, rc, rk);
             // Schnee: bleibt in den Rinnen länger liegen
@@ -3423,7 +3436,7 @@ export class Renderer3D {
       if (d.k === 'patch') {
         // Flickstelle: dunkleres, frisches Stück Asphalt mit leicht schiefen Kanten
         const j = (q: number) => (hash(r * 31 + k * 7 + q) - 0.5) * 0.25;
-        const col = shadeF(lin('#5d6167'), 0.95 + hash(r * 13 + k) * 0.1);
+        const col = shadeF(lin('#6a6e74'), 0.97 + hash(r * 13 + k) * 0.1);
         marks.quad(P(a, d.x - d.w + j(1), H * 0.5), P(a, d.x + d.w + j(2), H * 0.5), P(b, d.x + d.w + j(3), H * 0.5), P(b, d.x - d.w + j(4), H * 0.5), col);
         continue;
       }
