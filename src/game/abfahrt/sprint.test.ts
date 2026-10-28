@@ -4,6 +4,8 @@ import { SPRINT_FINISH, Track } from './track';
 import { SprintRace, type SprintResult } from './sprint';
 import { riderOptions, rivalNames } from './sprintRiders';
 import type { Profile, TourData } from '../../lib/types';
+import type { StageRef } from './stageRef';
+import { parseFinale } from './finale';
 
 const kit = { jersey: '#ff5fa2', side: '#fff', helmet: '#fff', shorts: '#111', skin: '#f0c4a0', shoes: '#fff', number: '27' };
 
@@ -69,4 +71,33 @@ test('Fahrerauswahl: je Typ ein Fahrer, eigener Tipp zuerst, ohne Rundfahrt trot
   const rivals = rivalNames(data, 12);
   assert.equal(rivals[0], 'Fahrer 7');
   assert.ok(!rivals.includes('Fahrer 12'));
+});
+
+test('Echtes Finale (Neapel): Kurven an ihrer Stelle, Zielgerade gerade und 4 % steil, Pflaster ab 650 m', () => {
+  const ref: StageRef = {
+    lang: 'it', tour: 'Giro 2026', stage: 6, date: '2026-05-14', from: 'Paestum', to: 'Napoli', town: 'Napoli', climb: null, summitFinish: false, preview: false,
+    finale: parseFinale('Die letzten 3 km gerade am Hafen entlang. Linkskurve 650 m vor dem Ziel in einen leichten Anstieg (4 %) über die gepflasterte Via Acton, zwei Rechtskurven 400 m vor dem Ziel auf die 8 m breite, gepflasterte Zielgerade.'),
+  };
+  const t = new Track('2026-05-14', [], 'sprint', ref);
+  const iF = SPRINT_FINISH / 2;
+  const at = (m: number) => t.seg(iF - m / 2);
+  // ab der letzten Kurve (400 m) schnurgerade
+  for (let m = 0; m <= 380; m += 10) assert.equal(at(m).curve, 0, `gerade bei ${m} m vor dem Ziel`);
+  // davor: Linkskurve endet bei 650 m, Rechtskurven zwischen 400 und 520 m
+  let left = 0;
+  let right = 0;
+  for (let m = 400; m < 530; m += 2) if (at(m).curve > 0) right++;
+  for (let m = 650; m < 720; m += 2) if (at(m).curve < 0) left++;
+  assert.ok(right > 10, `Rechtskurven vor der Zielgeraden (${right})`);
+  assert.ok(left > 8, `Linkskurve bei 650 m (${left})`);
+  // Steigung der Zielgeraden um 4 %, der Rest sanft
+  assert.ok(Math.abs(at(200).grade - 0.04) < 0.012, `Zielgerade steigt (${at(200).grade.toFixed(3)})`);
+  assert.ok(Math.abs(at(1500).grade) < 0.02, `Anfahrt flach (${at(1500).grade.toFixed(3)})`);
+  // Pflaster ab 650 m
+  assert.equal(at(300).surface, 'cobble');
+  assert.equal(at(600).surface, 'cobble');
+  assert.notEqual(at(900).surface, 'cobble');
+  // ohne Streckentext: Tageszufall wie bisher, keine Steigung
+  const plain = new Track('2026-05-14', [], 'sprint', 'Napoli');
+  assert.ok(plain.seg(iF - 100).grade <= 0.01);
 });

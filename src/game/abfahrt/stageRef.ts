@@ -7,6 +7,7 @@
 import type { Climb, Stage, StageKind } from '../../lib/types';
 import { SEASON_2027 } from '../../data/season2027';
 import type { Lang } from './facade';
+import { parseFinale, type FinaleSpec } from './finale';
 import { berlinDayKey, hashStr } from './rng';
 
 export type FinaleKind = 'sprint' | 'mountain';
@@ -29,6 +30,8 @@ export interface StageRef {
   summitFinish: boolean;
   /** Vorschau aus einer anderen Rundfahrt, weil die gewählte noch keine passende Etappe hat */
   preview: boolean;
+  /** Sprintfinale: Bauplan der letzten Kilometer aus dem Streckentext der Etappe */
+  finale: FinaleSpec | null;
 }
 
 const UK = /edinburgh|carlisle|keswick|liverpool|welshpool|cardiff|london|leeds|harrogate|york|sheffield|glasgow|manchester|cambridge|brighton|dundee|aberdeen/i;
@@ -49,7 +52,7 @@ function lastClimb(climbs: Climb[] | undefined): Climb | null {
   return [...list].sort((a, b) => a.km - b.km)[list.length - 1];
 }
 
-function make(kind: FinaleKind, tour: string, s: { number: number; date: string; from: string; to: string; km: number | null; climbs?: Climb[] }, preview: boolean): StageRef {
+function make(kind: FinaleKind, tour: string, s: { number: number; date: string; from: string; to: string; km: number | null; climbs?: Climb[]; finale?: string | null }, preview: boolean): StageRef {
   const climb = kind === 'mountain' ? lastClimb(s.climbs) : null;
   const town = clean(s.to) || s.to;
   return {
@@ -63,6 +66,7 @@ function make(kind: FinaleKind, tour: string, s: { number: number; date: string;
     climb,
     summitFinish: !!climb && s.km !== null && s.km - climb.km < 1.5,
     preview,
+    finale: kind === 'sprint' ? parseFinale(s.finale) : null,
   };
 }
 
@@ -74,7 +78,7 @@ export function stageRef(kind: FinaleKind, tourName: string | null | undefined, 
     .sort((a, b) => a.number - b.number);
   const st = list.find((s) => key(s.starts_at) >= dayKey);
   if (st && tourName) {
-    return make(kind, tourName, { number: st.number, date: key(st.starts_at), from: st.departure ?? '', to: st.arrival ?? '', km: st.distance_km, climbs: st.climbs }, false);
+    return make(kind, tourName, { number: st.number, date: key(st.starts_at), from: st.departure ?? '', to: st.arrival ?? '', km: st.distance_km, climbs: st.climbs, finale: st.info?.finale }, false);
   }
   // Vorschau: offizieller Plan der Tour de France 2027, jeden Tag ein anderes Finale
   const t = SEASON_2027.find((x) => x.stages.some((s) => fits(kind, s.kind) && s.to));

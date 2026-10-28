@@ -7,6 +7,7 @@
 import { between, chance, hashStr, mulberry32, pick, shuffle, type Rng } from './rng';
 import { STYLE, type Lang } from './facade';
 import type { StageRef } from './stageRef';
+import { finaleGrade, type FinaleSpec } from './finale';
 
 export const SEG = 2;            // Segmentlänge in m
 export const ROAD_HALF = 2.8;    // halbe Fahrbahnbreite in m
@@ -223,6 +224,8 @@ export class Track {
   readonly lang: Lang;
   /** Bergfinale: Steigung nach dem echten Schlussanstieg (1 = 7,8 %) */
   private climbScale = 1;
+  /** Sprintfinale: Bauplan der letzten Kilometer aus dem echten Streckentext (Kurven, Zielgerade, Steigung, Pflaster) */
+  readonly finale: FinaleSpec | null;
 
   constructor(dayKey: string, names: string[] = [], kind: TrackKind = 'descent', town: string | StageRef | null = '') {
     this.dayKey = dayKey;
@@ -230,6 +233,7 @@ export class Track {
     this.ref = typeof town === 'object' ? town : null;
     this.lang = this.ref?.lang ?? 'it';
     this.town = (typeof town === 'string' ? town : town?.town ?? '').trim().slice(0, 24);
+    this.finale = kind === 'sprint' ? this.ref?.finale ?? null : null;
     if (kind === 'mountain' && this.ref?.climb?.grad) this.climbScale = Math.max(0.92, Math.min(1.1, this.ref.climb.grad / 7.8));
     this.seed = hashStr(`${kind === 'sprint' ? 'sprint' : kind === 'mountain' ? 'berg' : 'abfahrt'}:${dayKey}`);
     this.rng = mulberry32(this.seed);
@@ -419,7 +423,24 @@ export class Track {
       }
       let g = base + wave * wav;
       if (marks[k] === 1) g *= 0.55;
+      if (sprint) {
+        // echtes Finale: Zielgerade und letzter Kilometer mit der Steigung aus dem Streckentext
+        const fg = this.finale ? finaleGrade(this.finale, SPRINT_FINISH - (start + k) * SEG) : null;
+        grade[k] = fg !== null ? fg + wave * 0.15 : g;
+        continue;
+      }
       grade[k] = Math.min(-0.004, g);
+    }
+    if (sprint && this.finale) {
+      // Übergänge glätten (kein Knick, wo die Steigung wechselt)
+      const sm = grade.slice();
+      for (let k = 0; k < n; k++) {
+        let a = 0;
+        let c = 0;
+        for (let q = -8; q <= 8; q++) { const j = k + q; if (j >= 0 && j < n) { a += grade[j]; c++; } }
+        sm[k] = a / c;
+      }
+      for (let k = 0; k < n; k++) grade[k] = sm[k];
     }
 
     // 2) Seiten, Beläge, Deko
@@ -547,7 +568,11 @@ export class Track {
         if (hp[k] > 0) rr = mauer; else l = mauer;
       }
 
-      if (surfaceRun <= 0) {
+      const forced = sprint ? this.finaleSurface(start + k) : null;
+      if (forced) {
+        if (surface !== forced) surfaceRun = 0;
+        surface = forced;
+      } else if (surfaceRun <= 0) {
         surface = this.surface(p.biome, k, n);
         surfaceRun = Math.round(between(r, 30, 110));
       }
@@ -740,8 +765,26 @@ export class Track {
               : [['straight', 0.2], ['curve', 0.24], ['tight', 0.14], ['sbend', 0.08], ['hairpin', 0.34]];
     }
     // Zielgerade: die letzten 600 m vor dem Ziel (und dahinter) schnurgerade; im Bergfinale 300 m
-    const straightFrom = sprint && this.sections.length === 2 ? SPRINT_FINISH / SEG - 300 - start
-      : mountain && this.sections.length === 5 ? MOUNTAIN_FINISH / SEG - 150 - start : Infinity;
+    // echtes Finale: ab der letzten Kurve gerade, davor die Kurven des Streckentexts an ihrer Stelle
+    const fin = sprint ? this.finale : null;
+    const lastCorner = fin?.lastCorner ?? null;
+    const straightFrom = sprint && lastCorner !== null ? Math.max(0, (SPRINT_FINISH - lastCorner) / SEG - start)
+      : sprint && this.sections.length === 2 ? SPRINT_FINISH / SEG - 300 - start
+        : mountain && this.sections.length === 5 ? MOUNTAIN_FINISH / SEG - 150 - start : Infinity;
+    /** geplante Kurven: Segment, an dem die Kurve endet, Richtung, Anzahl */
+    const script = (fin?.corners ?? [])
+      .map((c) => ({ end: (SPRINT_FINISH - c.at) / SEG - start, dir: c.dir, n: c.n }))
+      .filter((c) => c.end > 30 && c.end <= n - 20);
+    const cornerPieces = (c: { dir: 'L' | 'R' | null; n: number }): Piece[] => {
+      const d = c.dir === 'L' ? -1 : c.dir === 'R' ? 1 : (chance(r, 0.5) ? 1 : -1);
+      const pcs: Piece[] = [];
+      for (let q = 0; q < c.n; q++) {
+        if (q > 0) pcs.push(straight(8));
+        pcs.push({ curve: ramp(d * (c.n > 1 ? 0.019 : 0.023), 6, c.n > 1 ? 10 : 14, 6) });
+      }
+      return pcs;
+    };
+    const pieceLen = (pcs: Piece[]) => pcs.reduce((a, pc) => a + pc.curve.length, 0);
     const choose = () => {
       let x = r();
       for (const [k, w] of W[biome]) { x -= w; if (x <= 0) return k; }
@@ -831,7 +874,24 @@ export class Track {
     const first = opening ? (mountain ? 26 : 70) : mountain ? 12 : 24;
     take(pickClear([[straight(first)], ...escapes(first)]));
     while (len < Math.min(n - 40, straightFrom)) {
+      let room = Infinity;
+      if (script.length) {
+        // nächste geplante Kurve: so lange gerade, dass sie genau an ihrer Stelle endet
+        const c = script[0];
+        const pcs = cornerPieces(c);
+        const from = c.end - pieceLen(pcs);
+        room = from - len;
+        if (room < 14) {
+          script.shift();
+          if (from < len) continue;
+          const plan = [straight(from - len), ...pcs];
+          take(drive(plan, false) < 0 ? pickClear([plan, mirror(plan), [straight(c.end - len)]]) : plan);
+          continue;
+        }
+      }
       let kind = choose();
+      // vor einer geplanten Kurve keine engen Ecken aus dem Zufall
+      if (script.length && (kind === 'tight' || kind === 'sbend')) kind = 'curve';
       if (opening && len < (mountain ? 40 : 200) && (kind === 'hairpin' || kind === 'tight' || kind === 'crest')) kind = 'curve';
       // Kehre nur aus einem Schenkel heraus, der ungefähr in Sollrichtung liegt
       if (kind === 'hairpin' && Math.abs(wrap(head - this.goal)) > (mountain ? 0.75 : 0.55)) kind = 'curve';
@@ -887,6 +947,8 @@ export class Track {
           pcs = [straight(Math.round(between(r, 18, 55)))];
       }
       if (!hair && kind !== 'straight' && chance(r, 0.5)) pcs.push(straight(Math.round(between(r, 8, 22))));
+      // nicht in die geplante Kurve hineinbauen
+      if (pieceLen(pcs) > room) pcs = [straight(room)];
       let chosen = pcs;
       if (drive(pcs, false) < 0) {
         // zu nah an einem älteren Stück: gespiegelt, gekürzt oder ein Ausweichstück
@@ -948,9 +1010,18 @@ export class Track {
     return this.mountain > 0 ? [d, u] : [u, d];
   }
 
+  /** Sprintfinale: Pflaster laut Streckentext (ab der genannten Stelle bis kurz hinter das Ziel) */
+  private finaleSurface(i: number): Surface | null {
+    const f = this.finale;
+    if (!f || f.cobblesFrom === null) return null;
+    const toGo = SPRINT_FINISH - i * SEG;
+    return toGo <= f.cobblesFrom && toGo > -80 ? 'cobble' : null;
+  }
+
   private surface(biome: BiomeId, k: number, n: number): Surface {
     const r = this.rng;
-    if (this.kind === 'sprint') return biome === 'village' && k < n * 0.25 && chance(r, 0.5) ? 'cobble' : chance(r, 0.4) ? 'fresh' : 'asphalt';
+    // Sprint: Pflaster in der Altstadt – mit echtem Streckentext nur dort, wo er es nennt (finaleSurface)
+    if (this.kind === 'sprint') return biome === 'village' && !this.finale && k < n * 0.25 && chance(r, 0.5) ? 'cobble' : chance(r, 0.4) ? 'fresh' : 'asphalt';
     if (this.kind === 'mountain') return chance(r, 0.45) ? 'fresh' : 'asphalt';
     switch (biome) {
       case 'village': return k > n * 0.25 && k < n * 0.8 && chance(r, 0.6) ? 'cobble' : 'asphalt';

@@ -378,6 +378,12 @@ export class SprintRace {
     return d;
   }
 
+  /** Steigung bremst alle gleich: 4 % kosten rund ein Zehntel Tempo, leicht bergab geht es etwas schneller */
+  private gradeFactor(z: number): number {
+    const g = this.track.segAt(z).grade;
+    return clamp(1 - 2.4 * g, 0.82, 1.05);
+  }
+
   private stepPlayer(dt: number) {
     const p = this.p;
     const d = SPRINT_FINISH - p.z;
@@ -402,6 +408,7 @@ export class SprintRace {
       vd = Math.min(vd, V - 1.4);
       if (!this.flags.has('platt')) { this.flags.add('platt'); this.pop('Platt!', 'red', 'Kraft ist alle', true); }
     }
+    vd *= this.gradeFactor(p.z);
     const acc = go ? s.acc : 2.2;
     p.v = clamp(p.v + clamp(vd - p.v, -2.6 * dt, acc * dt), 0, 24);
     // eingeklemmt: durch den Vordermann kommt man nicht durch
@@ -550,6 +557,7 @@ export class SprintRace {
       } else if (!roll && !o.sprinter && o.team !== MATE && d < 280 && d > 0) vd = Math.min(vd, V - 0.6);
       if (!roll && !o.peeled && d > 0) vd = Math.max(vd, V - 3);
       if (d < -4) vd = 9;
+      vd *= this.gradeFactor(o.z);
       o.v = clamp(o.v + clamp(vd - o.v, -2.6 * dt, (o.going ? o.acc : 2.2) * dt), 0, 23);
       // nicht auffahren: hinter dem Vordermann bleiben, zu dicht → etwas zurückfallen
       const front = this.wheelAhead(o.z, o.x, 1.7, o);

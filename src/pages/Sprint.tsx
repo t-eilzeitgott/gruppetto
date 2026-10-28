@@ -293,6 +293,7 @@ export function SprintPage() {
                   <div>
                     <h1 className="abf-title">Sprintfinale</h1>
                     <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km</p>
+                    {ref?.finale?.line ? <p className="abf-sub abf-sub--finale">Echtes Finale: {ref.finale.line}</p> : null}
                   </div>
                 </div>
                 <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => TYPE_STATS[t]} bars={sprintBars} />
