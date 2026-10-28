@@ -12,16 +12,20 @@
  * Wolkenschatten und Nebelbänke (aus der Weltposition je Bildpunkt), Leuchten, Strahlen, dann Tonwertkurve,
  * Farbkorrektur, Vignette und Korn.
  *
+ * Ein- und ausschaltbar im Pausenmenü (gfxOpts.ts), anfangs aus: „Lichtfilter & Wetter“ (alles hier außer den
+ * Schatten – ausgeschaltet gilt das Licht des Spiels ohne Wetter) und „Sonnenschatten“. Umschalten übersetzt
+ * die Shader neu (ein kurzer Halt im Menü, nicht während der Fahrt).
+ *
  * Leistung: je nach gespeicherter Grafikstufe des Geräts (quality.ts) – hoch: Schatten 2048 und Nachbearbeitung
- * mit 4× Kantenglättung; mittel: Schatten 1024, 2×; niedrig: nur Licht und Tageszeit, keine Schatten, keine
- * Nachbearbeitung. Sinkt die Auflösung während der Fahrt stark, schaltet die Nachbearbeitung ab (Schatten
- * bleiben – sie umzuschalten hieße, alle Shader neu zu übersetzen).
+ * mit 4× Kantenglättung; mittel: Schatten 1024, 2×; niedrig: Schatten 1024, nur Licht und Tageszeit, keine
+ * Nachbearbeitung. Sinkt die Auflösung während der Fahrt stark, schaltet die Nachbearbeitung ab.
  */
 import * as THREE from 'three';
 import type { RaceView } from './engine';
 import { MOUNTAIN_FINISH, SPRINT_FINISH } from './track';
 import { berlinDayKey } from './rng';
 import { storedQuality } from './quality';
+import { gfxOn, onGfxChange } from './gfxOpts';
 
 export type WeatherId = 'gold' | 'storm' | 'nebel';
 
@@ -83,7 +87,7 @@ export function weatherForRun(n: number): WeatherId {
 /** Name des Wetters der nächsten Fahrt (für die Startkarte), null wenn abgeschaltet */
 export function nextWeatherName(): string | null {
   const fixed = weatherOverride();
-  if (fixed === 'none') return null;
+  if (fixed === 'none' || (!fixed && !gfxOn('licht'))) return null;
   // ohne Nachbearbeitung gibt es nur das Licht der Goldenen Stunde (siehe WeatherFx.choose)
   const id = gfxTier() === 'low' ? 'gold' : fixed ?? weatherForRun(runsToday() + 1);
   return WEATHERS[id].name;
@@ -293,6 +297,8 @@ export class WeatherFx {
   private flagged = new WeakSet<THREE.Object3D>();
   private fixed: WeatherId | 'none' | null;
   private env: WeatherEnv;
+  private shadows = false;
+  private off: () => void;
 
   constructor(private host: WeatherHost) {
     this.env = host.weatherEnv;
@@ -321,21 +327,41 @@ export class WeatherFx {
       uBloom: { value: 0 }, uRays: { value: 0 }, uClouds: { value: 0 }, uSky: { value: 0 }, uFogBank: { value: 0 }, uFogBankH: { value: 10 },
       uExposure: { value: 1 }, uContrast: { value: 1 }, uSat: { value: 1 }, uWarm: { value: 0 }, uSplit: { value: 0 }, uVignette: { value: 0 }, uGrain: { value: 0 },
     } });
-    if (this.tier !== 'low') this.setupShadows();
+    if (gfxOn('schatten')) this.setShadows(true);
     this.choose(runsToday() + 1);
     host.post = (draw, g) => this.frame(draw, g);
+    // im Pausenmenü umgeschaltet
+    this.off = onGfxChange((k, on) => {
+      if (k === 'schatten') this.setShadows(on);
+      // mitten in der Fahrt: deren Wetter (sie ist schon gezählt), sonst das der nächsten
+      else if (k === 'licht') this.choose(['', 'ready', 'over'].includes(this.lastPhase) ? runsToday() + 1 : Math.max(1, runsToday()));
+    });
   }
 
   /** Wetter der n-ten Fahrt des Tages einstellen (oder die feste Vorgabe aus der Adresse) */
   private choose(n: number) {
+    // Lichtfilter aus: Licht des Spiels ohne Wetter (die Vorgabe aus der Adresse gilt trotzdem – zum Prüfen)
+    if (!this.fixed && !gfxOn('licht')) { this.weather = null; return; }
     const id = this.fixed ?? weatherForRun(n);
     // ohne Nachbearbeitung wären Gewitter und Nebel nur eine tiefe Sonne: dann bleibt es bei der Goldenen Stunde
     this.weather = id === 'none' ? null : WEATHERS[this.tier === 'low' && id !== 'gold' ? 'gold' : id];
   }
 
-  /** Sonnenschatten: einmal beim Anlegen (ein späteres Umschalten übersetzt alle Shader neu) */
-  private setupShadows() {
+  /**
+   * Sonnenschatten an oder aus. three.js übersetzt dann alle beleuchteten Shader neu (die Zahl der Lichter mit
+   * Schatten gehört zum Shader) – beim Anlegen vor dem Vorwärmen, sonst im Pausenmenü.
+   */
+  private setShadows(on: boolean) {
+    if (on === this.shadows) return;
+    this.shadows = on;
     const { gl, sun } = this.env;
+    if (!on) {
+      gl.shadowMap.enabled = false;
+      sun.castShadow = false;
+      sun.shadow.map?.dispose();
+      sun.shadow.map = null;
+      return;
+    }
     const high = this.tier === 'high';
     gl.shadowMap.enabled = true;
     gl.shadowMap.type = THREE.PCFShadowMap;
@@ -375,6 +401,8 @@ export class WeatherFx {
       else if (phase === 'ready' || phase === 'over') this.choose(runsToday() + 1);
       this.lastPhase = phase;
     }
+    // neue Objekte (Landschaft, Fahrer) werfen und empfangen Schatten
+    if (this.shadows && (++this.frames & 7) === 0) this.flagShadows();
     const L = this.weather;
     if (!L) {
       this.host.debugTod = null;
@@ -385,7 +413,6 @@ export class WeatherFx {
     const fin = g.track.kind === 'sprint' ? SPRINT_FINISH : g.track.kind === 'mountain' ? MOUNTAIN_FINISH : 7500;
     const k = Math.max(0, Math.min(1, g.p.z / fin));
     this.host.debugTod = L.tod[0] + (L.tod[1] - L.tod[0]) * k * k * (3 - 2 * k);
-    if (this.tier !== 'low' && (++this.frames & 7) === 0) this.flagShadows();
     // Nachbearbeitung nur mit genug Leistung (die Qualitätsregelung senkt die Auflösung, wenn es eng wird)
     if (this.tier === 'low' || this.host.quality < 0.55) { draw(); return; }
     this.render(draw, L);
@@ -479,6 +506,7 @@ export class WeatherFx {
     for (const s of this.small) s.dispose();
     this.down.dispose(); this.blur.dispose(); this.rays.dispose(); this.comp.dispose();
     this.mesh.geometry.dispose();
+    this.off();
     this.host.post = null;
   }
 }

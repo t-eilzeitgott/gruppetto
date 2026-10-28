@@ -21,7 +21,7 @@ import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { ZeitIcon } from '../ui/GameIcon';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent } from './Game';
-import { FpsSwitch, RangePicker } from './gameKit';
+import { FpsSwitch, GfxSwitches, RangePicker } from './gameKit';
 import {
   FinaleBoard, FinaleMini, HowTo, dist, lsGet, lsSet, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
@@ -355,13 +355,14 @@ export function ZeitfahrenPage() {
 
       {ui === 'paused' ? (
         <div className="abf-layer">
-          <div className="abf-card abf-card--small">
+          <div className="abf-card abf-card--small abf-scroll">
             <h2 className="abf-title">Pause</h2>
             <p className="abf-muted">Die Uhr steht – die Geister warten mit.</p>
             <button type="button" className="btn btn--primary btn--full" onClick={() => setUi('playing')}><span>Weiterfahren</span></button>
             <button type="button" className="btn btn--secondary btn--full" onClick={() => navigate('/')}><span>Aufhören</span></button>
             <RangePicker />
             <FpsSwitch />
+            <GfxSwitches />
           </div>
         </div>
       ) : null}

@@ -1270,14 +1270,20 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf-switch__knob { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s; }
 .abf-switch.is-on .abf-switch__track { background: var(--accent); }
 .abf-switch.is-on .abf-switch__knob { transform: translateX(18px); }
+/* Grafik-Schalter (Lichtfilter, Schatten, Details) */
+.abf-gfx { display: flex; flex-direction: column; gap: 2px; width: 100%; padding-top: 8px; }
+.abf-switch--sub { font-size: 14px; min-height: 48px; }
+.abf-switch__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.abf-switch__text small { font-size: 12px; font-weight: 500; line-height: 1.25; opacity: 0.65; }
 /* unsichtbarer Platz zum Vorwärmen (echte Größe, nicht zu sehen) */
 .stage-holder { position: fixed; inset: 0; opacity: 0; pointer-events: none; z-index: -1; overflow: hidden; }
 /* 3D-Szene blendet ein, sobald das erste Bild gezeichnet ist (die Startkarte steht schon) */
 .abf__canvas { opacity: 0; transition: opacity 0.45s ease; }
 .abf__canvas.is-drawn { opacity: 1; }
-.abf__overlay {
-  position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none;
-  /* leichter Kamerafilter: Vignette und ein Hauch Wärme oben (liegt unter Popups und HUD) */
+.abf__overlay { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+/* leichter Kamerafilter: Vignette und ein Hauch Wärme oben (liegt unter Popups und HUD) – gehört zum
+   „Lichtfilter“ im Pausenmenü (gfxOpts.ts) */
+.gfx-licht .abf__overlay {
   background:
     radial-gradient(ellipse 120% 95% at 50% 46%, transparent 58%, rgba(8, 6, 14, 0.30) 100%),
     linear-gradient(to bottom, rgba(255, 196, 140, 0.07), transparent 38%);

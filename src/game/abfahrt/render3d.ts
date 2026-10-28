@@ -34,6 +34,10 @@ import { setGlossEnv } from './gloss';
 import { apIn, apOut, apQ, appearify, appearifyTree, setAp } from './appear';
 import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
 import type { WeatherEnv } from './weather';
+import { gfxOn, onGfxChange } from './gfxOpts';
+
+/** Kennung der feinen Landschafts-Shader (gfxOpts „details“) im Programmschlüssel */
+const dk = () => (gfxOn('details') ? '+d' : '');
 
 /**
  * Bäume lösen sich zwischen TREE_FADE und TREE_GONE weich auf; das Kronendach der Landschaft hebt sich schon
@@ -544,6 +548,28 @@ export class Renderer3D {
     // weiches Ein- und Ausblenden (Abschnitte, Kacheln, Straßenobjekte): Materialien vor dem ersten Bild vorbereiten
     for (const m of [...Object.values(this.mats), ...this.terrMats, ...this.waterMats, this.markMat, this.crowdMat, this.sprMat]) appearify(m);
     this.resize();
+    // im Pausenmenü umgeschaltet (gfxOpts): feine Landschafts-Shader oder Sonnenschatten – die betroffenen Shader
+    // gleich neu übersetzen (ein kurzer Halt im Menü statt Ruckler beim ersten Dorf oder Tunnel)
+    this.offGfx = onGfxChange((k) => {
+      if (k === 'details') {
+        const { asphalt, fresh, cobble, gravel, verge, terrain, portal } = this.mats;
+        for (const m of [asphalt, fresh, cobble, gravel, verge, terrain, portal, ...this.terrMats]) m.needsUpdate = true;
+      }
+      // (nach den anderen Empfängern: das Wetter schaltet die Schatten erst noch um)
+      if (k !== 'licht') queueMicrotask(() => this.rewarm());
+    });
+  }
+
+  private offGfx: () => void;
+
+  /** nach einer Umschaltung: alle Shader neu anstoßen (Vorwärm-Gruppe und was gerade in der Szene ist) */
+  private rewarm() {
+    if (this.lost) return;
+    try {
+      this.progSeen.clear();
+      if (this.warmGroup) this.warmUp(this.warmGroup);
+      this.warmUp(this.scene);
+    } catch (e) { console.error(e); }
   }
 
   /** Datentextur (Rauschen, Helligkeit): Werte wie gemalt, ohne Farbraum-Umrechnung */
@@ -658,14 +684,14 @@ export class Renderer3D {
               vec3 avgC = textureLod(map, vMapUv, 12.0).rgb;
               float rd = distance(vWP, cameraPosition);
               sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, avgC, smoothstep(28.0, 95.0, rd) * 0.8);
-              vec3 mn = texture2D(uNoise, vWP.xz / 26.0).rgb;
+              ${gfxOn('details') ? `vec3 mn = texture2D(uNoise, vWP.xz / 26.0).rgb;
               sampledDiffuseColor.rgb *= 1.0 + ${patch.toFixed(2)} * ((mn.r * 0.6 + mn.g * 0.4) - 0.5);
-              sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);
+              sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);` : ''}
               diffuseColor *= sampledDiffuseColor;
-              ${CLOUD('vWP.xz')}
+              ${gfxOn('details') ? CLOUD('vWP.xz') : ''}
             #endif`);
       };
-      m.customProgramCacheKey = () => `road-${key}`;
+      m.customProgramCacheKey = () => `road-${key}${dk()}`;
     };
     roadify(this.mats.asphalt, 'a', 0.34);
     roadify(this.mats.fresh, 'f', 0.18);
@@ -697,7 +723,7 @@ export class Renderer3D {
           #else
             vec4 sampledDiffuseColor = vec4(1.0);
           #endif
-          {
+          ${gfxOn('details') ? `{
             // Steilheit und Projektionsrichtung aus der weichen Eckennormale (je Dreieck wäre die Textur an jeder
             // Kante gebrochen – die Wand zerfiel in Facetten); Textur immer (gleichmäßiger Kontrollfluss → Mipmap)
             vec3 fn = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
@@ -720,13 +746,13 @@ export class Renderer3D {
               vec3 rockC = r1.rgb * mix(vec3(1.0), 0.55 + 0.55 * r2.rgb, fine);
               sampledDiffuseColor = mix(sampledDiffuseColor, vec4(rockC, 1.0), steep);
             }
-          }
+          }` : ''}
           diffuseColor *= sampledDiffuseColor;
-          ${CLOUD('vRockP.xz')}`);
+          ${gfxOn('details') ? CLOUD('vRockP.xz') : ''}`);
     };
     for (const [m, key] of [[this.mats.terrain, 'rock-terr'], [this.mats.portal, 'rock-portal']] as [THREE.Material, string][]) {
       m.onBeforeCompile = rockify;
-      m.customProgramCacheKey = () => key;
+      m.customProgramCacheKey = () => key + dk();
     }
     // Landschaft pro Bildpunkt: Wald (Kronendach, organischer Rand), Fels und Schnee aus Gewichten je Ecke,
     // aufgebrochen mit Rauschen – statt verwaschener Eckpunktfarben
@@ -780,7 +806,7 @@ export class Renderer3D {
           #endif
           vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\n#define SPLAT_U\nuniform vec4 uCanD;\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
+        .replace('#include <common>', `#include <common>\n${MD}${gfxOn('details') ? '#define TDETAIL\n' : ''}#define TLV ${lv}\n#define SPLAT_U\nuniform vec4 uCanD;\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
         .replace('#include <color_fragment>', `
           // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
           // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen.
@@ -790,7 +816,7 @@ export class Renderer3D {
             vec3 fnT = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
             float camD = distance(vTW, cameraPosition);
             float big = vMat.w;
-            #if TLV < 2
+            #if TLV < 2 && defined(TDETAIL)
               // mittleres Rauschen: r, Höhe g, Steigung von g in b/a (je Texel ×4)
               vec4 nz2 = texture2D(uRelief, vTW.xz / 33.0);
               #if TLV == 1 && defined(TMORPH)
@@ -816,6 +842,8 @@ export class Renderer3D {
             // nach Höhe), gemischt nach der Wandrichtung. Das Muster hängt so nicht vom Netz ab: jede Landschaftsstufe
             // zeigt dasselbe (eine Projektion entlang der Fläche wurde auf groben Stufen zum Zickzack – beim Wechsel
             // der Stufe sichtbar). Gelesen nur, wo Fels ist (Ableitungen vorher: richtige Mipmap)
+            float gul = 0.5;
+            #ifdef TDETAIL
             vec2 wxz = fnT.xz * fnT.xz;
             wxz *= wxz;
             wxz /= max(wxz.x + wxz.y, 1e-6);
@@ -825,7 +853,6 @@ export class Renderer3D {
             vec2 gAy = dFdy(gA);
             vec2 gBx = dFdx(gB);
             vec2 gBy = dFdy(gB);
-            float gul = 0.5;
             if (rk * wallW > 0.01) {
               vec4 ra = wxz.x > 0.02 ? textureGrad(uRelief, gA, gAx, gAy) : vec4(0.5);
               vec4 rb = wxz.y > 0.02 ? textureGrad(uRelief, gB, gBx, gBy) : vec4(0.5);
@@ -835,6 +862,7 @@ export class Renderer3D {
               vec2 sb = (rb.ba - 0.5) * 64.0 * 18.0 * wxz.y;
               tGrad += vec3(sb.x / 120.0, (sa.y + sb.y) / 190.0, sa.x / 120.0) * (rk * far * wallW);
             }
+            #endif
             float gul2 = mix(0.5, nz2.g, hiF * wallW);
             vec3 rc = vRk * (0.8 + 0.42 * nz2.r) * mix(1.0, 0.84 + 0.26 * mix(gul, gul2, 0.4), far);
             // großflächig hellere und dunklere Partien (Gesteinswechsel, Flechten) – vor allem in der Ferne
@@ -856,7 +884,7 @@ export class Renderer3D {
             // Kronen mit Licht- und Schattenseite: das Kronendach ein Stück zur Sonne hin verschoben gelesen –
             // wo die Krone höher ist als die Nachbarin Richtung Sonne, liegt sie im Licht, sonst im Schatten
             float crownL = 0.0;
-            #if TLV < 2
+            #if TLV < 2 && defined(TDETAIL)
               vec2 cuv = vTW.xz / 10.0;
               vec2 cux = dFdx(cuv);
               vec2 cuy = dFdy(cuv);
@@ -878,7 +906,7 @@ export class Renderer3D {
             fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, 0.45 + 0.55 * canopy);
             // Schichtung: wellige waagrechte Lagen (Sedimentbänder) – nur in der Nähe: weiter weg würden daraus
             // Höhenlinien über den ganzen Berg (gerade Streifen); an steilen Flächen kräftig, sonst schwach
-            #if TLV < 2
+            #if TLV < 2 && defined(TDETAIL)
             {
               float lay = sin(vTW.y * 0.72 + (nz2.r - 0.5) * 3.2 + (big - 0.5) * 2.5 + vTW.x * 0.004);
               float band = smoothstep(-0.25, 0.55, lay);
@@ -897,24 +925,28 @@ export class Renderer3D {
             // Schnee: bleibt in den Rinnen länger liegen
             float sn = smoothstep(0.42, 0.6, vMat.z + (vNz.y - 0.5) * 0.55 + (nz2.g - 0.5) * 0.25 + rk * (0.5 - gul) * 0.5) * smoothstep(0.38, 0.7, fnT.y + (nz2.r - 0.5) * 0.3 + (0.5 - gul) * 0.25);
             tCol = mix(tCol, uSnow * (0.9 + 0.12 * nz2.g), sn);
-            #if TLV < 2
+            #if TLV < 2 && defined(TDETAIL)
               // Buckel in Wiese und Wald (3 m auf 33 m)
               tGrad.xz += (nz2.ba - 0.5) * 64.0 * 3.0 / 33.0 * ((1.0 - rk) * far);
             #endif
             // Schnee glättet das Relief
             tGrad *= 1.0 - 0.7 * sn;
             diffuseColor.rgb *= tCol;
-            ${CLOUD('vTW.xz')}
+            #ifdef TDETAIL
+              ${CLOUD('vTW.xz')}
+            #endif
             #if TLV > 0
               diffuseColor.rgb *= ${detailMean.toFixed(4)};
             #endif
           #endif`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          #ifdef TDETAIL
           {
             // Relief: Normale gegen die Steigung kippen (nur den Anteil entlang der Fläche)
             vec3 gV = (viewMatrix * vec4(tGrad, 0.0)).xyz;
             normal = normalize(normal - (gV - dot(gV, normal) * normal));
-          }`);
+          }
+          #endif`);
     };
     // Landschaftsmaterialien: gröbere Stufen sinken dort ab, wo die feinere liegt
     const lower = <M extends THREE.Material>(m: M, lv: number, drop: number, key: string, rock: boolean): M => {
@@ -938,7 +970,7 @@ export class Renderer3D {
           // Prüfmodus: abgesenkte gröbere Stufe sichtbar = Loch in der feineren (magenta)
           .replace('#include <dithering_fragment>', '#include <dithering_fragment>\nif (uHole > 0.5 && vLow > 0.5) gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);');
       };
-      m.customProgramCacheKey = () => `${key}${lv}`;
+      m.customProgramCacheKey = () => `${key}${lv}${rock ? dk() : ''}`;
       return m;
     };
     this.terrMats = LEVELS.map((_, lv) => lower(L({ vertexColors: true, map: lv === 0 ? detail : null }), lv, lv === 1 ? 110 : 380, 'terr', true));
@@ -4912,6 +4944,7 @@ export class Renderer3D {
   }
 
   dispose() {
+    this.offGfx();
     try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); this.markers?.dispose(); } catch { /* Kontext evtl. schon weg */ }
     try { this.gl.dispose(); } catch { /* egal */ }
     // Kontext sofort freigeben: iOS erlaubt nur wenige gleichzeitig – sonst bleibt ein späteres Spiel schwarz
