@@ -134,7 +134,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         idleT = 0;
         cb.current.onFrame(eng, dt);
-        fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0, renderer.quality);
+        fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0, renderer.quality, renderer.shaderErrors);
         lastDraw = now;
         if (idle) { frames += 1; raf = requestAnimationFrame(loop); return; }
         acc += dt;

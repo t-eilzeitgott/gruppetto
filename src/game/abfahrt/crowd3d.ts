@@ -310,8 +310,8 @@ const VERT_BEGIN = /* glsl */ `
     // Detailstufen je Person: fein bis ~14 m, einfach bis ~30 m, dahinter Bilder. Übergänge mit einem Raster
     // je Bildpunkt: die Stufen teilen sich die Bildpunkte (nichts wird halb durchsichtig, nichts springt)
     float dCam = distance(aI0.xz, cameraPosition.xz);
-    float f0 = 1.0 - smoothstep(12.0, 16.0, dCam);
-    float g0 = 1.0 - smoothstep(27.0, 32.0, dCam);
+    float f0 = 1.0 - smoothstep(16.0, 22.0, dCam);
+    float g0 = 1.0 - smoothstep(46.0, 54.0, dCam);
   #ifdef CROWD_ALWAYS
     // Läufer: immer fein; tauchen sie weit voraus auf, blenden sie weich ein
     vXa = 0.0; vXb = 1.0 - smoothstep(106.0, 124.0, dCam);

@@ -277,7 +277,7 @@ export function GamePage() {
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt, raw);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         hudRef.current(eng, dt);
-        fps.frame(raw * 1000, performance.now() - c0, renderer.quality);
+        fps.frame(raw * 1000, performance.now() - c0, renderer.quality, renderer.shaderErrors);
         // Bildrate beobachten und notfalls die Qualität senken
         acc += dt;
         frames += 1;

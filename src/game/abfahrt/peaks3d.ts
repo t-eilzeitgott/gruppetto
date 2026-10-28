@@ -16,6 +16,8 @@ export interface PeakLight {
   uFillDir: { value: THREE.Vector3 };
   uFillC: { value: THREE.Color };
   uHaze: { value: THREE.Color };
+  /** Dunst zur Sonne hin in ihrer Farbe (dasselbe wie ATMO.fogSunCol in grade.ts) */
+  uGlow: { value: THREE.Color };
   uNoise: { value: THREE.Texture | null };
 }
 
@@ -24,7 +26,7 @@ export function peakLight(): PeakLight {
     uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uSunC: { value: new THREE.Color(1, 1, 1) },
     uSkyC: { value: new THREE.Color(0.4, 0.45, 0.5) }, uGroundC: { value: new THREE.Color(0.3, 0.3, 0.25) },
     uFillDir: { value: new THREE.Vector3(0, 1, 0) }, uFillC: { value: new THREE.Color(0, 0, 0) },
-    uHaze: { value: new THREE.Color(0.8, 0.85, 0.9) }, uNoise: { value: null },
+    uHaze: { value: new THREE.Color(0.8, 0.85, 0.9) }, uGlow: { value: new THREE.Color(0, 0, 0) }, uNoise: { value: null },
   };
 }
 
@@ -45,7 +47,7 @@ void main() {
 
 const FRAG = /* glsl */ `
 uniform vec3 uSunDir; uniform vec3 uSunC; uniform vec3 uSkyC; uniform vec3 uGroundC;
-uniform vec3 uFillDir; uniform vec3 uFillC; uniform vec3 uHaze; uniform sampler2D uNoise;
+uniform vec3 uFillDir; uniform vec3 uFillC; uniform vec3 uHaze; uniform vec3 uGlow; uniform sampler2D uNoise;
 uniform vec3 uRock; uniform vec3 uRockD; uniform vec3 uForest; uniform vec3 uMeadow; uniform vec3 uSnowC; uniform vec3 uSnowS;
 uniform float uAmp; uniform float uSnow; uniform float uTree; uniform float uOpacity;
 uniform float uR0; uniform float uR1;
@@ -98,7 +100,8 @@ void main() {
   float far = smoothstep(uR0, uR1, r);
   float low = 1.0 - smoothstep(-80.0, uAmp * 0.45, h);
   float hz = clamp(0.1 + far * 0.55 + low * 0.2, 0.0, 0.9);
-  col = mix(col, uHaze, hz);
+  // Dunst zur Sonne hin in ihrer Farbe (wie der Nebel der Landschaft, grade.ts)
+  col = mix(col, uHaze + uGlow * pow(max(dot(normalize(vP), uSunDir), 0.0), 5.0), hz);
   gl_FragColor = vec4(col, uOpacity);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

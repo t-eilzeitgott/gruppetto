@@ -29,8 +29,11 @@ export class FpsMeter {
     this.parent = parent;
   }
 
-  /** ein gezeichnetes Bild: Abstand zum vorigen (ms), Rechenzeit fürs Bild (ms), Auflösungsstufe (0–1, optional) */
-  frame(intervalMs: number, cpuMs: number, quality?: number) {
+  /**
+   * ein gezeichnetes Bild: Abstand zum vorigen (ms), Rechenzeit fürs Bild (ms), Auflösungsstufe (0–1, optional),
+   * Shader, die nicht übersetzt haben (optional – dann steht es als Warnung dabei)
+   */
+  frame(intervalMs: number, cpuMs: number, quality?: number, shaderErrors = 0) {
     if (!enabled || !this.parent) {
       if (this.el) { this.el.remove(); this.el = null; }
       return;
@@ -58,9 +61,10 @@ export class FpsMeter {
     const avg = this.sum / this.n;
     const f = (x: number) => x.toFixed(1).replace('.', ',');
     const q = quality !== undefined ? ` · ${Math.round(quality * 100)} %` : '';
-    el.textContent = `${Math.round(1000 / avg)} fps · ${f(avg)} ms · max ${Math.round(this.max)} · CPU ${f(this.cpu / this.n)}${q}`;
-    // einbrechende Bildrate dezent markieren
-    el.classList.toggle('is-slow', avg > 20 || this.max > 50);
+    const bad = shaderErrors > 0 ? ` · ${shaderErrors} Shader kaputt` : '';
+    el.textContent = `${Math.round(1000 / avg)} fps · ${f(avg)} ms · max ${Math.round(this.max)} · CPU ${f(this.cpu / this.n)}${q}${bad}`;
+    // einbrechende Bildrate (und kaputte Shader) dezent markieren
+    el.classList.toggle('is-slow', avg > 20 || this.max > 50 || shaderErrors > 0);
     this.n = 0;
     this.sum = 0;
     this.max = 0;

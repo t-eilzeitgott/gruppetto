@@ -23,7 +23,7 @@ import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry,
 import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
 import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
 import { mulberry32 } from './rng';
-import './grade';
+import { ATMO } from './grade';
 import { setGlossEnv } from './gloss';
 import { apIn, apOut, apQ, appearify, appearifyTree, setAp } from './appear';
 import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
@@ -303,12 +303,21 @@ export class Renderer3D {
   }
   private holeMode = false;
   private holeU = { value: 0 };
+  /** Shader-Programme, die nicht übersetzt haben (0 = alles in Ordnung) */
+  shaderErrors = 0;
   private w = { x: 0, y: 0, z: 0, th: 0 };
 
   constructor(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement) {
     // Kantenglättung immer an (MSAA): auf Handy-GPUs günstig, Kanten und Linien werden weich
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false });
     { const c = this.gl.getContext(); this.msaa = (c.getParameter(c.SAMPLES) as number) >= 2; }
+    // Shader, die nicht übersetzen, bleiben unsichtbar (ganze Landschaftsstufen!): zählen und in der
+    // Bildraten-Anzeige zeigen, dazu wie üblich in der Konsole melden
+    this.gl.debug.onShaderError = (gl, program, vs, fs) => {
+      this.shaderErrors += 1;
+      const log = (s: WebGLShader) => (gl.getShaderInfoLog(s) ?? '').trim();
+      console.error('Shader übersetzt nicht:', (gl.getProgramInfoLog(program) ?? '').trim(), log(vs), log(fs));
+    };
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
     // sanfte Tonwertkurve (helle Sonne ohne ausgefressene Farben) plus leichter Filmlook (GRADE)
     this.gl.toneMapping = THREE.CustomToneMapping;
@@ -541,8 +550,10 @@ export class Renderer3D {
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vRockP;')
         .replace('#include <project_vertex>', '#include <project_vertex>\nvRockP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      // (uRelief und uTime erklärt auf der feinsten Landschaftsstufe schon der Landschafts-Shader – nicht doppelt,
+      // sonst übersetzt der Shader nicht und die Stufe bleibt unsichtbar)
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uRock;\nuniform sampler2D uRelief;\nuniform float uTime;\nvarying vec3 vRockP;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uRock;\n#ifndef SPLAT_U\nuniform sampler2D uRelief;\nuniform float uTime;\n#endif\nvarying vec3 vRockP;')
         .replace('#include <map_fragment>', `
           #ifdef USE_MAP
             vec4 sampledDiffuseColor = texture2D(map, vMapUv);
@@ -629,7 +640,7 @@ export class Renderer3D {
           #endif
           vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\nuniform float uTime;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
+        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\n#define SPLAT_U\nuniform float uTime;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
         .replace('#include <color_fragment>', `
           // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
           // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen.
@@ -649,6 +660,9 @@ export class Renderer3D {
             #else
               vec4 nz2 = vec4(0.5);
             #endif
+            // großflächige Flecken (300 m): auf allen Stufen gleich gelesen – so sehen ferne Berge nicht wie eine
+            // Fläche aus einem Guss aus, und an der Stufengrenze stimmt die Farbe überein
+            float nzF = texture2D(uRelief, vTW.xz / 300.0).r;
             // Wiesen: Flecken heller/dunkler, mal saftiger, mal trockener (gelblicher)
             vec3 tCol = vColor.rgb * (0.92 + 0.16 * big);
             tCol = mix(tCol, tCol * vec3(1.1, 1.02, 0.78), smoothstep(0.55, 0.85, big) * 0.5);
@@ -683,33 +697,41 @@ export class Renderer3D {
             }
             float gul2 = mix(0.5, nz2.g, hiF * wallW);
             vec3 rc = vRk * (0.8 + 0.42 * nz2.r) * mix(1.0, 0.84 + 0.26 * mix(gul, gul2, 0.4), far);
+            // großflächig hellere und dunklere Partien (Gesteinswechsel, Flechten) – vor allem in der Ferne
+            rc *= 0.86 + 0.3 * nzF;
             // auf Absätzen (weniger steil) Gras und Geröll
             rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, big) * 0.6);
             // Wald: Rand aus Rauschen; aus der Nähe Waldboden (dort stehen Bäume), weiter weg das Kronendach
             // Waldrand weich (kein harter Saum zwischen Wiese und Wald)
             float fo = smoothstep(0.42, 0.62, vMat.x + (big - 0.5) * 0.25 + (vNz.x - 0.5) * 0.6 + (nz2.g - 0.5) * 0.28) * (1.0 - rk);
-            // Kronen: nah aus der Textur, auf den gröberen Stufen ihr Mittelwert (gleiche Helligkeit an der Grenze)
+            // Kronen: auf der feinen und mittleren Stufe aus der Textur (Mipmaps glätten sie in der Ferne von
+            // selbst), auf der gröbsten ihr Mittelwert (gleiche Helligkeit an der Grenze)
             float crown = ${canMean.toFixed(4)};
-            #if TLV == 0
+            #if TLV < 2
               vec2 cuv = vTW.xz / 10.0;
               vec2 cux = dFdx(cuv);
               vec2 cuy = dFdy(cuv);
               if (fo > 0.01) crown = textureGrad(uCanopy, cuv, cux, cuy).r;
-              #ifdef TMORPH
+              #if TLV == 1 && defined(TMORPH)
                 crown = mix(crown, ${canMean.toFixed(4)}, vMk);
               #endif
             #endif
-            vec3 fc = mix(uForA, uForB, nz2.r) * (0.42 + crown * 0.72);
-            fc = mix(fc, uForA * vec3(0.72, 0.7, 0.58), smoothstep(0.78, 0.45, fnT.y) * 0.7);
+            // Waldfarbe: Kronendach mit großflächig hellerem und dunklerem Bestand; an steilen Hängen nur wenig
+            // dunkler (sonst liest man einen Hangwald als Loch im Berg)
+            vec3 fc = mix(uForA, uForB, nz2.r * 0.6 + nzF * 0.4) * (0.5 + crown * 0.72);
+            fc = mix(fc, uForA * vec3(0.72, 0.7, 0.58), smoothstep(0.78, 0.45, fnT.y) * 0.22);
             float canopy = smoothstep(${CAN_NEAR.toFixed(1)}, ${(TREE_GONE - 10).toFixed(1)}, camD);
             fc = mix(uForA * vec3(0.75, 0.72, 0.6), fc, canopy);
-            // Schichtung: wellige waagrechte Lagen (Sedimentbänder) – so liest man eine Felswand auch von weitem;
-            // an steilen Flächen kräftig, auf flacherem Fels schwach
+            // Schichtung: wellige waagrechte Lagen (Sedimentbänder) – nur in der Nähe: weiter weg würden daraus
+            // Höhenlinien über den ganzen Berg (gerade Streifen); an steilen Flächen kräftig, sonst schwach
+            #if TLV < 2
             {
               float lay = sin(vTW.y * 0.72 + (nz2.r - 0.5) * 3.2 + (big - 0.5) * 2.5 + vTW.x * 0.004);
               float band = smoothstep(-0.25, 0.55, lay);
-              rc *= mix(0.84, 1.1, band) * (1.0 - 0.25 * wallW) + 0.25 * wallW * mix(0.72, 1.16, band);
+              float strata = 1.0 - smoothstep(200.0, 480.0, camD);
+              rc *= mix(1.0, mix(0.84, 1.1, band) * (1.0 - 0.25 * wallW) + 0.25 * wallW * mix(0.72, 1.16, band), strata);
             }
+            #endif
             // Schutthalde am Fuß: wo Fels in Wiese übergeht, graubraunes Geröll statt eines harten Saums
             {
               vec3 scree = mix(vRk, vec3(0.31, 0.28, 0.24) * (0.75 + 0.5 * nz2.r), 0.55);
@@ -1664,23 +1686,29 @@ export class Renderer3D {
     this.hemi.color.setRGB(0.74, 0.84, 1, THREE.SRGBColorSpace).multiply(tint);
     // Bodenlicht: helle Wiesen, Fels und Schnee werfen viel Licht zurück – auch Schattenseiten bleiben freundlich
     this.hemi.groundColor.setRGB(0.64, 0.6, 0.5, THREE.SRGBColorSpace).multiply(tint);
-    // kräftiges Himmels- und Bodenlicht: Schattenseiten (Felswände, Hänge weg von der Sonne) bleiben lesbar
-    this.hemi.intensity = (2.1 + 0.6 * dayK) * dim;
+    // Himmels- und Bodenlicht: Schattenseiten (Felswände, Hänge weg von der Sonne) bleiben lesbar, aber deutlich
+    // dunkler als die Sonnenseite – Licht mit Richtung statt gleichmäßiger Helligkeit
+    this.hemi.intensity = (1.7 + 0.55 * dayK) * dim;
     const sunC = new THREE.Color().setRGB(L.sun[0] / 255, L.sun[1] / 255, L.sun[2] / 255, THREE.SRGBColorSpace);
     this.sun.color.copy(sunC);
-    this.sun.intensity = Math.max(0.5, Math.min(2.35, (L.sunY + 0.12) * 5.7)) * dayK * dim;
-    // Sonnenstand: am Nachmittag schräg von hinten (die Berge vor einem liegen im Licht), zum Abend hin
-    // wandert die Sonne nach Westen, steht tiefer und taucht seitlich vor einem ins Abendrot
+    this.sun.intensity = Math.max(0.6, Math.min(3.0, (L.sunY + 0.14) * 7.0)) * dayK * dim;
+    // Sonnenstand: am Nachmittag schräg von hinten und von der Seite (die Berge vor einem liegen im Licht, Hänge
+    // bekommen Licht- und Schattenseite), zum Abend hin wandert die Sonne nach Westen, steht tiefer und taucht
+    // seitlich vor einem ins Abendrot
     const el = Math.max(-0.2, L.sunY) * 1.5 + 0.18;
-    const az = Math.PI - 0.6 + Math.min(0.75, L.t) * 2.1;
+    const az = Math.PI - 0.95 + Math.min(0.75, L.t) * 2.1;
     const sd = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az)).normalize();
+    // Dunst zur Sonne hin in ihrer Farbe: nachmittags zart, am Abend ein Glühen (siehe grade.ts)
+    ATMO.fogSunDir.value.copy(sd);
+    ATMO.fogSunCol.value.copy(sunC).multiplyScalar((0.18 + 0.55 * L.hazeAmt) * Math.max(0, Math.min(1, 1 - L.stars * 1.5)) * dim);
+    this.peakU.uGlow.value.copy(ATMO.fogSunCol.value);
     const c = this.shadowCenter(g, sd);
     this.sun.position.copy(c).addScaledVector(sd, 220);
     this.sun.target.position.copy(c);
     // Gegenlicht: von der anderen Seite, flacher, bläulich wie Himmelslicht
     this.fill.position.copy(this.camera.position).add(new THREE.Vector3(-sd.x, 0.45, -sd.z).normalize().multiplyScalar(200));
     this.fill.target.position.copy(this.camera.position);
-    this.fill.intensity = 0.8 * dayK * dim;
+    this.fill.intensity = 0.7 * dayK * dim;
     // Spiegelungen auf Lack, Chrom und Helmen werden mit dem Licht dunkler
     setGlossEnv(Math.max(0.2, 1 - L.lights * 0.8) * dim);
     const u = this.skyMat.uniforms;
@@ -3665,15 +3693,15 @@ export class Renderer3D {
     const cp = this.camera.position;
     for (const ch of this.chunks.values()) {
       for (const b of ch.crowd) {
-        // Welche Stufe ein Mensch zeigt, entscheidet der Shader je Person (fein bis ~14 m, einfach bis ~30 m,
+        // Welche Stufe ein Mensch zeigt, entscheidet der Shader je Person (fein bis ~20 m, einfach bis ~50 m,
         // dahinter Bilder – mit weichen, gerasterten Übergängen). Hier nur: Gruppen weglassen, die gerade
         // niemanden in dieser Stufe haben (waagrechter Abstand wie im Shader)
         const d = Math.hypot(cp.x - b.c.x, cp.z - b.c.z);
         const dn = d - b.r - 0.5;
         const df = d + b.r + 0.5;
-        const near = dn < 16;
-        const mid = dn < 32 && df > 12;
-        const spr = df > 27;
+        const near = dn < 22;
+        const mid = dn < 54 && df > 16;
+        const spr = df > 46;
         const lod = (near ? 1 : 0) + (mid ? 2 : 0) + (spr ? 4 : 0);
         if (lod === b.lod) continue;
         b.lod = lod;

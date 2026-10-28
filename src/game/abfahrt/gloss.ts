@@ -208,8 +208,8 @@ export function glossMat(): GlossMaterial {
  * lösen sich zwischen FAR0 und FAR1 m Abstand (des Teils zur Kamera) gerastert auf. Dahinter werden sie
  * gar nicht mehr gezeichnet (RiderModel.setFar).
  */
-export const FAR0 = 17;
-export const FAR1 = 25;
+export const FAR0 = 30;
+export const FAR1 = 40;
 export function farFade(sh: THREE.WebGLProgramParametersWithUniforms) {
   sh.vertexShader = sh.vertexShader
     .replace('#include <common>', '#include <common>\nvarying float vFarK;')

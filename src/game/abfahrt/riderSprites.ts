@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import type { Kit } from './rider';
 import { RiderModel } from './rider3d';
 import { DITHER_GLSL, apQ } from './appear';
+import { ATMO } from './grade';
 import type { TreeLightU } from './forest3d';
 import { lin } from './models3d';
 
@@ -31,9 +32,10 @@ const CPX = 64;
 const SS = 2;
 /** Blick leicht von oben (wie die Kamera auf die Fahrer vor ihr schaut) */
 const ELEV = 0.12;
-/** ab hier Bild statt 3D (Abstand zur Kamera, m): dazwischen weich überblendet */
-export const SPRITE_NEAR = 26;
-export const SPRITE_FAR = 32;
+/** ab hier Bild statt 3D (Abstand zur Kamera, m): dazwischen weich überblendet – weit genug, dass man den Wechsel
+ * im Fahren kaum sieht (die 64-px-Bilder sind erst ab ~45 m so klein wie die 3D-Fahrer) */
+export const SPRITE_NEAR = 44;
+export const SPRITE_FAR = 54;
 /** höchstens so viele Bildfahrer */
 const MAX = 64;
 const STRIDE = 32;
@@ -517,5 +519,6 @@ void main() {
   });
   m.alphaToCoverage = msaa;
   for (const k of ['uSunDir', 'uSunC', 'uSkyC', 'uGroundC', 'uFillDir', 'uFillC'] as const) m.uniforms[k] = light[k];
+  Object.assign(m.uniforms, ATMO);
   return m;
 }

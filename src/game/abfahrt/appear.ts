@@ -10,6 +10,7 @@
  * genau): keine Halbtransparenz, keine Sortierung, kein Loch – und nichts springt.
  */
 import * as THREE from 'three';
+import { ATMO } from './grade';
 
 /** Kodierung im Matrixelement: 1 + EPS · Code (Code 0 = normal) */
 const EPS = 4e-5;
@@ -65,6 +66,8 @@ export function appearify(m: THREE.Material | THREE.Material[]) {
   const key = m.customProgramCacheKey();
   m.onBeforeCompile = function (sh, r) {
     prev.call(this, sh, r);
+    // Dunst mit Sonne (siehe grade.ts): jedes Material bekommt dieselben Uniforms
+    Object.assign(sh.uniforms, ATMO);
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>\n${AP_HEAD}`)
       .replace('#include <project_vertex>', `#include <project_vertex>\n${AP_VERT}`);

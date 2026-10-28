@@ -12,6 +12,7 @@
  */
 import * as THREE from 'three';
 import { AP_FRAG, AP_HEAD, AP_VERT, apHook } from './appear';
+import { ATMO } from './grade';
 import { GB, M, bakedTexture, lin, mixC, mulC, softNormals } from './models3d';
 import { mulberry32 } from './rng';
 
@@ -593,5 +594,6 @@ void main() {
   m.uniforms.uTime = time;
   if (morph) m.uniforms.uMorph = morph;
   for (const k of ['uSunDir', 'uSunC', 'uSkyC', 'uGroundC', 'uFillDir', 'uFillC'] as const) m.uniforms[k] = light[k];
+  Object.assign(m.uniforms, ATMO);
   return m;
 }

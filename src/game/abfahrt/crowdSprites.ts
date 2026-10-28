@@ -277,7 +277,7 @@ flat varying vec3 vCb;`)
   vec3 sprP = aS0.xyz;
   vec2 toC = cameraPosition.xz - sprP.xz;
   // Übergang von den 3D-Figuren (27–32 m): Bildpunkte, die dort noch die Figur zeigt, bleiben frei
-  vXa = 1.0 - smoothstep(27.0, 32.0, length(toC));
+  vXa = 1.0 - smoothstep(46.0, 54.0, length(toC));
   if (vXa >= 1.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 dC = toC / max(length(toC), 1e-3);
   // zur Kamera gewandt, etwas nach oben: bekommt Himmel und Sonne wie eine Figur
