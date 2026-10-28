@@ -54,9 +54,8 @@ export function App() {
     if (!userId) resetCache();
   }, [userId]);
 
-  // Bildraten-Anzeige in den Spielen nur für Admins
-  const isAdmin = !!me.data?.is_admin;
-  useEffect(() => setFpsMeter(isAdmin), [isAdmin]);
+  // Bildraten-Anzeige in den Spielen nur für Admins (gleich beim Rendern gesetzt: das Spiel startet vor den Effekten der App)
+  setFpsMeter(!!me.data?.is_admin);
 
   const first = route.parts[0];
   if (first === 'impressum' || first === 'datenschutz') {

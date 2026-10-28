@@ -12,25 +12,33 @@ export function setFpsMeter(on: boolean) {
 
 export class FpsMeter {
   private el: HTMLDivElement | null = null;
+  private parent: HTMLElement | null;
   private n = 0;
   private sum = 0;
   private max = 0;
   private cpu = 0;
   private t0 = 0;
 
+  /** die Anzeige entsteht erst beim Zeichnen: Wer Admin ist, steht beim Spielstart nicht immer schon fest */
   constructor(parent: HTMLElement | null) {
-    if (!enabled || !parent) return;
-    const el = document.createElement('div');
-    el.className = 'fps-meter';
-    el.setAttribute('aria-hidden', 'true');
-    parent.append(el);
-    this.el = el;
+    this.parent = parent;
   }
 
   /** ein gezeichnetes Bild: Abstand zum vorigen (ms), Rechenzeit fürs Bild (ms), Auflösungsstufe (0–1, optional) */
   frame(intervalMs: number, cpuMs: number, quality?: number) {
+    if (!enabled || !this.parent) {
+      if (this.el) { this.el.remove(); this.el = null; }
+      return;
+    }
+    if (!this.el) {
+      const e = document.createElement('div');
+      e.className = 'fps-meter';
+      e.setAttribute('aria-hidden', 'true');
+      e.textContent = '– fps';
+      this.parent.append(e);
+      this.el = e;
+    }
     const el = this.el;
-    if (!el) return;
     // nach Pausen (Hintergrund, Karte) nicht mitzählen
     if (intervalMs > 0 && intervalMs < 250) {
       this.n += 1;
@@ -57,5 +65,6 @@ export class FpsMeter {
   dispose() {
     this.el?.remove();
     this.el = null;
+    this.parent = null;
   }
 }
