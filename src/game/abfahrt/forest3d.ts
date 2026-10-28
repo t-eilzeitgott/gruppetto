@@ -158,8 +158,8 @@ function broadleaf(o: { cw: number; ch: number; trunkH: number; n: number; dark:
 function cypress(hd: boolean, seed: number, o: { H?: number; w?: number; dark?: string; light?: string; trunk?: number } = {}): THREE.BufferGeometry {
   const b = new GB();
   const r: Rnd = mulberry32(seed * 31 + 7);
-  const D = lin(o.dark ?? '#1f3f1f');
-  const Lc = lin(o.light ?? '#4f7a3a');
+  const D = lin(o.dark ?? '#2f4231');
+  const Lc = lin(o.light ?? '#627a58');
   const trunk = o.trunk ?? 1.2;
   b.add(new THREE.CylinderGeometry(0.1, 0.15 + trunk * 0.05, trunk, 5), M(0, trunk / 2), lin('#5a3d27'));
   const n = hd ? 16 : 7;
@@ -219,7 +219,7 @@ function palm(hd: boolean, seed: number): THREE.BufferGeometry {
     const ca = Math.cos(a);
     const sa = Math.sin(a);
     const L = 2.6 + r() * 0.6;
-    const col = lin(f % 2 ? '#3f7a32' : '#4f8f3c');
+    const col = lin(f % 2 ? '#5a8050' : '#6c925a');
     // Wedel: Mittelrippe hängt im Bogen nach unten, Fiedern links und rechts
     const pt = (t: number) => [top[0] + ca * L * t, top[1] + 0.5 * t - 1.6 * t * t, top[2] + sa * L * t];
     for (let q = 0; q < leaves; q++) {
@@ -242,28 +242,43 @@ function palm(hd: boolean, seed: number): THREE.BufferGeometry {
 interface Variant { kind: TreeKind; make: (hd: boolean) => THREE.BufferGeometry }
 
 const VARIANTS: Variant[] = [
-  { kind: 'pine', make: (hd) => conifer({ h: 12.5, w: 2.9, tiers: hd ? 19 : 15, br: hd ? 15 : 8, dark: '#14361d', light: '#4d8446', seed: 3, hd }) },
-  { kind: 'pine', make: (hd) => conifer({ h: 14, w: 2.55, tiers: hd ? 20 : 16, br: hd ? 14 : 8, dark: '#173c22', light: '#57894a', seed: 11, hd, droop: 0.34 }) },
-  { kind: 'pine', make: (hd) => conifer({ h: 10.5, w: 3.1, tiers: hd ? 17 : 14, br: hd ? 15 : 8, dark: '#12331c', light: '#467c40', seed: 23, hd, droop: 0.22 }) },
-  { kind: 'pineSnow', make: (hd) => conifer({ h: 11.8, w: 2.8, tiers: hd ? 18 : 14, br: hd ? 15 : 8, dark: '#173a28', light: '#4a7a52', seed: 5, snow: true, hd }) },
-  { kind: 'pineSnow', make: (hd) => conifer({ h: 13.5, w: 2.5, tiers: hd ? 19 : 15, br: hd ? 14 : 8, dark: '#173a28', light: '#4f8058', seed: 29, snow: true, hd, droop: 0.32 }) },
-  { kind: 'larch', make: (hd) => conifer({ h: 11.5, w: 2.4, tiers: hd ? 15 : 12, br: hd ? 11 : 8, dark: '#4d7428', light: '#acc85e', seed: 7, droop: 0.38, sparse: 0.28, hd }) },
-  { kind: 'larch', make: (hd) => conifer({ h: 13, w: 2.2, tiers: hd ? 16 : 13, br: hd ? 10 : 7, dark: '#56782c', light: '#bccf6a', seed: 41, droop: 0.42, sparse: 0.32, hd }) },
-  { kind: 'tree', make: (hd) => broadleaf({ cw: 5.6, ch: 5.2, trunkH: 3.4, n: hd ? 84 : 12, dark: '#2f5e22', light: '#86ba52', seed: 2, hd }) },
-  { kind: 'tree', make: (hd) => broadleaf({ cw: 4.8, ch: 6.2, trunkH: 3.8, n: hd ? 88 : 12, dark: '#2a5520', light: '#7aae4a', seed: 19, hd }) },
-  { kind: 'tree', make: (hd) => broadleaf({ cw: 6.4, ch: 4.6, trunkH: 3.0, n: hd ? 84 : 12, dark: '#335f24', light: '#93c25a', seed: 37, hd, blob: 1.1 }) },
-  { kind: 'treeRound', make: (hd) => broadleaf({ cw: 3.8, ch: 3.5, trunkH: 2.2, n: hd ? 60 : 9, dark: '#3a6e28', light: '#92c85c', seed: 8, hd }) },
-  { kind: 'treeRound', make: (hd) => broadleaf({ cw: 3.3, ch: 3.9, trunkH: 2.5, n: hd ? 60 : 9, dark: '#356526', light: '#88bd55', seed: 47, hd }) },
+  { kind: 'pine', make: (hd) => conifer({ h: 12.5, w: 2.9, tiers: hd ? 19 : 15, br: hd ? 15 : 8, dark: '#2b3f30', light: '#667f5b', seed: 3, hd }) },
+  { kind: 'pine', make: (hd) => conifer({ h: 14, w: 2.55, tiers: hd ? 20 : 16, br: hd ? 14 : 8, dark: '#2e4432', light: '#728a62', seed: 11, hd, droop: 0.34 }) },
+  { kind: 'pine', make: (hd) => conifer({ h: 10.5, w: 3.1, tiers: hd ? 17 : 14, br: hd ? 15 : 8, dark: '#283c2e', light: '#5e7a58', seed: 23, hd, droop: 0.22 }) },
+  { kind: 'pineSnow', make: (hd) => conifer({ h: 11.8, w: 2.8, tiers: hd ? 18 : 14, br: hd ? 15 : 8, dark: '#2d4236', light: '#6a8468', seed: 5, snow: true, hd }) },
+  { kind: 'pineSnow', make: (hd) => conifer({ h: 13.5, w: 2.5, tiers: hd ? 19 : 15, br: hd ? 14 : 8, dark: '#2f4538', light: '#73896c', seed: 29, snow: true, hd, droop: 0.32 }) },
+  { kind: 'larch', make: (hd) => conifer({ h: 11.5, w: 2.4, tiers: hd ? 15 : 12, br: hd ? 11 : 8, dark: '#6b7a45', light: '#b4b878', seed: 7, droop: 0.38, sparse: 0.28, hd }) },
+  { kind: 'larch', make: (hd) => conifer({ h: 13, w: 2.2, tiers: hd ? 16 : 13, br: hd ? 10 : 7, dark: '#727f49', light: '#bec07f', seed: 41, droop: 0.42, sparse: 0.32, hd }) },
+  { kind: 'tree', make: (hd) => broadleaf({ cw: 5.6, ch: 5.2, trunkH: 3.4, n: hd ? 84 : 12, dark: '#44583a', light: '#91a265', seed: 2, hd }) },
+  { kind: 'tree', make: (hd) => broadleaf({ cw: 4.8, ch: 6.2, trunkH: 3.8, n: hd ? 88 : 12, dark: '#405439', light: '#879a5f', seed: 19, hd }) },
+  { kind: 'tree', make: (hd) => broadleaf({ cw: 6.4, ch: 4.6, trunkH: 3.0, n: hd ? 84 : 12, dark: '#4a5e3c', light: '#9cab6c', seed: 37, hd, blob: 1.1 }) },
+  { kind: 'treeRound', make: (hd) => broadleaf({ cw: 3.8, ch: 3.5, trunkH: 2.2, n: hd ? 60 : 9, dark: '#4e6440', light: '#a0b070', seed: 8, hd }) },
+  { kind: 'treeRound', make: (hd) => broadleaf({ cw: 3.3, ch: 3.9, trunkH: 2.5, n: hd ? 60 : 9, dark: '#495f3d', light: '#95a768', seed: 47, hd }) },
   { kind: 'cypress', make: (hd) => cypress(hd, 4) },
   { kind: 'olive', make: (hd) => olive(hd, 6) },
   { kind: 'olive', make: (hd) => olive(hd, 13) },
   { kind: 'palm', make: (hd) => palm(hd, 9) },
   // Pappeln (Po-Ebene): hoch, schlank, hellgrün, mit freiem Stamm
-  { kind: 'poplar', make: (hd) => cypress(hd, 21, { H: 14, w: 1.25, dark: '#3d6a2a', light: '#9ccb5a', trunk: 2.4 }) },
-  { kind: 'poplar', make: (hd) => cypress(hd, 33, { H: 12.5, w: 1.1, dark: '#416f2c', light: '#a6d164', trunk: 2.0 }) },
+  { kind: 'poplar', make: (hd) => cypress(hd, 21, { H: 14, w: 1.25, dark: '#586a42', light: '#a7b474', trunk: 2.4 }) },
+  { kind: 'poplar', make: (hd) => cypress(hd, 33, { H: 12.5, w: 1.1, dark: '#5e7046', light: '#b0bb7c', trunk: 2.0 }) },
   // Apfelbaum (Südtirol): klein, rund, kurzer Stamm
-  { kind: 'apple', make: (hd) => broadleaf({ cw: 3.0, ch: 2.6, trunkH: 1.1, n: hd ? 48 : 8, dark: '#3f7a2c', light: '#9ad35e', seed: 53, hd }) },
+  { kind: 'apple', make: (hd) => broadleaf({ cw: 3.0, ch: 2.6, trunkH: 1.1, n: hd ? 48 : 8, dark: '#52663f', light: '#9eb06c', seed: 53, hd }) },
 ];
+
+/**
+ * Farbvarianz je Baum: Helligkeit, dazu wärmer (gelblich-olive) oder kühler (bläulich) und etwas Sättigung –
+ * nebeneinander stehende Bäume derselben Art sehen so verschieden aus. r1, r2 in 0 … 1 (fest je Baum), tint =
+ * Helligkeit; gleiche Formel für Bilder in der Ferne und 3D-Bäume in der Nähe.
+ */
+export function treeTint(tint: number, r1: number, r2: number): [number, number, number] {
+  const hv = r1 * 2 - 1;
+  const olive = Math.max(0, r2 * 2 - 1.2);
+  // Olive: rot rauf, blau runter; kühl: blau rauf, rot runter; die Sättigung über die Breite der Spreizung
+  const r = tint * (1 + 0.16 * hv + 0.22 * olive);
+  const g = tint * (0.97 + 0.06 * Math.abs(hv) - 0.04 * olive);
+  const b = tint * (1 - 0.2 * hv - 0.28 * olive);
+  return [r, g, b];
+}
 
 /** Varianten je Art (Index in VARIANTS) */
 const BY_KIND = new Map<string, number[]>();

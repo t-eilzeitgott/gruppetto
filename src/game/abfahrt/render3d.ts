@@ -27,7 +27,7 @@ import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, Terrain, grassy, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
 import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
-import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
+import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeTint, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
 import { mulberry32 } from './rng';
 import { ATMO } from './grade';
 import { viewRange, viewRangeVersion } from './viewRange';
@@ -1830,10 +1830,10 @@ export class Renderer3D {
       const rec = new Float32Array(d.trees.length * TREC);
       d.trees.forEach((t, k) => {
         const o = k * TREC;
-        // jeder Baum etwas anders: heller/dunkler, gelblicher oder bläulicher
-        const hv = ((t.rot * 7.3) % 1) * 2 - 1;
+        // jeder Baum etwas anders: heller/dunkler, olivgelb oder bläulich (treeTint)
+        const [tr, tg, tb] = treeTint(t.tint, (t.rot * 7.3) % 1, (t.rot * 11.9) % 1);
         rec[o] = t.x; rec[o + 1] = t.y; rec[o + 2] = t.z; rec[o + 3] = t.s; rec[o + 4] = t.rot;
-        rec[o + 5] = t.tint * (1 + 0.1 * hv); rec[o + 6] = t.tint * (0.98 + 0.05 * Math.abs(hv)); rec[o + 7] = t.tint * (1 - 0.13 * hv);
+        rec[o + 5] = tr; rec[o + 6] = tg; rec[o + 7] = tb;
         rec[o + 8] = treeVariant(t.kind, (t.rot * 13.17) % 1);
         rec[o + 9] = t.dy ?? 0;
       });
@@ -1886,11 +1886,13 @@ export class Renderer3D {
           const n = ix ? ix.count : P.count;
           q.setFromAxisAngle(up, t.rot);
           m.compose(p0.set(t.x, t.y, t.z), q, sc.set(t.s, t.s, t.s));
+          // dieselbe Farbvarianz wie das Bild desselben Baums in der Ferne
+          const [tr, tg, tb] = treeTint(t.tint, (t.rot * 7.3) % 1, (t.rot * 11.9) % 1);
           for (let i = 0; i < n; i++) {
             const k = ix ? ix.getX(i) : i;
             v.fromBufferAttribute(P, k).applyMatrix4(m);
             pos[o * 3] = v.x; pos[o * 3 + 1] = v.y; pos[o * 3 + 2] = v.z;
-            col[o * 3] = (C ? C.getX(k) : 1) * t.tint; col[o * 3 + 1] = (C ? C.getY(k) : 1) * t.tint; col[o * 3 + 2] = (C ? C.getZ(k) : 1) * t.tint;
+            col[o * 3] = (C ? C.getX(k) : 1) * tr; col[o * 3 + 1] = (C ? C.getY(k) : 1) * tg; col[o * 3 + 2] = (C ? C.getZ(k) : 1) * tb;
             dys[o] = t.dy ?? 0;
             o++;
           }
@@ -3920,15 +3922,15 @@ export class Renderer3D {
       const m = new THREE.Matrix4().compose(new THREE.Vector3(px, py - 0.05, pz), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rot, 0)), new THREE.Vector3(sc, sc * (0.9 + hash(s.i + sp.v) * 0.25), sc));
       const v = 0.85 + hash(s.i * 3 + sp.v) * 0.3;
       if (TREES.has(kind) && this.cTrees) {
-        const hv = hash(s.i * 7 + sp.v) * 2 - 1;
-        this.cTrees.push(px, py - 0.05, pz, sc, rot, v * (1 + 0.1 * hv), v * (0.95 + hash(s.i) * 0.1), v * (1 - 0.13 * hv), treeVariant(kind, hash(s.i * 13 + sp.v * 7)), 0);
+        const [tr, tg, tb] = treeTint(v, hash(s.i * 7 + sp.v), hash(s.i * 11 + sp.v * 3));
+        this.cTrees.push(px, py - 0.05, pz, sc, rot, tr, tg, tb, treeVariant(kind, hash(s.i * 13 + sp.v * 7)), 0);
         return;
       }
       let list = inst.get(kind);
       if (!list) { list = { m: [], c: [] }; inst.set(kind, list); }
       list.m.push(m);
-      const hv = TREES.has(kind) ? hash(s.i * 7 + sp.v) * 2 - 1 : 0;
-      list.c.push(new THREE.Color(v * (1 + 0.1 * hv), v * (0.95 + hash(s.i) * 0.1), v * (1 - 0.13 * hv)));
+      if (TREES.has(kind)) { const [tr, tg, tb] = treeTint(v, hash(s.i * 7 + sp.v), hash(s.i * 11 + sp.v * 3)); list.c.push(new THREE.Color(tr, tg, tb)); }
+      else list.c.push(new THREE.Color(v, v * (0.95 + hash(s.i) * 0.1), v));
       if (kind === 'lamp') {
         const ax = Math.sin(rot) * -0.62;
         const az = Math.cos(rot) * -0.62;
