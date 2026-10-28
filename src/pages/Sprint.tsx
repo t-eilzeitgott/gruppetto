@@ -10,6 +10,7 @@ import type { GameBest } from '../data/source';
 import { SprintRace, TYPE_STATS, typeBars, type SprintEvent, type SprintHud, type SprintResult } from '../game/abfahrt/sprint';
 import { riderOptions, rivalNames, sprintTrains, teamMate, type RiderOption } from '../game/abfahrt/sprintRiders';
 import { shortTour, stageRef } from '../game/abfahrt/stageRef';
+import { LOOKS } from '../game/abfahrt/region';
 import { SPRINT_FINISH, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
@@ -293,7 +294,7 @@ export function SprintPage() {
                   <SprintIcon size={44} />
                   <div>
                     <h1 className="abf-title">Sprintfinale</h1>
-                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km</p>
+                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km{ref ? ` · ${LOOKS[ref.region].label}` : ''}</p>
                     {ref?.finale?.line ? <p className="abf-sub abf-sub--finale">Echtes Finale: {ref.finale.line}</p> : null}
                   </div>
                 </div>

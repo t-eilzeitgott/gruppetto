@@ -75,7 +75,7 @@ test('Fahrerauswahl: je Typ ein Fahrer, eigener Tipp zuerst, ohne Rundfahrt trot
 
 test('Echtes Finale (Neapel): Kurven an ihrer Stelle, Zielgerade gerade und 4 % steil, Pflaster ab 650 m', () => {
   const ref: StageRef = {
-    lang: 'it', tour: 'Giro 2026', stage: 6, date: '2026-05-14', from: 'Paestum', to: 'Napoli', town: 'Napoli', climb: null, summitFinish: false, preview: false,
+    lang: 'it', tour: 'Giro 2026', stage: 6, date: '2026-05-14', from: 'Paestum', to: 'Napoli', town: 'Napoli', climb: null, summitFinish: false, preview: false, region: 'riviera',
     finale: parseFinale('Die letzten 3 km gerade am Hafen entlang. Linkskurve 650 m vor dem Ziel in einen leichten Anstieg (4 %) über die gepflasterte Via Acton, zwei Rechtskurven 400 m vor dem Ziel auf die 8 m breite, gepflasterte Zielgerade.'),
   };
   const t = new Track('2026-05-14', [], 'sprint', ref);

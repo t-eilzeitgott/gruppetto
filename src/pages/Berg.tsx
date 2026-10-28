@@ -10,6 +10,7 @@ import type { GameBest } from '../data/source';
 import { BERG_STATS, BergRace, bergBars, type BergEvent, type BergHud, type BergResult } from '../game/abfahrt/berg';
 import { riderOptions, rivalNames, teamMate, type RiderOption } from '../game/abfahrt/sprintRiders';
 import { shortTour, stageRef } from '../game/abfahrt/stageRef';
+import { LOOKS } from '../game/abfahrt/region';
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { HudBanner, PowerRing, RaceBar, SwapIcon, TvAd, raceBar, writeBar, writeRing } from './hud';
@@ -317,7 +318,7 @@ export function BergPage() {
                   <BergIcon size={44} />
                   <div>
                     <h1 className="abf-title">Bergfinale</h1>
-                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title}</p>
+                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title}{ref ? ` · ${LOOKS[ref.region].label}` : ''}</p>
                   </div>
                 </div>
                 <BergProfile track={track} />

@@ -16,8 +16,8 @@ import { ATMO } from './grade';
 import { GB, M, bakedTexture, lin, mixC, mulC, softNormals } from './models3d';
 import { mulberry32 } from './rng';
 
-export type TreeKind = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'palm';
-export const TREE_KINDS = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'palm']);
+export type TreeKind = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'palm' | 'poplar' | 'apple';
+export const TREE_KINDS = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'palm', 'poplar', 'apple']);
 
 
 // ------------------------------------------------------------------ Modelle
@@ -155,18 +155,20 @@ function broadleaf(o: { cw: number; ch: number; trunkH: number; n: number; dark:
 }
 
 /** Zypresse: schlanke Säule aus übereinanderliegenden Ballen, spitz zulaufend */
-function cypress(hd: boolean, seed: number): THREE.BufferGeometry {
+function cypress(hd: boolean, seed: number, o: { H?: number; w?: number; dark?: string; light?: string; trunk?: number } = {}): THREE.BufferGeometry {
   const b = new GB();
   const r: Rnd = mulberry32(seed * 31 + 7);
-  const D = lin('#1f3f1f');
-  const Lc = lin('#4f7a3a');
-  b.add(new THREE.CylinderGeometry(0.1, 0.15, 1.2, 5), M(0, 0.6), lin('#5a3d27'));
+  const D = lin(o.dark ?? '#1f3f1f');
+  const Lc = lin(o.light ?? '#4f7a3a');
+  const trunk = o.trunk ?? 1.2;
+  b.add(new THREE.CylinderGeometry(0.1, 0.15 + trunk * 0.05, trunk, 5), M(0, trunk / 2), lin('#5a3d27'));
   const n = hd ? 16 : 7;
-  const H = 8.6;
+  const H = o.H ?? 8.6;
+  const W = o.w ?? 0.95;
   for (let i = 0; i < n; i++) {
     const k = i / (n - 1);
-    const y = 0.9 + k * (H - 1.4);
-    const rad = 0.95 * Math.pow(1 - k, 0.7) * (0.9 + r() * 0.2) + 0.18;
+    const y = trunk - 0.3 + k * (H - trunk - 0.2);
+    const rad = W * Math.pow(1 - k, 0.7) * (0.9 + r() * 0.2) + 0.18;
     const a = r() * Math.PI * 2;
     const off = hd ? 0.12 : 0.06;
     b.addFn(new THREE.IcosahedronGeometry(1, 1), M(Math.cos(a) * off, y, Math.sin(a) * off, rad, (H / n) * 1.25, rad, r() * 3), (_p, nn) => {
@@ -256,6 +258,11 @@ const VARIANTS: Variant[] = [
   { kind: 'olive', make: (hd) => olive(hd, 6) },
   { kind: 'olive', make: (hd) => olive(hd, 13) },
   { kind: 'palm', make: (hd) => palm(hd, 9) },
+  // Pappeln (Po-Ebene): hoch, schlank, hellgrün, mit freiem Stamm
+  { kind: 'poplar', make: (hd) => cypress(hd, 21, { H: 14, w: 1.25, dark: '#3d6a2a', light: '#9ccb5a', trunk: 2.4 }) },
+  { kind: 'poplar', make: (hd) => cypress(hd, 33, { H: 12.5, w: 1.1, dark: '#416f2c', light: '#a6d164', trunk: 2.0 }) },
+  // Apfelbaum (Südtirol): klein, rund, kurzer Stamm
+  { kind: 'apple', make: (hd) => broadleaf({ cw: 3.0, ch: 2.6, trunkH: 1.1, n: hd ? 48 : 8, dark: '#3f7a2c', light: '#9ad35e', seed: 53, hd }) },
 ];
 
 /** Varianten je Art (Index in VARIANTS) */
@@ -271,7 +278,7 @@ export function treeVariant(kind: string, h: number): number {
 // ------------------------------------------------------------------ Bildvorrat
 
 const COLS = 8;
-const ROWS = 2;
+const ROWS = 3;
 /** Farbe je Zelle (Pixel); die Normalen in halber Auflösung (Licht ändert sich weich) */
 const CPX = 384;
 const RPX = 768;

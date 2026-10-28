@@ -15,6 +15,7 @@ import { EDGE, MOUNTAIN_FINISH, SEG, type BiomeId, type Seg, type Side, type Tra
 const ASPHALT: RGBf = [0.035, 0.036, 0.04];
 import { BIOME_PALETTES, mixRGB, type RGB } from './palette';
 import { lin255, type RGBf } from './models3d';
+import { LOOKS, pickWeighted, type RegionLook } from './region';
 import { MARK_CELL, markCandidate, nearMark, type Landmark } from './landmarks3d';
 
 // ------------------------------------------------------------------ Rauschen
@@ -286,8 +287,12 @@ export class Terrain {
   /** Gebiete, deren Höhen sich beim letzten Fensterwechsel geändert haben (x0, z0, x1, z1) */
   private dirty: number[][] = [];
 
+  /** Landschaftsbild der Gegend (Bäume, Wiesen- und Feldfarben im Tal) */
+  private look: RegionLook;
+
   constructor(track: Track) {
     this.track = track;
+    this.look = LOOKS[track.region];
     NOISE_SEED = (track.seed % 100000) + 7;
   }
 
@@ -1178,7 +1183,7 @@ export class Terrain {
           // innen dicht, am Rand ausdünnend (weicher Saum), auf der Wiese vereinzelt
           const p = fo > 0.5 ? 0.92 : fo > 0.1 ? 0.25 + fo * 0.6 : C.meadowTrees;
           if (h2(tx * 3000 + i * 7, tz * 3000 + j * 13) > p) continue;
-          const kind = pickTree(b, above, h2(i * 31 + tx, j * 17 + tz), fo > 0.3);
+          const kind = pickTree(b, above, h2(i * 31 + tx, j * 17 + tz), fo > 0.3, this.look);
           // Höhe der gröberen Stufe an derselben Stelle (der Baum folgt dem Gelände beim Übergang)
           const dy = this.coarseDy(x, z, y, cg, cV, cA);
           trees.push({ kind, x, y: y - 0.35, z, s: 0.75 + h2(i + tx * 77, j + tz * 91) * 0.65, rot: r1 * Math.PI * 2, tint: 0.82 + r2 * 0.32, dy });
@@ -1380,7 +1385,7 @@ export class Terrain {
   private colorsFor(lv: number): ColorSet[] {
     const hit = this.colorCache.get(lv);
     if (hit) return hit;
-    const out = BIOMES.map((b) => colorSet(b));
+    const out = BIOMES.map((b) => colorSet(b, this.look));
     this.colorCache.set(lv, out);
     return out;
   }
@@ -1418,10 +1423,13 @@ interface ColorSet {
   fieldy: number; forestThr: number; treeLine: number; rockLine: number; snowLine: number; meadowTrees: number;
 }
 
-function colorSet(b: BiomeId): ColorSet {
+function colorSet(b: BiomeId, look: RegionLook): ColorSet {
   const p = BIOME_PALETTES[b];
   const L = (c: RGB) => lin255(c[0], c[1], c[2]);
-  const mid = p.ground.meadow[0];
+  // Täler (Dorf, See, Weinberge) tragen die Farben der Gegend; Pass und Bergwald bleiben alpin
+  const low = b === 'village' || b === 'lake' || b === 'vineyard';
+  const mid: RGB = low ? mixRGB(p.ground.meadow[0], look.meadow, 0.7) : p.ground.meadow[0];
+  const fieldC: RGB = low ? look.field : [196, 176, 92];
   const base = {
     meadow: L(mid),
     meadow2: L(mixRGB(mid, [150, 170, 70], 0.25)),
@@ -1430,8 +1438,8 @@ function colorSet(b: BiomeId): ColorSet {
     rock: L(mixRGB(p.rock, [178, 176, 170], 0.45)),
     rockDark: L(mixRGB(p.rockDark, [132, 130, 126], 0.4)),
     snow: L([240, 245, 250]),
-    field: L([196, 176, 92]),
-    field2: L([142, 168, 72]),
+    field: L(fieldC),
+    field2: L(mixRGB(fieldC, [120, 160, 70], 0.5)),
     sand: L([196, 186, 160]),
     lakeBed: L(mixRGB(p.water, [40, 90, 110], 0.4)),
   };
@@ -1441,18 +1449,19 @@ function colorSet(b: BiomeId): ColorSet {
     case 'alpine': return { ...base, fieldy: 0.25, forestThr: 0.48, treeLine: 195, rockLine: 250, snowLine: 335, meadowTrees: 0.03 };
     case 'forest': return { ...base, fieldy: 0.15, forestThr: 0.38, treeLine: 200, rockLine: 255, snowLine: 340, meadowTrees: 0.05 };
     case 'village': return { ...base, fieldy: 1, forestThr: 0.48, treeLine: 195, rockLine: 255, snowLine: 340, meadowTrees: 0.04 };
-    case 'lake': return { ...base, fieldy: 0.6, forestThr: 0.48, treeLine: 200, rockLine: 260, snowLine: 345, meadowTrees: 0.04 };
-    case 'vineyard': return { ...base, meadow: L([150, 170, 80]), field: L([200, 184, 98]), field2: L([128, 150, 62]), fieldy: 1, forestThr: 0.58, treeLine: 300, rockLine: 420, snowLine: 9999, meadowTrees: 0.05 };
+    case 'lake': return { ...base, fieldy: look.dry ? 0.8 : 0.6, forestThr: look.dry ? 0.56 : 0.48, treeLine: 200, rockLine: look.dry ? 230 : 260, snowLine: 345, meadowTrees: look.dry ? 0.06 : 0.04 };
+    case 'vineyard': return { ...base, meadow: L(mixRGB([150, 170, 80], look.meadow, 0.6)), field: L(mixRGB([200, 184, 98], look.field, 0.6)), field2: L(mixRGB([128, 150, 62], look.field, 0.3)), fieldy: 1, forestThr: look.dry ? 0.66 : 0.58, treeLine: 300, rockLine: 420, snowLine: 9999, meadowTrees: 0.05 };
   }
 }
 
-function pickTree(b: number, above: number, r: number, forest: boolean): string {
+function pickTree(b: number, above: number, r: number, forest: boolean, look: RegionLook): string {
   switch (BIOMES[b]) {
     case 'pass': return above > 170 ? (r < 0.5 ? 'larch' : 'pine') : r < 0.7 ? 'pine' : 'larch';
     case 'alpine': return above > 160 ? (r < 0.5 ? 'larch' : 'pine') : r < 0.62 ? 'pine' : r < 0.9 ? 'larch' : 'tree';
     case 'forest': return r < 0.68 ? 'pine' : r < 0.9 ? 'larch' : 'tree';
-    case 'village': return forest ? (r < 0.6 ? 'pine' : 'tree') : r < 0.5 ? 'treeRound' : 'tree';
-    case 'lake': return forest ? (r < 0.5 ? 'pine' : 'tree') : r < 0.4 ? 'tree' : r < 0.7 ? 'cypress' : 'treeRound';
-    default: return forest ? (r < 0.5 ? 'treeRound' : 'tree') : r < 0.45 ? 'cypress' : r < 0.75 ? 'olive' : 'treeRound';
+    // Täler: die Bäume der Gegend (Pappeln in der Po-Ebene, Zypressen und Oliven in der Toskana, Palmen an der Küste)
+    case 'village': return forest ? pickWeighted(look.forest, r) : pickWeighted(look.valley, r);
+    case 'lake': return forest ? pickWeighted(look.forest, r) : pickWeighted(look.valley, r);
+    default: return forest ? pickWeighted(look.forest, r) : pickWeighted(look.valley, r);
   }
 }

@@ -8,6 +8,7 @@ import { between, chance, hashStr, mulberry32, pick, shuffle, type Rng } from '.
 import { STYLE, type Lang } from './facade';
 import type { StageRef } from './stageRef';
 import { finaleGrade, type FinaleSpec } from './finale';
+import { LOOKS, pickWeighted, type Region } from './region';
 
 export const SEG = 2;            // Segmentlänge in m
 export const ROAD_HALF = 2.8;    // halbe Fahrbahnbreite in m
@@ -55,7 +56,7 @@ export type SpriteKind =
   | 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'palm' | 'olive' | 'bush' | 'flowers'
   | 'rock' | 'boulder' | 'snowpole' | 'chalet' | 'barn' | 'rifugio' | 'farmhouse' | 'cow' | 'cowBW' | 'hay'
   | 'fence' | 'vinerow' | 'sunflowers' | 'crowd' | 'chevron' | 'lamp' | 'parasol' | 'boat' | 'logs'
-  | 'tornante' | 'townSign' | 'passSign' | 'fountain' | 'flagpole' | 'campervan' | 'grassTuft' | 'stoneWall';
+  | 'tornante' | 'townSign' | 'passSign' | 'fountain' | 'flagpole' | 'campervan' | 'grassTuft' | 'stoneWall' | 'poplar' | 'apple';
 
 export interface Sprite {
   k: SpriteKind;
@@ -232,6 +233,8 @@ export class Track {
   private climbScale = 1;
   /** Sprintfinale: Bauplan der letzten Kilometer aus dem echten Streckentext (Kurven, Zielgerade, Steigung, Pflaster) */
   readonly finale: FinaleSpec | null;
+  /** Gegend der Etappe: Bäume, Felder, Hausstile (Abfahrt immer Dolomiten) */
+  readonly region: Region;
 
   constructor(dayKey: string, names: string[] = [], kind: TrackKind = 'descent', town: string | StageRef | null = '') {
     this.dayKey = dayKey;
@@ -240,6 +243,7 @@ export class Track {
     this.lang = this.ref?.lang ?? 'it';
     this.town = (typeof town === 'string' ? town : town?.town ?? '').trim().slice(0, 24);
     this.finale = kind === 'sprint' ? this.ref?.finale ?? null : null;
+    this.region = kind === 'descent' ? 'dolomiten' : this.ref?.region ?? (kind === 'mountain' ? 'dolomiten' : 'po');
     if (kind === 'mountain' && this.ref?.climb?.grad) this.climbScale = Math.max(0.92, Math.min(1.1, this.ref.climb.grad / 7.8));
     this.seed = hashStr(`${kind === 'sprint' ? 'sprint' : kind === 'mountain' ? 'berg' : 'abfahrt'}:${dayKey}`);
     this.rng = mulberry32(this.seed);
@@ -1062,11 +1066,14 @@ export class Track {
     const lang = this.lang;
     const S = STYLE;
     // Bergdörfer (Bergfinale, Dolomiten-Abfahrt, Weiler) mit Chalets und Bruchstein, Städte mit Bürgerhäusern
-    const alpine = mode === 'hamlet' ? (this.kind === 'sprint' ? 0.35 : 0.8) : this.kind === 'sprint' ? 0.04 : 0.45;
-    const townPool: number[] = lang === 'en' ? [S.backstein, S.backstein, S.backstein, S.backstein, S.creme, S.haussmann, S.fachwerk]
+    const look = LOOKS[this.region];
+    // Anteil Berghäuser: Abfahrt (Dolomiten) wie gehabt, Finale nach der Gegend
+    const alpine = this.kind === 'descent' ? (mode === 'hamlet' ? 0.8 : 0.45) : mode === 'hamlet' ? Math.min(1, look.alpine + 0.3) : look.alpine;
+    const byLang: number[] = lang === 'en' ? [S.backstein, S.backstein, S.backstein, S.backstein, S.creme, S.haussmann, S.fachwerk]
       : lang === 'fr' ? [S.ocker, S.lachs, S.creme, S.gelb, S.haussmann, S.haussmann, S.terrakotta, S.fachwerk, S.creme]
         : lang === 'es' ? [S.ocker, S.creme, S.creme, S.gelb, S.terrakotta, S.terrakotta, S.haussmann]
           : [S.ocker, S.lachs, S.creme, S.gelb, S.terrakotta, S.ocker, S.gelb];
+    const townPool: number[] = this.kind === 'descent' ? byLang : look.town.map((k) => (S as Record<string, number>)[k]).filter((x): x is number => x !== undefined);
     const alpPool: number[] = lang === 'en' ? [S.bruchstein, S.backstein] : [S.chalet, S.chalet, S.bruchstein, S.chalet, S.creme];
     const big = this.kind === 'sprint' && mode === 'town';
     let churchAt = piazza ? piazza[0] - start + 12 : mode === 'town' ? Math.floor(between(r, 0.25, 0.6) * n) : chance(r, 0.5) ? Math.floor(n * 0.5) : -1;
@@ -1199,6 +1206,9 @@ export class Track {
 
   private decorate(start: number, n: number, biome: BiomeId, _D: number, sec: number, marks: number[], curve: number[]) {
     const r = this.rng;
+    // Bäume der Gegend in den Tälern (Pappeln, Zypressen, Oliven, Palmen, Apfelbäume)
+    const look = LOOKS[this.region];
+    const vt = (): SpriteKind => pickWeighted(look.valley, r()) as SpriteKind;
     const S = (i: number) => this.seg(i);
     const sideOf = (s: Seg, sign: number) => (sign < 0 ? s.L : s.R);
     const put = (i: number, sign: number, k: SpriteKind, dx: number, opts: Partial<Sprite> = {}) => {
@@ -1334,7 +1344,7 @@ export class Track {
             if (near < 0.07) put(i, sign, 'flowers', between(r, 0.3, 4), { s: between(r, 0.7, 1.2) });
             else if (near < 0.32) put(i, sign, 'grassTuft', between(r, 0.15, 1.4), { s: between(r, 0.7, 1.25) });
             else if (near < 0.13 && biome !== 'lake') put(i, sign, chance(r, 0.5) ? 'cow' : 'cowBW', between(r, 3, 14), { s: between(r, 0.9, 1.1) });
-            else if (near < 0.16) put(i, sign, biome === 'lake' ? pick(r, ['cypress', 'palm', 'olive'] as SpriteKind[]) : pick(r, ['larch', 'pine', 'treeRound'] as SpriteKind[]), between(r, 3, 22));
+            else if (near < 0.16) put(i, sign, biome === 'lake' || biome === 'vineyard' || biome === 'village' ? vt() : pick(r, ['larch', 'pine', 'treeRound'] as SpriteKind[]), between(r, 3, 22));
             else if (near < 0.175 && biome === 'alpine') put(i, sign, chance(r, 0.5) ? 'chalet' : 'barn', between(r, 10, 22), { s: between(r, 0.9, 1.1) });
             else if (near < 0.19 && biome === 'alpine') put(i, sign, 'hay', between(r, 3, 12));
             break;
@@ -1348,7 +1358,7 @@ export class Track {
           case 'pavement':
             // Bäume, Schirme und Brunnen nur dort, wo auf ein paar Meter kein Haus steht (sonst ragen sie in die Fassade)
             if (!bld && ![-4, -2, 2, 4].some((d) => i + d >= start && i + d < start + n && (sign < 0 ? S(i + d).bL : S(i + d).bR))) {
-              if (near < 0.25) put(i, sign, pick(r, ['treeRound', 'tree', 'cypress'] as SpriteKind[]), between(r, 2.5, 6), { s: between(r, 0.7, 1) });
+              if (near < 0.25) put(i, sign, look.coast && chance(r, 0.6) ? 'palm' : this.kind === 'descent' ? pick(r, ['treeRound', 'tree', 'cypress'] as SpriteKind[]) : vt(), between(r, 2.5, 6), { s: between(r, 0.7, 1) });
               else if (near < 0.32) put(i, sign, 'parasol', between(r, 0.8, 2), { s: 1 });
               else if (near < 0.34) put(i, sign, 'fountain', 1.2, { s: 1 });
             }
@@ -1356,19 +1366,23 @@ export class Track {
             break;
           case 'water':
             if (near < 0.03) put(i, sign, 'boat', between(r, 20, 90), { s: between(r, 0.8, 1.3) });
+            // Küste: Palmen an der Promenade
+            if (look.coast && near > 0.9 && k % 2 === 0) put(i, sign, 'palm', between(r, 0.8, 2.4), { s: between(r, 0.8, 1.1) });
             break;
           case 'vines':
-            if (k % 3 === 0) for (let j = 0; j < 4; j++) put(i, sign, 'vinerow', 1.4 + j * 2.6, { s: 1, f: false, v: 0 });
-            if (near < 0.03) put(i, sign, 'cypress', between(r, 4, 20));
+            // Südtirol: Apfelplantagen statt Reben
+            if (look.rows === 'apples') { if (k % 3 === 0) for (let j = 0; j < 4; j++) put(i, sign, 'apple', 1.8 + j * 3.0, { s: between(r, 0.75, 0.95), f: false }); }
+            else if (k % 3 === 0) for (let j = 0; j < 4; j++) put(i, sign, 'vinerow', 1.4 + j * 2.6, { s: 1, f: false, v: 0 });
+            if (near < 0.03) put(i, sign, vt(), between(r, 4, 20));
             if (near > 0.985) put(i, sign, 'farmhouse', between(r, 14, 26), { s: 1 });
             break;
           case 'sunflower':
             if (k % 2 === 0) put(i, sign, 'sunflowers', between(r, 0.6, 2.6), { s: between(r, 0.9, 1.1) });
-            if (near < 0.03) put(i, sign, 'cypress', between(r, 8, 20));
+            if (near < 0.03) put(i, sign, vt(), between(r, 8, 20));
             break;
           case 'field':
             if (near < 0.05) put(i, sign, 'hay', between(r, 3, 15));
-            else if (near < 0.09) put(i, sign, pick(r, ['cypress', 'olive', 'treeRound'] as SpriteKind[]), between(r, 3, 20));
+            else if (near < 0.09) put(i, sign, vt(), between(r, 3, 20));
             else if (near > 0.99) put(i, sign, 'farmhouse', between(r, 14, 26), { s: 1 });
             break;
         }
