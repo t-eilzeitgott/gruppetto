@@ -18,3 +18,16 @@ const GRADE = `vec3 CustomToneMapping( vec3 color ) {
 
 const chunk = THREE.ShaderChunk as unknown as Record<string, string>;
 chunk.tonemapping_pars_fragment = chunk.tonemapping_pars_fragment.replace('vec3 CustomToneMapping( vec3 color ) { return color; }', GRADE);
+
+/**
+ * Luftperspektive mit Höhe: unter der Kamera (Täler) liegt der Dunst dichter, über ihr (Gipfel) ist die Luft klarer.
+ * Die Höhe relativ zur Kamera kommt aus der Ansichtsposition (Zeile y der Ansichtsmatrix) – so gilt es für jedes
+ * Material, auch für eigene Shader, die nur mvPosition kennen.
+ */
+chunk.fog_pars_vertex = chunk.fog_pars_vertex.replace('varying float vFogDepth;', 'varying float vFogDepth;\n\tvarying float vFogRel;');
+chunk.fog_vertex = chunk.fog_vertex.replace('vFogDepth = - mvPosition.z;', 'vFogDepth = - mvPosition.z;\n\tvFogRel = dot( viewMatrix[1].xyz, mvPosition.xyz );');
+chunk.fog_pars_fragment = chunk.fog_pars_fragment.replace('varying float vFogDepth;', 'varying float vFogDepth;\n\tvarying float vFogRel;');
+chunk.fog_fragment = chunk.fog_fragment.replace(
+  'float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );',
+  'float fogK = fogDensity * ( 1.0 + 0.85 * clamp( - vFogRel / 170.0, - 0.45, 1.5 ) );\n\t\tfloat fogFactor = 1.0 - exp( - fogK * fogK * vFogDepth * vFogDepth );',
+);

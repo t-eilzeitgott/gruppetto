@@ -500,7 +500,7 @@ export class Renderer3D {
     };
     // Straßenbeläge und Bankett: großflächige Flecken (Flickstellen, Abrieb, Staub) brechen das Kachelmuster auf,
     // in der Ferne geht die Textur in ihre Mittelfarbe über – kein Flimmern, keine Linien beim Fahren
-    const roadU = { uNoise: { value: this.noiseMap } };
+    const roadU = { uNoise: { value: this.noiseMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time };
     const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number) => {
       m.onBeforeCompile = (sh) => {
         Object.assign(sh.uniforms, roadU);
@@ -508,7 +508,7 @@ export class Renderer3D {
           .replace('#include <common>', '#include <common>\nvarying vec3 vWP;')
           .replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', '#include <common>\nuniform sampler2D uNoise;\nvarying vec3 vWP;')
+          .replace('#include <common>', '#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform float uTime;\nvarying vec3 vWP;')
           .replace('#include <map_fragment>', `
             #ifdef USE_MAP
               vec4 sampledDiffuseColor = texture2D(map, vMapUv);
@@ -520,6 +520,7 @@ export class Renderer3D {
               sampledDiffuseColor.rgb *= 1.0 + ${patch.toFixed(2)} * ((mn.r * 0.6 + mn.g * 0.4) - 0.5);
               sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);
               diffuseColor *= sampledDiffuseColor;
+              ${CLOUD('vWP.xz')}
             #endif`);
       };
       m.customProgramCacheKey = () => `road-${key}`;
@@ -534,14 +535,14 @@ export class Renderer3D {
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
     // Weltkoordinaten statt UV – waagrechte Lagen laufen so über alle Flächen hinweg
     const rockMap = this.tex(rockTex());
-    const rockU = { uRock: { value: rockMap } };
+    const rockU = { uRock: { value: rockMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time };
     const rockify = (sh: THREE.WebGLProgramParametersWithUniforms) => {
       Object.assign(sh.uniforms, rockU);
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vRockP;')
         .replace('#include <project_vertex>', '#include <project_vertex>\nvRockP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uRock;\nvarying vec3 vRockP;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uRock;\nuniform sampler2D uRelief;\nuniform float uTime;\nvarying vec3 vRockP;')
         .replace('#include <map_fragment>', `
           #ifdef USE_MAP
             vec4 sampledDiffuseColor = texture2D(map, vMapUv);
@@ -569,7 +570,8 @@ export class Renderer3D {
             // nur lesen, wo Fels sichtbar ist (Ableitungen vorher, damit die Mipmap stimmt)
             if (steep > 0.003) sampledDiffuseColor = mix(sampledDiffuseColor, textureGrad(uRock, ruv, rux, ruy), steep);
           }
-          diffuseColor *= sampledDiffuseColor;`);
+          diffuseColor *= sampledDiffuseColor;
+          ${CLOUD('vRockP.xz')}`);
     };
     for (const [m, key] of [[this.mats.terrain, 'rock-terr'], [this.mats.portal, 'rock-portal']] as [THREE.Material, string][]) {
       m.onBeforeCompile = rockify;
@@ -584,7 +586,10 @@ export class Renderer3D {
       uRelief: { value: this.reliefTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canCv, 2) },
       uForA: { value: new THREE.Color().setRGB(...lin255(30, 60, 34)) }, uForB: { value: new THREE.Color().setRGB(...lin255(56, 88, 46)) },
       uSnow: { value: new THREE.Color().setRGB(...lin255(240, 245, 250)) },
+      uTime: this.time,
     };
+    // Wolkenschatten: großflächige, langsam ziehende Flecken (gleiches Rauschen, gleiche Zeit in allen Materialien)
+    const CLOUD = (pos: string) => `{ float cloud = smoothstep(0.5, 0.82, texture2D(uRelief, (${pos} + uTime * vec2(6.0, 2.5)) / 700.0).r); diffuseColor.rgb *= 1.0 - 0.3 * cloud; }`;
     // je Stufe nur, was dort sichtbar ist: feine Muster (Kronen, Felstextur, mittleres Rauschen) nur nah;
     // großflächiges Rauschen kommt je Ecke (aNz, vMat.w) statt aus einer Textur
     const splat = (sh: THREE.WebGLProgramParametersWithUniforms, lv: number) => {
@@ -624,7 +629,7 @@ export class Renderer3D {
           #endif
           vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
+        .replace('#include <common>', `#include <common>\n${MD}#define TLV ${lv}\nuniform float uTime;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
         .replace('#include <color_fragment>', `
           // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
           // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen.
@@ -723,6 +728,7 @@ export class Renderer3D {
             // Schnee glättet das Relief
             tGrad *= 1.0 - 0.7 * sn;
             diffuseColor.rgb *= tCol;
+            ${CLOUD('vTW.xz')}
             #if TLV > 0
               diffuseColor.rgb *= ${detailMean.toFixed(4)};
             #endif
@@ -3433,13 +3439,8 @@ export class Renderer3D {
     for (let k = 0; k < len; k++) {
       const a = rows[r + k];
       const b = rows[r + k + 1];
-      if (d.k === 'patch') {
-        // Flickstelle: dunkleres, frisches Stück Asphalt mit leicht schiefen Kanten
-        const j = (q: number) => (hash(r * 31 + k * 7 + q) - 0.5) * 0.25;
-        const col = shadeF(lin('#6a6e74'), 0.97 + hash(r * 13 + k) * 0.1);
-        marks.quad(P(a, d.x - d.w + j(1), H * 0.5), P(a, d.x + d.w + j(2), H * 0.5), P(b, d.x + d.w + j(3), H * 0.5), P(b, d.x - d.w + j(4), H * 0.5), col);
-        continue;
-      }
+      // Flickstellen: als Rechteck wirken sie wie Platten – (noch) nicht gezeichnet
+      if (d.k === 'patch') continue;
       if (d.k === 'zebra') for (let q = -2; q <= 2; q++) marks.quad(P(a, q * 1.05 - 0.25, H), P(a, q * 1.05 + 0.25, H), P(b, q * 1.05 + 0.25, H), P(b, q * 1.05 - 0.25, H), lin('#f2f2ec'));
       else if (d.k === 'grid') for (let q = 0; q < 4; q++) {
         const t0 = q / 4;
