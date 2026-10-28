@@ -565,10 +565,9 @@ export class Renderer3D {
             vec4 sampledDiffuseColor = vec4(1.0);
           #endif
           {
-            // Steilheit aus der Dreiecksfläche; Textur immer (gleichmäßiger Kontrollfluss → richtige Mipmap)
-            vec3 px = dFdx(vRockP);
-            vec3 py = dFdy(vRockP);
-            vec3 fn = normalize(cross(px, py));
+            // Steilheit und Projektionsrichtung aus der weichen Eckennormale (je Dreieck wäre die Textur an jeder
+            // Kante gebrochen – die Wand zerfiel in Facetten); Textur immer (gleichmäßiger Kontrollfluss → Mipmap)
+            vec3 fn = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
             // nur in der Nähe: weiter weg würden die feinen Schichten zu Streifen flimmern
             float steep = (1.0 - smoothstep(0.5, 0.8, abs(fn.y))) * (1.0 - smoothstep(60.0, 180.0, distance(vRockP, cameraPosition)));
             #ifdef TMORPH
@@ -3003,12 +3002,15 @@ export class Renderer3D {
     // Gesteinsfarbe: Lagen nach Höhe, etwas Rauschen
     const rock = rgbLin(mixRGB(pal.rock, [168, 160, 148], 0.25));
     const rockD = rgbLin(pal.rockDark);
+    // (Farbe je Knoten, weich über die Fläche – je Zelle eine eigene Farbe zerlegte die Wand in Facetten)
     const colAt = (l: number, h: number, salt: number): RGBf => {
       const band = 0.5 + 0.5 * Math.sin(h * 1.7 + Math.sin(l * 0.15) * 1.2);
-      const t = Math.min(1, band * 0.55 + hash(salt) * 0.35);
-      const f = 0.9 + hash(salt + 7) * 0.2;
+      const n = 0.5 + 0.5 * Math.sin(l * 0.9 + h * 1.3 + salt * 0.37) * Math.sin(l * 0.33 - h * 0.7);
+      const t = Math.min(1, band * 0.55 + n * 0.3);
+      const f = 0.93 + n * 0.14;
       return [(rock[0] + (rockD[0] - rock[0]) * t) * f, (rock[1] + (rockD[1] - rock[1]) * t) * f, (rock[2] + (rockD[2] - rock[2]) * t) * f];
     };
+    const nodeCol = (n: number[]) => colAt(n[3], n[4], a.seg.i % 97);
     // Aussparung um die Öffnung: Zellen, die ihr zu nahe kommen, übernimmt ein Rahmen (unten)
     const near = (i: number, j: number) => {
       const l0 = lat(i);
@@ -3025,9 +3027,9 @@ export class Renderer3D {
         const B = N(i + 1, j);
         const C = N(i + 1, j + 1);
         const D = N(i, j + 1);
-        const col = colAt(A[3], A[4], i * 53 + j * 7 + a.seg.i);
-        if (Math.abs(A[1] - C[1]) < Math.abs(B[1] - D[1])) { gb.tri(A, B, C, col); gb.tri(A, C, D, shadeF(col, 0.96)); }
-        else { gb.tri(A, B, D, col); gb.tri(B, C, D, shadeF(col, 0.96)); }
+        const cA = nodeCol(A), cB = nodeCol(B), cC = nodeCol(C), cD = nodeCol(D);
+        if (Math.abs(A[1] - C[1]) < Math.abs(B[1] - D[1])) { gb.triC(A, B, C, cA, cB, cC); gb.triC(A, C, D, cA, cC, cD); }
+        else { gb.triC(A, B, D, cA, cB, cD); gb.triC(B, C, D, cB, cC, cD); }
       }
     }
     if (this.late()) yield;
@@ -3063,7 +3065,7 @@ export class Renderer3D {
         const B = all[j];
         const C = all[k];
         const cy = (A[1] + B[1] + C[1]) / 3 - a.y;
-        gb.tri([A[0], A[1], A[2]], [B[0], B[1], B[2]], [C[0], C[1], C[2]], colAt(0, cy, i * 17 + k));
+        gb.tri([A[0], A[1], A[2]], [B[0], B[1], B[2]], [C[0], C[1], C[2]], colAt(0, cy, a.seg.i % 97));
       }
     }
     if (this.late()) yield;

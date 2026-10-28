@@ -384,6 +384,24 @@ export function portalFacade(mas: GB, trim: GB, a: TRow, P: Pfn, dir: 1 | -1): {
 
   // 2) Bogensteine (ungerade Anzahl, Schlussstein in der Mitte etwas größer und weiter vorn)
   const NV = 13;
+  // Mörtelgrund hinter dem Bogenkranz und über der Laibung: durch die Stoßfugen zwischen den Steinen sah man
+  // sonst ins Leere (Löcher am Portal) – jetzt auf dunklen Mörtel
+  {
+    const MORTAR = shade(FAC, 0.5);
+    const NB = NV * 2;
+    for (let j = 0; j < NB; j++) {
+      const t0 = Math.PI - (j / NB) * Math.PI;
+      const t1 = Math.PI - ((j + 1) / NB) * Math.PI;
+      const [ix0, ih0] = vault(t0, -0.03);
+      const [ix1, ih1] = vault(t1, -0.03);
+      const [ox0, oh0] = vault(t0, RO + 0.5);
+      const [ox1, oh1] = vault(t1, RO + 0.5);
+      quadT([[ix0, ih0, DF - 0.03], [ix1, ih1, DF - 0.03], [ox1, oh1, DF - 0.03], [ox0, oh0, DF - 0.03]], MORTAR);
+      const [sx0, sh0] = vault(t0, 0.03);
+      const [sx1, sh1] = vault(t1, 0.03);
+      quadT([[sx1, sh1, DF + 0.2], [sx0, sh0, DF + 0.2], [sx0, sh0, 0], [sx1, sh1, 0]], MORTAR);
+    }
+  }
   for (let j = 0; j < NV; j++) {
     const t0 = Math.PI - (j / NV) * Math.PI;
     const t1 = Math.PI - ((j + 1) / NV) * Math.PI;
