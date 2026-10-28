@@ -2688,12 +2688,18 @@ export class Renderer3D {
       const lr = Math.min(-1.3, this.terrain!.lakeOf(s.sec) - s.y);
       const sand = lin('#b9ad96');
       const wet = lin('#8f8672');
-      const bed = shadeF(rgbLin(pal.water), 0.55);
+      // Seegrund: dunkler nasser Boden (das Wasser darüber zeichnet die Landschaft) – kein Blau, das ohne Wasser
+      // darüber als blaue Wand neben der Straße stand
+      const bed = shadeF(mixRGB(wet, rgbLin(pal.water), 0.25) as RGBf, 0.55);
       const m = Math.max(lr + 0.3, -1.2);
+      // liegt die Straße hoch über dem See: Böschung flacher und oberhalb des Wasserspiegels Fels statt
+      // Seegrund-Blau (sonst stand eine blaue Wand neben der Straße)
+      const k = Math.max(1, -lr / 5);
+      const h5 = (m + lr - 0.8) / 2;
       return {
-        o: [0, 0.2, 0.4, 1.2, 2, 4, 6, 12, 20],
-        h: [0, -0.22, -0.45, (-0.45 + m) / 2, m, (m + lr - 0.8) / 2, lr - 0.8, lr - 2.6, lr - 4.5],
-        cols: [sand, sand, sand, wet, wet, bed, bed, bed],
+        o: [0, 0.2, 0.4, 1.2, 2, 2 + 2 * k, 2 + 4 * k, 8 + 4 * k, 16 + 4 * k],
+        h: [0, -0.22, -0.45, (-0.45 + m) / 2, m, h5, lr - 0.8, lr - 2.6, lr - 4.5],
+        cols: [sand, sand, sand, wet, m > lr + 0.5 ? rock(3) : wet, h5 > lr + 0.3 ? rock(4) : bed, bed, bed],
       };
     }
     if (side.wall > 0 && side.stone) {
@@ -2713,7 +2719,8 @@ export class Renderer3D {
       const W = side.wall;
       const snow = side.ground === 'snow';
       const top = side.ground === 'rock' ? 'meadow' : side.ground;
-      const j = (k: number, amp: number) => n(k + 60) * amp + (hash(s.i * 13 + k * 7 + (sg > 0 ? 3 : 0)) - 0.5) * amp * 0.35;
+      // (nur weiches Rauschen entlang der Strecke – Zacken je Segment zerlegten die Wand in dunkle Dreiecke)
+      const j = (k: number, amp: number) => n(k + 60) * amp;
       const d = wallSetback(W, snow);
       const o = [0, d * 0.22 + j(1, 0.2 + d * 0.1), d * 0.5 + j(2, 0.25 + d * 0.12), d * 0.78 + j(3, 0.2 + d * 0.1), d, d + 1.4, d + 6, d + 15, d + 29];
       for (let k = 1; k < 4; k++) o[k] = Math.max(o[k - 1] + 0.01, Math.min(d - 0.01 * (4 - k), o[k]));

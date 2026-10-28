@@ -1113,7 +1113,9 @@ export class Terrain {
         for (let i = 0; i < N; i++) {
           const ka = (j + 1) * G + (i + 1);
           if (W[ka] <= 0.35 && W[ka + 1] <= 0.35 && W[ka + G] <= 0.35 && W[ka + G + 1] <= 0.35) continue;
-          const ly = (LY[ka] + LY[ka + 1] + LY[ka + G] + LY[ka + G + 1]) / 4;
+          // Seespiegel: der tiefste der vier Ecken (am Rand eines Seeabschnitts tragen Ecken sonst den Talboden
+          // des nächsten Abschnitts – die Wasserfläche stand dort als blaue Wand)
+          const ly = Math.min(LY[ka], LY[ka + 1], LY[ka + G], LY[ka + G + 1]);
           const xa = x0 + i * cell;
           const za = z0 + j * cell;
           // eine Zelle Rand mitnehmen, damit das Ufer ins Wasser taucht
