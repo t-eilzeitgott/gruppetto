@@ -1018,7 +1018,7 @@ export class Renderer3D {
       this.rs.mesh.visible = false;
     }
     // Landschaftsproben zuerst: die Abschnitte fragen beim Bau nach Geländehöhen
-    if (this.terrain?.window(Math.max(0, p.z - 900), Math.max(p.z + 3000, this.routeEnd))) {
+    if (this.terrain?.window(Math.max(0, p.z - 900), Math.max(p.z + 4600, this.routeEnd))) {
       // neue oder weggefallene Straßenstücke ändern die Höhen ringsum: betroffene Kacheln neu bauen
       for (const [x0, z0, x1, z1] of this.terrain.takeDirty()) {
         for (const t of this.tiles.values()) {
@@ -1441,7 +1441,7 @@ export class Renderer3D {
       this.pre = { keys, idx: 0, gen: null };
       // die Proben müssen die ganze Strecke abdecken (sonst stimmten die Kacheln später nicht mehr); geänderte
       // Gebiete holt draw() im nächsten Bild ab (betroffene Kacheln werden neu gebaut)
-      T.window(Math.max(0, g.p.z - 900), Math.max(g.p.z + 3000, this.routeEnd));
+      T.window(Math.max(0, g.p.z - 900), Math.max(g.p.z + 4600, this.routeEnd));
     }
     const pre = this.pre;
     T.deadline = t0 + budget;
@@ -2867,12 +2867,14 @@ export class Renderer3D {
       mas.quad(A1, A0, B0, B1, dark, [[0, za], [EDGE / uvS, za], [EDGE / uvS, zb], [0, zb]]);
     }
     // Bach im Graben (quer unter der Brücke): eine ebene Wasserfläche auf der Höhe der tiefsten Stelle
-    if (s.bridge > 0) {
+    // (nur unter dem hohen Teil und nicht breiter als die Brücke hoch ist – an den Rampen lag die Fläche sonst
+    // neben der Straße im Gelände)
+    if (s.bridge > 2.5) {
       const t = this.track!;
       let deep = s;
       for (let j = s.i - 24; j <= s.i + 24; j++) { const q = t.seg(Math.max(t.first, j)); if (q.bridge > deep.bridge) deep = q; }
       const yw = deep.y - deep.bridge - 0.9;
-      const W = 40;
+      const W = Math.min(40, 4 + (s.bridge - 2.5) * 6);
       const A0 = P(a, -W, 0); const A1 = P(a, W, 0); const B0 = P(b, -W, 0); const B1 = P(b, W, 0);
       for (const q of [A0, A1, B0, B1]) q[1] = yw;
       water.quad(A0, A1, B1, B0, [1, 1, 1]);
