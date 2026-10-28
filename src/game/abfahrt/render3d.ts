@@ -2277,8 +2277,10 @@ export class Renderer3D {
           else if ((s.i & 3) < 2) strip(-0.06, 0.06, white);
         }
       }
-      // --- Gelände
-      if (!s.tunnel) {
+      // --- Gelände (auf einem Viadukt: Bogenbrücke statt Böschung, unten ein Bach)
+      if (s.bridge > 0) {
+        this.bridgeSide(mas, water, a, b, P);
+      } else if (!s.tunnel) {
         for (const sg of [-1, 1]) this.terrainSide(terr, mas, a, b, sg, P, sg < 0 ? lim.L[r] : lim.R[r], sg < 0 ? lim.L[r + 1] : lim.R[r + 1]);
       } else {
         const [t0, t1, len] = this.tunnelOf(s.i);
@@ -2671,6 +2673,87 @@ export class Renderer3D {
     terr.quad(E0, E1, D1, D0, sc, [[0, 0], [0.3, 0], [0.3, 0.5], [0, 0.5]]);
   }
 
+  /**
+   * Steinviadukt: Seitenwände aus Bruchstein vom Fahrbahnrand bis hinunter in den Graben, alle 8 m ein Pfeiler,
+   * dazwischen Bögen (durch die man hindurchsieht), unter dem Bogenscheitel läuft ein Bach
+   */
+  private bridgeSide(mas: GB, water: GB, a: Row, b: Row, P: (r: Row, x: number, h: number) => number[]) {
+    const T = this.terrain!;
+    const reg = this.region!;
+    const s = a.seg;
+    const SPAN = 4;            // Segmente je Bogen (8 m)
+    const PIER = 0.6;          // halbe Pfeilerbreite (m)
+    const RISE = 3.0;          // Stich des Bogens (m)
+    const TOP = 1.1;           // Mauer vom Fahrbahnrand bis zum Bogenscheitel (m)
+    const st = shadeF(lin('#b8ae9c'), 0.9 + hash(s.i * 5) * 0.14);
+    const dark = shadeF(st, 0.62);
+    // Unterkante der Wand (Bogenlinie) an einer Stelle u (0..1) im Bogen, relativ zur Fahrbahn
+    const arch = (i: number, t: number) => {
+      const u = ((i % SPAN) + t) / SPAN;                // 0 = Pfeilermitte
+      const d = Math.abs(u - 0.5) * 2;                  // 0 am Scheitel, 1 am Pfeiler
+      return -(TOP + RISE * (1 - Math.sqrt(Math.max(0, 1 - d * d))));
+    };
+    // Boden unter dem Pfeiler (Rand der Fahrbahn), relativ zur Fahrbahn
+    const ground = (row: Row, x: number) => { const q = P(row, x, 0); return T.heightIn(reg, q[0], q[2]) - row.y - 0.4; };
+    const uvS = 1.8;
+    const za = s.i * SEG / uvS;
+    const zb = za + SEG / uvS;
+    for (const sg of [-1, 1]) {
+      const x = sg * (EDGE + 0.25);
+      // Wand in 4 Stücken je Segment (die Bogenlinie ist rund)
+      const N = 4;
+      for (let q = 0; q < N; q++) {
+        const t0 = q / N;
+        const t1 = (q + 1) / N;
+        const r0 = { ...a, x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0, z: a.z + (b.z - a.z) * t0, rx: a.rx + (b.rx - a.rx) * t0, rz: a.rz + (b.rz - a.rz) * t0 };
+        const r1 = { ...a, x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1, z: a.z + (b.z - a.z) * t1, rx: a.rx + (b.rx - a.rx) * t1, rz: a.rz + (b.rz - a.rz) * t1 };
+        const h0 = arch(s.i, t0);
+        const h1 = arch(s.i, t1);
+        const A0 = P(r0, x, -0.02); const A1 = P(r0, x, h0); const B0 = P(r1, x, -0.02); const B1 = P(r1, x, h1);
+        const u0 = za + (zb - za) * t0; const u1 = za + (zb - za) * t1;
+        const uv = [[u0 * sg, 0], [u0 * sg, h0 / uvS], [u1 * sg, h1 / uvS], [u1 * sg, 0]];
+        if (sg > 0) mas.quad(A0, A1, B1, B0, st, uv); else mas.quad(A1, A0, B0, B1, st, [uv[1], uv[0], uv[3], uv[2]]);
+      }
+      // Pfeiler: am Anfang jedes Bogens ein Quader bis auf den Boden, über die ganze Breite
+      if (s.i % SPAN === 0) {
+        const g = Math.min(ground(a, x), ground(a, -x)) - 0.5;
+        const top = arch(s.i, 0) + 0.3;
+        const xi = sg * (EDGE + 0.25);
+        const corners = (dz: number, h: number) => { const r2 = { ...a, x: a.x + (b.x - a.x) * dz, y: a.y + (b.y - a.y) * dz, z: a.z + (b.z - a.z) * dz, rx: a.rx, rz: a.rz }; return P(r2, xi, h); };
+        const d0 = -PIER / SEG; const d1 = PIER / SEG;
+        // Außenfläche des Pfeilers (unter der Bogenwand) und seine beiden Flanken
+        const F0 = corners(d0, top); const F1 = corners(d1, top); const G0 = corners(d0, g); const G1 = corners(d1, g);
+        const uvp = [[(za + d0) * sg, top / uvS], [(za + d0) * sg, g / uvS], [(za + d1) * sg, g / uvS], [(za + d1) * sg, top / uvS]];
+        if (sg > 0) mas.quad(F0, G0, G1, F1, st, uvp); else mas.quad(G0, F0, F1, G1, st, [uvp[1], uvp[0], uvp[3], uvp[2]]);
+        // Flanken quer zur Straße (zur Mitte hin bis zur anderen Seite)
+        const xm = 0;
+        const Fi0 = (dz: number, h: number) => { const r2 = { ...a, x: a.x + (b.x - a.x) * dz, y: a.y + (b.y - a.y) * dz, z: a.z + (b.z - a.z) * dz, rx: a.rx, rz: a.rz }; return P(r2, xm, h); };
+        for (const [dz, flip] of [[d0, sg > 0], [d1, sg < 0]] as [number, boolean][]) {
+          const o0 = corners(dz, top); const o1 = corners(dz, g); const m0 = Fi0(dz, top); const m1 = Fi0(dz, g);
+          const uvf = [[0, top / uvS], [0, g / uvS], [EDGE / uvS, g / uvS], [EDGE / uvS, top / uvS]];
+          if (flip) mas.quad(o0, o1, m1, m0, dark, uvf); else mas.quad(o1, o0, m0, m1, dark, [uvf[1], uvf[0], uvf[3], uvf[2]]);
+        }
+      }
+    }
+    // Unterseite der Fahrbahnplatte (sieht man vom Graben aus)
+    {
+      const h = -TOP;
+      const A0 = P(a, -EDGE - 0.25, h); const A1 = P(a, EDGE + 0.25, h); const B0 = P(b, -EDGE - 0.25, h); const B1 = P(b, EDGE + 0.25, h);
+      mas.quad(A1, A0, B0, B1, dark, [[0, za], [EDGE / uvS, za], [EDGE / uvS, zb], [0, zb]]);
+    }
+    // Bach im Graben (quer unter der Brücke): eine ebene Wasserfläche auf der Höhe der tiefsten Stelle
+    if (s.bridge > 0) {
+      const t = this.track!;
+      let deep = s;
+      for (let j = s.i - 24; j <= s.i + 24; j++) { const q = t.seg(Math.max(t.first, j)); if (q.bridge > deep.bridge) deep = q; }
+      const yw = deep.y - deep.bridge - 0.9;
+      const W = 40;
+      const A0 = P(a, -W, 0); const A1 = P(a, W, 0); const B0 = P(b, -W, 0); const B1 = P(b, W, 0);
+      for (const q of [A0, A1, B0, B1]) q[1] = yw;
+      water.quad(A0, A1, B1, B0, [1, 1, 1]);
+    }
+  }
+
   private barriers(bar: GB, ads: GB, a: Row, b: Row, P: (r: Row, x: number, h: number) => number[]) {
     const s = a.seg;
     if (s.tunnel) return;
@@ -2707,10 +2790,12 @@ export class Renderer3D {
       } else if (side.barrier === 'stone') {
         const v = 0.85 + hash(s.i * 3 + sg) * 0.2;
         const st = shadeF(lin('#a89f90'), v);
-        wallQ(sg * (EDGE - 0.08), -0.1, 0.62, st);
+        const ht = s.bridge > 0 ? 0.95 : 0.62;
+        wallQ(sg * (EDGE - 0.08), -0.1, ht, st);
+        if (s.bridge > 0) wallQ(sg * (EDGE + 0.32), -0.1, ht, st);
         const x0 = sg * (EDGE - 0.08);
         const x1 = sg * (EDGE + 0.32);
-        const top = [P(a, x0, 0.62), P(a, x1, 0.62), P(b, x1, 0.62), P(b, x0, 0.62)];
+        const top = [P(a, x0, ht), P(a, x1, ht), P(b, x1, ht), P(b, x0, ht)];
         if (sg > 0) bar.quad(top[0], top[1], top[2], top[3], shadeF(lin('#c7beae'), v)); else bar.quad(top[1], top[0], top[3], top[2], shadeF(lin('#c7beae'), v));
       } else if (side.barrier === 'fence') {
         wallQ(sg * (EDGE + 0.15), 0.55, 0.63, lin('#7a5634'));

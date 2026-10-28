@@ -113,6 +113,8 @@ export interface Seg {
   lamp: boolean;
   crowd: boolean;
   crest: boolean;
+  /** Viadukt: Tiefe des Grabens unter der Straße (m; 0 = keine Brücke) */
+  bridge: number;
 }
 
 export interface Section {
@@ -422,6 +424,30 @@ export class Track {
     // Weiler unterwegs: ein gerades Stück mit Häusern zu beiden Seiten (am Schlussanstieg, in Almtälern,
     // im Sprintfinale auf der Anfahrt)
     const hamlet = this.hamletRange(p.biome, n, marks, curve, secIndex);
+    // Viadukt über einen Graben: ein gerades Stück ohne Kehre, Tunnel, Weiler – der Graben läuft quer zur Straße
+    const bridge = new Array<number>(n).fill(0);
+    // eigener Zufallsstrom: die übrige Strecke (Hindernisse, Deko) bleibt dieselbe wie ohne Brücke
+    const rb = mulberry32((this.seed * 7 + start * 131 + 17) >>> 0);
+    if (!race && p.biome !== 'village' && chance(rb, 0.6)) {
+      const BL = 16;      // Brücke (Segmente)
+      const RL = 12;      // Rampen davor und danach (der Graben läuft aus)
+      const clear = (k: number) => k >= 0 && k < n && marks[k] === 0 && Math.abs(curve[k]) < 0.012 && !tunnels.some(([a, b]) => k >= a - 40 && k < b + 40)
+        && !(hamlet && k >= hamlet[0] - 20 && k < hamlet[1] + 20) && !(p.descent === 0 && p.biome === 'pass' && this.sections.length === 1 && k >= 50 && k < 210);
+      let ok = false;
+      let k0 = 0;
+      for (let tries = 0; tries < 12 && !ok; tries++) {
+        k0 = Math.round(between(rb, 60, Math.max(61, n - 60 - BL)));
+        ok = true;
+        for (let k = k0 - RL; k < k0 + BL + RL && ok; k++) if (!clear(k)) ok = false;
+      }
+      if (ok) {
+        const D = between(rb, 7, 12);
+        for (let k = k0 - RL; k < k0 + BL + RL; k++) {
+          const t = k < k0 ? (k - (k0 - RL) + 1) / (RL + 1) : k >= k0 + BL ? (k0 + BL + RL - k) / (RL + 1) : 1;
+          bridge[k] = D * t * t * (3 - 2 * t);
+        }
+      }
+    }
     const buildings = p.biome === 'village' ? this.villageBuildings(start, n, 'town')
       : hamlet ? this.villageBuildings(start + hamlet[0], hamlet[1] - hamlet[0], 'hamlet') : { L: [], R: [] };
 
@@ -501,6 +527,12 @@ export class Track {
         const fix = (s: Side): Side => (s.drop && s.barrier === 'none' ? { ...s, barrier: 'rail' } : s);
         if (hairpinOutside < 0) l = fix(l); else rr = fix(rr);
       }
+      if (bridge[k] > 0) {
+        // auf der Brücke: Steinbrüstung, dahinter geht es hinunter in den Graben
+        const deck: Side = { ground: 'meadow', tilt: 0.12, barrier: 'stone', wall: 0, drop: false };
+        l = deck;
+        rr = deck;
+      }
       if (hp[k] !== 0 && hpW[k] > 0.3 && p.biome !== 'village' && !hamlet) {
         const g: Ground = p.biome === 'pass' ? 'rock' : p.biome === 'forest' ? 'forest' : 'meadow';
         const mauer: Side = { ground: g, tilt: 0.5, barrier: 'none', wall: hpW[k], drop: false, stone: true };
@@ -540,6 +572,7 @@ export class Track {
         sprites: null, objs: null, decals: null, banner: null,
         hairpin: marks[k] === 1 ? this.hairpinNo : 0,
         lamp: false, crowd: false, crest: marks[k] === 2,
+        bridge: bridge[k],
       };
       this.y += grade[k] * SEG;
       const thMid = this.th + curve[k] * SEG * 0.5;
@@ -1054,6 +1087,7 @@ export class Track {
     const sideOf = (s: Seg, sign: number) => (sign < 0 ? s.L : s.R);
     const put = (i: number, sign: number, k: SpriteKind, dx: number, opts: Partial<Sprite> = {}) => {
       const s = S(i);
+      if (s.bridge > 0) return;
       const side = sideOf(s, sign);
       this.add(i, { k, x: sign * (EDGE + dx), h: Track.groundH(side, dx), s: opts.s ?? between(r, 0.85, 1.2), v: opts.v ?? Math.floor(r() * 4), f: opts.f ?? chance(r, 0.5), text: opts.text });
     };
@@ -1113,14 +1147,16 @@ export class Track {
         s.lamp = i % 6 === 0;
         continue;
       }
-      // Kehre: oberhalb der Stützmauer Geröll, Büsche und Bäume (die Straße ist in den Hang geschnitten)
+      // Kehre: oberhalb der Stützmauer Geröll, Büsche und Bäume (die Straße ist in den Hang geschnitten) –
+      // mit eigenem Zufallsstrom, damit Hindernisse und übrige Deko unverändert bleiben
       if (marks[k] === 1) {
         const inner = curve[k] > 0 ? 1 : -1;
         if (k % 2 === 0) {
+          const rh = mulberry32((this.seed * 3 + i * 97) >>> 0);
           const pool: SpriteKind[] = biome === 'pass' ? ['boulder', 'rock', 'rock', 'snowpole'] : biome === 'forest' ? ['pine', 'bush', 'boulder', 'pine'] : ['larch', 'bush', 'boulder', 'rock', 'larch'];
-          const kind = pick(r, pool);
+          const kind = pick(rh, pool);
           const tree = kind === 'larch' || kind === 'pine';
-          put(i, inner, kind, tree ? between(r, 3.5, 7) : between(r, 1.2, 3.2), { s: tree ? between(r, 0.8, 1.1) : between(r, 0.6, 1.0) });
+          put(i, inner, kind, tree ? between(rh, 3.5, 7) : between(rh, 1.2, 3.2), { s: tree ? between(rh, 0.8, 1.1) : between(rh, 0.6, 1.0), v: Math.floor(rh() * 4), f: rh() < 0.5 });
         }
       }
       // Kehre: Schild vorher, Pfeile außen

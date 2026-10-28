@@ -446,7 +446,8 @@ export class Terrain {
       const sec = t.sections[s.sec];
       S.x[q] = s.wx;
       S.z[q] = s.wz;
-      S.y[q] = s.y;
+      // Viadukt: die Landschaft liegt dort im Graben unter der Straße
+      S.y[q] = s.y - s.bridge;
       S.rx[q] = Math.cos(s.th);
       S.rz[q] = Math.sin(s.th);
       S.b[q] = BIOMES.indexOf(sec.biome);
