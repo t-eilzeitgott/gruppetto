@@ -102,7 +102,7 @@ export function FpsSwitch() {
 }
 
 /**
- * Aufwendige Grafik im Pausenmenü (anfangs aus): Lichtfilter & Wetter, Sonnenschatten, Landschaftsdetails.
+ * Aufwendige Grafik im Pausenmenü (anfangs nur die Sonnenschatten an): Lichtfilter & Wetter, Sonnenschatten, Landschaftsdetails.
  * Umschalten übersetzt Shader neu – ein kurzer Halt hier im Menü.
  */
 export function GfxSwitches() {

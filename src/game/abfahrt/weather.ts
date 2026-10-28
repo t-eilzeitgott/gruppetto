@@ -12,7 +12,7 @@
  * Wolkenschatten und Nebelbänke (aus der Weltposition je Bildpunkt), Leuchten, Strahlen, dann Tonwertkurve,
  * Farbkorrektur, Vignette und Korn.
  *
- * Ein- und ausschaltbar im Pausenmenü (gfxOpts.ts), anfangs aus: „Lichtfilter & Wetter“ (alles hier außer den
+ * Ein- und ausschaltbar im Pausenmenü (gfxOpts.ts), anfangs nur die Schatten an: „Lichtfilter & Wetter“ (alles hier außer den
  * Schatten – ausgeschaltet gilt das Licht des Spiels ohne Wetter) und „Sonnenschatten“. Umschalten übersetzt
  * die Shader neu (ein kurzer Halt im Menü, nicht während der Fahrt).
  *

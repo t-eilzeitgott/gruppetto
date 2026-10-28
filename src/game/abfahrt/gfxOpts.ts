@@ -1,6 +1,6 @@
 /**
- * Aufwendige Grafik zum Zuschalten im Pausenmenü – anfangs alles aus, denn auf vielen Geräten kostet sie zu viel
- * Bildrate. Das Gerät merkt sich die Wahl. Ohne three.js (die leichten Spiele laden das Menü auch).
+ * Aufwendige Grafik zum Zuschalten im Pausenmenü – anfangs nur die Sonnenschatten an, der Rest kostet auf vielen
+ * Geräten zu viel Bildrate. Das Gerät merkt sich die Wahl. Ohne three.js (die leichten Spiele laden das Menü auch).
  *
  *  - licht: Wetter und Licht der Spielwelten (Goldene Stunde, Wetterumschwung, Nebel am Pass) mit der
  *    Nachbearbeitung (Leuchten, Lichtstrahlen, Wolken, Farbfilter, Vignette, Korn) und dem leichten
@@ -31,9 +31,15 @@ function urlAll(): boolean | null {
 
 const fixed = urlAll();
 
+/** anfangs an (solange auf dem Gerät nichts gewählt ist): nur die Sonnenschatten */
+const DEFAULT: Record<GfxOpt, boolean> = { licht: false, schatten: true, details: false };
+
 function load(k: GfxOpt): boolean {
   if (fixed !== null) return fixed;
-  try { return localStorage.getItem(KEY(k)) === '1'; } catch { return false; }
+  try {
+    const v = localStorage.getItem(KEY(k));
+    return v === null ? DEFAULT[k] : v === '1';
+  } catch { return DEFAULT[k]; }
 }
 
 const cur: Record<GfxOpt, boolean> = { licht: load('licht'), schatten: load('schatten'), details: load('details') };
