@@ -11,6 +11,7 @@ import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
 import { Abfahrt, type Friend, type GameEvent, type HudState, type RunResult, type ScoreCat } from '../game/abfahrt/engine';
 import { Renderer3D } from '../game/abfahrt/render3d';
+import { FpsMeter } from '../game/fpsMeter';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
@@ -255,6 +256,8 @@ export function GamePage() {
       let rebuilt = false;
       let drawn = false;
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGlGen((x) => x + 1); } };
+      // Bildrate für Admins (unauffällig unten links)
+      const fps = new FpsMeter(stage);
       const loop = (now: number) => {
         const raw = (now - prev) / 1000;
         const dt = Math.min(0.05, raw);
@@ -269,9 +272,11 @@ export function GamePage() {
         }
         lostT = 0;
         if (uiRef.current !== 'paused') eng.update(dt);
+        const c0 = performance.now();
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         hudRef.current(eng, dt);
+        fps.frame(raw * 1000, performance.now() - c0, renderer.quality);
         // Bildrate beobachten und notfalls die Qualität senken
         acc += dt;
         frames += 1;
@@ -314,6 +319,7 @@ export function GamePage() {
       (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer };
       return () => {
         cancelAnimationFrame(raf);
+        fps.dispose();
         canvas.removeEventListener('webglcontextlost', onLost);
         canvas.removeEventListener('webglcontextrestored', onRestored);
         ro?.disconnect();

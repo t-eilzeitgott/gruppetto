@@ -1247,6 +1247,13 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 /* Platz für die 3D-Bühne: die Leinwand kommt aus dem Vorrat (vorgewärmt beim App-Start) */
 .abf__stage { position: absolute; inset: 0; touch-action: none; cursor: grab; }
+/* Bildrate für Admins: klein und blass unten links */
+.fps-meter {
+  position: absolute; left: calc(var(--safe-l, 0px) + 8px); bottom: calc(var(--safe-b, 0px) + 6px); z-index: 5;
+  pointer-events: none; font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.5); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); white-space: nowrap;
+}
+.fps-meter.is-slow { color: rgba(255, 196, 120, 0.75); }
 /* unsichtbarer Platz zum Vorwärmen (echte Größe, nicht zu sehen) */
 .stage-holder { position: fixed; inset: 0; opacity: 0; pointer-events: none; z-index: -1; overflow: hidden; }
 /* 3D-Szene blendet ein, sobald das erste Bild gezeichnet ist (die Startkarte steht schon) */

@@ -5,6 +5,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/abfahrt/pool';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
+import { FpsMeter } from '../game/fpsMeter';
 import { afterPaint } from '../lib/afterPaint';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
@@ -101,6 +102,9 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       let rebuilt = false;
       let drawn = false;
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGen((x) => x + 1); } };
+      // Bildrate für Admins (unauffällig unten links)
+      const fps = new FpsMeter(stage);
+      let lastDraw = 0;
       const loop = (now: number) => {
         const raw = (now - prev) / 1000;
         const dt = Math.min(0.05, raw);
@@ -124,10 +128,13 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           raf = requestAnimationFrame(loop);
           return;
         }
+        const c0 = performance.now();
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : idle ? Math.min(0.1, idleT) : dt);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         idleT = 0;
         cb.current.onFrame(eng, dt);
+        fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0, renderer.quality);
+        lastDraw = now;
         if (idle) { frames += 1; raf = requestAnimationFrame(loop); return; }
         acc += dt;
         frames += 1;
@@ -169,6 +176,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       g.__abfahrt = { engine: () => engineRef.current, renderer };
       return () => {
         cancelAnimationFrame(raf);
+        fps.dispose();
         canvas.removeEventListener('webglcontextlost', onLost);
         canvas.removeEventListener('webglcontextrestored', onRestored);
         ro?.disconnect();

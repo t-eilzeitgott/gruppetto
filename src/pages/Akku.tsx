@@ -4,6 +4,7 @@
  * Bestwert vorerst nur auf dem Gerät (keine Bestenliste in der Datenbank).
  */
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { FpsMeter } from '../game/fpsMeter';
 import { useMembers } from '../app/hooks';
 import { navigate } from '../app/router';
 import { cx, useTitle } from '../ui/kit';
@@ -116,6 +117,9 @@ export function AkkuPage() {
     let raf = 0;
     let prev = performance.now();
     let idleAcc = 0;
+    // Bildrate für Admins (unauffällig unten links)
+    const fps = new FpsMeter(canvas.parentElement);
+    let lastDraw = 0;
     const loop = (now: number) => {
       const dt = Math.min(0.05, (now - prev) / 1000);
       prev = now;
@@ -123,9 +127,13 @@ export function AkkuPage() {
       if (g) {
         const u = uiRef.current;
         if (u === 'playing') {
+          const c0 = performance.now();
           g.update(dt);
           r.draw(g, dt);
+          fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0);
+          lastDraw = now;
         } else {
+          lastDraw = 0;
           // Karte im Vordergrund: Szene dahinter nur 10-mal pro Sekunde (spart Akku), in der Pause gar nicht
           idleAcc += dt;
           if (dirty || (u !== 'paused' && idleAcc >= 0.1)) {
@@ -160,6 +168,7 @@ export function AkkuPage() {
     (window as unknown as { __akku?: unknown }).__akku = { game: () => gameRef.current, renderer: r };
     return () => {
       cancelAnimationFrame(raf);
+      fps.dispose();
       ro?.disconnect();
       obs.disconnect();
       window.removeEventListener('resize', onResize);
