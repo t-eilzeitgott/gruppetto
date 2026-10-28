@@ -4340,7 +4340,9 @@ export class Renderer3D {
           if (ri === 0 && poles.some((q) => Math.abs(u + 0.4 - q) < 1.05)) p.act = Act.cheer;
           else { u += 0.4; if (u >= end) break; }
         }
-        if (ola && p.act !== Act.sign && p.act !== Act.flag && r() < 0.85) {
+        if (p.act === Act.sign && p.hatType === 5) p.act = Act.devil; // der Teufel hält kein Schild
+        if (p.act === Act.sign) p.cup = false;
+        if (ola && p.act !== Act.sign && p.act !== Act.flag && p.act !== Act.devil && r() < 0.85) {
           p.act = Act.ola;
           // Phase aus dem Ort: die Welle läuft der Straße entlang den Fahrern entgegen
           p.phase = ((s.i * SEG + u) * 0.03) / 37;
@@ -4349,8 +4351,9 @@ export class Renderer3D {
         out.push(p);
         if (p.act === Act.sign) this.signBoard(p, r);
         // Kind auf den Schultern
-        if (ri > 0 && !kid && p.act !== Act.sign && r() < 0.05) {
+        if (ri > 0 && !kid && p.act !== Act.sign && p.act !== Act.devil && r() < 0.05) {
           p.act = Act.hold;
+          p.cup = false;
           const c = randomPerson(r, zone, { row: ri, kid: true });
           c.act = Act.sit;
           c.height = 0.56 + r() * 0.06;
@@ -4458,7 +4461,7 @@ export class Renderer3D {
         want = fwd;
         p.act = ru.v > 4.2 ? (ru.flag ? Act.runFlag : Act.run) : ru.flag ? Act.jogFlag : Act.jog;
       } else {
-        p.act = ru.flag ? Act.flag : Act.cheer;
+        p.act = ru.flag ? Act.flag : p.hatType === 5 ? Act.devil : Act.cheer;
         if (ru.go && gap < -3) want = fwd; // schaut dem Fahrer nach
       }
       if (!ru.go && ru.yaw === 0) ru.yaw = want;

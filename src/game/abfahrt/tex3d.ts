@@ -365,9 +365,10 @@ export function bannerTex(text: string, sub: string, bg: string, fg: string): HT
 
 // ------------------------------------------------------------------ Werbebanden und Pappschilder
 
-/** Zellen im Atlas (1024×2048, je 256×128, 4 Spalten × 16 Zeilen): oben die Banden, ab Zelle SIGN_BASE die Schilder */
+/** Zellen im Atlas (1024×2560, je 256×128, 4 Spalten × 20 Zeilen): oben die Banden, ab Zelle SIGN_BASE die Schilder */
 export const AD_COLS = 4;
-const AD_ROWS = 16;
+const AD_ROWS = 20;
+const AD_H = AD_ROWS * 128;
 const SIGN_BASE = 40;
 /** UV-Rechteck einer Zelle: [u0, v0, u1, v1] */
 export function adCell(i: number, sign: boolean): [number, number, number, number] {
@@ -375,7 +376,7 @@ export function adCell(i: number, sign: boolean): [number, number, number, numbe
   const cx = k % AD_COLS;
   const cy = Math.floor(k / AD_COLS);
   const pu = 2 / 1024;
-  const pv = 2 / 2048;
+  const pv = 2 / AD_H;
   return [cx / AD_COLS + pu, 1 - (cy + 1) / AD_ROWS + pv, (cx + 1) / AD_COLS - pu, 1 - cy / AD_ROWS - pv];
 }
 
@@ -436,11 +437,21 @@ const SIGN_POOL = ['ALLEZ!', 'FORZA!', 'DAJE!', 'HOPP HOPP', 'VAI VAI!', 'GO GO 
   'NUR NOCH 14 KEHREN', 'WO IST DEIN E-BIKE?', 'KUCHEN OBEN!', 'TIPP: PLATZ 1', 'SCHALT RUNTER!', 'ICH WILL EIN BIDON', 'OMA FÄHRT SCHNELLER',
   'BERG? WELCHER BERG?', 'LÄCHELN!', 'DU SCHAFFST DAS', 'KETTE RECHTS!', 'BEINE WIE BUTTER?', 'WATT IST LOS?', 'ATTACKE!', 'NIE MEHR E-BIKE',
   'WINKEN!', 'HUPEN!', 'SCHÖNE WADEN!', 'NOCH 3 KM (GELOGEN)', 'ICH HAB GETIPPT!', 'AUSSENSEITER!', 'PASTA PARTY', 'PIZZA OBEN',
-  'MEHR WATT!', 'NICHT BREMSEN', 'GEL? HAB ICH!', 'SPRINT!', 'DAI DAI DAI', 'FORZA RAGAZZI', 'VAMOS!', 'GRUPPETTO 4 LIFE'];
-/** mit Namen der Runde: % = Vorname */
-const SIGN_NAMED = ['ALLEZ %', '% ♥', 'FORZA %', 'GO %!', 'VAI %!', '% FÜR GELB', 'HOPP %!', 'WIR ♥ %'];
-/** so viele Schilder hat der Atlas (Zellen 40 … 63) */
-export const SIGN_COUNT = 24;
+  'MEHR WATT!', 'NICHT BREMSEN', 'GEL? HAB ICH!', 'SPRINT!', 'DAI DAI DAI', 'FORZA RAGAZZI', 'VAMOS!', 'GRUPPETTO 4 LIFE',
+  // Radsport-Insider
+  'N+1', 'CHAPEAU!', 'SHUT UP LEGS', 'RULE #5', 'KOM? KAFFEE!', 'SOCKEN ZU KURZ!', 'BEINE RASIERT?', 'KARBON STATT KARIES',
+  'FAHR DEIN TEMPO', 'NUR NOCH 1 SEGMENT', 'STRAVA ODER NIE PASSIERT', 'WATT/KG? EGAL!', 'KETTE GEÖLT?', 'BIDON LEER?', 'WINDSCHATTEN GESUCHT',
+  'SCHLAUCH GEFLICKT?', 'GEGENWIND IST AUCH WIND', 'DAS IST KEIN BERG', 'BERGAUF IST AUCH SCHÖN', 'KAFFEE-STOPP OBEN',
+  // Tippspiel-Insider
+  'AUSSENSEITER-BONUS +4', 'MAX 3× TIPPBAR!', 'TIPPSCHLUSS 12:00!', '20 PUNKTE BITTE', 'PLATZ 10 = 1 PUNKT', 'ICH TIPP GEGEN DICH',
+  'HINTEN IST DAS NEUE VORNE', 'GRUPPETTO > PELOTON', 'ZEITLIMIT? EGAL!', 'SPRITZ IM ZIEL', 'BONUSTIPP SITZT', 'TIPP VERPENNT',
+  'WER HAT DEN FAVORITEN?', 'PRO FÜR 2,99', 'MEIN TIPP GEWINNT', 'GEISTERFAHRER ♥', 'ZWISCHENZEIT: GRÜN!', 'BESTZEIT HEUTE?'];
+/** mit Namen der Runde: % = Vorname – die Lieblingsstelle für Insider */
+const SIGN_NAMED = ['ALLEZ %', '% ♥', 'FORZA %', 'GO %!', 'VAI %!', '% FÜR GELB', 'HOPP %!', 'WIR ♥ %',
+  '% ZAHLT DEN SPRITZ', 'TIPPKÖNIG %', '% TIPPT FALSCH', '% IM GRUPPETTO', '% HOL DIE 20!', '% → ZEITLIMIT', 'GEIST VON %', '% FÄHRT E-BIKE',
+  '% ATTACKE!', 'WO IST %?', '% SCHULDET MIR BIER', 'PODIUM FÜR %'];
+/** so viele Schilder hat der Atlas (Zellen 40 … 79) */
+export const SIGN_COUNT = 40;
 
 /** Mischen mit festem Startwert (Fisher-Yates) */
 function shuffled<T>(list: T[], r: Rng): T[] {
@@ -450,29 +461,31 @@ function shuffled<T>(list: T[], r: Rng): T[] {
 }
 
 /**
- * Sprüche der 24 Pappschilder für ein Rennen: bis zu zehn mit Namen der Runde (immer andere Mitspieler und
+ * Sprüche der 40 Pappschilder für ein Rennen: bis zu 18 mit Namen der Runde (immer andere Mitspieler und
  * Sprüche), der Rest aus dem Vorrat. Derselbe Startwert ergibt dieselben Schilder; jedes Rennen würfelt neu.
  */
 export function signTexts(names: string[], seed: number): string[] {
   const r = mulberry32(seed ^ 0x1b873593);
-  const own = shuffled(names, r).slice(0, 5);
+  const own = shuffled(names, r).slice(0, 6);
   const named = shuffled(SIGN_NAMED, r);
   const pool = shuffled(SIGN_POOL, r);
   const out: string[] = [];
   for (let i = 0; i < SIGN_COUNT; i++) {
-    if (i < own.length * 2) out.push(named[i % named.length].replace('%', own[Math.floor(i / 2)]));
-    else out.push(pool[(i - own.length * 2) % pool.length]);
+    if (i < own.length * 3) out.push(named[i % named.length].replace('%', own[Math.floor(i / 3)]));
+    else out.push(pool[(i - own.length * 3) % pool.length]);
   }
   return out;
 }
-const BOARDS: [string, string][] = [['#fbfaf5', '#141414'], ['#ffe14d', '#141414'], ['#ff8fc0', '#141414'], ['#d8b07a', '#1a1a1a'], ['#fbfaf5', '#d6249f'], ['#fbfaf5', '#c0392b'], ['#ffffff', '#0b5394']];
+/** Pappe, Bettlaken, Zeichenkarton: meist hell oder Pappbraun, ab und zu Gelb oder Rosa */
+const BOARDS: [string, string][] = [['#f4f1e8', '#141414'], ['#f2d64b', '#141414'], ['#ec9cc2', '#141414'], ['#c9a273', '#1a1a1a'], ['#f4f1e8', '#c42a86'],
+  ['#f4f1e8', '#b03a2e'], ['#f7f6f2', '#1f3f73'], ['#b98f5f', '#141414'], ['#d7b588', '#7a1f1f'], ['#f4f1e8', '#2d5a3a']];
 
 /**
  * Atlas mit Banden (oben) und handgeschriebenen Pappschildern (unten); Namen der Runde kommen auf ein paar Schilder.
  * seed: je Rennen ein neuer – dann stehen andere Sprüche auf den Schildern (die Banden bleiben)
  */
 export function adsTex(names: string[], seed = 77): HTMLCanvasElement {
-  const cv = canvas(1024, 2048);
+  const cv = canvas(1024, AD_H);
   const c = cv.getContext('2d')!;
   const r = mulberry32(seed);
   const texts = signTexts(names, seed);
@@ -591,9 +604,11 @@ const FAN_LOOKS: { bg: string; fg: string; edge: string; stripes?: string[] }[] 
 ];
 
 const FAN_SAYINGS = ['ALLEZ ALLEZ ALLEZ!', 'FORZA GRUPPETTO!', 'HINTEN IST DAS NEUE VORNE', 'KEINE BREMSE, KEINE GNADE', 'WO BLEIBT DER BESENWAGEN?',
+  'AUSSENSEITER-BONUS INCOMING', 'N+1 IST DIE EINZIG RICHTIGE ZAHL', 'TIPPEN. LEIDEN. SIEGEN.', 'SPRITZ IM ZIEL – FÜR ALLE!', 'GEGENWIND? KENNEN WIR.',
   'E-BIKES BITTE DRAUSSEN LASSEN', 'KUCHEN IM ZIEL!', 'TIPPSCHLUSS 12 UHR!', 'DAJE DAJE DAJE!', 'VAI VAI VAI!', 'TRET DOCH MAL!',
   'NUR NOCH EINE KEHRE. EHRLICH.', '♥ GIRO ♥', 'WATT? WIR TIPPEN!', 'ALLEZ LES GRUPPETTOS', 'HUPEN FÜR DAS GRUPPETTO!'];
-const FAN_NAMED = ['ALLEZ %!', 'FORZA %!', '% ♥', 'WIR GLAUBEN AN %', '% FOR PRESIDENT', 'HOPP HOPP %!', 'VAI %!', '% IST DER BESTE'];
+const FAN_NAMED = ['ALLEZ %!', 'FORZA %!', '% ♥', 'WIR GLAUBEN AN %', '% FOR PRESIDENT', 'HOPP HOPP %!', 'VAI %!', '% IST DER BESTE',
+  'FANCLUB %', '% – TIPPKÖNIG DER HERZEN', '% FÄHRT, WIR TRINKEN', 'HEUTE GEWINNT %'];
 
 /** Atlas der Spruchbänder: 1024 × 2048, neun Zeilen zu 224 px (eine je Band, 7,7 m × 1,7 m) */
 export const FAN_CELLS = 9;

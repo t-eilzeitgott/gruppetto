@@ -20,7 +20,7 @@ import { freezeTarget } from './models3d';
 const CW = 48;
 const CH = 96;
 const COLS = 32;
-const ROWS = 10;
+const ROWS = 16;
 const MW = 1.7;
 const MH = 3.4;
 /** Füße stehen so weit über dem Zellboden */
@@ -28,7 +28,8 @@ const FOOT = 0.06;
 /** Blickrichtung im Bild: leicht zur Seite gedreht (Dreiviertelansicht, gespiegelt für die andere Seite) */
 const YAW = 0.42;
 
-/** Figuren im Vorrat: Kopfbedeckung und Merkmale (1 kurze Hose, 2 lange Ärmel, 4 lange Haare, 8 Brille) */
+/** Figuren im Vorrat: Kopfbedeckung und Merkmale (1 kurze Hose, 2 lange Ärmel, 4 lange Haare, 8 Brille).
+ * Hutform 4 = Radhelm (Hobby-Radler), 5 = Teufel mit Hörnern und Dreizack */
 const VARIANTS: { hatType: number; feat: number; flag: boolean }[] = [
   { hatType: 0, feat: 2, flag: true },
   { hatType: 1, feat: 2, flag: false },
@@ -36,6 +37,8 @@ const VARIANTS: { hatType: number; feat: number; flag: boolean }[] = [
   { hatType: 2, feat: 1, flag: false },
   { hatType: 3, feat: 2, flag: false },
   { hatType: 0, feat: 1 | 8, flag: true },
+  { hatType: 4, feat: 1 | 8, flag: false },
+  { hatType: 5, feat: 2, flag: false },
 ];
 
 /** Bewegungen: Bilder je Takt, Taktlänge (Zeiteinheiten des Shaders), Begeisterung */
@@ -54,6 +57,7 @@ const ACTS: { act: number; f: number; c: number; e: number }[] = [
   { act: Act.jump, f: 6, c: 0.8, e: 0.45 },
   { act: Act.ola, f: 6, c: 1.2, e: 0.45 },
   { act: Act.dance, f: 6, c: 1, e: 0.45 },
+  { act: Act.devil, f: 6, c: 1 / 1.2, e: 0.45 },
 ];
 
 interface Cell { cell: number; f: number; c: number }
@@ -64,6 +68,8 @@ const BAKE: Person[] = [];
   VARIANTS.forEach((v, vi) => {
     for (const a of ACTS) {
       if (a.act === Act.flag && !v.flag) continue;
+      // der Teufel macht nur Teufelssachen – und nur er
+      if ((a.act === Act.devil) !== (v.hatType === 5) && a.act !== Act.cheer && a.act !== Act.idle) continue;
       CELLS.set(`${vi}:${a.act}`, { cell: n, f: a.f, c: a.c });
       for (let k = 0; k < a.f; k++) {
         const col = n % COLS;
@@ -86,7 +92,7 @@ const BAKE: Person[] = [];
 const ROLE = /* glsl */ `
   {
     float slot = color.r;
-    float feat = floor(aI3.w / 16.0);
+    float feat = floor(aI3.w / 32.0);
     float role = 7.0;
     if (slot < 0.5) role = 0.0;
     else if (slot < 1.5) role = 1.0;
@@ -98,7 +104,9 @@ const ROLE = /* glsl */ `
     else if (slot < 7.5) role = bit(feat, 1.0) > 0.5 ? 0.0 : 2.0;
     else if (slot < 8.5) role = bit(feat, 2.0) > 0.5 ? 1.0 : 0.0;
     else if (slot < 10.5) role = 7.0;
-    else { float x = mod(color.b, 3.0); role = x < 0.5 ? 5.0 : x < 1.5 ? 6.0 : 4.0; }
+    else if (slot < 11.5) { float x = mod(color.b, 3.0); role = x < 0.5 ? 5.0 : x < 1.5 ? 6.0 : 4.0; }
+    else if (slot < 12.5) role = 4.0;
+    else role = 7.0;
     vec4 a = vec4(abs(role) < 0.1 ? 1.0 : 0.0, abs(role - 1.0) < 0.1 ? 1.0 : 0.0, abs(role - 2.0) < 0.1 ? 1.0 : 0.0, abs(role - 3.0) < 0.1 ? 1.0 : 0.0);
     vec4 b = vec4(abs(role - 4.0) < 0.1 ? 1.0 : 0.0, abs(role - 5.0) < 0.1 ? 1.0 : 0.0, abs(role - 6.0) < 0.1 ? 1.0 : 0.0, 1.0);
     vRole = uPass < 0.5 ? a : b;
@@ -191,7 +199,9 @@ void main() {
 /** Welche Figur im Vorrat passt zu diesem Zuschauer? (Fahnenträger ohne Hut) */
 function variantOf(p: Person): number {
   const flag = p.act === Act.flag || p.act === Act.runFlag || p.act === Act.jogFlag;
+  if (p.hatType === 5) return 7;
   if (!flag) {
+    if (p.hatType === 4) return 6;
     if (p.hatType === 1) return 1;
     if (p.hatType === 2) return 3;
     if (p.hatType === 3) return 4;
@@ -334,6 +344,6 @@ flat varying vec3 vCb;`)
     diffuseColor = vec4(sc / max(cov, 0.04) * 1.22, clamp(aS, 0.0, 1.0));
   }`);
   };
-  m.customProgramCacheKey = () => 'crowd-spr-2';
+  m.customProgramCacheKey = () => 'crowd-spr-3';
   return m;
 }

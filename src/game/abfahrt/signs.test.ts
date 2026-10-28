@@ -17,7 +17,7 @@ test('Pappschilder: jedes Rennen andere Sprüche, gleicher Startwert gleiche Sch
 
 test('Pappschilder: Namen der Runde stehen drauf – je Rennen andere Mitspieler', () => {
   const withName = (seed: number) => new Set(NAMES.filter((n) => signTexts(NAMES, seed).some((t) => t.includes(n))));
-  assert.equal(withName(3).size, 5);
+  assert.equal(withName(3).size, 6);
   const all = new Set<string>();
   for (let seed = 0; seed < 20; seed++) for (const n of withName(seed)) all.add(n);
   assert.equal(all.size, NAMES.length);

@@ -13,23 +13,41 @@ import { lin, type RGBf } from './models3d';
 
 const hexes = (list: string[]) => list.map((h) => lin(h));
 
-/** Farbtabelle für den Shader; die Bereiche unten zeigen hinein */
+/**
+ * Farbtabelle für den Shader; die Bereiche unten zeigen hinein. Kleidung gedeckt wie im echten Leben: viel Navy,
+ * Schwarz, Weiß, Grau und Jeans, dazu erdige Farben – kräftig nur das Giro-Rosa und die Trikots der Hobby-Radler.
+ */
 const PAL_SRC = {
   skin: ['#f6d7bd', '#eac3a2', '#d8a77f', '#bf8a62', '#9a6544', '#6e4630'],
-  top: ['#1f2a44', '#26272b', '#f3f3f1', '#8d929a', '#c0392b', '#e8478f', '#ff8fc0', '#f1c40f', '#2e86de', '#2f9e5a',
-    '#e67e22', '#6c4fd8', '#169c88', '#d8c8aa', '#5f6f35', '#7d1f2a', '#55aee8', '#ffffff', '#ff5fa2', '#0b5394'],
-  bottom: ['#2c3e50', '#3d5a80', '#1c1c1e', '#6b6e73', '#bfae80', '#4b3a2a', '#e9e6df', '#2d3b2a'],
-  hair: ['#17120f', '#3b2a1e', '#6a4a2c', '#a8763e', '#d9c08a', '#8f8f8f', '#e3e1dc', '#7a2e14'],
+  /** Alltag: dunkel, hell, grau, Jeans */
+  neutral: ['#1f2a44', '#2a2b2f', '#efeee9', '#8a8f96', '#c2c6cc', '#4a4f57', '#24477a', '#3e5f8a', '#f7f6f2', '#cbbd9f', '#e6d9c0', '#7a5236', '#3b3f45', '#5e6e86'],
+  /** gedeckte Farben: Ziegel, Senf, Flaschengrün, Rost, Pflaume, Petrol, Oliv, Bordeaux, Taubenblau, Salbei … */
+  colour: ['#a8322b', '#c9a43a', '#3d7a52', '#b8662e', '#5a5272', '#2f7c74', '#5a6435', '#6e2232', '#7fa9c9', '#9c3b2c', '#2d4a3a', '#9fb5a0', '#c78f6b', '#8a6d9e', '#d7b56d'],
+  /** Giro-Rosa (Fanartikel), etwas heller und etwas dunkler */
+  pink: ['#e0559a', '#ec8db8', '#cf4686'],
+  /** Trikots der Hobby-Radler (dürfen leuchten) */
+  kit: ['#e8c832', '#1f6fb2', '#c23b2e', '#f2f2ee', '#1c1c1e', '#2a9d8f', '#e07a2a', '#7fa83a', '#e0559a', '#2b3a67', '#8fc3e8'],
+  bottom: ['#2c3e50', '#3d5a80', '#1c1c1e', '#6b6e73', '#bfae80', '#4b3a2a', '#e9e6df', '#2d3b2a', '#5b6b80', '#a89773', '#3a3d42', '#7d6a55'],
+  hair: ['#17120f', '#3b2a1e', '#6a4a2c', '#a8763e', '#d9c08a', '#8f8f8f', '#e3e1dc', '#7a2e14', '#2a1d15', '#b89a6a'],
+  /** Teufelskostüm */
+  devil: ['#b3221c'],
 };
+type PalKey = keyof typeof PAL_SRC;
 const PAL: RGBf[] = [];
-const RANGE: Record<keyof typeof PAL_SRC, [number, number]> = { skin: [0, 0], top: [0, 0], bottom: [0, 0], hair: [0, 0] };
-for (const k of Object.keys(PAL_SRC) as (keyof typeof PAL_SRC)[]) {
+const RANGE = {} as Record<PalKey, [number, number]>;
+for (const k of Object.keys(PAL_SRC) as PalKey[]) {
   RANGE[k] = [PAL.length, PAL_SRC[k].length];
   PAL.push(...hexes(PAL_SRC[k]));
 }
-const PINK = RANGE.top[0] + 5;
-const PINK2 = RANGE.top[0] + 18;
-const WHITE = RANGE.top[0] + 17;
+const PINK = RANGE.pink[0];
+const PINK2 = RANGE.pink[0] + 2;
+const PINK_L = RANGE.pink[0] + 1;
+const WHITE = RANGE.neutral[0] + 8;
+const BLACK = RANGE.neutral[0] + 1;
+const NAVY = RANGE.neutral[0];
+const GREY = RANGE.neutral[0] + 3;
+const DEVIL = RANGE.devil[0];
+const BIB = [RANGE.bottom[0] + 2, RANGE.bottom[0] + 2, RANGE.bottom[0], RANGE.bottom[0] + 10];
 
 /** Fahnen: drei Streifen; die ersten senkrecht (vom Mast aus), dann waagrecht (von oben) */
 const FLAGS_V: string[][] = [
@@ -40,6 +58,8 @@ const FLAGS_V: string[][] = [
   ['#169b62', '#f4f5f0', '#ff883e'], // Irland
   ['#f36fa8', '#f36fa8', '#f36fa8'], // Rosa (Giro)
   ['#002b7f', '#fcd116', '#ce1126'], // Rumänien
+  ['#046a38', '#da291c', '#da291c'], // Portugal (ohne Wappen)
+  ['#e0559a', '#1f2a44', '#e0559a'], // Fanclub gruppetto
 ];
 const FLAGS_H: string[][] = [
   ['#1b1b1b', '#dd0000', '#ffce00'], // Deutschland
@@ -50,6 +70,8 @@ const FLAGS_H: string[][] = [
   ['#ed2939', '#f4f5f0', '#ed2939'], // Österreich
   ['#ed2939', '#f4f5f0', '#00a1de'], // Luxemburg
   ['#f4f5f0', '#00966e', '#d62612'], // Bulgarien
+  ['#f4f5f0', '#1f4fa3', '#d8262e'], // Slowenien (ohne Wappen)
+  ['#ffd100', '#034ea2', '#ce1126'], // Ecuador
 ];
 const NV = FLAGS_V.length;
 const FLAG_COLS: RGBf[] = [...FLAGS_V, ...FLAGS_H].flatMap((f) => hexes(f));
@@ -58,11 +80,13 @@ const NFLAGS = NV + FLAGS_H.length;
 // ------------------------------------------------------------------ Geometrie
 
 /** Farbfächer (welche Farbe ein Teil bekommt) */
-const S = { skin: 0, top: 1, bottom: 2, shoes: 3, hair: 4, hat: 5, accent: 6, lowerLeg: 7, forearm: 8, dark: 9, pole: 10, flag: 11 } as const;
+const S = { skin: 0, top: 1, bottom: 2, shoes: 3, hair: 4, hat: 5, accent: 6, lowerLeg: 7, forearm: 8, dark: 9, pole: 10, flag: 11, bag: 12, drink: 13 } as const;
 /** Körperteile (wie sie sich bewegen) */
 const P = {
   body: 0, armAU: 1, armAF: 2, armBU: 3, armBF: 4, head: 5, cap: 6, sunhat: 7, beanie: 8, longHair: 9, glasses: 10,
   phone: 11, pole: 12, flag: 13, legAU: 14, legAL: 15, legBU: 16, legBL: 17,
+  // Zubehör, das später dazukam (Nummern danach, damit die Bereiche oben gleich bleiben)
+  helmet: 18, horns: 19, beard: 20, backpack: 21, trident: 22, ponytail: 23, cup: 24,
 } as const;
 
 /** Baukasten für indizierte Geometrie; doppelte Eckpunkte einer Grundform werden zusammengelegt */
@@ -112,7 +136,7 @@ const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0) 
   new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
 
 /** Körper für alle, Zubehör nur für die, die es tragen */
-export const KINDS = ['body', 'cap', 'sunhat', 'beanie', 'longHair', 'glasses', 'phone', 'flag'] as const;
+export const KINDS = ['body', 'cap', 'sunhat', 'beanie', 'longHair', 'glasses', 'phone', 'flag', 'helmet', 'horns', 'beard', 'backpack', 'trident', 'ponytail', 'cup'] as const;
 export type Kind = typeof KINDS[number];
 
 /** Ein Mensch (oder sein Zubehör), 1,75 m, Blick nach +z. lod 1 = vereinfacht für die Ferne */
@@ -190,6 +214,38 @@ function personGeometry(kind: Kind, lod: 0 | 1): THREE.BufferGeometry | null {
       }
     }
   }
+  // Radhelm der Hobby-Radler (raufgefahren, um zuzuschauen): länglich, mit Lüftungsschlitzen
+  if (kind === 'helmet') {
+    b.add(cap(lod ? 6 : 10, lod ? 3 : 5), M(0, 1.668, -0.014, 0.124, 0.108, 0.146, -0.14), S.hat, P.helmet);
+    if (!lod) for (const x of [-0.048, 0, 0.048]) b.add(new THREE.BoxGeometry(0.016, 0.012, 0.19), M(x, 1.772, -0.02, 1, 1, 1, -0.14), S.dark, P.helmet);
+  }
+  // Teufelskostüm: Hörner und Dreizack (rot), Hörner auf dem Kopf
+  if (kind === 'horns') {
+    for (const sg of [-1, 1]) b.add(new THREE.ConeGeometry(0.022, 0.1, lod ? 4 : 6), M(sg * 0.055, 1.755, 0.02, 1, 1, 1, 0.15, 0, -sg * 0.38), S.hat, P.horns);
+  }
+  // Dreizack in der rechten Hand: im Ruhezustand nach vorn, bei angewinkeltem Arm senkrecht nach oben
+  if (kind === 'trident') {
+    b.add(cyl(0.014, 0.014, 1.5, 4), M(0.252, 0.8, 0.28, 1, 1, 1, Math.PI / 2), S.dark, P.trident);
+    b.add(new THREE.BoxGeometry(0.17, 0.024, 0.024), M(0.252, 0.8, 1.03), S.hat, P.trident);
+    for (const x of [-0.072, 0, 0.072]) b.add(new THREE.ConeGeometry(0.016, 0.15, 4), M(0.252 + x, 0.8, 1.11, 1, 1, 1, Math.PI / 2), S.hat, P.trident);
+  }
+  // Vollbart mit Schnauzer
+  if (kind === 'beard') {
+    b.add(ball(lod ? 5 : 7, lod ? 3 : 4), M(0, 1.566, 0.058, 0.074, 0.043, 0.05), S.hair, P.beard);
+    if (!lod) b.add(new THREE.BoxGeometry(0.064, 0.014, 0.018), M(0, 1.602, 0.104), S.hair, P.beard);
+  }
+  // Rucksack der Wanderer, mit Trägern vorn
+  if (kind === 'backpack') {
+    b.add(new THREE.BoxGeometry(0.27, 0.36, 0.14), M(0, 1.2, -0.2), S.bag, P.backpack);
+    if (!lod) {
+      b.add(new THREE.BoxGeometry(0.2, 0.05, 0.13), M(0, 1.04, -0.205), S.dark, P.backpack);
+      for (const sg of [-1, 1]) b.add(new THREE.BoxGeometry(0.035, 0.32, 0.02), M(sg * 0.1, 1.28, 0.142), S.bag, P.backpack);
+    }
+  }
+  // Pferdeschwanz
+  if (kind === 'ponytail') b.add(ball(lod ? 5 : 6, lod ? 3 : 4), M(0, 1.575, -0.13, 0.042, 0.105, 0.042, 0.45), S.hair, P.ponytail);
+  // Becher in der linken Hand (Spritz oder Bier), steht aufrecht, wenn der Unterarm vorgestreckt ist
+  if (kind === 'cup') b.add(cyl(0.036, 0.029, 0.12, lod ? 5 : 7, false), M(-0.25, 0.8, 0.075, 1, 1, 1, Math.PI / 2), S.drink, P.cup);
   if (b.empty) return null;
   const g = b.build();
   // Detailstufe der Grundform (der Shader blendet je Person zwischen den Stufen über)
@@ -203,7 +259,7 @@ const VERT_HEAD = /* glsl */ `
 attribute vec4 aI0; // Position xyz, Grundrichtung
 attribute vec4 aI1; // Größe, Breite, Aktion, Phase
 attribute vec4 aI2; // Farben: Haut, Oberteil, Hose, Haare
-attribute vec4 aI3; // Farben: Hut, Hutform, Akzent, Fahne + 16*Merkmale
+attribute vec4 aI3; // Farben: Hut, Hutform, Akzent, Fahne + 32*Merkmale
 attribute float aLod; // Detailstufe der Grundform
 varying float vXa;    // sichtbar, wo die Rasterschwelle in [vXa, vXb) liegt
 varying float vXb;
@@ -256,6 +312,13 @@ void armPose(float act, float t, float e, out vec4 A, out vec4 B, out vec4 legs,
     B = mix(idleB, pt, 0.35 + 0.65 * ex);
     A = mix(idleA, vec4(0.0, 1.45, 2.35, 1.1), 0.35 + 0.65 * ex);
     body.z = 0.1 * ex * sin(t * TAU * 1.0);
+  } else if (act > 17.5) {   // Teufel: Dreizack im Takt in die Höhe stoßen, die andere Faust ballt mit
+    float pump = max(0.0, sin(t * TAU * 1.2));
+    B = vec4(0.18, 0.25 + 0.55 * pump * (0.4 + 0.6 * e), 1.5 - 0.35 * pump, 0.05);
+    A = mix(vec4(0.35, 0.2, 1.9, 0.6), vec4(2.3 + 0.25 * pump, 0.3, 0.5, 0.0), ex);
+    body.x = pump * 0.12 * ex;
+    body.z = 0.06 * sin(t * TAU * 0.6);
+    legs = vec4(0.0, 0.25 * pump * ex, 0.0, 0.25 * pump * ex);
   } else if (act > 14.5 && act < 15.5) {   // springt mit beiden Armen in der Luft
     float hop = max(0.0, sin(t * TAU * 1.25));
     float land = max(0.0, -sin(t * TAU * 1.25));
@@ -341,9 +404,12 @@ const VERT_BEGIN = /* glsl */ `
 #else
   float e = 1.0 - smoothstep(5.0, 48.0, dist);
 #endif
-  float feat = floor(aI3.w / 16.0);
+  float feat = floor(aI3.w / 32.0);
   vec4 A; vec4 B; vec4 legs; vec3 body;
   armPose(act, t, e, A, B, legs, body);
+  // wer einen Becher hat, hält ihn vor sich (beim Jubeln, Tanzen, Springen geht er mit nach oben: Prost!)
+  if (bit(feat, 256.0) > 0.5 && (act < 2.5 || abs(act - 6.0) < 0.1 || abs(act - 11.0) < 0.1))
+    A = vec4(0.06, 0.32 + 0.04 * sin(t * 0.7), 1.3, 0.22);
 
   // nicht benötigte Teile verschwinden
   bool hide = false;
@@ -354,6 +420,13 @@ const VERT_BEGIN = /* glsl */ `
   else if (part > 9.5 && part < 10.5) hide = bit(feat, 8.0) < 0.5;
   else if (part > 10.5 && part < 11.5) hide = abs(act - 4.0) > 0.1;
   else if (part > 11.5 && part < 13.5) hide = abs(act - 5.0) > 0.1 && abs(act - 9.0) > 0.1 && abs(act - 14.0) > 0.1;
+  else if (part > 17.5 && part < 18.5) hide = abs(aI3.y - 4.0) > 0.1;
+  else if (part > 18.5 && part < 19.5) hide = abs(aI3.y - 5.0) > 0.1;
+  else if (part > 19.5 && part < 20.5) hide = bit(feat, 32.0) < 0.5;
+  else if (part > 20.5 && part < 21.5) hide = bit(feat, 64.0) < 0.5;
+  else if (part > 21.5 && part < 22.5) hide = abs(aI3.y - 5.0) > 0.1;
+  else if (part > 22.5 && part < 23.5) hide = bit(feat, 128.0) < 0.5;
+  else if (part > 23.5) hide = bit(feat, 256.0) < 0.5;
 
   // Fahne flattert
   if (part > 12.5 && part < 13.5) {
@@ -363,8 +436,8 @@ const VERT_BEGIN = /* glsl */ `
   }
 
   // Arme
-  bool armA = part > 0.5 && part < 2.5;
-  bool armB = (part > 2.5 && part < 4.5) || (part > 10.5 && part < 13.5);
+  bool armA = (part > 0.5 && part < 2.5) || part > 23.5;
+  bool armB = (part > 2.5 && part < 4.5) || (part > 10.5 && part < 13.5) || (part > 21.5 && part < 22.5);
   if (armA || armB) {
     float sg = armA ? -1.0 : 1.0;
     vec4 P = armA ? A : B;
@@ -376,14 +449,14 @@ const VERT_BEGIN = /* glsl */ `
     transformed = Sh + rZ(rY(rX(q - Sh, -P.y), -sg * P.w), sg * P.x);
   }
   // Beine
-  if (part > 13.5) {
+  if (part > 13.5 && part < 17.5) {
     float sg = part < 15.5 ? -1.0 : 1.0;
     float swing = part < 15.5 ? legs.x : legs.z;
     float knee = part < 15.5 ? legs.y : legs.w;
     vec3 Hp = vec3(sg * 0.1, 0.9, 0.0);
     vec3 Kn = vec3(sg * 0.1, 0.46, 0.0);
     vec3 q = transformed;
-    bool lower = part > 14.5 && part < 15.5 || part > 16.5;
+    bool lower = (part > 14.5 && part < 15.5) || part > 16.5;
     if (lower) q = Kn + rX(q - Kn, knee);
     float spread = act > 9.5 && act < 10.5 ? sg * 0.55 : 0.0;
     transformed = Hp + rZ(rX(q - Hp, -swing), spread);
@@ -393,7 +466,7 @@ const VERT_BEGIN = /* glsl */ `
   float target = atan(toR.x, toR.y);
   float delta = target - base;
   delta = mod(delta + 3.14159, 6.28318) - 3.14159;
-  float att = (act > 7.5 && act < 9.5) || act > 11.5 ? 0.0 : 1.0 - smoothstep(30.0, 150.0, dist);
+  float att = (act > 7.5 && act < 9.5) || (act > 11.5 && act < 17.5) ? 0.0 : 1.0 - smoothstep(30.0, 150.0, dist);
 #ifdef CROWD_BAKE
   att = 0.0;
 #endif
@@ -402,7 +475,7 @@ const VERT_BEGIN = /* glsl */ `
 #ifdef CROWD_BAKE
   headTurn = 0.0;
 #endif
-  bool head = part > 4.5 && part < 10.5;
+  bool head = (part > 4.5 && part < 10.5) || (part > 17.5 && part < 20.5) || (part > 22.5 && part < 23.5);
   if (head) {
     vec3 Nk = vec3(0.0, 1.5, 0.0);
     float kid = 1.0 - smoothstep(0.68, 0.88, aI1.x);
@@ -420,8 +493,8 @@ const VERT_BEGIN = /* glsl */ `
 const VERT_COLOR = /* glsl */ `
   {
     float slot = color.r;
-    float feat = floor(aI3.w / 16.0);
-    float flagI = mod(aI3.w, 16.0);
+    float feat = floor(aI3.w / 32.0);
+    float flagI = mod(aI3.w, 32.0);
     vec3 skin = uPal[int(aI2.x + 0.5)];
     vec3 top = uPal[int(aI2.y + 0.5)];
     vec3 bottom = uPal[int(aI2.z + 0.5)];
@@ -436,12 +509,15 @@ const VERT_COLOR = /* glsl */ `
     else if (slot < 8.5 && slot > 7.5) col = bit(feat, 2.0) > 0.5 ? top : skin;
     else if (slot < 9.5 && slot > 8.5) col = vec3(0.012);
     else if (slot < 10.5 && slot > 9.5) col = vec3(0.32, 0.22, 0.12);
-    else if (slot > 10.5) {
+    else if (slot > 10.5 && slot < 11.5) {
       float x = mod(color.b, 3.0);
       float y = floor(color.b / 3.0 + 0.01);
       float stripe = flagI < ${NV}.0 - 0.5 ? x : y;
       col = uFlag[int(flagI * 3.0 + stripe + 0.5)];
     }
+    else if (slot > 11.5 && slot < 12.5) col = uPal[int(aI3.z + 0.5)];
+    // Becher: Spritz (orange) oder Bier (bernstein)
+    else if (slot > 12.5) col = fract(aI1.w * 23.0) > 0.5 ? vec3(0.86, 0.22, 0.03) : vec3(0.72, 0.42, 0.06);
     vColor = vColor * 0.0 + 1.0; // vec3 oder vec4, je nach three-Version
     vColor.rgb = col;
   }
@@ -468,7 +544,7 @@ export function crowdMaterial(u: CrowdUniforms, always = false): THREE.MeshLambe
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
         { float dth = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); if (dth < vXa || dth >= vXb) discard; }`);
   };
-  m.customProgramCacheKey = () => (always ? 'crowd-2a' : 'crowd-2');
+  m.customProgramCacheKey = () => (always ? 'crowd-3a' : 'crowd-3');
   return m;
 }
 
@@ -481,7 +557,7 @@ export const CROWD_VERT = { head: VERT_HEAD, begin: VERT_BEGIN };
 // ------------------------------------------------------------------ Instanzen
 
 /** Was ein einzelner Zuschauer tut */
-export const Act = { idle: 0, clap: 1, wave: 2, cheer: 3, film: 4, flag: 5, shout: 6, hold: 7, run: 8, runFlag: 9, sit: 10, lean: 11, sign: 12, jog: 13, jogFlag: 14, jump: 15, ola: 16, dance: 17 } as const;
+export const Act = { idle: 0, clap: 1, wave: 2, cheer: 3, film: 4, flag: 5, shout: 6, hold: 7, run: 8, runFlag: 9, sit: 10, lean: 11, sign: 12, jog: 13, jogFlag: 14, jump: 15, ola: 16, dance: 17, devil: 18 } as const;
 
 export interface Person {
   x: number; y: number; z: number; yaw: number;
@@ -489,6 +565,7 @@ export interface Person {
   skin: number; top: number; bottom: number; hair: number;
   hat: number; hatType: number; accent: number; flag: number;
   shorts: boolean; sleeves: boolean; longHair: boolean; glasses: boolean; stripe: boolean;
+  beard?: boolean; backpack?: boolean; ponytail?: boolean; cup?: boolean;
 }
 
 export const STRIDE = 16;
@@ -497,8 +574,9 @@ export function packPerson(p: Person, out: Float32Array, i: number) {
   out[o] = p.x; out[o + 1] = p.y; out[o + 2] = p.z; out[o + 3] = p.yaw;
   out[o + 4] = p.height; out[o + 5] = p.width; out[o + 6] = p.act; out[o + 7] = p.phase;
   out[o + 8] = p.skin; out[o + 9] = p.top; out[o + 10] = p.bottom; out[o + 11] = p.hair;
-  const feat = (p.shorts ? 1 : 0) + (p.sleeves ? 2 : 0) + (p.longHair ? 4 : 0) + (p.glasses ? 8 : 0) + (p.stripe ? 16 : 0);
-  out[o + 12] = p.hat; out[o + 13] = p.hatType; out[o + 14] = p.accent; out[o + 15] = p.flag + 16 * feat;
+  const feat = (p.shorts ? 1 : 0) + (p.sleeves ? 2 : 0) + (p.longHair ? 4 : 0) + (p.glasses ? 8 : 0) + (p.stripe ? 16 : 0)
+    + (p.beard ? 32 : 0) + (p.backpack ? 64 : 0) + (p.ponytail ? 128 : 0) + (p.cup ? 256 : 0);
+  out[o + 12] = p.hat; out[o + 13] = p.hatType; out[o + 14] = p.accent; out[o + 15] = p.flag + 32 * feat;
 }
 
 /** Braucht dieser Zuschauer dieses Zubehör? (Läufer bekommen alles, der Shader blendet aus) */
@@ -512,6 +590,12 @@ export function needs(p: Person, k: Kind): boolean {
     case 'glasses': return p.glasses;
     case 'phone': return p.act === Act.film;
     case 'flag': return p.act === Act.flag || p.act === Act.runFlag || p.act === Act.jogFlag;
+    case 'helmet': return p.hatType === 4;
+    case 'horns': case 'trident': return p.hatType === 5;
+    case 'beard': return !!p.beard;
+    case 'backpack': return !!p.backpack;
+    case 'ponytail': return !!p.ponytail;
+    case 'cup': return !!p.cup;
   }
 }
 
@@ -556,38 +640,129 @@ const pickW = <T,>(r: Rnd, items: [T, number][]): T => {
   for (const [v, w] of items) { x -= w; if (x <= 0) return v; }
   return items[items.length - 1][0];
 };
-const inRange = (r: Rnd, k: keyof typeof RANGE) => RANGE[k][0] + Math.floor(r() * RANGE[k][1]);
+const inRange = (r: Rnd, k: PalKey) => RANGE[k][0] + Math.floor(r() * RANGE[k][1]);
+/** Kleidung, wie man sie an der Strecke sieht: meist Alltagsfarben, ein Drittel gedeckt farbig, etwas Rosa */
+const clothes = (r: Rnd, pink = 0.1): number => {
+  const x = r();
+  return x < pink ? inRange(r, 'pink') : x < pink + 0.52 ? inRange(r, 'neutral') : inRange(r, 'colour');
+};
+const oneOf = <T,>(r: Rnd, l: T[]): T => l[Math.floor(r() * l.length)];
+
+/** Typen an der Strecke – je Zone unterschiedlich häufig */
+export type Persona = 'fan' | 'tifoso' | 'rider' | 'hiker' | 'nonno' | 'devil';
 
 /** Ein zufälliger, glaubwürdiger Zuschauer (ohne Ort) */
 export function randomPerson(r: Rnd, zone: Zone, opts: { row: number; kid?: boolean; runner?: boolean }): Person {
   const cold = zone === 'pass';
   const kid = !!opts.kid;
+  const persona: Persona = kid ? 'fan'
+    : opts.runner ? pickW<Persona>(r, [['fan', 70], ['tifoso', 14], ['devil', 8], ['rider', 8]])
+    : pickW<Persona>(r, [['fan', 58], ['tifoso', zone === 'tifosi' ? 16 : 7], ['rider', cold ? 13 : 6], ['hiker', cold ? 13 : 2],
+      ['nonno', zone === 'village' ? 13 : 5], ['devil', opts.row < 2 ? 0.7 : 0]]);
   const skin = inRange(r, 'skin');
   let hair = inRange(r, 'hair');
-  const older = !kid && r() < 0.2;
+  const older = persona === 'nonno' || (!kid && r() < 0.14);
   if (older) hair = RANGE.hair[0] + 5 + Math.floor(r() * 2);
-  // Oberteile: viel Rosa beim Giro, dazu Alltagsfarben
-  let top = r() < 0.16 ? (r() < 0.6 ? PINK : PINK2) : inRange(r, 'top');
-  const sleeves = cold ? r() < 0.8 : r() < 0.28;
-  const shorts = kid ? r() < 0.6 : cold ? r() < 0.08 : r() < 0.45;
-  const hatType = pickW(r, cold ? [[0, 48], [1, 26], [3, 26]] : [[0, 62], [1, 26], [2, 12]]);
+  let top = clothes(r, 0.1);
+  let bottom = inRange(r, 'bottom');
+  let sleeves = cold ? r() < 0.8 : r() < 0.28;
+  let shorts = kid ? r() < 0.6 : cold ? r() < 0.08 : r() < 0.45;
+  let hatType = pickW(r, cold ? [[0, 48], [1, 26], [3, 26]] : [[0, 62], [1, 26], [2, 12]]);
+  let hat = r() < 0.2 ? (r() < 0.5 ? PINK : WHITE) : clothes(r, 0.05);
+  let accent = r() < 0.4 ? WHITE : clothes(r, 0.15);
+  let glasses = !kid && r() < (cold ? 0.22 : 0.3);
+  let stripe = r() < 0.3;
+  let longHair = !older && r() < (kid ? 0.4 : 0.32);
+  let beard = !kid && !longHair && r() < 0.14;
+  let ponytail = !longHair && !beard && r() < (kid ? 0.2 : 0.12);
+  let backpack = !kid && cold && r() < 0.1;
   let act: number;
   if (opts.runner) act = r() < 0.45 ? Act.runFlag : Act.run;
-  else if (kid) act = pickW(r, [[Act.cheer, 4], [Act.wave, 3], [Act.clap, 3]]);
+  else if (kid) act = pickW(r, [[Act.cheer, 4], [Act.wave, 3], [Act.clap, 3], [Act.jump, 2]]);
   else if (opts.row === 0) act = pickW(r, [[Act.lean, 24], [Act.clap, 18], [Act.film, 12], [Act.wave, 10], [Act.cheer, 10], [Act.shout, 8], [Act.flag, 3], [Act.jump, 4], [Act.idle, 7]]);
   else if (r() < 0.07) act = Act.sign;
   else act = pickW(r, [[Act.cheer, 16], [Act.flag, cold ? 9 : 6], [Act.clap, 15], [Act.wave, 12], [Act.film, 8], [Act.shout, 7], [Act.jump, 8], [Act.dance, cold ? 2 : 6], [Act.idle, 12]]);
-  if (opts.runner && r() < 0.35) top = skin; // ohne Hemd
+  switch (persona) {
+    case 'tifoso':
+      // Giro-Fan: Rosa von Kopf bis Fuß, gern mit Fahne
+      top = r() < 0.75 ? oneOf(r, [PINK, PINK, PINK_L, PINK2]) : WHITE;
+      hat = r() < 0.6 ? PINK : WHITE;
+      accent = r() < 0.5 ? WHITE : PINK2;
+      stripe = r() < 0.5;
+      if (!opts.runner && opts.row > 0 && r() < 0.35) act = Act.flag;
+      break;
+    case 'rider':
+      // Hobby-Radler, selbst raufgefahren: Helm (oder Radkappe), Brille, Trikot mit Streifen, schwarze Hose
+      hatType = r() < 0.82 ? 4 : 1;
+      hat = r() < 0.6 ? oneOf(r, [WHITE, BLACK, BLACK, GREY]) : inRange(r, 'kit');
+      top = inRange(r, 'kit');
+      accent = r() < 0.5 ? WHITE : inRange(r, 'kit');
+      stripe = r() < 0.75;
+      bottom = oneOf(r, BIB);
+      shorts = true;
+      sleeves = cold && r() < 0.45; // Armlinge
+      glasses = r() < 0.8;
+      longHair = false;
+      backpack = false;
+      if (!opts.runner) act = opts.row === 0 ? pickW(r, [[Act.lean, 8], [Act.clap, 8], [Act.shout, 8], [Act.film, 6], [Act.cheer, 6]])
+        : pickW(r, [[Act.cheer, 8], [Act.clap, 8], [Act.shout, 6], [Act.film, 5], [Act.wave, 4]]);
+      break;
+    case 'hiker':
+      // Wanderer: Rucksack, Sonnenhut oder Mütze, erdige Farben, lange Hose
+      backpack = true;
+      hatType = pickW(r, cold ? [[3, 4], [2, 3], [1, 3], [0, 2]] : [[2, 5], [1, 4], [0, 3]]);
+      top = r() < 0.65 ? inRange(r, 'colour') : inRange(r, 'neutral');
+      hat = r() < 0.5 ? inRange(r, 'colour') : inRange(r, 'neutral');
+      accent = inRange(r, r() < 0.5 ? 'colour' : 'kit');
+      bottom = oneOf(r, [RANGE.bottom[0] + 3, RANGE.bottom[0] + 4, RANGE.bottom[0] + 5, RANGE.bottom[0] + 9, RANGE.bottom[0] + 11, RANGE.bottom[0] + 7]);
+      shorts = !cold && r() < 0.4;
+      sleeves = cold ? r() < 0.9 : r() < 0.4;
+      if (act === Act.film && r() < 0.5) act = Act.wave;
+      break;
+    case 'nonno':
+      // die Älteren aus dem Dorf: Schiebermütze oder Hut, Strickjacke in Braun, Grau, Creme
+      hatType = pickW(r, [[1, 5], [2, 2], [0, 3]]);
+      hat = oneOf(r, [GREY, BLACK, NAVY, RANGE.neutral[0] + 11, RANGE.neutral[0] + 9, RANGE.neutral[0] + 10]);
+      top = r() < 0.7 ? inRange(r, 'neutral') : oneOf(r, [RANGE.colour[0] + 7, RANGE.colour[0] + 6, RANGE.colour[0] + 10, RANGE.colour[0] + 12]);
+      bottom = oneOf(r, [RANGE.bottom[0] + 3, RANGE.bottom[0] + 5, RANGE.bottom[0] + 4, RANGE.bottom[0] + 11, RANGE.bottom[0]]);
+      sleeves = true;
+      shorts = false;
+      glasses = r() < 0.6;
+      longHair = false;
+      ponytail = false;
+      beard = r() < 0.3;
+      stripe = r() < 0.15;
+      act = opts.row === 0 ? pickW(r, [[Act.lean, 10], [Act.clap, 8], [Act.idle, 6], [Act.wave, 4], [Act.shout, 3]])
+        : pickW(r, [[Act.clap, 8], [Act.idle, 8], [Act.wave, 5], [Act.film, 2]]);
+      break;
+    case 'devil':
+      // der Teufel an der Strecke: rotes Kostüm, Hörner, Dreizack
+      top = DEVIL; bottom = DEVIL; hat = DEVIL; accent = BLACK;
+      hatType = 5;
+      sleeves = true; shorts = false; stripe = false;
+      longHair = false; ponytail = false; backpack = false;
+      beard = r() < 0.45;
+      glasses = r() < 0.3;
+      if (!opts.runner) act = Act.devil;
+      else act = Act.run;
+      break;
+    default:
+      break;
+  }
+  if (opts.runner && persona === 'fan' && r() < 0.35) top = skin; // ohne Hemd
+  // ein Getränk in der Hand: Spritz oder Bier (nicht oben am kalten Pass, nicht beim Filmen oder Fahneschwenken)
+  const cup = !kid && !opts.runner && persona !== 'rider' && persona !== 'devil' && r() < (cold ? 0.05 : zone === 'village' ? 0.2 : 0.14)
+    && act !== Act.flag && act !== Act.film && act !== Act.sign;
   const flag = r() < 0.32 ? Math.floor(r() * 2) : Math.floor(r() * NFLAGS);
   return {
     x: 0, y: 0, z: 0, yaw: 0,
-    height: kid ? 0.56 + r() * 0.16 : 0.93 + r() * 0.17,
-    width: kid ? 0.82 + r() * 0.12 : 0.9 + r() * 0.28,
+    height: kid ? 0.56 + r() * 0.16 : 0.93 + r() * 0.17 - (older ? 0.03 : 0),
+    width: kid ? 0.82 + r() * 0.12 : 0.9 + r() * 0.28 + (older ? 0.06 : 0),
     act, phase: r(),
-    skin, top, bottom: inRange(r, 'bottom'), hair,
-    hat: r() < 0.3 ? (r() < 0.5 ? PINK : WHITE) : inRange(r, 'top'), hatType,
-    accent: r() < 0.4 ? WHITE : inRange(r, 'top'), flag,
-    shorts, sleeves, longHair: !older && r() < (kid ? 0.4 : 0.34), glasses: !kid && r() < (cold ? 0.22 : 0.3), stripe: r() < 0.3,
+    skin, top, bottom, hair,
+    hat, hatType,
+    accent, flag,
+    shorts, sleeves, longHair, glasses, stripe,
+    beard, backpack, ponytail, cup,
   };
 }
-
