@@ -187,8 +187,8 @@ function profile(kind: number, b: number): void {
 
 export interface TerrainLevel { size: number; n: number; ring: number; skirt: number }
 export const LEVELS: TerrainLevel[] = [
-  { size: 128, n: 32, ring: 2, skirt: 22 },
-  { size: 512, n: 32, ring: 2, skirt: 60 },
+  { size: 128, n: 32, ring: 4, skirt: 22 },
+  { size: 512, n: 32, ring: 3, skirt: 60 },
   { size: 2048, n: 32, ring: 1, skirt: 160 },
 ];
 

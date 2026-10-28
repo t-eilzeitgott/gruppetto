@@ -45,8 +45,8 @@ const TREES = TREE_KINDS;
  * an. Am Rand ihres Gebiets ist sie ihr gleich – kommen dort Kacheln hinzu oder fallen weg, sieht man nichts.
  * Der Mittelpunkt liegt nur wenig voraus: in Kehren schwenkt er so kaum (die Berge in der Ferne bleiben ruhig).
  */
-const MORPH: [number, number][] = [[150, 206], [600, 760]];
-const MORPH_AHEAD = [48, 0];
+const MORPH: [number, number][] = [[300, 412], [1200, 1520]];
+const MORPH_AHEAD = [96, 0];
 
 const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
 
@@ -1005,7 +1005,7 @@ export class Renderer3D {
       this.rs.mesh.visible = false;
     }
     // Landschaftsproben zuerst: die Abschnitte fragen beim Bau nach Geländehöhen
-    if (this.terrain?.window(Math.max(0, p.z - 520), Math.max(p.z + 3000, this.routeEnd))) {
+    if (this.terrain?.window(Math.max(0, p.z - 900), Math.max(p.z + 3000, this.routeEnd))) {
       // neue oder weggefallene Straßenstücke ändern die Höhen ringsum: betroffene Kacheln neu bauen
       for (const [x0, z0, x1, z1] of this.terrain.takeDirty()) {
         for (const t of this.tiles.values()) {
@@ -1270,7 +1270,7 @@ export class Renderer3D {
     const fw = this.terrFwd;
     // Mittelpunkt je Stufe: die Kamera selbst. Die Ringe hängen so nur vom Ort ab, nicht von der Blickrichtung –
     // in Kehren dreht sich die Kamera, ohne dass Kacheln neu gebaut werden müssen. (Voraus reicht die feinste
-    // Stufe trotzdem weit genug: ihr Übergang endet spätestens 254 m voraus, ihr Gebiet frühestens nach 256 m.)
+    // Stufe trotzdem weit genug: ihr Übergang endet spätestens 508 m voraus, ihr Gebiet frühestens nach 512 m.)
     // (Felder wiederverwendet: keine neuen Listen je Bild)
     const mt = this.morphT;
     for (let lv = 0; lv < mt.length; lv++) { mt[lv][0] = cp.x + fw.x * MORPH_AHEAD[lv]; mt[lv][1] = cp.z + fw.z * MORPH_AHEAD[lv]; }
@@ -1424,7 +1424,7 @@ export class Renderer3D {
       this.pre = { keys, idx: 0, gen: null };
       // die Proben müssen die ganze Strecke abdecken (sonst stimmten die Kacheln später nicht mehr); geänderte
       // Gebiete holt draw() im nächsten Bild ab (betroffene Kacheln werden neu gebaut)
-      T.window(Math.max(0, g.p.z - 520), Math.max(g.p.z + 3000, this.routeEnd));
+      T.window(Math.max(0, g.p.z - 900), Math.max(g.p.z + 3000, this.routeEnd));
     }
     const pre = this.pre;
     T.deadline = t0 + budget;
