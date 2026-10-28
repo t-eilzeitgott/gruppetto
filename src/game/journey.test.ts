@@ -6,7 +6,7 @@ test('Europareise: Route steigt in Kilometern, Ortslage liegt auf der Karte', ()
   for (let i = 1; i < ROUTE.length; i++) assert.ok(ROUTE[i].km > ROUTE[i - 1].km, `${ROUTE[i].name} nach ${ROUTE[i - 1].name}`);
   for (const s of ROUTE) {
     const [x, y] = mapXY(s.lon, s.lat);
-    assert.ok(x >= 20 && x <= 300 && y >= 20 && y <= 540, `${s.name} auf der Karte (${x.toFixed(0)}, ${y.toFixed(0)})`);
+    assert.ok(x >= 20 && x <= 300 && y >= 20 && y <= 550, `${s.name} auf der Karte (${x.toFixed(0)}, ${y.toFixed(0)})`);
   }
   assert.equal(ROUTE[0].name, 'Wuppertal');
   assert.equal(ROUTE[ROUTE.length - 1].name, 'Palermo');

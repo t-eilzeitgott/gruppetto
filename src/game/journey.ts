@@ -116,7 +116,7 @@ export function mapXY(lon: number, lat: number): [number, number] {
   const lon0 = 5.2;
   const lon1 = 17.4;
   const lat0 = 52.2;
-  const lat1 = 36.6;
+  const lat1 = 36.3;
   const x = ((lon - lon0) / (lon1 - lon0)) * MAP.w;
   // Breite leicht gestaucht (Mercator-ähnlich reicht hier nicht, Hochformat zählt)
   const y = ((lat0 - lat) / (lat0 - lat1)) * MAP.h;
