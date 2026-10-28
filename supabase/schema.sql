@@ -170,7 +170,7 @@ create index if not exists tt_ghosts_day_idx on public.tt_ghosts (day, time_ms);
 
 -- Nur eine schnellere Fahrt ersetzt die gespeicherte (zwei Geräte, langsame Verbindung)
 create or replace function public.tt_ghosts_keep_best()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = public as $$
 begin
   if new.time_ms >= old.time_ms then
     return null;
