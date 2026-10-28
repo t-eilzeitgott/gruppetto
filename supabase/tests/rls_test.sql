@@ -265,6 +265,18 @@ insert into public.tt_ghosts (day, time_ms, bike, splits, trace) values (current
 select pg_temp.expect_eq((select time_ms from public.tt_ghosts where day = current_date), 221000, 'Geist: schnellere Fahrt ersetzt');
 select pg_temp.expect_error($q$ insert into public.tt_ghosts (user_id, day, time_ms, trace) values ('00000000-0000-0000-0000-00000000000a', current_date, 100000, '[0,0,0]') $q$, 'row-level security');
 select pg_temp.expect_error($q$ insert into public.tt_ghosts (day, time_ms, trace) values (current_date - 1, 0, '[0,0,0]') $q$, 'check');
+-- Geister der anderen Spiele: je Spiel und Tag die Fahrt mit den meisten Punkten
+insert into public.game_ghosts (game, day, score, meters, bike, trace) values ('sprint', current_date, 1200, 2400, 'aero', '[0,30,0,35,28,1]');
+insert into public.game_ghosts (game, day, score, meters, bike, trace) values ('sprint', current_date, 900, 2400, 'zeit', '[0,0,0]')
+  on conflict (user_id, game, day) do update set score = excluded.score, bike = excluded.bike, trace = excluded.trace;
+select pg_temp.expect_eq((select score from public.game_ghosts where game = 'sprint' and day = current_date), 1200, 'Spielgeist: weniger Punkte ersetzen nicht');
+insert into public.game_ghosts (game, day, score, meters, bike, trace) values ('sprint', current_date, 1500, 2400, 'zeit', '[0,0,0,36,10,1]')
+  on conflict (user_id, game, day) do update set score = excluded.score, bike = excluded.bike, trace = excluded.trace;
+select pg_temp.expect_eq((select score from public.game_ghosts where game = 'sprint' and day = current_date), 1500, 'Spielgeist: mehr Punkte ersetzen');
+insert into public.game_ghosts (game, day, score, trace) values ('berg', current_date, 800, '[0,0,0]');
+select pg_temp.expect_eq((select count(*) from public.game_ghosts where day = current_date)::int, 2, 'Spielgeist: je Spiel einer');
+select pg_temp.expect_error($q$ insert into public.game_ghosts (game, day, score, trace) values ('zeitfahren', current_date, 1, '[0,0,0]') $q$, 'check');
+select pg_temp.expect_error($q$ insert into public.game_ghosts (user_id, game, day, score, trace) values ('00000000-0000-0000-0000-00000000000a', 'abfahrt', current_date, 1, '[0,0,0]') $q$, 'row-level security');
 commit;
 
 begin;
@@ -273,6 +285,9 @@ select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a
 select pg_temp.expect_eq((select count(*) from public.tt_ghosts where day = current_date), 1, 'Geister: Mitglied sieht fremde Fahrten');
 update public.tt_ghosts set time_ms = 1 where day = current_date;
 select pg_temp.expect_eq((select time_ms from public.tt_ghosts where day = current_date), 221000, 'Geister: fremde Fahrt nicht änderbar');
+select pg_temp.expect_eq((select count(*) from public.game_ghosts where day = current_date)::int, 2, 'Spielgeister: Mitglied sieht fremde Fahrten');
+update public.game_ghosts set score = 9999 where day = current_date;
+select pg_temp.expect_eq((select max(score) from public.game_ghosts where day = current_date), 1500, 'Spielgeister: fremde Fahrt nicht änderbar');
 commit;
 
 -- ---------- Anonym ----------

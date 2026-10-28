@@ -6,6 +6,7 @@ import type {
 import { DEFAULT_SCALE, tipLimit } from '../lib/scoring';
 import { bonusDeadline } from '../lib/time';
 import { ttScore, type TtGhostRow } from '../game/tt';
+import type { GameGhostRow, GhostGame } from '../game/ghosts';
 import { berlinDayKey, hashStr } from '../game/abfahrt/rng';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
@@ -242,6 +243,37 @@ export class DemoSource implements DataSource {
     const prev = this.myGhost.get(g.day);
     if (prev && prev.time_ms <= g.time_ms) return;
     this.myGhost.set(g.day, { ...g, user_id: DEMO_ME, created_at: new Date().toISOString() });
+  }
+
+  // Abfahrt, Sprint- und Bergfinale: Geister der Demo-Runde je Spiel und Tag einmal ohne Bild durchgerechnet
+  private ghostDays = new Map<string, GameGhostRow[]>();
+  private myGameGhost = new Map<string, GameGhostRow>();
+
+  async gameGhosts(game: GhostGame, day: string): Promise<GameGhostRow[]> {
+    const key = `${game}:${day}`;
+    let rows = this.ghostDays.get(key);
+    if (!rows) {
+      const { simulateRun } = await import('../game/abfahrt/ghostSim');
+      const bikes = ['aero', 'acciaio', 'feder', 'titan', 'allround'];
+      const people: [string, number][] = game === 'abfahrt'
+        ? [['u-felix', 0.95], ['u-julian', 0.75], ['u-lena', 0.55]]
+        : [['u-felix', 0.9], ['u-julian', 0.7], ['u-lena', 0.6], ['u-tobi', 0.4]];
+      rows = people.map(([id, skill], i) => {
+        const g = simulateRun(game, day, skill, hashStr(`${id}:${game}:${day}`));
+        return { user_id: id, game, day, score: g.score, meters: g.meters, bike: bikes[i % bikes.length], trace: g.trace, created_at: new Date(Date.now() - (i + 1) * 1900e3).toISOString() };
+      }).filter((g) => g.trace.length >= 6);
+      this.ghostDays.set(key, rows);
+    }
+    const mine = this.myGameGhost.get(key);
+    return [...rows, ...(mine ? [mine] : [])].sort((a, b) => b.score - a.score);
+  }
+
+  async saveGameGhost(g: Omit<GameGhostRow, 'user_id' | 'created_at'>): Promise<void> {
+    await wait(60);
+    const key = `${g.game}:${g.day}`;
+    const prev = this.myGameGhost.get(key);
+    if (prev && prev.score >= g.score) return;
+    this.myGameGhost.set(key, { ...g, user_id: DEMO_ME, created_at: new Date().toISOString() });
   }
 
   async myRuns(since: string): Promise<GameRun[]> {

@@ -2290,3 +2290,7 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 .gpu-hint .muted { opacity: 0.65; }
+
+/* Startkarte: Geister der Runde */
+.abf-ghosts { line-height: 1.5; }
+.abf-ghosts__dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 4px 1px 0; opacity: 0.75; vertical-align: middle; box-shadow: 0 0 0 1.5px var(--bg); }

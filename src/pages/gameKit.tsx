@@ -7,6 +7,7 @@ import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
 import { RANGES, setViewRange, userRange, type RangeId } from '../game/abfahrt/viewRange';
 import { GFX_OPTS, gfxOn, setGfx, type GfxOpt } from '../game/abfahrt/gfxOpts';
 import { Segmented } from '../ui/kit';
+import type { GhostRider } from '../game/tt';
 
 export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 export const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
@@ -91,6 +92,22 @@ export function RangePicker() {
 }
 
 /** Schalter im Pausenmenü: Bildrate unten links anzeigen */
+/** Startkarte: wer heute als Geist mitfährt (Punkte der Bestfahrt) */
+export function GhostLine({ list }: { list: GhostRider[] }) {
+  if (!list.length) return null;
+  const sorted = [...list].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  return (
+    <p className="abf-sub abf-ghosts">
+      <span>Als Geist dabei: </span>
+      {sorted.map((g, i) => (
+        <span key={g.id}>
+          {i ? ' · ' : ''}<i className="abf-ghosts__dot" style={{ background: g.color }} />{g.me ? 'Dein Bestlauf' : g.name.trim().split(/\s+/)[0]}{' '}{(g.score ?? 0).toLocaleString('de-DE')}
+        </span>
+      ))}
+    </p>
+  );
+}
+
 export function FpsSwitch() {
   const [on, setOn] = useState(fpsMeterOn);
   return (

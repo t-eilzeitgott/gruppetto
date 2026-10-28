@@ -182,6 +182,36 @@ drop trigger if exists tt_ghosts_keep_best on public.tt_ghosts;
 create trigger tt_ghosts_keep_best before update on public.tt_ghosts
   for each row execute function public.tt_ghosts_keep_best();
 
+-- Abfahrt, Sprint- und Bergfinale: die beste Fahrt des Tages je Mitglied und Spiel (nach Punkten) als Geist –
+-- Punkte, Strecke, Rad und die Fahrspur (wie beim Zeitfahren), siehe src/game/ghosts.ts
+create table if not exists public.game_ghosts (
+  user_id    uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  game       text not null check (game in ('abfahrt', 'sprint', 'berg')),
+  day        date not null,
+  score      int  not null check (score >= 0 and score < 10000000),
+  meters     int  not null default 0 check (meters >= 0 and meters < 1000000),
+  bike       text not null default 'allround',
+  trace      jsonb not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, game, day),
+  constraint game_ghosts_trace_size check (pg_column_size(trace) < 200000)
+);
+create index if not exists game_ghosts_day_idx on public.game_ghosts (game, day, score desc);
+
+-- Nur eine Fahrt mit mehr Punkten ersetzt die gespeicherte
+create or replace function public.game_ghosts_keep_best()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  if new.score <= old.score then
+    return null;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists game_ghosts_keep_best on public.game_ghosts;
+create trigger game_ghosts_keep_best before update on public.game_ghosts
+  for each row execute function public.game_ghosts_keep_best();
+
 -- Wertungsstand nach einer Etappe (z. B. Gesamtwertung Top 10) – sichtbar mit dem Ergebnis
 create table if not exists public.stage_standings (
   stage_id bigint not null references public.stages (id) on delete cascade,
@@ -561,6 +591,7 @@ alter table public.stage_standings   enable row level security;
 alter table public.stage_profiles    enable row level security;
 alter table public.game_scores       enable row level security;
 alter table public.tt_ghosts         enable row level security;
+alter table public.game_ghosts       enable row level security;
 alter table public.stages            enable row level security;
 alter table public.stage_tips        enable row level security;
 alter table public.stage_results     enable row level security;
@@ -610,6 +641,13 @@ create policy tt_ghosts_select on public.tt_ghosts
   for select to authenticated using (public.is_member() or public.is_admin());
 drop policy if exists tt_ghosts_write on public.tt_ghosts;
 create policy tt_ghosts_write on public.tt_ghosts
+  for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member());
+
+drop policy if exists game_ghosts_select on public.game_ghosts;
+create policy game_ghosts_select on public.game_ghosts
+  for select to authenticated using (public.is_member() or public.is_admin());
+drop policy if exists game_ghosts_write on public.game_ghosts;
+create policy game_ghosts_write on public.game_ghosts
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member());
 
 -- Bestenliste: beste Punktzahl, weiteste Strecke und Gesamtstrecke je Mitglied (optional ab einem Zeitpunkt)

@@ -8,6 +8,8 @@ import { EDGE, ROAD_HALF, SEG, Track, difficulty, type Obj, type Seg, type Side,
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { Mission, MissionStat } from './missions';
 import { cadenceFor, pedalStep, smooth } from './motion';
+import { GhostField, ghostMode, withGhostTag } from './ghostRun';
+import type { GhostRider } from '../tt';
 
 export const G = 9.81;
 const CD = 0.00105;          // Luftwiderstand in Abfahrtshaltung (1/m)
@@ -98,6 +100,8 @@ export interface RaceView {
   friends: Friend[];
   shake: number;
   crashSpin: number;
+  /** Geister der Runde (halbdurchsichtig, keine Gegner), siehe ghostRun.ts */
+  ghosts?: Opp[];
 }
 
 export interface HudState {
@@ -123,6 +127,8 @@ export interface RunResult {
   missionsDone: string[];
   friendsBeaten: string[];
   sectionName: string;
+  /** eigene Fahrspur (Geist), siehe ghostRun.ts */
+  trace: number[];
 }
 
 export interface GameOptions {
@@ -136,6 +142,8 @@ export interface GameOptions {
   tutorial: boolean;
   /** Testfahrt (Admin): Zeitraffer (2 oder 3), keine Hindernisse, kein Sturz – zählt nicht in den Tabellen */
   cruise?: number;
+  /** Geister der Runde: beste Fahrt des Tages je Mitglied */
+  ghosts?: GhostRider[];
   onEvent?: (e: GameEvent) => void;
   onOver?: (r: RunResult) => void;
 }
@@ -150,6 +158,10 @@ export class Abfahrt {
   track: Track;
   phase: Phase = 'ready';
   time = 0;
+  /** Geister der Runde */
+  readonly ghostField: GhostField | null;
+  tags: RiderTag[] = [];
+  get ghosts(): Opp[] { return this.ghostField?.list ?? []; }
   phaseT = 0;
   p!: Player;
   opps: Opp[] = [];
@@ -198,6 +210,7 @@ export class Abfahrt {
     this.opts = opts;
     this.friends = opts.friends.map((f) => ({ ...f, passed: false })).sort((a, b) => a.meters - b.meters);
     this.missionsDone = new Set(opts.missionsDone);
+    this.ghostField = opts.cruise ? null : new GhostField(opts.ghosts ?? []);
     this.track = new Track(opts.dayKey, opts.names);
     if (opts.cruise) { this.track.dropHazards(); this.dbg.speed = opts.cruise; }
     this.rng = mulberry32(this.track.seed ^ 0x5eed);
@@ -224,6 +237,8 @@ export class Abfahrt {
     this.chain = 0; this.mult = 1; this.multT = 0;
     this.draft = 0; this.shake = 0; this.heading = 0;
     this.phase = 'ready'; this.phaseT = 0; this.time = 0; this.timeScale = 1;
+    this.ghostField?.reset();
+    this.tags = [];
     this.nextSpawn = 120;
     this.sectionIdx = -1;
     this.recordShown = false;
@@ -328,6 +343,9 @@ export class Abfahrt {
       this.timeScale = this.phaseT < 0.9 ? 0.35 : Math.min(1, this.timeScale + dtReal * 2);
       if (this.phaseT > 1.8) this.finish();
     }
+    // Geister: fahren ab „Los“ (auch während des eigenen Sturzes weiter), die eigene Spur endet mit dem Sturz
+    this.ghostField?.step(dt, this.phase === 'playing' || this.phase === 'crash', { z: this.p.z, x: this.p.x, mode: ghostMode(this.p) }, this.track, this.phase !== 'playing');
+    this.tags = withGhostTag([], this.ghostField);
     this.track.trim(Math.floor(this.p.z / SEG) - 200);
   }
 
@@ -1009,6 +1027,7 @@ export class Abfahrt {
       missionsDone: done,
       friendsBeaten: this.friends.filter((f) => f.passed).map((f) => f.name),
       sectionName: this.track.sections[Math.max(0, this.sectionIdx)]?.name ?? '',
+      trace: this.ghostField?.recorded ?? [],
     });
   }
 }

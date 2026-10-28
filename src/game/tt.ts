@@ -45,6 +45,8 @@ export interface GhostRider {
   trace: number[];
   me?: boolean;
   bot?: boolean;
+  /** Punkte (Abfahrt, Sprint- und Bergfinale – dort zählt die Punktzahl, nicht die Zeit) */
+  score?: number;
 }
 
 /** Geist, wie er in der Datenbank liegt (beste Fahrt des Tages je Mitglied) */

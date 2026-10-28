@@ -9,6 +9,8 @@
  */
 import { EDGE, ROAD_HALF, SPRINT_FINISH, Track } from './track';
 import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup, standings, type Standing, type RiderTag } from './engine';
+import { GhostField, ghostMode, withGhostTag } from './ghostRun';
+import type { GhostRider } from '../tt';
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { StageRef } from './stageRef';
@@ -45,6 +47,8 @@ export interface SprintOptions {
   trains?: { team: string; riders: string[] }[];
   /** eigener Anfahrer aus dem Team des gewählten Fahrers */
   mate?: string | null;
+  /** Geister der Runde: beste Fahrt des Tages je Mitglied */
+  ghosts?: GhostRider[];
   onEvent?: (e: SprintEvent) => void;
   onOver?: (r: SprintResult) => void;
 }
@@ -63,6 +67,8 @@ export interface SprintResult {
   topKmh: number;
   launchAt: number;     // Restmeter beim Antreten (0 = gar nicht)
   podium: { name: string; me: boolean }[];
+  /** eigene Fahrspur (Geist), siehe ghostRun.ts */
+  trace: number[];
 }
 
 export interface SprintHud {
@@ -129,6 +135,9 @@ export class SprintRace {
   shake = 0;
   crashSpin = 0;
   tags: RiderTag[] = [];
+  /** Geister der Runde */
+  readonly ghostField: GhostField | null;
+  get ghosts(): Opp[] { return this.ghostField?.list ?? []; }
   tx = 0;
   draft = 0;
   energy = 1;
@@ -153,6 +162,7 @@ export class SprintRace {
 
   constructor(opts: SprintOptions) {
     this.opts = opts;
+    this.ghostField = new GhostField(opts.ghosts ?? []);
     this.stats = TYPE_STATS[opts.rider.type];
     this.track = new Track(opts.dayKey, opts.names, 'sprint', opts.town);
     this.rng = mulberry32(this.track.seed ^ 0x51);
@@ -174,6 +184,7 @@ export class SprintRace {
     this.phase = 'ready';
     this.phaseT = 0;
     this.time = 0;
+    this.ghostField?.reset();
     this.energy = 1;
     this.draft = 0;
     this.finT = -1;
@@ -317,6 +328,9 @@ export class SprintRace {
     for (const pp of this.popups) pp.age += dtReal;
     this.popups = this.popups.filter((pp) => pp.age < pp.life);
     this.shake = Math.max(0, this.shake - dt * 3);
+    // Geister: fahren ab „Los“; die eigene Spur endet im Ziel
+    this.ghostField?.step(dt, this.phase === 'playing', { z: this.p.z, x: this.p.x, mode: ghostMode(this.p) }, this.track, this.finT >= 0);
+    this.tags = withGhostTag(this.tags, this.ghostField);
     if (this.phase === 'playing' && this.finT >= 0 && this.time - this.finT > 2.6) this.finish();
     this.track.trim(Math.floor(this.p.z / 2) - 200);
   }
@@ -632,6 +646,7 @@ export class SprintRace {
       topKmh: Math.round(this.topV * 3.6),
       launchAt: this.launchAt,
       podium: all.slice(0, 3).map((x) => ({ name: x.me ? this.opts.rider.name : x.name, me: x.me })),
+      trace: this.ghostField?.recorded ?? [],
     });
   }
 

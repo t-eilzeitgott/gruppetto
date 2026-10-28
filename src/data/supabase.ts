@@ -1,5 +1,6 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type { TtGhostRow } from '../game/tt';
+import type { GameGhostRow, GhostGame } from '../game/ghosts';
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, PointScale, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
   Tour, TourData, StageSyncInfo, SyncLogEntry, SyncMode, SyncStatus,
@@ -315,6 +316,25 @@ export class SupabaseSource implements DataSource {
     await this.rest('tt_ghosts?on_conflict=user_id,day', {
       method: 'POST',
       body: { user_id: this.me(), day: g.day, time_ms: Math.round(g.time_ms), bike: g.bike, splits: g.splits.map((x) => Math.round(x)), trace: g.trace, created_at: new Date().toISOString() },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+    });
+  }
+
+  async gameGhosts(game: GhostGame, day: string): Promise<GameGhostRow[]> {
+    try {
+      const rows = await this.rest<GameGhostRow[]>(`game_ghosts?game=eq.${game}&day=eq.${encodeURIComponent(day)}&select=user_id,game,day,score,meters,bike,trace,created_at&order=score.desc&limit=40`);
+      return rows.map((r) => ({ ...r, trace: Array.isArray(r.trace) ? r.trace : [] }));
+    } catch {
+      // ältere Datenbank ohne Tabelle: ohne Geister weiter
+      return [];
+    }
+  }
+
+  async saveGameGhost(g: Omit<GameGhostRow, 'user_id' | 'created_at'>): Promise<void> {
+    // ein Eintrag je Mitglied, Spiel und Tag; hat die gespeicherte Fahrt mehr Punkte, behält die Datenbank sie (Trigger)
+    await this.rest('game_ghosts?on_conflict=user_id,game,day', {
+      method: 'POST',
+      body: { user_id: this.me(), game: g.game, day: g.day, score: Math.round(g.score), meters: Math.round(g.meters), bike: g.bike, trace: g.trace, created_at: new Date().toISOString() },
       prefer: 'resolution=merge-duplicates,return=minimal',
     });
   }

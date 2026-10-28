@@ -13,6 +13,7 @@ import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { LOOKS } from '../game/abfahrt/region';
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
 import { nextWeatherName } from '../game/abfahrt/weather';
+import { useGameGhosts } from './useGhosts';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { HudBanner, PowerRing, RaceBar, SwapIcon, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
@@ -21,7 +22,7 @@ import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { BergIcon } from '../ui/GameIcon';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
-import { FpsSwitch, GfxSwitches, RangePicker } from './gameKit';
+import { FpsSwitch, GfxSwitches, RangePicker, GhostLine } from './gameKit';
 import {
   FinaleBoard, FinaleMini, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
@@ -104,6 +105,9 @@ export function BergPage() {
   const mine = season.data?.find((b) => b.user_id === me.id);
   const myBest = Math.max(best, mine?.best ?? 0);
 
+  // Geister der Runde: beste Fahrt des Tages je Mitglied
+  const ghosts = useGameGhosts('berg', day, me, members.data);
+
   const makeEngine = () => {
     const accent = readAccent();
     const eng = new BergRace({
@@ -114,6 +118,7 @@ export function BergPage() {
       mate: teamMate(tourData.data, chosen.id, 'climb')?.name ?? null,
       kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number, bike: bikes.current },
       town: ref,
+      ghosts: ghosts.ghosts.current,
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
@@ -136,6 +141,7 @@ export function BergPage() {
     lsSet(LS_RUNS, String((Number(lsGet(LS_RUNS)) || 0) + 1));
     if (r.score > (Number(lsGet(LS_BEST)) || 0)) { lsSet(LS_BEST, String(r.score)); setBest(r.score); }
     if (r.score > 0) source.submitScore('berg', r.score, MOUNTAIN_FINISH).then(() => invalidate('game:berg')).catch(() => undefined);
+    ghosts.save(r.score, MOUNTAIN_FINISH, bikes.current, r.trace);
   };
 
   /** Tutorial der ersten Läufe: bei der ersten Attacke mitgehen, in der Abfahrt ducken */
@@ -323,6 +329,7 @@ export function BergPage() {
                   <div>
                     <h1 className="abf-title">Bergfinale</h1>
                     <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title}{ref ? ` · ${LOOKS[ref.region].label}` : ''}{wetter ? ` · ${wetter}` : ''}</p>
+                    <GhostLine list={ghosts.list} />
                   </div>
                 </div>
                 <BergProfile track={track} />

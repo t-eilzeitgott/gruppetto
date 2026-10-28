@@ -16,6 +16,7 @@ import { FrameClock } from '../game/frameClock';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { Track } from '../game/abfahrt/track';
 import { nextWeatherName } from '../game/abfahrt/weather';
+import { useGameGhosts } from './useGhosts';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, Segmented, cx, useTitle } from '../ui/kit';
@@ -24,7 +25,7 @@ import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { GameIcon } from '../ui/GameIcon';
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
-import { FpsSwitch, GfxSwitches, RangePicker, PauseIcon, PlayIcon, useCountUp } from './gameKit';
+import { FpsSwitch, GfxSwitches, RangePicker, PauseIcon, PlayIcon, useCountUp, GhostLine } from './gameKit';
 
 export { PauseIcon, PlayIcon, useCountUp };
 
@@ -132,6 +133,9 @@ export function GamePage() {
     return list;
   }, [season.data, members.data, me.id]);
 
+  // Geister der Runde: beste Fahrt des Tages je Mitglied
+  const ghosts = useGameGhosts('abfahrt', day, me, members.data);
+
   const makeEngine = (playing: boolean) => {
     const accent = readAccent();
     const eng = new Abfahrt({
@@ -144,6 +148,7 @@ export function GamePage() {
       missionsDone: new Set(doneIds),
       tutorial: !(playing && cruiseRef.current) && (Number(lsGet(LS_TUTORIAL)) || 0) < 4,
       cruise: playing && cruiseRef.current ? cruiseRef.current : undefined,
+      ghosts: playing ? ghosts.ghosts.current : [],
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
@@ -204,6 +209,7 @@ export function GamePage() {
     if (r.score > (Number(lsGet(LS_BEST)) || 0)) { lsSet(LS_BEST, String(r.score)); setBest(r.score); }
     if (r.score > 0) {
       source.submitScore('abfahrt', r.score, r.meters).then(() => invalidate('game:abfahrt')).catch(() => undefined);
+      ghosts.save(r.score, r.meters, bikes.current, r.trace);
     }
   };
 
@@ -623,6 +629,7 @@ export function GamePage() {
                   <div>
                     <h1 className="abf-title">Abfahrt</h1>
                     <p className="abf-sub">{track.title}{wetter ? ` · ${wetter}` : ''}</p>
+                    <GhostLine list={ghosts.list} />
                   </div>
                 </div>
                 <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />

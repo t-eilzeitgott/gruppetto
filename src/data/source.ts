@@ -1,5 +1,6 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type { TtGhostRow } from '../game/tt';
+import type { GameGhostRow, GhostGame } from '../game/ghosts';
 import type {
   AdminUser, BonusCategory, BonusResult, Profile, Rider, Stage, Tour, TourData, StageKind, TourTheme,
   SyncMode, SyncStatus,
@@ -102,6 +103,10 @@ export interface DataSource {
   ttGhosts(day: string): Promise<TtGhostRow[]>;
   /** eigene beste Fahrt des Tages hinterlegen (nur, wenn sie schneller ist als die gespeicherte) */
   saveTtGhost(g: Omit<TtGhostRow, 'user_id' | 'created_at'>): Promise<void>;
+  /** Abfahrt, Sprint- und Bergfinale: Geister des Tages (beste Fahrt je Mitglied nach Punkten) */
+  gameGhosts(game: GhostGame, day: string): Promise<GameGhostRow[]>;
+  /** eigene Fahrt als Geist hinterlegen (nur, wenn sie mehr Punkte hat als die gespeicherte) */
+  saveGameGhost(g: Omit<GameGhostRow, 'user_id' | 'created_at'>): Promise<void>;
   /** Lieblingsfahrer (IDs der Fahrer-Stammdaten) */
   listFavorites(): Promise<number[]>;
   setFavorite(cyclistId: number, on: boolean): Promise<void>;

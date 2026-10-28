@@ -17,6 +17,8 @@
  */
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, Track } from './track';
 import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup, standings, type Standing, type RiderTag } from './engine';
+import { GhostField, ghostMode, withGhostTag } from './ghostRun';
+import type { GhostRider } from '../tt';
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { RiderType, SprintRider } from './sprint';
@@ -49,6 +51,8 @@ export interface BergOptions {
   town?: string | StageRef | null;
   /** Edelhelfer aus dem eigenen Team */
   mate?: string | null;
+  /** Geister der Runde: beste Fahrt des Tages je Mitglied */
+  ghosts?: GhostRider[];
   onEvent?: (e: BergEvent) => void;
   onOver?: (r: BergResult) => void;
 }
@@ -70,6 +74,8 @@ export interface BergResult {
   gpmPlace: number;
   slides: number;
   podium: { name: string; me: boolean }[];
+  /** eigene Fahrspur (Geist), siehe ghostRun.ts */
+  trace: number[];
 }
 
 export type BergStage = 'climb' | 'descent' | 'final';
@@ -178,6 +184,9 @@ export class BergRace {
   shake = 0;
   crashSpin = 0;
   tags: RiderTag[] = [];
+  /** Geister der Runde */
+  readonly ghostField: GhostField | null;
+  get ghosts(): Opp[] { return this.ghostField?.list ?? []; }
   tx = 0;
   draft = 0;
   energy = 1;
@@ -210,6 +219,7 @@ export class BergRace {
 
   constructor(opts: BergOptions) {
     this.opts = opts;
+    this.ghostField = new GhostField(opts.ghosts ?? []);
     this.stats = BERG_STATS[opts.rider.type];
     this.track = new Track(opts.dayKey, opts.names, 'mountain', opts.town);
     this.rng = mulberry32(this.track.seed ^ 0xb3);
@@ -234,6 +244,7 @@ export class BergRace {
     this.phase = 'ready';
     this.phaseT = 0;
     this.time = 0;
+    this.ghostField?.reset();
     this.energy = 1;
     this.draft = 0;
     this.finT = -1;
@@ -395,6 +406,9 @@ export class BergRace {
     for (const pp of this.popups) pp.age += dr;
     this.popups = this.popups.filter((pp) => pp.age < pp.life);
     this.shake = Math.max(0, this.shake - dr * 3);
+    // Geister: fahren ab „Los“; die eigene Spur endet im Ziel
+    this.ghostField?.step(dt, this.phase === 'playing', { z: this.p.z, x: this.p.x, mode: ghostMode(this.p) }, this.track, this.finT >= 0);
+    this.tags = withGhostTag(this.tags, this.ghostField);
     if (this.phase === 'playing' && this.finT >= 0 && this.time - this.finT > 2.6) this.finish();
     this.track.trim(Math.floor(this.p.z / SEG) - 200);
   }
@@ -957,6 +971,7 @@ export class BergRace {
       gpmPlace,
       slides: this.slides,
       podium: all.slice(0, 3).map((x) => ({ name: x.me ? this.opts.rider.name : x.name, me: x.me })),
+      trace: this.ghostField?.recorded ?? [],
     });
   }
 
