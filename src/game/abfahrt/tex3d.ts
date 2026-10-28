@@ -215,14 +215,14 @@ export function rockTex(): HTMLCanvasElement {
   while (y < S) {
     const h = Math.min(S - y, 4 + r() * 15);
     const tone = r();
-    const fill = tone < 0.34 ? `rgba(78,68,56,${(0.05 + r() * 0.13).toFixed(2)})`
-      : tone < 0.72 ? `rgba(255,252,246,${(0.08 + r() * 0.18).toFixed(2)})`
-        : `rgba(132,110,86,${(0.05 + r() * 0.1).toFixed(2)})`;
+    const fill = tone < 0.34 ? `rgba(78,68,56,${(0.12 + r() * 0.22).toFixed(2)})`
+      : tone < 0.72 ? `rgba(255,252,246,${(0.14 + r() * 0.26).toFixed(2)})`
+        : `rgba(132,110,86,${(0.12 + r() * 0.18).toFixed(2)})`;
     const amp = 0.8 + r() * 2.5;
     const ph = r() * TAU;
     const k = 1 + Math.floor(r() * 3);
     const edge = (x: number, off: number) => off + amp * Math.sin(ph + (x / S) * TAU * k) + 1.2 * Math.sin(ph * 3 + (x / S) * TAU * (k + 3));
-    const joint = `rgba(38,32,26,${(0.08 + r() * 0.2).toFixed(2)})`;
+    const joint = `rgba(38,32,26,${(0.16 + r() * 0.3).toFixed(2)})`;
     const lw = 0.8 + r() * 1.6;
     for (const dy of [-S, 0, S]) {
       c.fillStyle = fill;

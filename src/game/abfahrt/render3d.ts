@@ -571,7 +571,8 @@ export class Renderer3D {
             // Kante gebrochen – die Wand zerfiel in Facetten); Textur immer (gleichmäßiger Kontrollfluss → Mipmap)
             vec3 fn = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
             // nur in der Nähe: weiter weg würden die feinen Schichten zu Streifen flimmern
-            float steep = (1.0 - smoothstep(0.5, 0.8, abs(fn.y))) * (1.0 - smoothstep(60.0, 180.0, distance(vRockP, cameraPosition)));
+            float camDR = distance(vRockP, cameraPosition);
+            float steep = (1.0 - smoothstep(0.5, 0.8, abs(fn.y))) * (1.0 - smoothstep(220.0, 460.0, camDR));
             #ifdef TMORPH
               steep *= 1.0 - vMk;
             #endif
@@ -580,7 +581,14 @@ export class Renderer3D {
             vec2 rux = dFdx(ruv);
             vec2 ruy = dFdy(ruv);
             // nur lesen, wo Fels sichtbar ist (Ableitungen vorher, damit die Mipmap stimmt)
-            if (steep > 0.003) sampledDiffuseColor = mix(sampledDiffuseColor, textureGrad(uRock, ruv, rux, ruy), steep);
+            if (steep > 0.003) {
+              // zwei Maßstäbe: Schichten (11 m) und feine Körnung (2,7 m, nur nah) – sonst wirkt die Wand wie verwaschen
+              vec4 r1 = textureGrad(uRock, ruv, rux, ruy);
+              vec4 r2 = textureGrad(uRock, ruv * 4.1 + 0.37, rux * 4.1, ruy * 4.1);
+              float fine = 1.0 - smoothstep(40.0, 120.0, camDR);
+              vec3 rockC = r1.rgb * mix(vec3(1.0), 0.55 + 0.55 * r2.rgb, fine);
+              sampledDiffuseColor = mix(sampledDiffuseColor, vec4(rockC, 1.0), steep);
+            }
           }
           diffuseColor *= sampledDiffuseColor;
           ${CLOUD('vRockP.xz')}`);
