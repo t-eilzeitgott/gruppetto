@@ -12,6 +12,7 @@ import { riderOptions, rivalNames, sprintTrains, teamMate, type RiderOption } fr
 import { shortTour, stageRef } from '../game/abfahrt/stageRef';
 import { LOOKS } from '../game/abfahrt/region';
 import { SPRINT_FINISH, Track } from '../game/abfahrt/track';
+import { nextWeatherName } from '../game/abfahrt/weather';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
@@ -211,6 +212,8 @@ export function SprintPage() {
   const onPointerUp = () => engineRef.current?.pointerUp();
 
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
+  // Wetter der nächsten Fahrt (wechselt über den Tag, siehe weather.ts)
+  const wetter = nextWeatherName();
   const flammePct = ((SPRINT_FINISH - 1000) / SPRINT_FINISH) * 100;
   const boardView = (
     <FinaleBoard title="Bestenliste Sprint" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Sprint', 'Sprints']} />
@@ -294,7 +297,7 @@ export function SprintPage() {
                   <SprintIcon size={44} />
                   <div>
                     <h1 className="abf-title">Sprintfinale</h1>
-                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km{ref ? ` · ${LOOKS[ref.region].label}` : ''}</p>
+                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km{ref ? ` · ${LOOKS[ref.region].label}` : ''}{wetter ? ` · ${wetter}` : ''}</p>
                     {ref?.finale?.line ? <p className="abf-sub abf-sub--finale">Echtes Finale: {ref.finale.line}</p> : null}
                   </div>
                 </div>

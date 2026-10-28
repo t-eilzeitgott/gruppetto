@@ -33,6 +33,7 @@ import { viewRange, viewRangeVersion } from './viewRange';
 import { setGlossEnv } from './gloss';
 import { apIn, apOut, apQ, appearify, appearifyTree, setAp } from './appear';
 import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
+import type { WeatherEnv } from './weather';
 
 /**
  * Bäume lösen sich zwischen TREE_FADE und TREE_GONE weich auf; das Kronendach der Landschaft hebt sich schon
@@ -1181,7 +1182,8 @@ export class Renderer3D {
     this.updateCrowd(g, dt);
     this.updateObjects(g);
     this.updateParticles(g);
-    this.gl.render(this.scene, this.camera);
+    if (this.post) this.post(() => this.gl.render(this.scene, this.camera), g);
+    else this.gl.render(this.scene, this.camera);
     this.drawOverlay(g);
     // neue Teile vorab hochladen (eine Portion je Bild), bevor sie sichtbar werden
     const u0 = performance.now();
@@ -1815,8 +1817,19 @@ export class Renderer3D {
   /** Radlampen erst bei Dunkelheit (und im Tunnel) – nicht schon im Abendlicht der Finals */
   private bikeLight(): number { return Math.max(0, this.night - 0.62) * 2.6 + this.tunnelDim; }
 
-  /** nur für Tests: feste Tageszeit (0 Mittag … 0.7 Sonnenuntergang) */
+  /** feste Tageszeit (0 Mittag … 0.7 Sonnenuntergang): Tests und das Wetter (weather.ts) setzen sie, sonst null */
   debugTod: number | null = null;
+
+  /**
+   * Wetter (weather.ts): zeichnet die Szene über eine Nachbearbeitung statt direkt auf die Leinwand.
+   * draw() zeichnet die Szene in das gerade gesetzte Ziel; g ist die Fahrt dieses Bildes.
+   */
+  post: ((draw: () => void, g: RaceView) => void) | null = null;
+
+  /** was das Wetter vom Renderer braucht */
+  get weatherEnv(): WeatherEnv {
+    return { gl: this.gl, scene: this.scene, camera: this.camera, sun: this.sun, fog: this.fog, sky: this.skyMat.uniforms, skyMesh: this.sky, noCast: [this.mats.billboard] };
+  }
 
   /**
    * Tageszeit über die Fahrt: jede Fahrt beginnt am Nachmittag und endet im Abendlicht – Sprint- und
