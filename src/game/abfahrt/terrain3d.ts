@@ -64,8 +64,6 @@ function ridged(x: number, y: number): number {
   }
   return Math.min(1, sum / 0.95);
 }
-const smin = (a: number, b: number, k: number) => { const h = Math.max(0, Math.min(1, 0.5 + 0.5 * (b - a) / k)); return b + (a - b) * h - k * h * (1 - h); };
-const smax = (a: number, b: number, k: number) => -smin(-a, -b, k);
 const sstep = (e0: number, e1: number, x: number) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
 
 // ------------------------------------------------------------------ Straßenproben
@@ -103,55 +101,85 @@ const kindOf = (s: Side, tunnel: boolean): number => {
  * (spürbare Ruckler) aus.
  */
 const PF = new Float64Array(9);
-/** Querprofil eines Straßenstücks: Höhe relativ zur Straße im Abstand e ab Bankettkante (Eingaben in PF, Ergebnis PF[8]) */
+/**
+ * Querprofil eines Straßenstücks: Höhe relativ zur Straße im Abstand e ab Bankettkante (Eingaben in PF, Ergebnis PF[8]).
+ * Weiches Minimum/Maximum (smin/smax) und sstep stehen hier ausgeschrieben: als Aufrufe mit Kommazahlen legte jeder
+ * Aufruf Zahlenobjekte an (die Funktion läuft tausendfach je Bild) – fast die Hälfte des Speichermülls der Fahrt.
+ */
 function profile(kind: number, b: number): void {
   const tilt = PF[0], wall = PF[1], e = PF[2], floorRel = PF[3], ridgeRel = PF[4], lakeRel = PF[5], lakeW = PF[6], depth = PF[7];
+  // Ergebnis = smin(x, y, k)
+  let x: number;
+  let y = ridgeRel;
+  let k = 60;
   switch (kind) {
-    case K_UP: {
-      const lin = tilt * Math.min(e, 30) + Math.max(0, e - 30) * S_UP[b];
-      { PF[8] = smin(lin, ridgeRel, 60); return; }
-    }
-    case K_WALL: {
-      const lin = (e < 0.6 ? wall * (e / 0.6) : wall + 0.4 * Math.min(1, (e - 0.6) / 1.2) + tilt * Math.max(0, e - 1.8)) + Math.max(0, e - 30) * S_UP[b];
-      { PF[8] = smin(lin, Math.max(ridgeRel, wall + 24), 60); return; }
-    }
+    case K_UP:
+      x = tilt * Math.min(e, 30) + Math.max(0, e - 30) * S_UP[b];
+      break;
+    case K_WALL:
+      x = (e < 0.6 ? wall * (e / 0.6) : wall + 0.4 * Math.min(1, (e - 0.6) / 1.2) + tilt * Math.max(0, e - 1.8)) + Math.max(0, e - 30) * S_UP[b];
+      y = Math.max(ridgeRel, wall + 24);
+      break;
     case K_TUNNEL: {
       // Berg über dem Tunnel: am Portal gut 10 m, nach innen steil ansteigend (Felsrücken statt Erdwall).
       // Bergseitig steigt er weiter an, talseitig fällt er zum Tal hin ab (sonst stünde dort eine Wand)
       const top = 13 + Math.min(depth * 1.25, 80);
-      if (tilt < -0.03) { PF[8] = smax(top - Math.max(0, e - 4) * 0.8, floorRel, 20); return; }
-      { PF[8] = smin(top + 0.5 * e, Math.max(ridgeRel, 60), 40); return; }
+      if (tilt < -0.03) {
+        // smax(top − …, floorRel, 20)
+        const a = top - Math.max(0, e - 4) * 0.8;
+        const h = Math.max(0, Math.min(1, 0.5 + 0.5 * (a - floorRel) / 20));
+        PF[8] = floorRel + (a - floorRel) * h + 20 * h * (1 - h);
+        return;
+      }
+      x = top + 0.5 * e;
+      y = Math.max(ridgeRel, 60);
+      k = 40;
+      break;
     }
-    case K_FLAT: {
-      const lin = 0.13 + Math.min(e, 40) * 0.07 + Math.max(0, e - 40) * S_UP[b];
-      { PF[8] = smin(lin, ridgeRel, 60); return; }
-    }
+    case K_FLAT:
+      x = 0.13 + Math.min(e, 40) * 0.07 + Math.max(0, e - 40) * S_UP[b];
+      break;
     case K_WATER: {
-      if (e < 6) { PF[8] = lakeRel * sstep(0, 6, e); return; }
+      if (e < 6) {
+        // lakeRel · sstep(0, 6, e)
+        const t = Math.max(0, Math.min(1, e / 6));
+        PF[8] = lakeRel * t * t * (3 - 2 * t);
+        return;
+      }
       if (e < lakeW) { PF[8] = lakeRel; return; }
-      { PF[8] = smin(lakeRel + (e - lakeW) * 0.42, ridgeRel, 60); return; }
+      x = lakeRel + (e - lakeW) * 0.42;
+      break;
     }
     case K_DROP: {
-      const k = Math.max(0.6, -tilt);
+      const kd = Math.max(0.6, -tilt);
       let near: number;
-      if (e < 0.9) near = -0.5 * k * (e / 0.9);
-      else if (e < 3) near = -k * (0.5 + 2.5 * (e - 0.9) / 2.1);
-      else if (e < 7) near = -k * (3 + 5 * (e - 3) / 4);
-      else if (e < 12) near = -k * (8 + 8 * (e - 7) / 5);
-      else if (e < 18) near = -k * (16 + 10 * (e - 12) / 6);
-      else near = -k * (26 + (e - 18) * 0.9);
-      const eF = 18 + Math.max(0, (-26 * k - floorRel) / (0.9 * k));
-      const v = smax(near, floorRel, 18);
-      { PF[8] = smin(v + Math.max(0, e - eF - 420) * 0.42, ridgeRel, 60); return; }
+      if (e < 0.9) near = -0.5 * kd * (e / 0.9);
+      else if (e < 3) near = -kd * (0.5 + 2.5 * (e - 0.9) / 2.1);
+      else if (e < 7) near = -kd * (3 + 5 * (e - 3) / 4);
+      else if (e < 12) near = -kd * (8 + 8 * (e - 7) / 5);
+      else if (e < 18) near = -kd * (16 + 10 * (e - 12) / 6);
+      else near = -kd * (26 + (e - 18) * 0.9);
+      const eF = 18 + Math.max(0, (-26 * kd - floorRel) / (0.9 * kd));
+      // v = smax(near, floorRel, 18)
+      const h = Math.max(0, Math.min(1, 0.5 + 0.5 * (near - floorRel) / 18));
+      const v = floorRel + (near - floorRel) * h + 18 * h * (1 - h);
+      x = v + Math.max(0, e - eF - 420) * 0.42;
+      break;
     }
     default: { // K_DOWN
       const t30 = tilt * 30;
       const lin = tilt * Math.min(e, 30) - Math.max(0, e - 30) * S_DOWN[b];
       const eF = 30 + Math.max(0, (t30 - floorRel) / S_DOWN[b]);
-      const v = smax(lin, floorRel, 22);
-      { PF[8] = smin(v + Math.max(0, e - eF - 420) * 0.42, ridgeRel, 60); return; }
+      // v = smax(lin, floorRel, 22)
+      const h = Math.max(0, Math.min(1, 0.5 + 0.5 * (lin - floorRel) / 22));
+      const v = floorRel + (lin - floorRel) * h + 22 * h * (1 - h);
+      x = v + Math.max(0, e - eF - 420) * 0.42;
+      break;
     }
   }
+  // smin(x, y, k)
+  const h = Math.max(0, Math.min(1, 0.5 + 0.5 * (y - x) / k));
+  PF[8] = y + (x - y) * h - k * h * (1 - h);
 }
 
 export interface TerrainLevel { size: number; n: number; ring: number; skirt: number }
@@ -273,6 +301,26 @@ export class Terrain {
     this.limCache.set(i, out);
     if (this.limCache.size > 20000) this.limCache.clear();
     return out;
+  }
+
+  /** nächstes Straßenstück, dessen Korridorbreite noch vorab gerechnet wird */
+  private limNext = -1;
+  /**
+   * Korridorbreiten im Probenfenster vorab rechnen, in kleinen Portionen bis zur Zeit until (performance.now()).
+   * Sonst rechnet die erste Kachel in einem neuen Gebiet hunderte auf einmal (ein Bild mit bis zu ~8 ms mehr).
+   */
+  prefetchLim(until: number) {
+    if (this.zTo < this.zFrom) return;
+    const t = this.track;
+    const i0 = Math.max(t.first, Math.floor(this.zFrom / SEG));
+    const i1 = Math.floor(this.zTo / SEG);
+    if (this.limNext < i0) this.limNext = i0;
+    let n = 0;
+    while (this.limNext <= i1) {
+      this.lim(this.limNext);
+      this.limNext += 1;
+      if ((++n & 7) === 0 && performance.now() > until) break;
+    }
   }
 
   private rawLim(i: number): [number, number] {
@@ -728,6 +776,7 @@ export class Terrain {
     const cell = L.size / L.n;
     // Rand mitnehmen: auch die Randpunkte sehen alle Straßenstücke in ihrer Nähe
     const sgr = lv < 2 ? this.segsNear(x0, z0, x0 + N * cell, z0 + N * cell, clampR(cell) + 24 + cell) : null;
+    if (this.late()) yield;
     const G = N + 3; // mit Rand
     const H = new Float32Array(G * G);
     const W = new Float32Array(G * G);
@@ -942,7 +991,7 @@ export class Terrain {
       yield* this.vertexSteps(cg, cV, cA);
       for (let v = 0; v < V * V; v++) {
         this.coarseAt(pos[v * 3], pos[v * 3 + 2], cg, cV, cA, morph, v);
-        if ((v & 31) === 31 && this.late()) yield;
+        if ((v & 7) === 7 && this.late()) yield;
       }
     }
     if (this.late()) yield;

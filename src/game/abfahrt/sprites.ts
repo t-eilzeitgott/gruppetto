@@ -4,6 +4,7 @@
  * es werden keine Bilddateien geladen.
  */
 import { mulberry32, type Rng } from './rng';
+import { fitFont } from './textfit';
 import type { Ground, SpriteKind, Surface } from './track';
 
 export interface SpriteImg {
@@ -699,9 +700,7 @@ export class SpriteBank {
           c.strokeStyle = '#1a1a1a'; c.lineWidth = 0.05;
           c.beginPath(); c.roundRect(-1.18, -1.93, 2.36, 0.91, 0.04); c.stroke();
           c.fillStyle = '#1a1a1a';
-          let fs = 0.42;
-          c.font = `800 ${fs}px ${FONT}`;
-          while (c.measureText(text.toUpperCase()).width > 2.1 && fs > 0.18) { fs -= 0.02; c.font = `800 ${fs}px ${FONT}`; }
+          fitFont(c, text.toUpperCase(), 2.1, 0.42, 0.02, 0.18, (fs) => `800 ${fs}px ${FONT}`);
           c.fillText(text.toUpperCase(), 0, -1.48);
         } else {
           rrect(c, -0.06, -1.3, 0.12, 1.3, 0.02, '#6b6f75');
@@ -709,9 +708,7 @@ export class SpriteBank {
           c.strokeStyle = '#f4efe4'; c.lineWidth = 0.05;
           c.beginPath(); c.roundRect(-1.36, -2.56, 2.72, 1.22, 0.07); c.stroke();
           c.fillStyle = '#f4efe4';
-          let fs = 0.36;
-          c.font = `800 ${fs}px ${FONT}`;
-          while (c.measureText(text).width > 2.5 && fs > 0.16) { fs -= 0.02; c.font = `800 ${fs}px ${FONT}`; }
+          fitFont(c, text, 2.5, 0.36, 0.02, 0.16, (fs) => `800 ${fs}px ${FONT}`);
           c.fillText(text, 0, -2.12);
           c.font = `600 0.26px ${FONT}`;
           c.fillText(sub, 0, -1.66);
@@ -985,9 +982,7 @@ export function roadText(text: string): HTMLCanvasElement {
   c.fillStyle = 'rgba(255,255,255,0.92)';
   c.textAlign = 'center';
   c.textBaseline = 'middle';
-  let fs = 150;
-  c.font = `900 ${fs}px ${FONT}`;
-  while (c.measureText(text).width > W * 0.94 && fs > 40) { fs -= 6; c.font = `900 ${fs}px ${FONT}`; }
+  fitFont(c, text, W * 0.94, 150, 6, 40, (fs) => `900 ${fs}px ${FONT}`);
   c.save();
   c.translate(W / 2, H / 2);
   c.scale(1, 1.1);

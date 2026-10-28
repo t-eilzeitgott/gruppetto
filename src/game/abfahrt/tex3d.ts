@@ -1,5 +1,6 @@
 /** Farbtexturen für den WebGL-Renderer (prozedural, nahtlos kachelbar) */
 import { mulberry32, type Rng } from './rng';
+import { fitFont } from './textfit';
 
 function canvas(w: number, h: number) {
   const c = document.createElement('canvas');
@@ -352,9 +353,7 @@ export function bannerTex(text: string, sub: string, bg: string, fg: string): HT
   c.textAlign = 'center';
   c.textBaseline = 'middle';
   const font = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif';
-  let fs = sub ? 64 : 80;
-  c.font = `800 ${fs}px ${font}`;
-  while (c.measureText(text).width > W * 0.92 && fs > 20) { fs -= 4; c.font = `800 ${fs}px ${font}`; }
+  fitFont(c, text, W * 0.92, sub ? 64 : 80, 4, 20, (fs) => `800 ${fs}px ${font}`);
   c.fillText(text, W / 2, sub ? H * 0.38 : H * 0.52);
   if (sub) {
     c.globalAlpha = 0.85;
@@ -667,9 +666,7 @@ export function plaqueTex(name: string, len: string): HTMLCanvasElement {
   const SERIF = 'Georgia, "Times New Roman", "Iowan Old Style", serif';
   c.textAlign = 'center';
   c.textBaseline = 'middle';
-  let fs = 46;
-  c.font = `700 ${fs}px ${SERIF}`;
-  while (c.measureText(name).width > W - 60 && fs > 16) { fs -= 2; c.font = `700 ${fs}px ${SERIF}`; }
+  fitFont(c, name, W - 60, 46, 2, 16, (fs) => `700 ${fs}px ${SERIF}`);
   // eingemeißelt: dunkle Schrift mit heller Kante darunter
   c.fillStyle = 'rgba(255,255,255,0.6)';
   c.fillText(name, W / 2 + 1, 46 + 2);

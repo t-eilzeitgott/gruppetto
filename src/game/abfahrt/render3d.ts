@@ -105,7 +105,36 @@ const TK = 16384;
 const tkey = (lv: number, i: number, j: number) => (lv * TK + (i + TK / 2)) * TK + (j + TK / 2);
 const tkI = (k: number) => (Math.floor(k / TK) % TK) - TK / 2;
 const tkJ = (k: number) => (k % TK) - TK / 2;
-interface Tile { lv: number; key: number; objs: THREE.Object3D[]; geos: THREE.BufferGeometry[]; tsrc: TreeSource | null; box: [number, number, number, number]; stale?: boolean; out?: boolean }
+interface Tile { lv: number; key: number; objs: THREE.Object3D[]; geos: THREE.BufferGeometry[]; tsrc: TreeSource | null; box: [number, number, number, number]; stale?: boolean; out?: boolean; staged?: boolean }
+
+/** so viel kommt je Bild vorab auf die Grafikkarte (Geometrie und Texturen neuer Teile, Bytes) */
+const UP_BYTES = 256 * 1024;
+/** Anmeldung zum Vorab-Hochladen: Objekte und Texturen, Fortschritt, noch gebraucht?, fertig */
+interface UpJob { objs: THREE.Object3D[]; tex: THREE.Texture[]; i: number; ti: number; alive: () => boolean; done: () => void }
+/** Größe der Daten einer Geometrie, die three.js beim ersten Zeichnen hochlädt (ohne Index: der folgt beim Zeichnen) */
+function geoBytes(g: THREE.BufferGeometry): number {
+  let b = 0;
+  let last: unknown = null;
+  for (const k in g.attributes) {
+    const a = g.attributes[k] as THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
+    const arr = (a as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute ? (a as THREE.InterleavedBufferAttribute).data.array : (a as THREE.BufferAttribute).array;
+    // mehrere Attribute in einem gemeinsamen Feld: nur einmal
+    if (arr === last) continue;
+    last = arr;
+    b += (arr as unknown as { byteLength: number }).byteLength;
+  }
+  return b;
+}
+/** Texturen eines Materials (Bildfelder und Uniforms eigener Shader) */
+function texturesOf(m: THREE.Material, out: Set<THREE.Texture>) {
+  const mm = m as unknown as Record<string, unknown>;
+  for (const k of ['map', 'emissiveMap', 'alphaMap', 'normalMap', 'bumpMap', 'aoMap', 'lightMap', 'specularMap']) {
+    const t = mm[k] as THREE.Texture | null | undefined;
+    if (t && (t as THREE.Texture).isTexture) out.add(t);
+  }
+  const u = (m as THREE.ShaderMaterial).uniforms;
+  if (u) for (const k in u) { const v = u[k]?.value as THREE.Texture | undefined; if (v && v.isTexture) out.add(v); }
+}
 /** Überblendung einer neu gebauten Kachel: die neue (inc) erscheint, die alte (out) geht – je Bildpunkt genau eine */
 interface TileFade { lv: number; a: number; dur: number; inc: Tile[]; out: Tile[] }
 interface AtlasEntry { u0: number; v0: number; u1: number; v1: number; w: number; h: number; du: number }
@@ -145,6 +174,8 @@ export class Renderer3D {
   private mtnBiome: BiomeId | null = null;
   /** Berge der nächsten Landschaft im Bau (in Schritten) */
   private mtnGen: { biome: BiomeId; it: Generator<void, THREE.Mesh, void> } | null = null;
+  /** Berge der neuen Landschaft: fertig gebaut, werden noch hochgeladen (dann erst überblenden) */
+  private mtnWait: { m: THREE.Mesh; biome: BiomeId; ready: boolean } | null = null;
   private mtnFade = 1;
   /** Licht für die Berge am Horizont (eigener Shader) */
   private peakU = peakLight();
@@ -868,7 +899,8 @@ export class Renderer3D {
    */
   private baseMs = 5;
   private room(): number {
-    let r = 12.5 - this.baseMs;
+    // Ziel ~11,5 ms Rechenzeit fürs Bild: Platz für Spiellogik, Anzeige, Speicherbereinigung und Hochladen
+    let r = 11.5 - this.baseMs;
     if (this.lastRaw > 0.021) r *= 0.5;
     return r;
   }
@@ -957,6 +989,11 @@ export class Renderer3D {
     this.updateParticles(g);
     this.gl.render(this.scene, this.camera);
     this.drawOverlay(g);
+    // neue Teile vorab hochladen (eine Portion je Bild), bevor sie sichtbar werden
+    const u0 = performance.now();
+    this.updateStaging();
+    this.updateDispose();
+    this.work += performance.now() - u0;
     const rest = performance.now() - d0 - this.work;
     this.baseMs += (Math.min(30, rest) - this.baseMs) * 0.08;
   }
@@ -1003,6 +1040,8 @@ export class Renderer3D {
     this.morphR.fill(-1);
     for (const t of this.tiles.values()) this.dropTile(t);
     this.tiles.clear();
+    for (const t of this.tWait.values()) this.dropTile(t);
+    this.tWait.clear();
     this.pending = null;
     for (const b of this.lvBox) b.set(1e9, 1e9, -1e9, -1e9);
     for (const b of this.lvBoxA) b.set(1e9, 1e9, -1e9, -1e9);
@@ -1132,12 +1171,24 @@ export class Renderer3D {
 
   private dropTile(t: Tile) {
     if (t.tsrc) this.treeSrc.delete(t.tsrc);
-    for (const o of t.objs) {
-      this.scene.remove(o);
-      if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose();
-      if (o.userData.bb) disposeBillboards((o as THREE.Mesh).geometry);
-    }
-    for (const g of t.geos) g.dispose();
+    for (const o of t.objs) this.scene.remove(o);
+    // freigeben erst nach und nach (ein Ringwechsel gibt viele Kacheln auf einmal frei)
+    this.dispQ.push(() => {
+      for (const o of t.objs) {
+        if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose();
+        if (o.userData.bb) disposeBillboards((o as THREE.Mesh).geometry);
+      }
+      for (const g of t.geos) g.dispose();
+    });
+  }
+
+  /** Freigaben, die noch ausstehen: je Bild eine kleine Portion (Puffer auf der Grafikkarte löschen kostet Zeit) */
+  private dispQ: (() => void)[] = [];
+  private dispI = 0;
+  private updateDispose() {
+    const t0 = performance.now();
+    while (this.dispI < this.dispQ.length && (this.idleBuild || performance.now() - t0 < 0.5)) this.dispQ[this.dispI++]();
+    if (this.dispI >= this.dispQ.length && this.dispI) { this.dispQ.length = 0; this.dispI = 0; }
   }
 
   /**
@@ -1149,6 +1200,7 @@ export class Renderer3D {
     if (!T) return;
     void g;
     this.updateFades(dt);
+    this.updateTileWait();
     const cp = this.camera.position;
     const t0 = performance.now();
     // großer Sprung (neuer Lauf): wie beim Start schrittweise neu aufbauen
@@ -1166,8 +1218,10 @@ export class Renderer3D {
     // Mittelpunkt je Stufe: die Kamera selbst. Die Ringe hängen so nur vom Ort ab, nicht von der Blickrichtung –
     // in Kehren dreht sich die Kamera, ohne dass Kacheln neu gebaut werden müssen. (Voraus reicht die feinste
     // Stufe trotzdem weit genug: ihr Übergang endet spätestens 254 m voraus, ihr Gebiet frühestens nach 256 m.)
-    const mid = LEVELS.map(() => [cp.x, cp.z]);
-    this.updateMorph(MORPH_AHEAD.map((k) => [cp.x + fw.x * k, cp.z + fw.z * k]), dt, jump);
+    // (Felder wiederverwendet: keine neuen Listen je Bild)
+    const mt = this.morphT;
+    for (let lv = 0; lv < mt.length; lv++) { mt[lv][0] = cp.x + fw.x * MORPH_AHEAD[lv]; mt[lv][1] = cp.z + fw.z * MORPH_AHEAD[lv]; }
+    this.updateMorph(mt, dt, jump);
     this.dropMorphed();
     // nach einem Sprung passen die alten Kacheln nicht mehr zur Strecke (sie stünden als Berge im Bild):
     // weg damit und wie beim Start neu aufbauen
@@ -1178,17 +1232,21 @@ export class Renderer3D {
     // Der Nahbereich (feine und mittlere Stufe) entsteht aber sofort vollständig: sonst schneidet die
     // grobe Stufe (ohne Straßenklemmen) durch Straße und Zuschauer
     // auf der Startkarte großzügig: dort soll die Welt komplett stehen, bevor es losgeht
-    const budget = this.idleBuild ? 30 : startup ? 12 : Math.max(1.2, Math.min(4, this.room() * 0.62));
+    const budget = this.idleBuild ? 30 : startup ? 12 : Math.max(1.2, Math.min(3.5, this.room() * 0.62));
+    // Korridorbreiten der Strecke vorab in kleinen Portionen (die Kacheln fragen sie dann nur noch ab)
+    T.prefetchLim(t0 + (this.idleBuild ? 6 : 0.3));
     if (fresh) {
       this.pending = null;
       for (const lv of [0, 1]) {
         const Lv = LEVELS[lv];
-        const cx = Math.floor(mid[lv][0] / Lv.size);
-        const cz = Math.floor(mid[lv][1] / Lv.size);
+        const cx = Math.floor(cp.x / Lv.size);
+        const cz = Math.floor(cp.z / Lv.size);
         for (let j = cz - 1; j <= cz + 1; j++) {
           for (let i = cx - 1; i <= cx + 1; i++) if (!this.tiles.has(tkey(lv, i, j))) this.buildTile(T, lv, i, j, t0, Infinity);
         }
       }
+      // sofort sichtbar (nach einem Sprung wäre sonst ein Bild lang nichts da) – sie laden beim nächsten Zeichnen hoch
+      for (const t of this.tiles.values()) t.staged = true;
     }
     // angefangene Kachel weiterbauen (nach einem Fensterwechsel neu beginnen: die Proben haben sich geändert)
     if (this.pending && this.pending.ver !== T.version) {
@@ -1199,10 +1257,11 @@ export class Renderer3D {
     T.deadline = t0 + budget;
     while (this.pending && performance.now() - t0 < budget) {
       const r = this.pending.gen.next();
-      if (r.done) { this.putTile(this.pending.key, r.value); this.pending = null; }
+      if (r.done) { this.tileDone(this.pending.key, r.value); this.pending = null; }
     }
-    const centers = LEVELS.map((Lv, lv) => [Math.floor(mid[lv][0] / Lv.size), Math.floor(mid[lv][1] / Lv.size)]);
-    const ringOf = (lv: number, key: number) => Math.max(Math.abs(tkI(key) - centers[lv][0]), Math.abs(tkJ(key) - centers[lv][1]));
+    const centers = this.cent;
+    for (let lv = 0; lv < LEVELS.length; lv++) { centers[lv][0] = Math.floor(cp.x / LEVELS[lv].size); centers[lv][1] = Math.floor(cp.z / LEVELS[lv].size); }
+    const ringOf = (lv: number, key: number) => this.ringOf(lv, key);
     // 1) fehlende Kacheln: beim Start erst der Nahbereich, dann die Ferne (damit nie Leere sichtbar ist),
     //    danach der Rest; nächste zuerst
     const order = startup ? ORDER_START : ORDER_RIDE;
@@ -1234,7 +1293,8 @@ export class Renderer3D {
       let rc = -1;
       for (let r = 0; r <= Lv.ring; r++) {
         let ok = true;
-        for (let j = cz - r; j <= cz + r && ok; j++) for (let i = cx - r; i <= cx + r && ok; i++) if (!this.tiles.has(tkey(lv, i, j))) ok = false;
+        // (vollständig = gebaut und schon auf der Grafikkarte: ein neuer Ring lädt nicht im Bild seines Erscheinens hoch)
+        for (let j = cz - r; j <= cz + r && ok; j++) for (let i = cx - r; i <= cx + r && ok; i++) if (!this.tiles.get(tkey(lv, i, j))?.staged) ok = false;
         if (!ok) break;
         rc = r;
       }
@@ -1293,10 +1353,45 @@ export class Renderer3D {
     T.deadline = t0 + budget;
     while (this.pending && performance.now() - t0 < budget) {
       const r = this.pending.gen.next();
-      if (r.done) { this.putTile(key, r.value); this.pending = null; }
+      if (r.done) { this.tileDone(key, r.value); this.pending = null; }
     }
     T.deadline = Infinity;
     return !this.pending;
+  }
+
+  /** fertig gebaute Ersatzkacheln, die noch hochgeladen werden (die alte bleibt bis dahin sichtbar) */
+  private tWait = new Map<number, Tile>();
+
+  /** Kachel fertig gebaut: einsetzen – ersetzt sie eine sichtbare, erst wenn sie auf der Grafikkarte ist */
+  private tileDone(key: number, t: Tile) {
+    const old = this.tiles.get(key);
+    if (old && !t.staged && this.boxSet[t.lv] && old.objs[0]?.visible && !old.out) {
+      // die alte ist damit nicht mehr veraltet (sonst würde sie gleich noch einmal gebaut)
+      old.stale = false;
+      const prev = this.tWait.get(key);
+      if (prev) this.dropTile(prev);
+      this.tileVis(t, false);
+      this.tWait.set(key, t);
+      return;
+    }
+    this.putTile(key, t);
+  }
+
+  /** wartende Ersatzkacheln einsetzen, sobald sie oben sind */
+  private updateTileWait() {
+    for (const [key, t] of this.tWait) {
+      if (!t.staged) continue;
+      this.tWait.delete(key);
+      this.putTile(key, t);
+    }
+  }
+
+  /** Ziel des Übergangs je Stufe und Mittelpunkt (Kachel) je Stufe – wiederverwendet */
+  private morphT = MORPH_AHEAD.map(() => [0, 0]);
+  private cent = LEVELS.map(() => [0, 0]);
+  /** Ring einer Kachel um die Kamera (Tschebyschow-Abstand in Kacheln) */
+  private ringOf(lv: number, key: number): number {
+    return Math.max(Math.abs(tkI(key) - this.cent[lv][0]), Math.abs(tkJ(key) - this.cent[lv][1]));
   }
 
   /** fertige Kachel einsetzen (eine veraltete mit gleichem Schlüssel verschwindet erst jetzt) */
@@ -1426,7 +1521,11 @@ export class Renderer3D {
     // neue Shader (z. B. der erste Wasserfall) gleich anstoßen: sichtbar wird die Kachel meist erst einige Bilder später
     for (const o of objs) this.warmUp(o);
     if (tsrc) this.treeSrc.add(tsrc);
-    return { lv, key, objs, geos, tsrc, box: [tx * size, tz * size, (tx + 1) * size, (tz + 1) * size] };
+    const tile: Tile = { lv, key, objs, geos, tsrc, box: [tx * size, tz * size, (tx + 1) * size, (tz + 1) * size] };
+    // vorab hochladen; ein neuer Ring erscheint erst, wenn alle seine Kacheln oben sind (auf der Startkarte gleich)
+    if (this.idleBuild) tile.staged = true;
+    else this.stage(objs, () => { tile.staged = true; });
+    return tile;
   }
 
   private clearChunks() {
@@ -1611,9 +1710,14 @@ export class Renderer3D {
     this.peakU.uNoise.value ??= this.noiseMap;
     // neue Landschaft: ihre Berge entstehen über einige Bilder (ein Ring je Schritt), dann überblenden
     // zurück in die Landschaft, deren Berge schon stehen: angefangenen Bau verwerfen
-    if (biome === this.mtnBiome) this.mtnGen = null;
-    else if (this.mtnGen?.biome !== biome) {
+    // (fertig gebaut, aber noch beim Hochladen: zählt schon als die neue Landschaft)
+    const waitB = this.mtnWait?.biome;
+    if (biome === this.mtnBiome) {
+      this.mtnGen = null;
+      if (this.mtnWait) { this.mtnWait.m.geometry.dispose(); (this.mtnWait.m.material as THREE.Material).dispose(); this.mtnWait = null; }
+    } else if (this.mtnGen?.biome !== biome && waitB !== biome) {
       this.mtnGen = this.mtn ? { biome, it: buildPeaksSteps(biome, this.peakU) } : null;
+      if (this.mtnWait) { this.mtnWait.m.geometry.dispose(); (this.mtnWait.m.material as THREE.Material).dispose(); this.mtnWait = null; }
       if (!this.mtn) {
         this.mtn = buildPeaks(biome, this.peakU);
         this.scene.add(this.mtn);
@@ -1626,14 +1730,21 @@ export class Renderer3D {
       let r = this.mtnGen.it.next();
       while (!r.done && performance.now() - t0 < 1.2) r = this.mtnGen.it.next();
       if (r.done) {
-        if (this.mtnOld) { this.scene.remove(this.mtnOld); this.mtnOld.geometry.dispose(); (this.mtnOld.material as THREE.Material).dispose(); }
-        this.mtnOld = this.mtn;
-        this.mtn = r.value;
-        this.scene.add(this.mtn);
-        this.mtnFade = 0;
-        this.mtnBiome = this.mtnGen.biome;
+        // erst hochladen (gut 0,7 MB), dann überblenden
+        const w = { m: r.value, biome: this.mtnGen.biome, ready: this.idleBuild };
+        this.mtnWait = w;
         this.mtnGen = null;
+        if (!w.ready) this.stage([w.m], () => { w.ready = true; }, () => this.mtnWait === w);
       }
+    }
+    if (this.mtnWait?.ready) {
+      if (this.mtnOld) { this.scene.remove(this.mtnOld); this.mtnOld.geometry.dispose(); (this.mtnOld.material as THREE.Material).dispose(); }
+      this.mtnOld = this.mtn;
+      this.mtn = this.mtnWait.m;
+      this.scene.add(this.mtn);
+      this.mtnFade = 0;
+      this.mtnBiome = this.mtnWait.biome;
+      this.mtnWait = null;
     }
     this.mtnFade = Math.min(1, this.mtnFade + dt / 2.5);
     for (const [m, a] of [[this.mtn, this.mtnFade], [this.mtnOld, 1 - this.mtnFade]] as [THREE.Mesh | null, number][]) {
@@ -1663,8 +1774,24 @@ export class Renderer3D {
   private chunkGen: { k: number; it: Generator<void, Chunk, void> } | null = null;
   /** Zeitgrenze für den Bau in Häppchen (performance.now(); Infinity: am Stück) */
   private deadline = Infinity;
+  /** Beginn des Bauens in diesem Bild */
+  private dlStart = 0;
   private late(): boolean {
     return this.deadline !== Infinity && performance.now() > this.deadline;
+  }
+  /**
+   * Reicht der Rest des Budgets nicht für etwas, das etwa ms dauert (neue Schrift malen, Haus, großes Teil)? Dann erst
+   * im nächsten Bild beginnen – nie gleich zu Beginn des Bauens im Bild, sonst ginge es nicht voran.
+   */
+  private soon(ms: number): boolean {
+    if (this.deadline === Infinity) return false;
+    const now = performance.now();
+    if (now - this.dlStart > 0.25 && now + ms > this.deadline) {
+      // für dieses Bild Schluss (der Bau gibt ab, die Schleife ruft ihn nicht gleich wieder auf)
+      this.deadline = 0;
+      return true;
+    }
+    return false;
   }
 
   /** Abschnitte, die gerade ein- oder ausgeblendet werden */
@@ -1691,22 +1818,26 @@ export class Renderer3D {
       if (fade) this.fadeChunk(c, false);
     };
     const w = wait ? this.warmUp(c.group) : null;
-    if (w) {
+    // im Hintergrund gebaut: erst zeigen, wenn auch die Geometrie (portionsweise) auf der Grafikkarte ist
+    const up = wait && !this.idleBuild;
+    if (w || up) {
       c.group.visible = false;
-      this.chunkWarm.set(c, { w, show });
+      const e = { w, show, staged: !up };
+      this.chunkWarm.set(c, e);
+      if (up) this.stage([c.group], () => { e.staged = true; });
       return;
     }
     show();
   }
 
-  /** Abschnitte, deren Shader noch übersetzt werden (unsichtbar bis dahin) */
-  private chunkWarm = new Map<Chunk, { w: Warm; show: () => void }>();
+  /** Abschnitte, deren Shader noch übersetzt werden oder die noch hochgeladen werden (unsichtbar bis dahin) */
+  private chunkWarm = new Map<Chunk, { w: Warm | null; show: () => void; staged: boolean }>();
 
   private updateChunkWarm(cur: number) {
     for (const [c, e] of this.chunkWarm) {
       // gleich unter dem Fahrer: nicht länger warten
       const urgent = c.idx <= cur + 1;
-      if (!urgent && !this.warmPending(e.w)) continue;
+      if (!urgent && (!e.staged || (e.w && this.warmPending(e.w)))) continue;
       this.chunkWarm.delete(c);
       if (this.chunks.get(c.idx) !== c) continue;
       c.group.visible = true;
@@ -1765,6 +1896,11 @@ export class Renderer3D {
     im.setColorAt(0, new THREE.Color());
     g.add(im);
     this.warmUp(g);
+    // ihre Texturen gleich mit hochladen (Fassaden-Atlas, Werbebanden, Böden …): sonst kämen sie erst beim ersten
+    // Dorf oder der ersten Bande auf die Grafikkarte – bis 8 MB in einem Bild
+    const all: THREE.Material[] = [];
+    g.traverse((o) => { const m = (o as THREE.Mesh).material; if (m) all.push(...(Array.isArray(m) ? m : [m])); });
+    this.uploadShared(all);
     // (nicht wegwerfen: sonst gäbe three.js die eben übersetzten Programme wieder frei)
     this.warmGroup = g;
     warmRoadText();
@@ -1815,6 +1951,100 @@ export class Renderer3D {
     return w.progs.length > 0;
   }
 
+  // ------------------------------------------------------------------ Vorab hochladen
+
+  /**
+   * Neue Teile (Kacheln, Abschnitte, Berge der nächsten Landschaft) kommen vorab in Portionen auf die Grafikkarte,
+   * bevor sie sichtbar werden. Sonst lud das erste Bild mit ihnen alles auf einmal hoch – ein Kachelring gut 1 MB,
+   * ein Abschnitt mit Zuschauern bis über 2 MB –, ein Ruckler, den kein Zeitbudget sieht. Dafür „zeichnet“ three.js
+   * Stellvertreter mit unsichtbarem Material: Es lädt dabei ihre Geometrie hoch, gezeichnet wird nichts.
+   */
+  private upQ: UpJob[] = [];
+  private upScene = new THREE.Scene();
+  private upMat = new THREE.MeshBasicMaterial({ visible: false });
+  private upNone = new THREE.BufferGeometry();
+  private upMesh: THREE.Mesh[] = [];
+  private upPts: THREE.Points[] = [];
+  /** schon hochgeladene Geometrien und Texturen */
+  private upSeen = new WeakSet<object>();
+
+  /** Teile zum Vorab-Hochladen anmelden; done() kommt, sobald alles oben ist (alive: noch gebraucht?) */
+  private stage(roots: THREE.Object3D[], done: () => void, alive: () => boolean = () => roots.every((r) => r.parent !== null)) {
+    const objs: THREE.Object3D[] = [];
+    const tex = new Set<THREE.Texture>();
+    for (const r of roots) {
+      r.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.geometry || !(m.isMesh || (o as THREE.Points).isPoints)) return;
+        objs.push(o);
+        for (const mt of Array.isArray(m.material) ? m.material : [m.material]) if (mt) texturesOf(mt, tex);
+      });
+    }
+    this.upQ.push({ objs, tex: [...tex], i: 0, ti: 0, alive, done });
+  }
+
+  /** je Bild (nach dem Zeichnen) eine Portion hochladen; auf der Startkarte alles auf einmal */
+  private updateStaging() {
+    if (!this.upQ.length) return;
+    const budget = this.idleBuild ? Infinity : UP_BYTES;
+    let bytes = 0;
+    let nm = 0;
+    let np = 0;
+    while (this.upQ.length && bytes < budget) {
+      const job = this.upQ[0];
+      if (!job.alive()) { this.upQ.shift(); continue; }
+      while (job.ti < job.tex.length && bytes < budget) {
+        const t = job.tex[job.ti++];
+        if (this.upSeen.has(t)) continue;
+        this.upSeen.add(t);
+        const img = t.image as { width?: number; height?: number } | null;
+        bytes += (img?.width ?? 0) * (img?.height ?? 0) * 4;
+        this.gl.initTexture(t);
+      }
+      while (job.i < job.objs.length && bytes < budget) {
+        const o = job.objs[job.i++];
+        const geo = (o as THREE.Mesh).geometry;
+        if (this.upSeen.has(geo)) continue;
+        this.upSeen.add(geo);
+        bytes += geoBytes(geo);
+        if ((o as THREE.Points).isPoints) {
+          let p = this.upPts[np];
+          if (!p) { p = new THREE.Points(this.upNone, this.upMat); p.frustumCulled = false; this.upPts.push(p); this.upScene.add(p); }
+          p.geometry = geo;
+          p.visible = true;
+          np += 1;
+        } else {
+          let p = this.upMesh[nm];
+          if (!p) { p = new THREE.Mesh(this.upNone, this.upMat); p.frustumCulled = false; this.upMesh.push(p); this.upScene.add(p); }
+          p.geometry = geo;
+          p.visible = true;
+          nm += 1;
+        }
+      }
+      if (job.ti >= job.tex.length && job.i >= job.objs.length) { this.upQ.shift(); job.done(); }
+    }
+    if (nm || np) {
+      const ac = this.gl.autoClear;
+      this.gl.autoClear = false;
+      this.gl.render(this.upScene, this.camera);
+      this.gl.autoClear = ac;
+      // nichts festhalten (die Geometrie gehört den Teilen)
+      for (let k = 0; k < nm; k++) { this.upMesh[k].geometry = this.upNone; this.upMesh[k].visible = false; }
+      for (let k = 0; k < np; k++) { this.upPts[k].geometry = this.upNone; this.upPts[k].visible = false; }
+    }
+  }
+
+  /** gemeinsame Texturen (Atlanten, Böden, Fassaden) beim Start hochladen – sonst erst beim ersten Dorf (bis 8 MB auf einmal) */
+  private uploadShared(mats: THREE.Material[]) {
+    const tex = new Set<THREE.Texture>();
+    for (const m of mats) texturesOf(m, tex);
+    for (const t of tex) {
+      if (this.upSeen.has(t)) continue;
+      this.upSeen.add(t);
+      this.gl.initTexture(t);
+    }
+  }
+
   private fadeChunk(c: Chunk, out: boolean) {
     this.cFades = this.cFades.filter((f) => f.c !== c);
     setAp(c.group, out ? apOut(0) : apIn(0));
@@ -1824,7 +2054,8 @@ export class Renderer3D {
   private dropChunk(c: Chunk) {
     this.cFades = this.cFades.filter((f) => f.c !== c);
     this.scene.remove(c.group);
-    c.dispose();
+    // freigeben erst nach und nach (siehe updateDispose)
+    this.dispQ.push(c.dispose);
   }
 
   private updateChunkFades(dt: number) {
@@ -1870,7 +2101,7 @@ export class Renderer3D {
     // danach mit Zeitbudget je Bild (nächste zuerst), auf der Startkarte großzügiger; der Bau gibt an der
     // Zeitgrenze von selbst ab (feine Häppchen)
     const t0 = performance.now();
-    let budget = this.idleBuild ? 12 : Math.max(0.8, Math.min(2.5, this.room() * 0.38));
+    let budget = this.idleBuild ? 12 : Math.max(0.8, Math.min(2.2, this.room() * 0.38));
     // knapp vor dem Fahrer fehlt noch etwas: dann zügig (sonst müsste es gleich am Stück entstehen – ein Ruckler)
     {
       let k = from;
@@ -1878,7 +2109,8 @@ export class Renderer3D {
       if (k <= cur + 3) budget = Math.max(budget, 2.5);
     }
     this.deadline = t0 + budget;
-    while (performance.now() - t0 < budget) {
+    this.dlStart = t0;
+    while (performance.now() < this.deadline) {
       if (!this.chunkGen) {
         let k = from;
         while (k <= to && this.chunks.has(k)) k++;
@@ -1898,6 +2130,39 @@ export class Renderer3D {
   private row(z: number, seg: Seg): Row {
     const w = this.track!.world(z, 0, 0, this.w);
     return { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), th: w.th, seg };
+  }
+
+  /**
+   * Requisiten je Art (Bäume, Felsen, Zäune …) als InstancedMesh – wiederverwendet statt freigegeben: three.js
+   * durchsucht beim Freigeben eines InstancedMesh die Zustände aller Geometrien (bei einem Abschnitt mit mehreren
+   * Arten zusammen über 10 ms).
+   */
+  private imPool = new Map<Prop3D, THREE.InstancedMesh[]>();
+  private takeIM(kind: Prop3D, geo: THREE.BufferGeometry, n: number): THREE.InstancedMesh {
+    const list = this.imPool.get(kind);
+    let im: THREE.InstancedMesh | undefined;
+    if (list) {
+      const i = list.findIndex((x) => x.instanceMatrix.count >= n);
+      if (i >= 0) im = list.splice(i, 1)[0];
+    }
+    if (!im) {
+      let cap = 16;
+      while (cap < n) cap *= 2;
+      im = new THREE.InstancedMesh(geo, this.mats.props, cap);
+      im.castShadow = true;
+      im.receiveShadow = true;
+      im.userData.kind = kind;
+    }
+    im.count = n;
+    return im;
+  }
+  private giveIM(im: THREE.InstancedMesh) {
+    const kind = im.userData.kind as Prop3D | undefined;
+    if (!kind) { im.dispose(); return; }
+    im.removeFromParent();
+    let list = this.imPool.get(kind);
+    if (!list) { list = []; this.imPool.set(kind, list); }
+    list.push(im);
   }
 
   /** Abschnitt in einem Zug bauen (beim Start) */
@@ -1921,11 +2186,13 @@ export class Renderer3D {
     const P = (r: Row, x: number, h: number): number[] => [r.x + r.rx * x, r.y + h, r.z + r.rz * x];
     const lim = { L: [] as number[], R: [] as number[] };
     for (let r = 0; r <= CH; r++) { const [l, rr] = this.terrain!.lim(i0 + r); lim.L.push(l); lim.R.push(rr); }
+    if (this.late()) yield;
     // Rechenbereich der Landschaft für diesen Abschnitt (Requisiten außerhalb des Korridors, Portale)
     let bx0 = Infinity, bz0 = Infinity, bx1 = -Infinity, bz1 = -Infinity;
     for (const r of rows) { bx0 = Math.min(bx0, r.x); bz0 = Math.min(bz0, r.z); bx1 = Math.max(bx1, r.x); bz1 = Math.max(bz1, r.z); }
-    this.region = this.terrain!.region(bx0 - 90, bz0 - 90, bx1 + 90, bz1 + 90);
-    const region = this.region;
+    const region = this.terrain!.region(bx0 - 90, bz0 - 90, bx1 + 90, bz1 + 90);
+    if (this.late()) yield;
+    this.region = region;
     const group = new THREE.Group();
     const disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[] = [];
     const surf: Record<string, GB> = { asphalt: new GB(), fresh: new GB(), cobble: new GB(), gravel: new GB() };
@@ -1968,6 +2235,8 @@ export class Renderer3D {
     const cTrees = this.cTrees;
     const white = lin('#f2f2ec');
     const sec = (s: Seg) => t.sections[s.sec];
+    // nach einer Pause: zwischendurch kann ein anderer Abschnitt gebaut worden sein – gemeinsamen Bauzustand zurück
+    const resume = () => { this.region = region; this.adsGB = ads; this.cTrees = cTrees; };
 
     for (let r = 0; r < CH; r++) {
       const a = rows[r];
@@ -2016,48 +2285,52 @@ export class Renderer3D {
       }
       // --- Begrenzungen
       this.barriers(bar, ads, a, b, P);
-      // --- Malereien
-      if (s.decals) for (const d of s.decals) this.decal(group, disp, marks, rows, r, d, P);
-      // --- Häuser
+      // --- Malereien (eine neue Schrift zu malen dauert: dann erst am Anfang des nächsten Bildes)
+      if (s.decals) {
+        for (const d of s.decals) {
+          if ((d.k === 'text' || d.k === 'arrow') && !this.labelTex.has(`${d.k}:${d.text}`) && this.soon(2)) { yield; resume(); }
+          this.decal(group, disp, marks, rows, r, d, P);
+        }
+      }
+      // --- Häuser (je Haus viele Teile: auch erst mit frischem Budget)
       for (const sg of [-1, 1]) {
         const bld = sg < 0 ? s.bL : s.bR;
-        if (bld && bld.start === s.i) this.building(town, a, bld, sg);
+        if (bld && bld.start === s.i) {
+          if (this.soon(2)) { yield; resume(); }
+          this.building(town, a, bld, sg);
+        }
       }
       // Wimpel- und Lichterketten quer über die Gasse
       if (s.bL && s.bR && s.i % 17 === 9 && !s.banner) this.garland(town, a, s.bL, s.bR);
-      // --- Sprites/Requisiten
+      // --- Sprites/Requisiten (Zuschauer: viele Menschen je Stück – nach jedem nachsehen)
       if (s.sprites) {
         for (const sp of s.sprites) {
           const l = sp.x < 0 ? lim.L[r] : lim.R[r];
           if (sp.k === 'crowd') this.crowdPeople(people[Math.min(3, Math.floor(r / 10))], s, sp.x < 0 ? -1 : 1, l, sp.v, Math.abs(sp.x) - EDGE);
           else this.prop(group, disp, inst, bill, anim, glows, a, sp, s, l);
+          if (this.late()) { yield; resume(); }
         }
       }
-      // --- Banner, Portal
+      // --- Banner, Portal (Schriftzug: erst mit frischem Budget)
       if (s.banner) {
         const k = s.banner.kind;
+        if (this.soon(2)) { yield; resume(); }
         this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : '#ffffff');
       }
-      for (const f of g.friends) if (Math.floor(f.meters / SEG) === s.i) this.arch(group, disp, a, { kind: 'arch', text: f.userId === 'me' ? 'Deine Bestmarke' : `Bestmarke ${f.name}`, sub: fmtKm(f.meters) }, f.color);
+      for (const f of g.friends) {
+        if (Math.floor(f.meters / SEG) !== s.i) continue;
+        if (this.soon(2)) { yield; resume(); }
+        this.arch(group, disp, a, { kind: 'arch', text: f.userId === 'me' ? 'Deine Bestmarke' : `Bestmarke ${f.name}`, sub: fmtKm(f.meters) }, f.color);
+      }
       if (s.portal) {
         // Portal in Häppchen (die Felswand braucht viele Höhenabfragen)
         yield* this.portalSteps(portal, mas, roof, group, disp, s.portal === 1 ? a : b, P, sec(s).biome, s.portal === 1 ? 1 : -1);
-        this.region = region;
-        this.adsGB = ads;
-        this.cTrees = cTrees;
+        resume();
       }
-      if (this.late()) {
-        yield;
-        // zwischendurch kann anderes gelaufen sein: gemeinsamen Bauzustand wiederherstellen
-        this.region = region;
-        this.adsGB = ads;
-        this.cTrees = cTrees;
-      }
+      if (this.late()) { yield; resume(); }
     }
     yield;
-    this.region = region;
-    this.adsGB = ads;
-    this.cTrees = cTrees;
+    resume();
 
     const add = (gb: GB, m: THREE.Material, order = 0, cast = false) => {
       if (gb.empty) return;
@@ -2106,6 +2379,8 @@ export class Renderer3D {
       () => add(ads, this.mats.ads, 0, true),
     ];
     for (const f of parts) {
+      // großes Teil nicht erst kurz vor Schluss des Budgets beginnen
+      if (this.soon(1)) yield;
       f();
       if (this.late()) yield;
     }
@@ -2115,8 +2390,9 @@ export class Renderer3D {
       disp.push(geo);
       group.add(new THREE.Mesh(geo, this.mats.billboard));
     }
-    // Bäume am Straßenrand: Bilder in einem Zeichenaufruf
-    const ct = this.cTrees;
+    // Bäume am Straßenrand: Bilder in einem Zeichenaufruf (die eigene Liste – nicht this.cTrees: dazwischen kann
+    // ein anderer Abschnitt gebaut worden sein)
+    const ct = cTrees;
     this.cTrees = null;
     let csrc: TreeSource | null = null;
     let cbm: THREE.Mesh | null = null;
@@ -2133,9 +2409,8 @@ export class Renderer3D {
       if (this.late()) yield;
       const geo = this.props[kind];
       if (!geo) continue;
-      const im = new THREE.InstancedMesh(geo, this.mats.props, list.m.length);
-      im.castShadow = true;
-      im.receiveShadow = true;
+      // aus dem Vorrat (ein InstancedMesh freizugeben kostet in three.js viel Zeit, siehe takeIM)
+      const im = this.takeIM(kind, geo, list.m.length);
       list.m.forEach((m, i) => { im.setMatrixAt(i, m); im.setColorAt(i, list.c[i]); });
       im.instanceMatrix.needsUpdate = true;
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
@@ -2159,6 +2434,8 @@ export class Renderer3D {
       for (const kind of KINDS) {
         const sub = list.filter((pp) => needs(pp, kind));
         if (!sub.length) continue;
+        // je Kleidungsart eine Geometrie für viele Menschen: zwischendurch nachsehen
+        if (this.late()) yield;
         const data = new Float32Array(sub.length * STRIDE);
         sub.forEach((pp, k) => packPerson(pp, data, k));
         for (const lod of [0, 1] as const) {
@@ -2211,7 +2488,9 @@ export class Renderer3D {
         if (csrc) this.treeSrc.delete(csrc);
         if (cbm) disposeBillboards(cbm.geometry);
         for (const geo of sprGeos) disposeSpriteGeometry(geo);
-        group.traverse((o) => { if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose(); });
+        const ims: THREE.InstancedMesh[] = [];
+        group.traverse((o) => { if ((o as THREE.InstancedMesh).isInstancedMesh) ims.push(o as THREE.InstancedMesh); });
+        for (const im of ims) this.giveIM(im);
       },
     };
   }
@@ -2579,7 +2858,13 @@ export class Renderer3D {
     const name = tunnelName(t.lang, t0 * 7 + t1 * 13 + t.seed);
     const key = `plaque:${name}:${len}`;
     let tex = this.labelTex.get(key);
-    if (!tex) { tex = this.tex(plaqueTex(name, `m ${Math.round(len / 2) * 2}`), false); this.labelTex.set(key, tex); if (this.late()) yield; }
+    if (!tex) {
+      // Inschrift malen: erst mit frischem Budget
+      if (this.soon(2)) yield;
+      tex = this.tex(plaqueTex(name, `m ${Math.round(len / 2) * 2}`), false);
+      this.labelTex.set(key, tex);
+      if (this.late()) yield;
+    }
     const pg = new GB();
     pg.uv = true;
     pg.quad(plaque[0], plaque[1], plaque[2], plaque[3], [1, 1, 1], [[0, 0], [1, 0], [1, 1], [0, 1]]);
@@ -2589,6 +2874,7 @@ export class Renderer3D {
     disp.push(geo);
     group.add(new THREE.Mesh(geo, mat));
     if (!gb.empty) {
+      if (this.soon(1)) yield;
       const rg = gb.buildSmooth(new THREE.Vector3(-fx * dir, 0.25, -fz * dir));
       disp.push(rg);
       const rm = new THREE.Mesh(rg, this.mats.portal);

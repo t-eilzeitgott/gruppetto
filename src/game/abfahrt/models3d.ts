@@ -102,9 +102,18 @@ export function bakedTexture(px: Uint8Array, w: number, h: number): THREE.DataTe
   return t;
 }
 
+/** schon umgerechnete Farben: das Zerlegen der Farbangabe (#rrggbb) kostet je Aufruf, Abschnitte rufen es tausendfach */
+const linCache = new Map<string | number, RGBf>();
 export function lin(hex: string | number): RGBf {
-  tmpColor.set(hex as THREE.ColorRepresentation);
-  return [tmpColor.r, tmpColor.g, tmpColor.b];
+  let c = linCache.get(hex);
+  if (!c) {
+    tmpColor.set(hex as THREE.ColorRepresentation);
+    c = [tmpColor.r, tmpColor.g, tmpColor.b];
+    if (linCache.size > 4096) linCache.clear();
+    linCache.set(hex, c);
+  }
+  // eigene Kopie (Aufrufer dürfen sie verändern)
+  return [c[0], c[1], c[2]];
 }
 export function lin255(r: number, g: number, b: number): RGBf {
   tmpColor.setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace);
@@ -272,13 +281,36 @@ export class GB {
   }
   build(normals = true): THREE.BufferGeometry {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(this.p.take(), 3));
+    const p = this.p.take();
+    g.setAttribute('position', new THREE.BufferAttribute(p, 3));
     g.setAttribute('color', new THREE.BufferAttribute(this.c.take(), 3));
     if (this.uv) g.setAttribute('uv', new THREE.BufferAttribute(this.u.take(), 2));
-    if (normals) g.computeVertexNormals();
+    if (normals) g.setAttribute('normal', new THREE.BufferAttribute(flatNormals(p), 3));
     g.computeBoundingSphere();
     return g;
   }
+}
+
+/**
+ * Flache Normalen je Dreieck für Geometrie ohne Index – wie computeVertexNormals(), aber direkt auf dem Zahlenfeld
+ * (ohne Vektor-Objekte je Ecke): bei großen Teilen eines Abschnitts (Fassaden, Banden) ein Vielfaches schneller.
+ */
+export function flatNormals(p: Float32Array): Float32Array {
+  const out = new Float32Array(p.length);
+  for (let i = 0; i + 8 < p.length; i += 9) {
+    // (C − B) × (A − B), wie three.js
+    const ux = p[i + 6] - p[i + 3], uy = p[i + 7] - p[i + 4], uz = p[i + 8] - p[i + 5];
+    const vx = p[i] - p[i + 3], vy = p[i + 1] - p[i + 4], vz = p[i + 2] - p[i + 5];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+    const x = nx / l, y = ny / l, z = nz / l;
+    out[i] = x; out[i + 1] = y; out[i + 2] = z;
+    out[i + 3] = x; out[i + 4] = y; out[i + 5] = z;
+    out[i + 6] = x; out[i + 7] = y; out[i + 8] = z;
+  }
+  return out;
 }
 
 export const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) => {
