@@ -23,6 +23,8 @@ interface Mix {
   gr: N;         // Kies / Bankett
   cc: N;         // Beton / Mauer
   canopy: boolean; // keine echten Bäume: Wald als Kronendach färben
+  /** Blüten im Gras (gebackene Punkte, Rang im Alpha) */
+  dots?: THREE.Texture;
   detail: boolean; // feine Texturen (nah) – sonst nur die großen
 }
 
@@ -45,7 +47,19 @@ function shade(S: Surfaces, m: Mix) {
   const tint = mix(base, base.mul(vec3(1.25, 1.05, 0.62)), dryW.mul(0.55)).mul(macro.x.mul(0.6).add(0.75).clamp(0.7, 1.25));
   // von oben projiziert: an steilen Hängen wäre das Muster senkrecht gestreckt – dort nur die ruhige Grundfarbe
   const flat = smoothstep(0.5, 0.82, nG.y);
-  const grassCol = tint.mul(m.detail ? mix(gC.mul(0.35).add(0.65), gDet.mul(0.7).add(gC.mul(0.3)), flat) : mix(float(1), gC.mul(0.6).add(0.4), flat));
+  let grassCol: N = tint.mul(m.detail ? mix(gC.mul(0.35).add(0.65), gDet.mul(0.7).add(gC.mul(0.3)), flat) : mix(float(1), gC.mul(0.6).add(0.4), flat));
+  const camD0 = pos.sub(cameraPosition).length();
+  if (m.dots) {
+    // Blumenwiese: fleckig viele oder wenige Blüten, nur auf ebener Wiese, in der Nähe als Punkte, fern als leichter Schimmer
+    const fd = texture(m.dots, pos.xz.div(3));
+    const many = smoothstep(0.3, 0.7, decodeAlbedo(texture(S.grass.albedo, pos.xz.div(53)).rgb).x.div(meanOf(S.grass).x).mul(0.5)).mul(flat);
+    const rank = fd.a.sub(0.1).div(0.9);
+    const near = float(1).sub(smoothstep(40, 80, camD0));
+    const show = smoothstep(0.04, 0.08, fd.a).mul(float(1).sub(smoothstep(many.mul(0.85).sub(0.02), many.mul(0.85), rank))).mul(near);
+    grassCol = mix(grassCol, decodeAlbedo(fd.rgb), show);
+    // fern: Schimmer in der Mischfarbe der Blüten (weiß, gelb, violett)
+    grassCol = mix(grassCol, grassCol.add(vec3(0.06, 0.05, 0.035)), many.mul(float(1).sub(near)).mul(0.7));
+  }
   let col: N = grassCol;
   let rough: N = m.detail ? gF.rough : float(0.92);
   let ao: N = m.detail ? mix(float(1), gF.ao, flat) : float(1);
@@ -57,7 +71,7 @@ function shade(S: Surfaces, m: Mix) {
   const crown = decodeAlbedo(crownT.col).div(meanOf(S.grass)).dot(vec3(0.3, 0.5, 0.2));
   const canopyCol = mix(vec3(0.03, 0.052, 0.024), vec3(0.095, 0.13, 0.052), crown.mul(0.6).clamp(0, 1)).mul(gC.y.mul(0.35).add(0.82));
   const floorCol = mix(m.tint.mul(0.55), mix(vec3(0.07, 0.06, 0.035), vec3(0.09, 0.075, 0.045), gDet.x.mul(0.5).clamp(0, 1)), 0.6).mul(gDet.mul(0.5).add(0.5));
-  const camD = pos.sub(cameraPosition).length();
+  const camD = camD0;
   const forestCol = m.canopy ? canopyCol : mix(floorCol, canopyCol, smoothstep(110, 260, camD));
   // Baumgrenze: unregelmäßig (große Zungen und Lücken), oberhalb einzelne Baumgruppen
   const wob = decodeAlbedo(texture(S.grass.albedo, pos.xz.div(97)).rgb).div(meanOf(S.grass)).y.sub(1);
@@ -117,7 +131,7 @@ function apply(mat: THREE.MeshStandardNodeMaterial, o: ReturnType<typeof shade>)
  * Landschaft (Kacheln aus terrain3d): Farbe = Wiese der Gegend, aMat = (Wald, Fels, Schnee, Rauschen),
  * aRock = Felsfarbe, aNz = großflächiges Rauschen. lv 0 mit echten Bäumen, darüber Kronendach.
  */
-export function terrainMaterial(S: Surfaces, lv: number): THREE.MeshStandardNodeMaterial {
+export function terrainMaterial(S: Surfaces, lv: number, dots?: THREE.Texture): THREE.MeshStandardNodeMaterial {
   const mat = new THREE.MeshStandardNodeMaterial();
   const aMat = attribute('aMat', 'vec4');
   const aNz = attribute('aNz', 'vec2');
@@ -127,7 +141,7 @@ export function terrainMaterial(S: Surfaces, lv: number): THREE.MeshStandardNode
   const sn = smoothstep(0.42, 0.6, aMat.z.add(aNz.y.sub(0.5).mul(0.45)));
   apply(mat, shade(S, {
     tint: vertexColor(), rockTint: attribute('aRock', 'vec3'),
-    fo, rk, sn, gr: float(0), cc: float(0), canopy: lv > 0, detail: lv === 0,
+    fo, rk, sn, gr: float(0), cc: float(0), canopy: lv > 0, detail: lv === 0, dots: lv === 0 ? dots : undefined,
   }));
   mat.name = `terrain${lv}`;
   // Prüfmodus: Stufen einfärben (?lvcolor)
@@ -138,12 +152,12 @@ export function terrainMaterial(S: Surfaces, lv: number): THREE.MeshStandardNode
 }
 
 /** Straßenrand (Korridor): Farbe der Gegend je Ecke, Gewichte aW = (Wald, Fels, Schnee, Kies), aC = (Beton, Felsfarbe) */
-export function corridorMaterial(S: Surfaces): THREE.MeshStandardNodeMaterial {
+export function corridorMaterial(S: Surfaces, dots?: THREE.Texture): THREE.MeshStandardNodeMaterial {
   const mat = new THREE.MeshStandardNodeMaterial();
   const w = attribute('aW', 'vec4');
   const c = attribute('aC', 'vec4');
   apply(mat, shade(S, {
-    tint: vertexColor(), rockTint: c.yzw, fo: w.x, rk: w.y, sn: w.z, gr: w.w, cc: c.x, canopy: false, detail: true,
+    tint: vertexColor(), rockTint: c.yzw, fo: w.x, rk: w.y, sn: w.z, gr: w.w, cc: c.x, canopy: false, detail: true, dots,
   }));
   mat.name = 'corridor';
   return mat;

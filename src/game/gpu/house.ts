@@ -265,7 +265,7 @@ function flowerBox(b: Builder, a: V3, c: V3, out: V3, seed: number, hang = 0.45,
   b.set({ mat: 'wood', kind: 0, swap: false, col: BOXWOOD });
   b.hexa([p(0, -0.22, 0), p(len, -0.22, 0), p(len, 0, 0), p(0, 0, 0), p(0, -0.22, 0.22), p(len, -0.22, 0.22), p(len, 0, 0.22), p(0, 0, 0.22)]);
   b.set({ mat: 'detail', rough: 0.7, metal: 0, shut: 0 });
-  const n = Math.max(2, Math.round(len / (fine ? 0.16 : 0.22)));
+  const n = Math.max(2, Math.round(len / (fine ? 0.19 : 0.26)));
   const leafCol = (k: number): V3 => { const v = 0.75 + rnd(seed * 3 + k) * 0.5; return [LEAF[0] * v, LEAF[1] * v * (0.9 + rnd(k) * 0.2), LEAF[2] * v]; };
   for (let k = 0; k < n; k++) {
     const s = (k + 0.5) * (len / n);
@@ -334,18 +334,23 @@ function windowAt(b: Builder, F: Face, h: Hole, o: WinOpt, seed: number) {
   b.quadF(F.p(h.s0, tv, dg), F.p(h.s1, tv, dg), F.p(h.s1, h.t1, dg), F.p(h.s0, h.t1, dg), F.N);
   b.set({ col: GLASS, rough: 0.04 });
   b.quadF(F.p(h.s0 + cw, tPanel, dg), F.p(h.s1 - cw, tPanel, dg), F.p(h.s1 - cw, tv, dg), F.p(h.s0 + cw, tv, dg), F.N);
-  // Rahmen, Mittelpfosten, Kämpfer, Sprossen (weiß gestrichen)
+  // Rahmen, Mittelpfosten, Kämpfer, Sprossen (weiß gestrichen); mittlere Stufe: nur die Vorderseiten
+  const mid = o.fine === false;
+  const bx = (s0: number, s1: number, t0: number, t1: number, d0: number, d1: number) => {
+    if (mid) b.quadF(F.p(s0, t0, d0), F.p(s1, t0, d0), F.p(s1, t1, d0), F.p(s0, t1, d0), F.N);
+    else fbox(b, F, s0, s1, t0, t1, d0, d1);
+  };
   b.set({ col: WHITE_PAINT, rough: 0.45 });
   const fw = 0.07;
-  fbox(b, F, h.s0, h.s0 + fw, h.t0, h.t1, dg - 0.06, dg + 0.01);
-  fbox(b, F, h.s1 - fw, h.s1, h.t0, h.t1, dg - 0.06, dg + 0.01);
-  fbox(b, F, h.s0 + fw, h.s1 - fw, h.t1 - fw, h.t1, dg - 0.06, dg + 0.01);
-  fbox(b, F, h.s0 + fw, h.s1 - fw, h.t0, h.t0 + fw, dg - 0.06, dg + 0.01);
+  bx(h.s0, h.s0 + fw, h.t0, h.t1, dg - 0.06, dg + 0.01);
+  bx(h.s1 - fw, h.s1, h.t0, h.t1, dg - 0.06, dg + 0.01);
+  bx(h.s0 + fw, h.s1 - fw, h.t1 - fw, h.t1, dg - 0.06, dg + 0.01);
+  bx(h.s0 + fw, h.s1 - fw, h.t0, h.t0 + fw, dg - 0.06, dg + 0.01);
   const sm = (h.s0 + h.s1) / 2;
-  fbox(b, F, sm - 0.03, sm + 0.03, h.t0 + fw, h.t1 - fw, dg - 0.055, dg);
+  bx(sm - 0.03, sm + 0.03, h.t0 + fw, h.t1 - fw, dg - 0.055, dg);
   const tk = o.door ? tPanel : h.t0 + hh * 0.66;
-  fbox(b, F, h.s0 + fw, h.s1 - fw, tk - 0.03, tk + 0.03, dg - 0.055, dg);
-  if (!o.door) {
+  bx(h.s0 + fw, h.s1 - fw, tk - 0.03, tk + 0.03, dg - 0.055, dg);
+  if (!o.door && !mid) {
     const tb = h.t0 + hh * 0.33;
     fbox(b, F, h.s0 + fw, h.s1 - fw, tb - 0.014, tb + 0.014, dg - 0.04, dg);
   }
@@ -359,13 +364,13 @@ function windowAt(b: Builder, F: Face, h: Hole, o: WinOpt, seed: number) {
     b.set({ col: FASCHE, rough: 0.85 });
     const fb = 0.12;
     const d0 = -0.012;
-    fbox(b, F, h.s0 - fb, h.s0, h.t0 - 0.07, h.t1 + fb, d0, 0);
-    fbox(b, F, h.s1, h.s1 + fb, h.t0 - 0.07, h.t1 + fb, d0, 0);
-    fbox(b, F, h.s0, h.s1, h.t1, h.t1 + fb, d0, 0);
-    fbox(b, F, h.s0 - fb - 0.1, h.s0 - fb, h.t1 + fb - 0.1, h.t1 + fb, d0, 0);
-    fbox(b, F, h.s1 + fb, h.s1 + fb + 0.1, h.t1 + fb - 0.1, h.t1 + fb, d0, 0);
+    bx(h.s0 - fb, h.s0, h.t0 - 0.07, h.t1 + fb, d0, 0);
+    bx(h.s1, h.s1 + fb, h.t0 - 0.07, h.t1 + fb, d0, 0);
+    bx(h.s0, h.s1, h.t1, h.t1 + fb, d0, 0);
+    bx(h.s0 - fb - 0.1, h.s0 - fb, h.t1 + fb - 0.1, h.t1 + fb, d0, 0);
+    bx(h.s1 + fb, h.s1 + fb + 0.1, h.t1 + fb - 0.1, h.t1 + fb, d0, 0);
     // Schürze unter dem Sims
-    fbox(b, F, h.s0 - 0.02, h.s1 + 0.02, h.t0 - 0.26, h.t0 - 0.07, d0, 0);
+    bx(h.s0 - 0.02, h.s1 + 0.02, h.t0 - 0.26, h.t0 - 0.07, d0, 0);
   }
   // Fensterläden (Jalousie), offen an der Wand
   if (o.shutters) {
@@ -375,6 +380,12 @@ function windowAt(b: Builder, F: Face, h: Hole, o: WinOpt, seed: number) {
       const sb = sa + lw;
       const ta = h.t0 - 0.03, tb = h.t1 + 0.03;
       b.set({ mat: 'detail', shut: 1, rough: 0.55, col: [1, 1, 1] });
+      if (mid) {
+        // mittlere Stufe: ein Brett je Laden
+        fbox(b, F, sa, sb, ta, tb, -0.05, -0.016);
+        b.set({ shut: 0 });
+        continue;
+      }
       // Rahmen
       fbox(b, F, sa, sa + 0.055, ta, tb, -0.055, -0.016);
       fbox(b, F, sb - 0.055, sb, ta, tb, -0.055, -0.016);
@@ -382,12 +393,6 @@ function windowAt(b: Builder, F: Face, h: Hole, o: WinOpt, seed: number) {
       fbox(b, F, sa + 0.055, sb - 0.055, tb - 0.07, tb, -0.055, -0.016);
       const tm = (ta + tb) / 2;
       fbox(b, F, sa + 0.055, sb - 0.055, tm - 0.035, tm + 0.035, -0.055, -0.016);
-      if (o.fine === false) {
-        // mittlere Stufe: Füllung als Fläche
-        b.quadF(F.p(sa + 0.055, ta + 0.07, -0.035), F.p(sb - 0.055, ta + 0.07, -0.035), F.p(sb - 0.055, tb - 0.07, -0.035), F.p(sa + 0.055, tb - 0.07, -0.035), F.N);
-        b.set({ shut: 0 });
-        continue;
-      }
       // Lamellen: schräg, unten außen
       for (const [pa, pb] of [[ta + 0.07, tm - 0.035], [tm + 0.035, tb - 0.07]]) {
         const n = Math.max(2, Math.floor((pb - pa) / 0.062));
@@ -813,11 +818,13 @@ export function buildHouse(lod: 0 | 1 | 2): Record<HMat, THREE.BufferGeometry> {
 }
 
 /** Materialien der Häuser (Instanzen: iP Ort/Drehung, iS.w Putzfarbe 0 … 1, iC Farbe der Läden) */
-export function houseMaterials(S: Record<SurfaceId, Surface>): Record<HMat, THREE.MeshStandardNodeMaterial> {
+export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnType<typeof instNodes>) => N) | null): Record<HMat, THREE.MeshStandardNodeMaterial> {
   const make = (name: string, shade: (I: ReturnType<typeof instNodes>) => { col: N; rough: N; ao?: N; xy?: N; metal?: N; k?: number }) => {
     const I = instNodes();
     const m = new THREE.MeshStandardNodeMaterial();
     m.positionNode = I.world;
+    // weiche Überblendung zwischen den Stufen (Deckung über die Kantenglättung)
+    if (fade) { m.opacityNode = fade(I); m.alphaToCoverage = true; }
     const o = shade(I);
     m.colorNode = o.col;
     m.roughnessNode = o.rough;

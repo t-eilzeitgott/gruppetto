@@ -11,7 +11,7 @@ import { bloom } from '../../../vendor/three/addons/BloomNode.js';
 import { Track, SEG, EDGE } from '../abfahrt/track';
 import { Terrain } from '../abfahrt/terrain3d';
 import { adsTex } from '../abfahrt/tex3d';
-import { bakeSurfaces, type Surface, type SurfaceId } from './bake';
+import { bakeFlowerDots, bakeSurfaces, type Surface, type SurfaceId } from './bake';
 import { buildSky, type SkySetup } from './sky';
 import { corridorMaterial, terrainMaterial } from './ground';
 import { adsMaterial, marksMaterial, metalMaterial, paintMaterial, roadMaterial, woodMaterial } from './mats';
@@ -23,6 +23,7 @@ import { Grass } from './grass';
 import { ForestEdge } from './forest';
 import { Houses } from './houses';
 import { Crowd } from './crowd';
+import { Life } from './life';
 import { tsl } from './nodes';
 
 const { cameraPosition, cubeTexture, dot, exp, float, fog, frontFacing, max, mix, normalize, pass, positionView, positionWorld, pow, select, smoothstep, texture, uniform, uv, vec3 } = tsl;
@@ -77,6 +78,7 @@ export class Showcase {
   private grass: Grass | null = null;
   private houses: Houses | null = null;
   private crowd: Crowd | null = null;
+  private life: Life | null = null;
   private disposed = false;
   private last = 0;
   private avgMs = 1000 / 60;
@@ -160,6 +162,11 @@ export class Showcase {
     this.free = at ? { at: new THREE.Vector3(at.x, at.y, at.z), az, el, dist } : null;
     if (at) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
   }
+  /** Testhilfe: der i-te Baum (nach Abstand zum Punkt) */
+  tree(i: number, x: number, z: number) {
+    const l = [...(this.trees?.allSpots() ?? [])].sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z));
+    return l[i] ?? null;
+  }
   /** Testhilfe: Platz eines Hauses */
   house(i: number) { return (this.houses as unknown as { spots: { x: number; y: number; z: number; rot: number }[] } | null)?.spots[i] ?? null; }
 
@@ -200,6 +207,7 @@ export class Showcase {
     r.setAnimationLoop((t) => this.frame(t));
     await step(0.02, 'Oberflächen werden gebacken');
     const S: Record<SurfaceId, Surface> = bakeSurfaces(r, low ? 0.25 : 1);
+    const dots = bakeFlowerDots(r, low ? 256 : 512);
     await step(0.06, 'Himmel');
     this.sky = await buildSky(r, 26, 205, low ? 128 : 512);
     if (this.disposed) return;
@@ -229,7 +237,7 @@ export class Showcase {
     }
     const adsM = adsMaterial(adsTex(this.opts.names));
     const corridor = (this.corridor = new Corridor(track, terrain, {
-      road: roadMaterial(S), marks: marksMaterial(S), sides: corridorMaterial(S), metal: metalMaterial(), wood: woodMaterial(),
+      road: roadMaterial(S), marks: marksMaterial(S), sides: corridorMaterial(S, dots), metal: metalMaterial(), wood: woodMaterial(),
       paint: paintMaterial(), ads: adsM,
     }));
     const grass = (this.grass = new Grass());
@@ -245,10 +253,10 @@ export class Showcase {
       if (crowd.signs.pos.length) this.scene.add(signMesh(crowd.signs, adsM.map!));
       log(`Zuschauer: ${crowd.count}, ${crowd.signs.pos.length / 18} Schilder`);
     }
-    const trees = (this.trees = new Trees());
+    const trees = (this.trees = new Trees(r, !!(r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend, low));
     trees.sunDir.value.copy(this.sky.sunDir);
     this.scene.add(trees.group);
-    const field = (this.field = new Field(terrain, route, [terrainMaterial(S, 0), terrainMaterial(S, 1), terrainMaterial(S, 2)], {
+    const field = (this.field = new Field(terrain, route, [terrainMaterial(S, 0, dots), terrainMaterial(S, 1), terrainMaterial(S, 2)], {
       onTrees: (_k, list, cx, cz) => trees.addTile(list, cx, cz),
     }));
     field.dropK = this.param('drop', 1);
@@ -288,10 +296,16 @@ export class Showcase {
     log(`Waldrand: ${edge.length} Bäume, Wald links/rechts auf ${forest.coverage.map((c) => Math.round(c * 100)).join('/')} % der Strecke`);
     // Häuser: oft entlang der Strecke, auf Wiesen (Bäume am Platz weichen)
     await step(0.72, 'Häuser');
-    const houses = (this.houses = new Houses(S));
+    const houses = (this.houses = new Houses(S, !!(r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend));
     houses.place(track, terrain, trees, Z0, Z1);
     this.scene.add(houses.group);
     log(`Häuser: ${houses.count} (je ${houses.tris.map((t) => Math.round(t)).join(' / ')} Dreiecke)`);
+    // Leben: Blumen, Sträucher, Farne, Kühe, Schafe, Vögel
+    await step(0.725, 'Wiesen und Tiere');
+    const life = (this.life = new Life());
+    life.build({ track, terrain, forest, trees, houses: houses.positions, z0: Z0, z1: Z1, msaa: !!(r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend });
+    this.scene.add(life.group);
+    log(`Leben: ${Object.entries(life.counts).map(([k, v]) => `${k} ${v}`).join(', ')}`);
     await step(0.73, 'Bäume');
     this.updateCamera(0);
     field.merge();
@@ -329,6 +343,7 @@ export class Showcase {
     this.trees?.warm(true);
     this.grass?.warm();
     this.houses?.warm(true);
+    this.life?.warm(true);
     this.crowd?.warm(true);
     // 3) Shader im Hintergrund übersetzen (für das Bildformat des Szenendurchgangs), Daten hochladen
     const rt = this.scenePass?.renderTarget ?? null;
@@ -350,6 +365,8 @@ export class Showcase {
     this.trees?.warm(false);
     this.trees?.update(this.camera.position, true);
     this.houses?.warm(false);
+    this.life?.warm(false);
+    this.life?.update(this.camera.position, true);
     this.houses?.update(this.camera.position, true);
     this.crowd?.warm(false);
     if (this.rider) this.crowd?.update(this.camera.position, this.rider.group.position, true);
@@ -609,6 +626,7 @@ export class Showcase {
       this.updateSun();
       this.trees?.update(this.camera.position, this.wrapped);
       this.houses?.update(this.camera.position);
+      this.life?.update(this.camera.position);
       this.crowd?.update(this.camera.position, this.rider.group.position);
       this.wrapped = false;
       this.grass?.update(this.camera.position);
@@ -644,7 +662,7 @@ export class Showcase {
   async snapshot(): Promise<string> {
     const r = this.renderer;
     r.info.reset();
-    if (this.track && this.rider) { this.updateCamera(1); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); this.houses?.update(this.camera.position, true); this.crowd?.update(this.camera.position, this.rider.group.position, true); }
+    if (this.track && this.rider) { this.updateCamera(1); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); this.houses?.update(this.camera.position, true); this.life?.update(this.camera.position, true); this.crowd?.update(this.camera.position, this.rider.group.position, true); }
     const size = new THREE.Vector2();
     r.getDrawingBufferSize(size);
     const rt = new THREE.RenderTarget(size.x, size.y, { depthBuffer: false });
@@ -691,6 +709,7 @@ export class Showcase {
     this.trees?.dispose();
     this.grass?.dispose();
     this.houses?.dispose();
+    this.life?.dispose();
     this.crowd?.dispose();
     this.sky?.dispose();
     this.frameRT?.dispose();

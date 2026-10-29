@@ -186,7 +186,7 @@ export class Field {
   }
 
   /**
-   * Wenn alles gebaut ist: Kacheln zu größeren Stücken zusammenlegen (feinste Stufe 4 × 4 = 512 m, mittlere
+   * Wenn alles gebaut ist: Kacheln zu größeren Stücken zusammenlegen (feinste Stufe 2 × 2 = 256 m, mittlere
    * 2 × 2 = 1 km) – viel weniger Zeichenaufrufe; ganz verdeckte gröbere Kacheln fallen weg.
    */
   merge() {
@@ -194,7 +194,7 @@ export class Field {
     for (const t of this.tiles) {
       if (t.mesh && !t.mesh.visible) { this.group.remove(t.mesh); t.mesh.geometry.dispose(); t.mesh = null; t.y0 = null; }
     }
-    for (const [lv, B] of [[0, 4], [1, 2]] as const) {
+    for (const [lv, B] of [[0, 2], [1, 2]] as const) {
       const groups = new Map<string, Tile[]>();
       for (const t of this.tiles) {
         if (t.lv !== lv || !t.mesh) continue;

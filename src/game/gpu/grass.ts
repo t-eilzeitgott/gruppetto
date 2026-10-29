@@ -17,12 +17,12 @@ const rnd = (n: number) => {
   return (x >>> 0) / 4294967296;
 };
 
-/** ein Büschel: zwölf Halme, je drei Dreiecke (unten breit, Spitze), leicht gebogen */
+/** ein Büschel: acht Halme, je drei Dreiecke (unten breit, Spitze), leicht gebogen */
 function clump(): THREE.BufferGeometry {
   const pos: number[] = [];
   const nor: number[] = [];
   const col: number[] = [];
-  for (let b = 0; b < 12; b++) {
+  for (let b = 0; b < 8; b++) {
     const a = rnd(b * 3 + 1) * Math.PI * 2;
     const r = 0.02 + rnd(b * 5 + 2) * 0.15;
     const ox = Math.cos(a) * r, oz = Math.sin(a) * r;
@@ -59,7 +59,7 @@ function clump(): THREE.BufferGeometry {
 /** Stelle eines Büschels: Ort, Drehung, Größe, Farbe der Gegend */
 export interface Tuft { x: number; y: number; z: number; rot: number; s: number; r: number; g: number; b: number }
 
-const SHOW = 48;
+const SHOW = 34;
 
 export class Grass {
   readonly group = new THREE.Group();
@@ -75,7 +75,7 @@ export class Grass {
     const w = I.world;
     // nur in der Nähe: zwischen 24 und 36 m sinken die Halme in den Boden
     const d = w.xz.sub(cameraPosition.xz).length();
-    const fade = float(1).sub(smoothstep(24, 36, d));
+    const fade = float(1).sub(smoothstep(15, 26, d));
     const ph = w.x.mul(0.37).add(w.z.mul(0.29));
     const gust = sin(time.mul(0.7).add(w.x.mul(0.05))).mul(0.5).add(0.5);
     const sway = vec2(sin(time.mul(2.3).add(ph)), cos(time.mul(1.9).add(ph.mul(1.3)))).mul(h.mul(h).mul(mix(0.25, 0.9, gust)));
@@ -84,6 +84,7 @@ export class Grass {
     m.colorNode = vertexColor().mul(I.color);
     m.roughnessNode = float(0.55);
     m.metalnessNode = float(0);
+    m.name = 'grass';
     this.mat = m;
   }
 

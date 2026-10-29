@@ -343,3 +343,38 @@ export function bakeSurfaces(renderer: THREE.WebGPURenderer, scale = 1): Record<
   return out;
 }
 
+
+/**
+ * Blüten im Gras (Kachel 3 m): Punkte in fünf Farben (Margerite mit gelber Mitte, Hahnenfuß, Glockenblume,
+ * Enzian, Klee). Deckung im Alphakanal als Rang 0,1 … 1 – der Boden zeigt je nach Blumenfülle nur die Punkte
+ * mit kleinem Rang (Flecken mit vielen und mit wenigen Blüten).
+ */
+export function bakeFlowerDots(renderer: THREE.WebGPURenderer, size = 512): THREE.Texture {
+  const rt = target(size, THREE.UnsignedByteType, true);
+  const m = new THREE.NodeMaterial();
+  m.fragmentNode = Fn(() => {
+    const p = uv();
+    const c = voronoi(p.mul(20), 20);
+    const id = c.id;
+    const sp = h21(vec2(id, 1.7));
+    const r0 = h21(vec2(id, 3.9)).mul(0.12).add(0.27);
+    const dot = smoothstep(r0, r0.mul(0.8), c.f1);
+    let col: N = lin(0.8, 0.8, 0.74);
+    col = mix(col, lin(0.85, 0.6, 0.03), smoothstep(0.34, 0.35, sp));
+    col = mix(col, lin(0.33, 0.14, 0.6), smoothstep(0.58, 0.59, sp));
+    col = mix(col, lin(0.05, 0.11, 0.6), smoothstep(0.72, 0.73, sp));
+    col = mix(col, lin(0.72, 0.28, 0.44), smoothstep(0.84, 0.85, sp));
+    // Margerite: gelbe Mitte
+    col = mix(col, lin(0.8, 0.55, 0.04), smoothstep(0.35, 0.34, sp).mul(smoothstep(r0.mul(0.4), r0.mul(0.3), c.f1)));
+    const rank = h21(vec2(id, 7.3));
+    const a = rank.mul(0.9).add(0.1).mul(smoothstep(0.45, 0.55, dot));
+    return vec4(sqrt(clamp(col, 0, 1)), a);
+  })();
+  const quad = new THREE.QuadMesh(m);
+  const prev = renderer.getRenderTarget();
+  renderer.setRenderTarget(rt);
+  quad.render(renderer);
+  renderer.setRenderTarget(prev);
+  m.dispose();
+  return rt.texture;
+}

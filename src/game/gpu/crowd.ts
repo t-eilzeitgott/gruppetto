@@ -277,7 +277,10 @@ function crowdMaterial(rider: N): THREE.MeshStandardNodeMaterial {
 function mergedPerson(lod: 0 | 1): THREE.BufferGeometry {
   const pos: number[] = [], col: number[] = [], nor: number[] = [], idx: number[] = [];
   const dummy = new Float32Array(PS);
+  // mittlere Stufe ohne seltenes Kleinzeug (Teufel, Rucksack, Zopf, Becher)
+  const skip = lod === 1 ? new Set(['horns', 'trident', 'backpack', 'ponytail', 'cup', 'glasses', 'phone']) : new Set<string>();
   for (const k of KINDS) {
+    if (skip.has(k)) continue;
     const g = crowdGeometry(k, lod, dummy, 1);
     if (!g) continue;
     const o = pos.length / 3;
@@ -336,7 +339,7 @@ function farPerson(): THREE.BufferGeometry {
 }
 
 /** Stufen: fein bis hier (m), einfach bis da, Kasten-Menschen bis dort */
-const LOD_D = [16, 38, 320];
+const LOD_D = [16, 30, 170];
 
 interface Group { geo: THREE.InstancedBufferGeometry; buf: THREE.InstancedInterleavedBuffer; data: Float32Array; mesh: THREE.Mesh }
 

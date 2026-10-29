@@ -398,7 +398,7 @@ export class Corridor {
         const tint = this.tints(s, side, 2, sg).grass;
         const maxO = Math.min(pr.o[pr.o.length - 1], 5);
         // Dichte: ~4,5 Büschel je m² (am Bankett dichter)
-        const n = Math.round(maxO * SEG * 4.5);
+        const n = Math.round(maxO * SEG * 3.2);
         for (let q = 0; q < n; q++) {
           const o = 0.25 + Math.pow(r(), 1.3) * (maxO - 0.25);
           let j = 0;

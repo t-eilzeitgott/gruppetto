@@ -10,6 +10,9 @@ import type { Surface, SurfaceId } from './bake';
 import { buildHouse, houseMaterials, HMATS, type HMat } from './house';
 import { commit, disposeGroup, instGroup, STRIDE, type InstGroup } from './inst';
 import type { Trees } from './trees';
+import { tsl } from './nodes';
+
+const { attribute, cameraPosition, float, select, smoothstep } = tsl;
 
 const hash = (a: number, b: number) => {
   let x = Math.imul(a ^ 0x2f6b9d1, 0x9e3779b1) ^ Math.imul(b ^ 0x5bd1e995, 0x85ebca77);
@@ -25,8 +28,10 @@ const SHUTTERS: [number, number, number][] = [[0.025, 0.1, 0.04], [0.2, 0.028, 0
 /** Grundriss mit Terrasse und Holzlege (lokal): Ecken für die Hangprüfung */
 const FOOT: [number, number][] = [[-5.95, -6.1], [5.95, -6.1], [5.95, 8.7], [-5.95, 8.7], [0, 1.3]];
 
-/** Grenzen der Stufen (m): voll, mittel, fern */
-const LOD_D = [65, 160];
+/** Stufenwechsel (Mitte, halbe Breite des Überblendbands, m): voll → mittel, mittel → fern */
+const B0: [number, number] = [42, 7];
+const B1: [number, number] = [115, 14];
+const MARGIN = 7;
 
 interface Spot { x: number; y: number; z: number; rot: number; tone: number; shut: number }
 
@@ -38,12 +43,21 @@ export class Houses {
   private spots: Spot[] = [];
   private at = new THREE.Vector3(1e9, 0, 0);
 
-  constructor(S: Record<SurfaceId, Surface>) {
-    this.mats = houseMaterials(S);
+  constructor(S: Record<SurfaceId, Surface>, msaa: boolean) {
+    // Stufe je Gruppe in iC.w (0 nah, 1 mittel, 2 fern); Abstand im Shader
+    this.mats = houseMaterials(S, msaa ? (I) => {
+      const d = I.at.xz.sub(cameraPosition.xz).length();
+      const a = smoothstep(B0[0] - B0[1], B0[0] + B0[1], d);
+      const b = smoothstep(B1[0] - B1[1], B1[0] + B1[1], d);
+      const code = attribute('iC', 'vec4').w;
+      return select(code.lessThan(0.5), float(1).sub(a), select(code.lessThan(1.5), a.mul(float(1).sub(b)), b));
+    } : null);
     this.geos = [buildHouse(0), buildHouse(1), buildHouse(2)];
   }
 
   get count() { return this.spots.length; }
+  /** Plätze (für Tiere und Pflanzen ringsum) */
+  get positions(): { x: number; z: number }[] { return this.spots.map((s) => ({ x: s.x, z: s.z })); }
 
   /** Dreiecke eines Hauses je Stufe (Prüfhilfe) */
   get tris(): number[] {
@@ -145,14 +159,17 @@ export class Houses {
     if (!this.spots.length || (!force && this.at.distanceToSquared(cam) < 36)) return;
     this.at.copy(cam);
     const cnt = [0, 0, 0];
-    for (const s of this.spots) {
-      const d = Math.hypot(s.x - cam.x, s.z - cam.z);
-      const lod = d < LOD_D[0] ? 0 : d < LOD_D[1] ? 1 : 2;
+    const put = (lod: number, s: Spot) => {
       const i = cnt[lod]++;
       const sh = SHUTTERS[s.shut];
-      for (const g of this.groups[lod]) {
-        g.data.set([s.x, s.y, s.z, s.rot, 1, 1, 1, s.tone, sh[0], sh[1], sh[2], 0], i * STRIDE);
-      }
+      for (const g of this.groups[lod]) g.data.set([s.x, s.y, s.z, s.rot, 1, 1, 1, s.tone, sh[0], sh[1], sh[2], lod], i * STRIDE);
+    };
+    for (const s of this.spots) {
+      const d = Math.hypot(s.x - cam.x, s.z - cam.z);
+      // im Überblendband in beide Stufen
+      if (d < B0[0] + B0[1] + MARGIN) put(0, s);
+      if (d > B0[0] - B0[1] - MARGIN && d < B1[0] + B1[1] + MARGIN) put(1, s);
+      if (d > B1[0] - B1[1] - MARGIN) put(2, s);
     }
     for (let lod = 0; lod < 3; lod++) for (const g of this.groups[lod]) commit(g, cnt[lod]);
   }
