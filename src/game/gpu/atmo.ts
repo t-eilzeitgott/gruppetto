@@ -27,6 +27,8 @@ export class Atmo {
   // dezentes Sonnenuntergangs-Licht (Nachbearbeitung): Lage der Sonne im Bild, Stärke
   private sunScr = uniform(new THREE.Vector2(0.5, 0.3));
   private sunsetK = uniform(0);
+  /** Tempo-Linien am Bildrand (0 … 1) – im Bild gerechnet statt auf einer 2D-Ebene über allem */
+  private speedK = uniform(0);
   private aspect = uniform(1);
   /** im Tunnel (0 draußen … 1 tief drin): Sonne, Himmelslicht und Umgebung gedämpft */
   private tunnelK = 0;
@@ -134,6 +136,26 @@ export class Atmo {
     const wc = vec3(1, 0.6, 0.3);
     col = col.add(wc.mul(halo.add(streak)).mul(sk.mul(0.22)).mul(float(1).sub(l.mul(0.55))));
     col = mix(col, col.mul(vec3(1.05, 0.995, 0.93)), sk.mul(0.7));
+    // Tempo-Linien (wie im Spiel): helle Striche, die vom Bildrand nach außen fliegen; unten in der Mitte (Fahrer) keine
+    {
+      const c = sv.sub(vec2(0.5, 0.42)).mul(vec2(this.aspect, 1));
+      const r = c.length();
+      const ang = tsl.atan(c.y, c.x).div(Math.PI * 2).add(0.5);
+      const N = 44;
+      const sec = ang.mul(N);
+      const id = tsl.floor(sec);
+      const h = h21(vec2(id, 3.1));
+      const h2 = h21(vec2(id, 7.7));
+      const ph = tsl.fract(time.mul(h.mul(1.1).add(1.4)).add(h2));
+      const r0 = ph.mul(0.45).add(0.42);
+      const len = this.speedK.mul(0.07).add(0.05);
+      const seg = smoothstep(r0, r0.add(0.012), r).mul(float(1).sub(smoothstep(r0.add(len).sub(0.02), r0.add(len), r)));
+      const dl = abs(tsl.fract(sec).sub(0.5)).mul((Math.PI * 2) / N).mul(r).mul(screenSize.y);
+      const thin = float(1).sub(smoothstep(0.6, 1.4, dl));
+      const below = smoothstep(0.15, 0.25, c.y.div(max(r, float(1e-3)))).mul(float(1).sub(smoothstep(0.45, 0.55, abs(c.x).div(max(r, float(1e-3))))));
+      const on = smoothstep(0.7, 0.72, h);
+      col = col.add(vec3(1, 1, 1).mul(this.speedK.mul(0.2)).mul(on).mul(seg).mul(thin).mul(float(1).sub(below)));
+    }
     const v = smoothstep(1.25, 0.4, sv.sub(0.5).mul(vec3(1, 1.3, 0).xy).length());
     col = col.mul(mix(float(1), v, g.vignette));
     const n = h21(sv.mul(screenSize).add(time.fract().mul(vec3(31.7, 17.3, 0).xy))).sub(0.5);
@@ -204,6 +226,9 @@ export class Atmo {
     this.setSky(this.shown, this.next ?? this.shown);
     this.envNode.value = this.cube(this.envSwitched && this.next ? this.next : this.shown).environment;
   }
+
+  /** Tempo-Linien: 0 aus … 1 voll */
+  setSpeed(k: number) { this.speedK.value = Math.max(0, Math.min(1, k)); }
 
   /** Tunnel: 0 draußen … 1 tief drin (Licht von außen weg, Lampenlicht warm) */
   setTunnel(k: number) { this.tunnelK = Math.max(0, Math.min(1, k)); }

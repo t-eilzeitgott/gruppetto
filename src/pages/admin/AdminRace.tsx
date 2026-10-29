@@ -325,6 +325,7 @@ export function RaceGpuPage() {
         <span className="abf-range__label">Welt</span>
         {WORLD.map((t) => <Switch key={t.k} on={!!settings[t.k]} label={t.label} hint={t.hint} onChange={(v) => change({ [t.k]: v } as Partial<Settings>)} />)}
         <Slider label="Gegner im Bild (höchstens)" value={settings.oppMax} min={0} max={16} step={1} onChange={(v) => change({ oppMax: v })} />
+        <Slider label="Bäume in der Ferne bis (m)" value={settings.treeFar} min={300} max={1850} step={50} onChange={(v) => change({ treeFar: v })} />
       </div>
       <div className="race-sec">
         <span className="abf-range__label">Kamera</span>
@@ -334,6 +335,7 @@ export function RaceGpuPage() {
         <span className="abf-range__label">Technik</span>
         <Slider label="Auflösung höchstens" value={settings.maxDpr} min={0.7} max={3} step={0.05} onChange={(v) => change({ maxDpr: v })} />
         <Slider label="Auflösung mindestens" value={settings.minDpr} min={0.5} max={2} step={0.05} onChange={(v) => change({ minDpr: v })} />
+        <Switch on={settings.msaa > 0} label="Kantenglättung (4×)" hint="Wirkt nach Neuladen der Seite" onChange={(v) => { change({ msaa: v ? 4 : 0 }); window.setTimeout(() => location.reload(), 150); }} />
         <Switch on={showFps} label="Bildrate anzeigen" hint="Bildzeit, CPU, GPU, Auflösung, Nachladen" onChange={(v) => { setShowFps(v); lsSet(LS_FPS, v ? '1' : '0'); }} />
         <Switch on={auto} label="Autopilot" hint="Fährt selbst: Linie, Flaschen, weicht Hindernissen aus" onChange={(v) => { setAuto(v); if (raceRef.current) raceRef.current.autopilot = v; }} />
       </div>

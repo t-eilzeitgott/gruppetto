@@ -145,6 +145,8 @@ export class Corridor {
 
   /** fertige Grasbüschel eines Abschnitts (Grashalme am Rand) */
   onTufts: ((t: Tuft[]) => void) | null = null;
+  /** Prüfhilfe: woran buildRange gerade arbeitet */
+  phase = '';
 
   constructor(private track: Track, private terrain: Terrain, private mats: CorridorMats) {}
 
@@ -309,11 +311,14 @@ export class Corridor {
       mesh.updateMatrix();
       out.add(mesh);
     };
+    this.phase = 'netz:fahrbahn';
     add(B.road.build(), this.mats.road, false);
     add(B.marks.build(), this.mats.marks, false, 1);
     yield;
+    this.phase = 'netz:rand';
     add(B.sides.build(), this.mats.sides, false);
     yield;
+    this.phase = 'netz:rest';
     add(B.metal.build(), this.mats.metal, true);
     add(B.wood.build(), this.mats.wood, true);
     add(B.paint.build(), this.mats.paint, true);
@@ -340,6 +345,7 @@ export class Corridor {
   /** ein Stück Straße ohne Tunnel – in Schritten (Fahrbahn, Ränder, Begrenzungen, Gras) */
   private *span(a0: number, a1: number, B: Builders): Generator<void, void, void> {
     const { road, marks, sides, metal, wood, paint, ads, stone } = B;
+    this.phase = 'fahrbahn';
     const rows: Row[] = [];
     for (let i = a0; i <= a1; i++) rows.push(this.row(i));
     // --- Fahrbahn: drei Spalten (für die Normalen), u quer 0 … 1, v längs (5,6-m-Kachel)
@@ -374,6 +380,7 @@ export class Corridor {
     yield;
     // --- Ränder: Bankett (Kies), Querprofil, Schürze
     for (const sg of [-1, 1]) {
+      this.phase = 'rand';
       const cols: number[][] = [];
       for (const r of rows) {
         const s = r.seg;
@@ -408,9 +415,11 @@ export class Corridor {
       yield;
     }
     yield;
+    this.phase = 'begrenzung';
     // --- Begrenzungen
     for (let k = 0; k < rows.length - 1; k++) this.barriers(rows[k], rows[k + 1], metal, wood, paint, ads, stone);
     yield;
+    this.phase = 'gras';
     // --- Grasbüschel auf den Wiesenstücken des Profils (nicht auf Fels, Schnee, Kies, Beton)
     if (this.onTufts) this.onTufts(this.tufts(rows));
   }

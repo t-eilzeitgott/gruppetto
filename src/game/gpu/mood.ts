@@ -125,16 +125,18 @@ export interface Settings {
   drama: boolean;
   /** dezentes Sonnenuntergangs-Licht: warmer Schein um die tiefe Sonne in der Nachbearbeitung (fast kostenlos) */
   sunset: boolean;
+  /** Bäume als Bilder bis so weit (m); dahinter nur das Kronendach im Boden */
+  treeFar: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   mood: 'mittag', cycle: false, shadows: true, bloom: true, grade: true, vignette: true, grain: true, fog: true, rain: true, crowd: true, life: true, grass: true, cinema: false,
   exposure: 1, warm: 0, sat: 1, contrast: 1, sun: 1, env: 1, fogK: 1, bloomK: 1, vignetteK: 1, grainK: 1, maxDpr: 2,
-  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4, oppMax: 12, minDpr: 0.85, drama: false, sunset: false,
+  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4, oppMax: 12, minDpr: 0.85, drama: false, sunset: false, treeFar: 1850,
 };
 
 /** Spiel (Abfahrt auf WebGPU): goldene Stunde, dramatischer Himmel, Sonnenuntergangs-Licht */
-export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'gold', drama: true, sunset: true, oppMax: 10 };
+export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'gold', drama: true, sunset: true, oppMax: 10, treeFar: 1100, minDpr: 1 };
 export const RACE_KEY = 'gruppetto.gpu.race';
 
 const KEY = 'gruppetto.gpu.settings';

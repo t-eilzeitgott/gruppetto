@@ -134,6 +134,10 @@ export class Race {
   private gpuPending = false;
   private gpuFrames = 0;
   private gpuMs = -1;
+  /** GPU-Zeit geglättet; Auflösung, unter der es nicht schneller wird (gelernt), laufender Versuch */
+  private avgGpu = 0;
+  private dprFloor = 0;
+  private probe: { from: number; gpu: number; at: number } | null = null;
   readonly perf = new Perf();
   /** Messfahrt fertig */
   onReport: ((r: Report) => void) | null = null;
@@ -234,6 +238,7 @@ export class Race {
     }));
     this.scene.add(world.group);
     world.trees.sunDir.value.copy(atmo.sunDir);
+    world.trees.setFar(this.settings.treeFar);
     const objects = (this.objects = new Objects());
     this.scene.add(objects.group);
     const particles = (this.particles = new Particles());
@@ -646,12 +651,28 @@ export class Race {
     const mn = Math.min(...this.intervals);
     this.period = mn < 9.6 ? 1000 / 120 : mn < 12.5 ? 1000 / 90 : 1000 / 60;
     if (this.intervals.length < 60 || now - this.lastDprChange < 1200 || this.paused) return;
+    // letzter Schritt nach unten hat die Grafikkarte kaum entlastet? Dann zurück zur schärferen Auflösung und
+    // nicht wieder darunter: die Kosten hängen dann nicht an den Bildpunkten (unscharf und trotzdem langsam)
+    if (this.probe && now - this.probe.at > 1600) {
+      const p = this.probe;
+      this.probe = null;
+      if (this.avgGpu > p.gpu * 0.9) {
+        this.dprFloor = p.from;
+        this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${p.from.toFixed(2)} (kleiner brachte GPU nichts: ${p.gpu.toFixed(1)}→${this.avgGpu.toFixed(1)} ms)`);
+        this.dpr = p.from;
+        this.renderer.setPixelRatio(this.dpr);
+        this.lastDprChange = now;
+        this.slowFor = this.fastFor = 0;
+        return;
+      }
+    }
     const cpuBound = this.avgCpu > this.period * 0.75;
     if (this.avgMs > this.period * 1.22 && !cpuBound) { this.slowFor += dtMs; this.fastFor = 0; } else if (this.avgMs < this.period * 1.06) { this.fastFor += dtMs; this.slowFor = 0; } else { this.slowFor = 0; }
     let want = this.dpr;
-    if (this.slowFor > 700) want = Math.max(Math.min(this.settings.minDpr, this.maxDpr), this.dpr - 0.15);
+    if (this.slowFor > 700) want = Math.max(Math.min(Math.max(this.settings.minDpr, this.dprFloor), this.maxDpr), this.dpr - 0.15);
     else if (this.fastFor > 3500) want = Math.min(this.maxDpr, this.dpr + 0.1);
     if (want !== this.dpr) {
+      if (want < this.dpr && this.gpuTiming && this.avgGpu > 0) this.probe = { from: this.dpr, gpu: this.avgGpu, at: now };
       this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${(Math.round(want * 100) / 100).toFixed(2)}`);
       this.dpr = Math.round(want * 100) / 100;
       this.renderer.setPixelRatio(this.dpr);
@@ -811,6 +832,7 @@ export class Race {
       P.mark(1);
       this.updateTunnel(run ? dt : 0);
       this.atmo?.update(run ? dt : 0, this.camera.position, this.camera);
+      this.atmo?.setSpeed(e.phase === 'playing' && !this.paused && !this.free ? (e.p.v - 21) / 14 : 0);
       this.updateSun();
       const mood = this.moodName;
       if (mood !== this.shownMood) { if (this.shownMood) P.event(EV.mood, mood); this.shownMood = mood; }
@@ -860,6 +882,7 @@ export class Race {
         if (typeof v !== 'number' || !(v > 0)) return;
         P.gpu = v / nf;
         this.gpuMs = v / nf;
+        this.avgGpu = this.avgGpu ? this.avgGpu + (v / nf - this.avgGpu) * 0.08 : v / nf;
         this.gpuSamples?.push(v / nf);
       }).catch(() => undefined).finally(() => { this.gpuPending = false; });
     }
@@ -947,6 +970,27 @@ export class Race {
   /** Prüfhilfe: Szene (welche Materialien/Geometrien sind sichtbar) */
   get debugScene(): THREE.Scene { return this.scene; }
   get debugRenderer(): THREE.WebGPURenderer { return this.renderer; }
+  /** Prüfhilfe (ohne Bildschirm): n Bilder zeichnen und auf die Grafik warten – Zeit je Bild (ms) */
+  async benchDraw(n = 5): Promise<number> {
+    const e = this.eng;
+    if (e && this.rider && this.world) { this.updateCamera(0); this.atmo?.update(0, this.camera.position, this.camera); this.updateSun(); this.world.update(this.camera.position, this.rider.group.position, true); }
+    this.draw();
+    if (this.frameRT) await this.renderer.readRenderTargetPixelsAsync(this.frameRT, 0, 0, 1, 1);
+    const t0 = performance.now();
+    for (let k = 0; k < n; k++) this.draw();
+    if (this.frameRT) await this.renderer.readRenderTargetPixelsAsync(this.frameRT, 0, 0, 1, 1);
+    return (performance.now() - t0) / n;
+  }
+  /** Prüfhilfe: Gruppen der Welt für die Kostenmessung */
+  get debugGroups(): Record<string, THREE.Object3D[]> {
+    const w = this.world!;
+    const known = new Set<THREE.Object3D>([w.field.group, w.trees.group, w.grass.group, w.houses.group, w.life.group, ...(w.crowd ? [w.crowd.group] : [])]);
+    return {
+      trees: [w.trees.group], houses: [w.houses.group], field: [w.field.group], road: w.group.children.filter((o) => !known.has(o)),
+      grass: [w.grass.group], life: [w.life.group], crowd: w.crowd ? [w.crowd.group] : [], objects: this.objects ? [this.objects.group] : [],
+      riders: [this.rider!.group, ...this.pool.map((r) => r.group)],
+    };
+  }
   /** Prüfhilfe: Spiel (Engine) */
   get engine(): Abfahrt | null { return this.eng; }
 
@@ -979,6 +1023,7 @@ export class Race {
     if (diff) this.perf.event(EV.settings, diff);
     this.settings = s;
     saveSettings(s, RACE_KEY);
+    this.dprFloor = 0;
     this.atmo?.apply(s, instant);
     this.maxDpr = Math.min(window.devicePixelRatio || 1, s.maxDpr);
     if (this.dpr > this.maxDpr) { this.dpr = this.maxDpr; this.renderer.setPixelRatio(this.dpr); }
@@ -987,6 +1032,7 @@ export class Race {
       if (w.crowd) w.crowd.group.visible = s.crowd;
       w.life.group.visible = s.life;
       w.grass.group.visible = s.grass;
+      if (s.treeFar !== prev.treeFar) w.trees.setFar(s.treeFar);
     }
   }
 

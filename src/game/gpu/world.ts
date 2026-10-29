@@ -261,7 +261,7 @@ export class World {
         }
         const ts = performance.now();
         const r = this.job.it.next();
-        this.noteStep(this.lbl === 'leben' ? `leben:${this.life.phase}` : this.lbl, performance.now() - ts);
+        this.noteStep(this.lbl === 'leben' ? `leben:${this.life.phase}` : this.lbl === 'strasse' ? `strasse:${this.corridor.phase}` : this.lbl, performance.now() - ts);
         if (r.done) this.job = null;
       }
       // Fernsicht (mittlere und grobe Landschaft) in der übrigen Zeit

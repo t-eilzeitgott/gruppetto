@@ -34,7 +34,8 @@ export class Overlay {
   }
 
   resize(w: number, h: number) {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    // 1,5-fach reicht für die Schrift; die Ebene über dem ganzen Bild kostet sonst beim Zusammensetzen viel
+    const dpr = Math.min(1.5, window.devicePixelRatio || 1);
     this.W = w;
     this.H = h;
     const ow = Math.round(w * dpr), oh = Math.round(h * dpr);
@@ -48,8 +49,9 @@ export class Overlay {
 
   draw(g: OverlayView) {
     const c = this.c;
-    const fast = g.v > 21 && g.playing;
-    const busy = fast || g.popups.length > 0;
+    // Tempo-Linien zeichnet jetzt die Nachbearbeitung (atmo.ts) – hier nur noch die Hinweise
+    const fast = false;
+    const busy = g.popups.length > 0;
     if (!busy && !this.dirty) return;
     this.dirty = busy;
     c.clearRect(0, 0, this.W, this.H);

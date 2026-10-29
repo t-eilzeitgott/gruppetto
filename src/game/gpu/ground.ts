@@ -31,6 +31,8 @@ interface Mix {
 }
 
 const meanOf = (s: Surface): N => vec3(s.mean.r, s.mean.g, s.mean.b);
+/** Prüfmodus (?tq=Bitmaske): Teile des Bodens weglassen, um ihre Kosten zu messen */
+const TQ = Number(/[?&]tq=(\d+)/.exec(typeof location === 'undefined' ? '' : location.search)?.[1] ?? 0);
 
 /** grobes Waldgewicht (Felsköpfe nicht mitten im Wald) */
 const foBase = (m: Mix): N => smoothstep(0.1, 0.5, m.fo);
@@ -56,7 +58,7 @@ function shade(S: Surfaces, m: Mix) {
   const tint = mix(base, base.mul(vec3(1.25, 1.05, 0.62)), dryW.mul(0.55).add(steepG.mul(0.3)).min(0.8)).mul(macro.x.mul(0.6).add(0.75).clamp(0.7, 1.25));
   let grassCol: N = tint.mul(m.detail ? mix(gC.mul(0.35).add(0.65), gDet.mul(0.7).add(gC.mul(0.3)), flat) : mix(float(1), gC.mul(0.6).add(0.4), flat));
   const camD0 = pos.sub(cameraPosition).length();
-  if (m.dots) {
+  if (m.dots && !(TQ & 1)) {
     // Blumenwiese: fleckig viele oder wenige Blüten, nur auf ebener Wiese, in der Nähe als Punkte, fern als leichter Schimmer
     const fd = texture(m.dots, pos.xz.div(3));
     const many = smoothstep(0.3, 0.7, decodeAlbedo(texture(S.grass.albedo, pos.xz.div(53)).rgb).x.div(meanOf(S.grass).x).mul(0.5)).mul(flat);
@@ -77,7 +79,7 @@ function shade(S: Surfaces, m: Mix) {
   // Flecken: Rauschmasken (roh gelesen 0 … 1; r mittel, g klein, b groß)
   const nz = (k: number): N => texture(S.noise.albedo, pos.xz.div(k)).rgb;
   const rk2 = nz(m.detail ? 41 : 160);
-  if (m.detail) {
+  if (m.detail && !(TQ & 2)) {
     // offene Erde mit Steinchen: kleine Flecken, eher am Hang (Viehtritt) als in der ebenen Wiese
     const g = planar(S.gravel.albedo, S.gravel.nra, pos.xz.div(1.6), nG, 0.7);
     const dirt = smoothstep(0.8, 0.9, rk2.y.add(steepG.mul(0.12))).mul(0.8);
@@ -86,7 +88,7 @@ function shade(S: Surfaces, m: Mix) {
     if (/[?&]dbgdirt\b/.test(location.search)) col = vec3(rk2.x, dirt, rk2.z);
     rough = mix(rough, float(0.93), dirt);
     n = normalize(mix(n, g.n, dirt));
-  } else {
+  } else if (!m.detail) {
     // ferne Hänge: Buckel und Mulden im Licht (sonst glatt wie Plastik)
     const hum = planarN(S.grass.nra, pos.xz.div(m.canopy ? 47 : 23), nG, 3.2);
     n = normalize(mix(nG, hum, 0.7));
@@ -94,7 +96,7 @@ function shade(S: Surfaces, m: Mix) {
   // Wald: nah Waldboden (Nadeln, Moos), fern Kronendach – auf der feinen Stufe mit dem Abstand übergeblendet, damit
   // ein Wald dort, wo die 3D-Bäume aufhören, nicht als Rechteck anders aussieht
   // Kronendach: Kronen als Buckel (Muster der Wiese, groß), hell besonnt, dunkle Lücken dazwischen
-  const crownT = planar(S.grass.albedo, S.grass.nra, pos.xz.div(m.detail ? 11 : 30), nG, 2.6);
+  const crownT = TQ & 4 ? { col: gC.mul(meanOf(S.grass)).sqrt(), n: nG } : planar(S.grass.albedo, S.grass.nra, pos.xz.div(m.detail ? 11 : 30), nG, 2.6);
   const crown = decodeAlbedo(crownT.col).div(meanOf(S.grass)).dot(vec3(0.3, 0.5, 0.2));
   const canopyCol = mix(vec3(0.03, 0.052, 0.024), vec3(0.095, 0.13, 0.052), crown.mul(0.6).clamp(0, 1)).mul(gC.y.mul(0.35).add(0.82));
   const floorCol = mix(m.tint.mul(0.55), mix(vec3(0.07, 0.06, 0.035), vec3(0.09, 0.075, 0.045), gDet.x.mul(0.5).clamp(0, 1)), 0.6).mul(gDet.mul(0.5).add(0.5));
@@ -109,7 +111,7 @@ function shade(S: Surfaces, m: Mix) {
   rough = mix(rough, float(0.95), foW);
   if (m.canopy) n = mix(n, crownT.n, foW);
   // Kies und Beton (Bankett, Rinne, Mauerkrone)
-  if (m.detail) {
+  if (m.detail && !(TQ & 64)) {
     const g = planar(S.gravel.albedo, S.gravel.nra, pos.xz.div(1.1), nG, 0.8);
     const gravelCol = decodeAlbedo(g.col).mul(0.62);
     col = mix(col, gravelCol, m.gr);
@@ -122,7 +124,7 @@ function shade(S: Surfaces, m: Mix) {
     n = mix(n, mix(nG, g.n, 0.25), m.cc);
   }
   // Geröll unter den Wänden: helle Halden aus Schutt (von oben, grob)
-  const sg = m.sc ? planar(S.gravel.albedo, S.gravel.nra, pos.xz.div(m.detail ? 2.6 : 11), nG, m.detail ? 1 : 1.6) : null;
+  const sg = m.sc && !(TQ & 8) ? planar(S.gravel.albedo, S.gravel.nra, pos.xz.div(m.detail ? 2.6 : 11), nG, m.detail ? 1 : 1.6) : null;
   const screeCol: N = sg ? decodeAlbedo(sg.col).div(meanOf(S.gravel)).mul(m.rockTint).mul(1.05) : null;
   if (sg && m.sc) {
     col = mix(col, screeCol, m.sc);
@@ -136,12 +138,12 @@ function shade(S: Surfaces, m: Mix) {
   const outcrop = smoothstep(0.72, 0.82, rk2.x.add(steepG.mul(0.15))).mul(steepG).mul(float(1).sub(foBase(m)));
   const rkW = max(m.rk, outcrop.mul(0.9));
   const top = { albedo: S.rock.albedo, nra: S.rock.nra };
-  const r = triplanar(S.cliff.albedo, S.cliff.nra, pos, nG, m.detail ? 9 : 27, 10, top, m.detail ? 1.5 : 1.3);
+  const r = TQ & 16 ? planar(S.rock.albedo, S.rock.nra, pos.xz.div(m.detail ? 9 : 27), nG, 1.3) : triplanar(S.cliff.albedo, S.cliff.nra, pos, nG, m.detail ? 9 : 27, 10, top, m.detail ? 1.5 : 1.3);
   const rRaw = decodeAlbedo(r.col).div(meanOf(S.cliff));
   let rockCol: N = rRaw.mul(m.rockTint).mul(0.6).add(rRaw.mul(vec3(0.2, 0.19, 0.17)).mul(0.4)).mul(1.15);
   let rockN: N = r.n;
   let rockAo: N = r.ao;
-  if (!m.detail) {
+  if (!m.detail && !(TQ & 16)) {
     const r2 = triplanar(S.cliff.albedo, S.cliff.nra, pos, nG, 150, 6, top, 2.2);
     rockCol = rockCol.mul(decodeAlbedo(r2.col).div(meanOf(S.cliff)).mul(0.7).add(0.3));
     rockN = normalize(r.n.add(r2.n).sub(nG));
@@ -165,9 +167,9 @@ function shade(S: Surfaces, m: Mix) {
     n = mix(n, sg.n, sr);
   }
   // Schnee: Altschnee in Flecken mit klaren Rändern; auf Fels nur auf Simsen und flachen Absätzen
-  const s = planar(S.snow.albedo, S.snow.nra, pos.xz.div(m.detail ? 6 : 17), nG, 1);
+  const s = TQ & 32 ? { col: vec3(0.95, 0.95, 0.95), rough: float(0.6), ao: float(1), n: nG } : planar(S.snow.albedo, S.snow.nra, pos.xz.div(m.detail ? 6 : 17), nG, 1);
   // Flecken aus den Rauschmasken (groß, mit ausgefransten Rändern) – das Wiesenmuster würde sprenkeln
-  const patchy = smoothstep(0.35, 0.75, nz(330).z.mul(0.7).add(nz(70).y.mul(0.3)));
+  const patchy = TQ & 32 ? zone.z : smoothstep(0.35, 0.75, nz(330).z.mul(0.7).add(nz(70).y.mul(0.3)));
   const ledge = smoothstep(0.72, 0.9, normalize(rockN).y);
   // Sommer: nur Reste – in Mulden und an flachen Stellen, auf Fels nur auf breiten Simsen
   const snowRaw = m.sn.mul(patchy.mul(0.9).add(0.2)).mul(mix(float(1), ledge, rkW.mul(0.7)));

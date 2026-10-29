@@ -50,7 +50,7 @@ interface Cell {
   spots: TreeSpot[];
   dirty: boolean;
   /** 0 je Baum verteilt, 1 alle als Bild, 2 weg; null: neu bestimmen */
-  far: 0 | 1 | 2 | null;
+  far: 0 | 1 | 2 | 3 | null;
   at: THREE.Vector3;
   groups: Group[];
 }
@@ -65,6 +65,14 @@ export class Trees {
   private atlas: THREE.Texture;
   private cells = new Map<string, Cell>();
   readonly sunDir = uniform(new THREE.Vector3(0, 1, 0));
+  /**
+   * Sichtweite der Bilder-Bäume (m) und ab wo nur noch jeder zweite steht (größer): tausende winzige Flächen mit
+   * Deckungsmaske kosten die Grafikkarte viel, unabhängig von der Auflösung – dahinter färbt der Boden den Wald
+   */
+  readonly farU = uniform(FAR[1]);
+  private far = FAR[1];
+  thinFrom = 650;
+  setFar(m: number) { this.far = m; this.farU.value = m; for (const c of this.cells.values()) c.far = null; }
   count = 0;
 
   /** msaa: Kantenglättung an (dann Deckung über „alpha to coverage“, sonst harter Schnitt) */
@@ -136,7 +144,7 @@ export class Trees {
     m.normalNode = transformNormalToView(normalize(R.mul(nb.x).add(vec3(0, 1, 0).mul(nb.y)).add(D.mul(nb.z))));
     m.colorNode = a.rgb.mul(a.rgb).mul(iC.xyz);
     const d = varying(iP.xz.sub(cameraPosition.xz).length(), 'vImpDist');
-    const f = smoothstep(B1[0] - B1[1], B1[0] + B1[1], d).mul(float(1).sub(smoothstep(FAR[0], FAR[1], d)));
+    const f = smoothstep(B1[0] - B1[1], B1[0] + B1[1], d).mul(float(1).sub(smoothstep(this.farU.sub(300), this.farU, d)));
     if (this.msaa) { m.opacityNode = coverage(a.a, f, 0.3); m.alphaToCoverage = true; } else { m.opacityNode = a.a.mul(f); m.alphaTest = 0.35; }
     m.name = 'trees-far';
     return m;
@@ -251,8 +259,8 @@ export class Trees {
   }
 
   /** Bäume einer Zelle nach Abstand auf die Stufen verteilen; im Überblendband in beide (all: alle als Bild) */
-  private partition(c: Cell, cam: THREE.Vector3, farOnly: boolean) {
-    c.far = farOnly ? 1 : 0;
+  private partition(c: Cell, cam: THREE.Vector3, farOnly: boolean, thin = false) {
+    c.far = farOnly ? (thin ? 3 : 1) : 0;
     c.at.copy(cam);
     const n0 = B0[0] + B0[1] + MARGIN;
     const m0 = B0[0] - B0[1] - MARGIN;
@@ -262,7 +270,16 @@ export class Trees {
       const cnt = [0, 0, 0];
       const put = (lv: number, k: number) => { g.lods[lv].data.set(g.src.subarray(k * STRIDE, k * STRIDE + STRIDE), cnt[lv] * STRIDE); cnt[lv]++; };
       for (let k = 0; k < g.n; k++) {
-        if (farOnly) { put(2, k); continue; }
+        if (farOnly) {
+          if (!thin) { put(2, k); continue; }
+          // ausgedünnt: jeder zweite Baum, dafür etwas größer
+          if ((k & 1) === 1) continue;
+          put(2, k);
+          const o = (cnt[2] - 1) * STRIDE;
+          const D = g.lods[2].data;
+          D[o + 4] *= 1.22; D[o + 5] *= 1.22; D[o + 6] *= 1.22;
+          continue;
+        }
         const d = Math.hypot(g.xz[k * 2] - cam.x, g.xz[k * 2 + 1] - cam.z);
         if (d < n0) put(0, k);
         if (d > m0 && d < n1) put(1, k);
@@ -283,12 +300,13 @@ export class Trees {
       const dx = Math.max(0, Math.abs(cam.x - c.cx) - CELL / 2);
       const dz = Math.max(0, Math.abs(cam.z - c.cz) - CELL / 2);
       const d = Math.hypot(dx, dz);
-      if (d > FAR[1] + MARGIN) {
+      if (d > this.far + MARGIN) {
         if (c.far !== 2) { c.far = 2; for (const g of c.groups) for (const l of g.lods) l.mesh.visible = false; }
         continue;
       }
       if (d > B1[0] + B1[1] + MARGIN) {
-        if (c.far !== 1) this.partition(c, cam, true);
+        const thin = d > this.thinFrom;
+        if (c.far !== (thin ? 3 : 1)) this.partition(c, cam, true, thin);
         continue;
       }
       // nah: neu verteilen, wenn die Kamera 6 m weiter ist (je Bild höchstens eine Zelle)
