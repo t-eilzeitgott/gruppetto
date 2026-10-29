@@ -280,6 +280,14 @@ export function treeTint(tint: number, r1: number, r2: number): [number, number,
   return [r, g, b];
 }
 
+/** Arten der Varianten (Index wie VARIANTS) – für die WebGPU-Welt */
+export const TREE_VARIANT_KINDS: TreeKind[] = VARIANTS.map((v) => v.kind);
+
+/** Modell einer Variante: fein (hd, für den Bildvorrat) oder wie die nahen 3D-Bäume im Spiel */
+export function treeModel(i: number, hd: boolean): THREE.BufferGeometry {
+  return VARIANTS[i].make(hd);
+}
+
 /** Varianten je Art (Index in VARIANTS) */
 const BY_KIND = new Map<string, number[]>();
 VARIANTS.forEach((v, i) => { const l = BY_KIND.get(v.kind) ?? []; l.push(i); BY_KIND.set(v.kind, l); });

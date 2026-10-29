@@ -1219,7 +1219,9 @@ export class Terrain {
     // Schürzen an allen vier Rändern: verdecken Ritzen zu Nachbarn und zur gröberen Stufe
     let vn = V * V;
     const skirt = (vIdx: number) => {
-      pos[vn * 3] = pos[vIdx * 3]; pos[vn * 3 + 1] = Math.max(pos[vIdx * 3 + 1] - L.skirt, SF[this.gridK(vIdx, V, G)]); pos[vn * 3 + 2] = pos[vIdx * 3 + 2];
+      // nie über die Kante hinaus: über einem Tunnel endet die Schürze über der Röhre (SF) – liegt die Kante selbst
+      // tiefer (Portal, Klemme unter die Straße), stünde sie sonst als Wand in den Himmel
+      pos[vn * 3] = pos[vIdx * 3]; pos[vn * 3 + 1] = Math.min(pos[vIdx * 3 + 1], Math.max(pos[vIdx * 3 + 1] - L.skirt, SF[this.gridK(vIdx, V, G)])); pos[vn * 3 + 2] = pos[vIdx * 3 + 2];
       nor[vn * 3] = nor[vIdx * 3]; nor[vn * 3 + 1] = nor[vIdx * 3 + 1]; nor[vn * 3 + 2] = nor[vIdx * 3 + 2];
       col[vn * 3] = col[vIdx * 3] * 0.8; col[vn * 3 + 1] = col[vIdx * 3 + 1] * 0.8; col[vn * 3 + 2] = col[vIdx * 3 + 2] * 0.8;
       for (let q = 0; q < 3; q++) rck[vn * 3 + q] = rck[vIdx * 3 + q] * 0.8;

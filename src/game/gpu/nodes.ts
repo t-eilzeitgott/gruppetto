@@ -34,6 +34,19 @@ export const h22 = (p: N): N => {
   return fract(vec2(r.x.add(r.y), r.x.add(r.z)).mul(vec2(r.z, r.y)));
 };
 
+/**
+ * Wertrauschen in einer Richtung mit Ableitung (für Rinnen und Schichtbänder im Fels): v 0 … 1, d = dv/dx.
+ * seed: eigene Folge je Verwendung
+ */
+export function vn1(x: N, seed: number): { v: N; d: N } {
+  const i = floor(x);
+  const f = fract(x);
+  const a = h21(vec2(i, seed));
+  const b = h21(vec2(i.add(1), seed));
+  const s = f.mul(f).mul(f.mul(-2).add(3));
+  return { v: mix(a, b, s), d: b.sub(a).mul(f.mul(float(1).sub(f)).mul(6)) };
+}
+
 /** Periode: gleich in beiden Richtungen oder je Achse (für gestreckte Muster: Klüfte, Wasserstreifen) */
 export type Per = number | [number, number];
 const perN = (per: Per): N => (typeof per === 'number' ? per : vec2(per[0], per[1]));
@@ -154,3 +167,30 @@ export const decodeAlbedo = (c: N): N => c.mul(c);
 
 /** weiche Mischung zweier Ergebnisse */
 export const blend = (a: N, b: N, t: N): N => mix(a, b, t);
+
+/** Bayer-Raster 4 × 4 (0 … 1) je Bildpunkt – ordentliches Gitter, auf jeder Grafik gleich */
+export function bayer4(): N {
+  const { floor: fl, mod, screenCoordinate } = tsl;
+  const px = fl(screenCoordinate.x), py = fl(screenCoordinate.y);
+  const b2 = (x: N, y: N): N => mod(x.mul(2).add(y.mul(3)), 4);
+  return b2(mod(px, 2), mod(py, 2)).mul(4).add(b2(mod(fl(px.div(2)), 2), mod(fl(py.div(2)), 2))).add(0.5).div(16);
+}
+
+/**
+ * Stufenwechsel ohne Flackern: jede Stufe eines Objekts belegt den Anteil [lo, hi) des Bayer-Rasters – die
+ * Stufen davor und danach genau die übrigen Bildpunkte. Beide Stufen zeichnen so nie denselben Bildpunkt (kein
+ * Z-Kampf, kein Flimmern wie bei „alpha to coverage“, das dieselben Abtastpunkte doppelt belegt), und das ohne
+ * Kantenglättung. Ergebnis 1 oder 0 als Deckung (dazu alphaTestNode 0,5).
+ */
+export function ditherVis(lo: N, hi: N): N {
+  const t = bayer4();
+  const { select } = tsl;
+  return select(t.greaterThanEqual(lo).and(t.lessThan(hi)), float(1), float(0));
+}
+
+/** Material auf Raster-Überblendung stellen: sichtbar im Anteil [lo, hi) */
+export function useDither(m: { opacityNode: unknown; alphaTestNode: unknown; alphaToCoverage: boolean }, lo: N, hi: N) {
+  m.opacityNode = ditherVis(lo, hi);
+  m.alphaTestNode = float(0.5);
+  m.alphaToCoverage = false;
+}

@@ -10,16 +10,9 @@ import * as THREE from 'three/webgpu';
 import { RiderModel } from '../abfahrt/rider3d';
 import { RiderAnim, type RiderState } from '../abfahrt/riderAnim';
 import { SKINS, TEAM_KITS, type Kit } from '../abfahrt/rider';
-import { tsl, type N } from './nodes';
+import { bayer4, tsl } from './nodes';
 
-const { attribute, clamp, float, floor, mix, mod, screenCoordinate, select, userData } = tsl;
-
-/** Bayer-Raster 4 × 4 (0 … 1) je Bildpunkt – ordentliches Gitter für die Geister, auf jeder Grafik gleich */
-function bayer4(): N {
-  const px = floor(screenCoordinate.x), py = floor(screenCoordinate.y);
-  const b2 = (x: N, y: N): N => mod(x.mul(2).add(y.mul(3)), 4);
-  return b2(mod(px, 2), mod(py, 2)).mul(4).add(b2(mod(floor(px.div(2)), 2), mod(floor(py.div(2)), 2))).add(0.5).div(16);
-}
+const { attribute, clamp, float, mix, select, userData } = tsl;
 
 /** Ursprungsmaterial (uuid, mit/ohne Glanz) → Knotenmaterial; gemeinsam für alle Fahrer */
 const MATS = new Map<string, THREE.Material>();

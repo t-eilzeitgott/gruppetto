@@ -54,17 +54,61 @@ export class Arches {
   private slot(b: Banner): number {
     const color = this.colorOf(b.kind);
     const main = b.kind === 'gpm' ? `GPM · ${b.text}` : b.kind === 'welcome' ? `Benvenuti a ${b.text}` : b.text;
-    const key = `${main}|${b.sub ?? ''}|${color}`;
+    const light = color === '#ffffff' || color === '#ffd23f';
+    return this.cell(`${main}|${b.sub ?? ''}|${color}`, () => bannerTex(main.toUpperCase(), b.sub ?? '', color, light ? '#1a1a1a' : '#ffffff'));
+  }
+
+  private cell(key: string, paint: () => HTMLCanvasElement): number {
     let s = this.slots.get(key);
     if (s !== undefined) return s;
     s = this.slots.size % CELLS;
     this.slots.set(key, s);
-    const light = color === '#ffffff' || color === '#ffd23f';
-    const src = bannerTex(main.toUpperCase(), b.sub ?? '', color, light ? '#1a1a1a' : '#ffffff');
     const c = this.canvas.getContext('2d')!;
-    c.drawImage(src, 0, s * CH, CW, CH);
+    c.drawImage(paint(), 0, s * CH, CW, CH);
     this.tex.needsUpdate = true;
     return s;
+  }
+
+  /**
+   * Tafel mit Schrift (Ortsschild, Name über dem Stadttor): an Segment i, quer x, Unterkante y über der Fahrbahn;
+   * posts: auf zwei Pfosten (Unterkante der Tafel dann bei y + 1,5 m)
+   */
+  plate(group: THREE.Group, i: number, x: number, y: number, text: string, sub: string, w = 1.9, posts = true) {
+    const s = this.cell(`plate|${text}|${sub}`, () => bannerTex(text, sub, '#f4f2ec', '#1b1b1b'));
+    const r = { x: 0, y: 0, z: 0, th: 0 };
+    this.track.world(i * SEG, 0, 0, r);
+    const rx = Math.cos(r.th), rz = Math.sin(r.th);
+    const fx = Math.sin(r.th), fz = -Math.cos(r.th);
+    const P = (q: number, l: number, h: number) => [r.x + rx * (x + q) + fx * l, r.y + h, r.z + rz * (x + q) + fz * l];
+    const pos: number[] = [], nor: number[] = [], uvs: number[] = [];
+    const quad = (a: number[], b: number[], c: number[], d: number[], n: number[], ua: number[][]) => {
+      for (const [p, u] of [[a, ua[0]], [b, ua[1]], [c, ua[2]], [a, ua[0]], [c, ua[2]], [d, ua[3]]] as [number[], number[]][]) { pos.push(...p); nor.push(...n); uvs.push(u[0], u[1]); }
+    };
+    const h = w * 0.24;
+    const y0 = posts ? y + 1.5 : y;
+    const v0 = 1 - ((s + 1) * CH - 2) / AH, v1 = 1 - (s * CH + 2) / AH;
+    const grey = 1 - (AH - PAL_H / 2) / AH;
+    const G = [[0.5, grey], [0.5, grey], [0.5, grey], [0.5, grey]];
+    // vorn (zum Ankommenden: Normale gegen die Fahrtrichtung), hinten grau
+    quad(P(-w / 2, -0.03, y0), P(w / 2, -0.03, y0), P(w / 2, -0.03, y0 + h), P(-w / 2, -0.03, y0 + h), [-fx, 0, -fz], [[0.004, v0], [0.996, v0], [0.996, v1], [0.004, v1]]);
+    quad(P(w / 2, 0.03, y0), P(-w / 2, 0.03, y0), P(-w / 2, 0.03, y0 + h), P(w / 2, 0.03, y0 + h), [fx, 0, fz], G);
+    if (posts) {
+      for (const q of [-w * 0.38, w * 0.38]) {
+        const a = q - 0.04, b = q + 0.04;
+        quad(P(a, 0.04, 0), P(b, 0.04, 0), P(b, 0.04, y0 + h), P(a, 0.04, y0 + h), [-fx, 0, -fz], G);
+        quad(P(b, 0.12, 0), P(a, 0.12, 0), P(a, 0.12, y0 + h), P(b, 0.12, y0 + h), [fx, 0, fz], G);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.computeBoundingSphere();
+    const mesh = new THREE.Mesh(geo, this.mat);
+    mesh.matrixAutoUpdate = false;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
   }
 
   /** ein Bogen: Masten und Band als ein Netz (ein Zeichenaufruf) */

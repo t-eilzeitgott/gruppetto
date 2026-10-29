@@ -22,6 +22,7 @@ import { Life } from './life';
 import { Trees } from './trees';
 import { Tunnels } from './tunnel';
 import { Arches } from './arches';
+import { Towns } from './town';
 import { tsl } from './nodes';
 import { cheapMaterial } from './light';
 
@@ -71,6 +72,7 @@ export class World {
   readonly forest: ForestEdge;
   readonly tunnels: Tunnels;
   readonly arches: Arches;
+  readonly towns: Towns;
   private track: Track;
   private terrain: Terrain;
   private pieces = new Map<number, Piece>();
@@ -99,6 +101,12 @@ export class World {
     this.forest = new ForestEdge(p.track, p.terrain, 0, 0);
     this.tunnels = new Tunnels(p.track, p.corridorMats.sides);
     this.arches = new Arches(p.track, p.accent ?? '#ff5fa2');
+    this.towns = new Towns({
+      track: p.track, terrain: p.terrain,
+      ground: (s, sg, dx) => this.corridor.groundAt(s, sg, dx),
+      trees: (list) => this.trees.addSpots(list),
+      plate: (g, i, x, h, text, sub, w, posts) => this.arches.plate(g, i, x, h, text, sub, w, posts),
+    });
     if (p.adsMap) {
       const m = cheapMaterial({ col: select(frontFacing, texture(p.adsMap, uv()).rgb, vec3(0.3, 0.2, 0.11)), nWorld: normalWorldGeometry, params: { side: THREE.DoubleSide } });
       m.name = 'signs';
@@ -185,6 +193,10 @@ export class World {
     // Torbögen (Start, Zwischenzeiten, Gipfel, Ziel)
     this.lbl = 'boegen';
     this.arches.addRange(piece.group, i0, i1);
+    // Ortsdurchfahrten: Häuserzeilen, Gassen, Gehsteig
+    this.lbl = 'ort';
+    const town = yield* this.towns.buildRange(k, i0, i1, this.late);
+    if (town) piece.group.add(town);
     // Zuschauer und ihre Schilder
     this.lbl = 'zuschauer';
     if (this.crowd) {
@@ -205,7 +217,7 @@ export class World {
     // Häuser (Abstand zur Straße über alle Stellen der Strecke)
     const roadDist = (x: number, z: number) => { const n = this.forest.near(x, z); return n ? n.d : 1e9; };
     this.lbl = 'haeuser';
-    yield* this.houses.addRange({ track: this.track, terrain: this.terrain, trees: this.trees, roadDist }, z0, z1, 6, this.late);
+    yield* this.houses.addRange({ track: this.track, terrain: this.terrain, trees: this.trees, roadDist, occ: this.towns.occ }, z0, z1, 6, this.late);
     // Pflanzen und Tiere
     const [lx0, lz0, lx1, lz1] = this.bbox(z0 - 40, z1 + 40, 230);
     const trees = this.trees;
@@ -213,7 +225,7 @@ export class World {
     yield* this.life.addRange({
       track: this.track, terrain: this.terrain, forest: this.forest,
       trees: { countNear: (x, z, r) => trees.countNear(x, z, r), allSpots: () => trees.spotsIn(lx0, lz0, lx1, lz1) },
-      houses: this.houses.positions, z0, z1, msaa: this.p.msaa,
+      houses: [...this.houses.positions, ...this.towns.centers()], farms: this.houses.positions, z0, z1, msaa: this.p.msaa,
     }, this.late);
     piece.group.updateMatrixWorld(true);
     this.group.add(piece.group);
@@ -271,7 +283,7 @@ export class World {
         }
         const ts = performance.now();
         const r = this.job.it.next();
-        this.noteStep(this.lbl === 'leben' ? `leben:${this.life.phase}` : this.lbl === 'strasse' ? `strasse:${this.corridor.phase}` : this.lbl, performance.now() - ts);
+        this.noteStep(this.lbl === 'leben' ? `leben:${this.life.phase}` : this.lbl === 'strasse' ? `strasse:${this.corridor.phase}` : this.lbl === 'ort' ? `ort:${this.towns.phase}` : this.lbl, performance.now() - ts);
         if (r.done) this.job = null;
       }
       // Fernsicht (mittlere und grobe Landschaft) in der übrigen Zeit
@@ -354,6 +366,7 @@ export class World {
       if (this.job?.k === k) this.job = null;
       pc.group.removeFromParent();
       pc.group.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) m.geometry.dispose(); });
+      this.towns.drop(k);
       this.pieces.delete(k);
       this.stats.dropped++;
       dropped = true;
@@ -387,6 +400,7 @@ export class World {
     this.houses.update(cam, force);
     this.life.update(cam, force);
     this.crowd?.update(cam, rider, force);
+    this.towns.update(cam);
   }
 
   /**
@@ -419,6 +433,8 @@ export class World {
       if (tun) group.add(tun);
     }
     group.add(this.arches.warm());
+    group.add(this.towns.warm());
+    this.arches.plate(group, 2, 0, 0, 'GRUPPETTO', '');
     if (this.signMat) {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
@@ -455,6 +471,7 @@ export class World {
     this.crowd?.dispose();
     (this.tunnels.mat as THREE.Material).dispose();
     this.arches.dispose();
+    this.towns.dispose();
     this.signMat?.dispose();
   }
 }

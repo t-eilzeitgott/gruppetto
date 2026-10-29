@@ -174,6 +174,14 @@ export class Corridor {
     return pr.h[pr.h.length - 1];
   }
 
+  /** wie edgeHeight, aber null jenseits des Profils (dort steht das Gelände) – für Häuser und Gehsteig-Dinge */
+  groundAt(s: Seg, sg: number, dx: number): number | null {
+    const side = sg < 0 ? s.L : s.R;
+    const pr = this.profile(side, s, sg, this.terrain.lim(s.i)[sg < 0 ? 0 : 1]);
+    if (dx > pr.o[pr.o.length - 1] + 0.5) return null;
+    return this.edgeHeight(s, sg, dx);
+  }
+
   /** Querprofil wie im Spiel (Höhen, Abstände ab Bankettkante), am Korridorrand abgeschnitten */
   private profile(side: Side, s: Seg, sg: number, lim: number): Profile {
     const pr = this.rawProfile(side, s, sg);

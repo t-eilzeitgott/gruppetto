@@ -12,7 +12,7 @@ import { commit, disposeGroup, instGroup, STRIDE, type InstGroup } from './inst'
 import type { Trees } from './trees';
 import { tsl } from './nodes';
 
-const { attribute, cameraPosition, float, select, smoothstep } = tsl;
+const { attribute, cameraPosition, float, select, smoothstep, varying } = tsl;
 
 const hash = (a: number, b: number) => {
   let x = Math.imul(a ^ 0x2f6b9d1, 0x9e3779b1) ^ Math.imul(b ^ 0x5bd1e995, 0x85ebca77);
@@ -42,6 +42,8 @@ export interface HouseCtx {
   trees: Trees;
   /** Abstand zur Straße (alle Stellen der Strecke, auch andere Kehren) */
   roadDist: (x: number, z: number) => number;
+  /** Grundrisse der Ortshäuser (x, z, Radius): dort kein Hof */
+  occ?: number[];
 }
 
 export class Houses {
@@ -53,15 +55,19 @@ export class Houses {
   private cap = 0;
   private at = new THREE.Vector3(1e9, 0, 0);
 
-  constructor(S: Record<SurfaceId, Surface>, msaa: boolean) {
+  constructor(S: Record<SurfaceId, Surface>, _msaa: boolean) {
     // Stufe je Gruppe in iC.w (0 nah, 1 mittel, 2 fern); Abstand im Shader
-    this.mats = houseMaterials(S, msaa ? (I) => {
-      const d = I.at.xz.sub(cameraPosition.xz).length();
+    // Raster-Überblendung (nodes.ditherVis): die Stufen teilen sich die Bildpunkte, nie dieselben – kein Flackern
+    this.mats = houseMaterials(S, (I) => {
+      const d = varying(I.at.xz.sub(cameraPosition.xz).length(), 'vHouseD');
       const a = smoothstep(B0[0] - B0[1], B0[0] + B0[1], d);
       const b = smoothstep(B1[0] - B1[1], B1[0] + B1[1], d);
       const code = attribute('iC', 'vec4').w;
-      return select(code.lessThan(0.5), float(1).sub(a), select(code.lessThan(1.5), a.mul(float(1).sub(b)), b));
-    } : null);
+      const one = float(1);
+      const lo = select(code.lessThan(0.5), float(0), select(code.lessThan(1.5), one.sub(a), one.sub(b)));
+      const hi = select(code.lessThan(0.5), one.sub(a), select(code.lessThan(1.5), one.sub(b), float(2)));
+      return [lo, hi];
+    });
     this.geos = [buildHouse(0), buildHouse(1), buildHouse(2)];
   }
 
@@ -102,6 +108,8 @@ export class Houses {
     const tryAt = (x: number, z: number, seed: number, minGap: number, minRoad: number, toward: { x: number; z: number } | null, at: number): Spot | null => {
       if (roadDist(x, z) < minRoad) return null;
       for (const s of this.spots) if ((s.x - x) ** 2 + (s.z - z) ** 2 < minGap * minGap) return null;
+      const occ = c.occ;
+      if (occ) for (let o = 0; o < occ.length; o += 3) if (Math.hypot(occ[o] - x, occ[o + 1] - z) < occ[o + 2] + 14) return null;
       if (trees.countNear(x, z, 14) > 3) return null;
       const h = (px: number, pz: number) => terrain.groundAt(px, pz);
       const gx = (h(x + 7, z) - h(x - 7, z)) / 14;
@@ -135,6 +143,8 @@ export class Houses {
       const village = track.sections[s.sec].biome === 'village';
       for (const side of [-1, 1]) {
         if (late()) yield;
+        // Ortsdurchfahrt mit Häuserzeilen (town.ts): dort keine Höfe gleich am Korridor
+        if (village && (s.bL || s.bR)) continue;
         if (village) {
           // Dorf: Häuserzeile gleich hinter dem Korridor (dort beginnt die Landschaft)
           const lim = terrain.lim(s.i)[side < 0 ? 0 : 1];

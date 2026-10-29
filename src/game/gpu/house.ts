@@ -12,7 +12,7 @@
  */
 import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
-import { decodeAlbedo, tsl, type N } from './nodes';
+import { decodeAlbedo, tsl, useDither, type N } from './nodes';
 import { cheapMaterial } from './light';
 import { instNodes } from './inst';
 import { MOOD_U } from './mood';
@@ -820,7 +820,7 @@ export function buildHouse(lod: 0 | 1 | 2): Record<HMat, THREE.BufferGeometry> {
 }
 
 /** Materialien der Häuser (Instanzen: iP Ort/Drehung, iS.w Putzfarbe 0 … 1, iC Farbe der Läden) */
-export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnType<typeof instNodes>) => N) | null): Record<HMat, THREE.MeshLambertNodeMaterial> {
+export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnType<typeof instNodes>) => [N, N]) | null): Record<HMat, THREE.MeshLambertNodeMaterial> {
   // günstiges Licht (light.ts): Lambert mit gemessenem Umgebungslicht – Häuser sind matt (Putz, Holz, Schindeln)
   const make = (name: string, shade: (I: ReturnType<typeof instNodes>) => { col: N; rough: N; ao?: N; xy?: N; metal?: N; k?: number }, emissive?: (I: ReturnType<typeof instNodes>) => N) => {
     const I = instNodes();
@@ -836,8 +836,8 @@ export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnT
     const col = o.metal ? o.col.mul(float(1).sub(o.metal.mul(0.4))) : o.col;
     const m = cheapMaterial({ col, nWorld: nW, ao: o.ao, extra: emissive ? emissive(I) : undefined });
     m.positionNode = I.world;
-    // weiche Überblendung zwischen den Stufen (Deckung über die Kantenglättung)
-    if (fade) { m.opacityNode = fade(I); m.alphaToCoverage = true; }
+    // weiche Überblendung zwischen den Stufen (Raster: jede Stufe ihre eigenen Bildpunkte)
+    if (fade) { const [lo, hi] = fade(I); useDither(m, lo, hi); }
     m.name = name;
     return m;
   };

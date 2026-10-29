@@ -11,7 +11,7 @@ import * as THREE from 'three/webgpu';
 import type { Terrain, TreeSpot } from '../abfahrt/terrain3d';
 import type { Track } from '../abfahrt/track';
 import { commit, disposeGroup, instGroup, instNodes, STRIDE, type InstGroup } from './inst';
-import { tsl, type N } from './nodes';
+import { tsl, useDither, type N } from './nodes';
 import type { ForestEdge } from './forest';
 
 const { atan, attribute, cameraPosition, cos, float, min, mix, normalize, positionGeometry, select, sin, smoothstep, time, transformNormalToView, varying, vec2, vec3, vertexColor } = tsl;
@@ -402,14 +402,19 @@ function wind(at: N, w: N, k: number): N {
   return vec3(sin(time.mul(2.3).add(ph)), 0, cos(time.mul(1.9).add(ph.mul(1.3)))).mul(w.mul(w).mul(mix(0.3, 1, gust)).mul(k));
 }
 
-/** Überblendung zwischen Stufen (Stufe in iS.w, Grenzen to[]) – Deckung über die Kantenglättung */
-function lodFade(d: N, to: number[], band: number): N {
+/**
+ * Überblendung zwischen Stufen (Stufe in iS.w, Grenzen to[]) als Raster-Anteil [lo, hi) (nodes.ditherVis): die
+ * Stufen teilen sich die Bildpunkte, nie dieselben – kein Flackern. out: zusätzlich ausblenden (0 … 1)
+ */
+function lodBand(d: N, to: number[], band: number, out: N): [N, N] {
   const q = attribute('iS', 'vec4').w;
-  const fin = (k: number) => (k === 0 ? float(1) : smoothstep(to[k - 1] - band, to[k - 1] + band, d));
-  const fout = (k: number) => (k === to.length - 1 ? float(1) : float(1).sub(smoothstep(to[k] - band, to[k] + band, d)));
-  let f: N = fin(to.length - 1).mul(fout(to.length - 1));
-  for (let k = to.length - 2; k >= 0; k--) f = select(q.lessThan(k + 0.5), fin(k).mul(fout(k)), f);
-  return f;
+  const one = float(1);
+  const a = (k: number): N => smoothstep(to[k] - band, to[k] + band, d);
+  const lo = (k: number): N => (k === 0 ? float(0) : one.sub(a(k - 1)));
+  const hi = (k: number): N => (k === to.length - 1 ? one.sub(out) : one.sub(a(k)).min(one.sub(out)));
+  let L: N = lo(to.length - 1), H: N = hi(to.length - 1);
+  for (let k = to.length - 2; k >= 0; k--) { L = select(q.lessThan(k + 0.5), lo(k), L); H = select(q.lessThan(k + 0.5), hi(k), H); }
+  return [L, H];
 }
 
 export interface LifeCtx {
@@ -417,7 +422,10 @@ export interface LifeCtx {
   terrain: Terrain;
   forest: ForestEdge;
   trees: { countNear(x: number, z: number, r: number): number; allSpots(): Iterable<TreeSpot> };
+  /** alle Häuser (Abstand halten) */
   houses: { x: number; z: number }[];
+  /** Höfe (Kühe davor) – ohne die Häuser der Orte */
+  farms?: { x: number; z: number }[];
   z0: number;
   z1: number;
   msaa: boolean;
@@ -429,7 +437,7 @@ export class Life {
   private mats: THREE.Material[] = [];
   private geos: THREE.BufferGeometry[] = [];
 
-  constructor(private msaa = true) {
+  constructor(_msaa = true) {
     const [shrubs, roses] = this.shrubKinds();
     const [cows, sheep] = this.herdKinds();
     this.kinds = { flowers: this.flowerKind(), shrubs, roses, ferns: this.fernKind(), cows, sheep, birds: this.birdKind() };
@@ -459,10 +467,12 @@ export class Life {
   *addRange(c: LifeCtx, late: () => boolean = () => false): Generator<void, void, void> {
     this.phase = 'raster';
     // Bäume in einem feinen Raster (viele Abfragen „steht hier ein Baum?“)
-    const grid = new Map<string, number[]>();
+    // Zahlenschlüssel (Zeichenketten je Baum erzeugten viel Müll – Speicherbereinigung mitten in der Fahrt)
+    const gk = (i: number, j: number) => (i + 32768) * 65536 + (j + 32768);
+    const grid = new Map<number, number[]>();
     let n = 0;
     for (const t of c.trees.allSpots()) {
-      const k = `${Math.floor(t.x / 8)},${Math.floor(t.z / 8)}`;
+      const k = gk(Math.floor(t.x / 8), Math.floor(t.z / 8));
       const l = grid.get(k);
       if (l) l.push(t.x, t.z); else grid.set(k, [t.x, t.z]);
       if (++n % 4000 === 0 && late()) yield;
@@ -472,7 +482,7 @@ export class Life {
       const R = Math.ceil(r / 8);
       const cx = Math.floor(x / 8), cz = Math.floor(z / 8);
       for (let j = -R; j <= R; j++) for (let i = -R; i <= R; i++) {
-        const l = grid.get(`${cx + i},${cz + j}`);
+        const l = grid.get(gk(cx + i, cz + j));
         if (!l) continue;
         for (let q = 0; q < l.length; q += 2) if ((l[q] - x) ** 2 + (l[q + 1] - z) ** 2 <= r * r) cnt++;
       }
@@ -499,12 +509,19 @@ export class Life {
 
   /** Boden: Höhe (Bereich je Zelle) und Neigung */
   private ground(c: LifeCtx) {
-    let reg: ReturnType<Terrain['region']> | null = null;
-    let key = '';
+    // Rechenbereiche je 32-m-Feld behalten: die Verteilung springt zwischen beiden Straßenseiten hin und her –
+    // mit nur einem gemerkten Feld wurde der Bereich (teuer: alle Straßenproben) fast bei jeder Abfrage neu gebaut
+    const regs = new Map<number, ReturnType<Terrain['region']>>();
     return (x: number, z: number) => {
-      const k = `${Math.floor(x / 32)},${Math.floor(z / 32)}`;
-      if (k !== key) { key = k; const bx = Math.floor(x / 32) * 32, bz = Math.floor(z / 32) * 32; reg = c.terrain.region(bx - 2, bz - 2, bx + 34, bz + 34); }
-      return c.terrain.heightIn(reg!, x, z);
+      const i = Math.floor(x / 32), j = Math.floor(z / 32);
+      const k = (i + 32768) * 65536 + (j + 32768);
+      let reg = regs.get(k);
+      if (!reg) {
+        if (regs.size > 48) regs.clear();
+        reg = c.terrain.region(i * 32 - 2, j * 32 - 2, i * 32 + 34, j * 32 + 34);
+        regs.set(k, reg);
+      }
+      return c.terrain.heightIn(reg, x, z);
     };
   }
 
@@ -544,8 +561,8 @@ export class Life {
         m.normalNode = I.normal;
         m.colorNode = vertexColor().xyz.mul(I.color);
         const d = varying(I.at.xz.sub(cameraPosition.xz).length(), 'vShrubD');
-        const f = lodFade(d, to, band).mul(float(1).sub(smoothstep(230, 260, d)));
-        if (this.msaa) { m.opacityNode = f; m.alphaToCoverage = true; }
+        const [lo, hi] = lodBand(d, to, band, smoothstep(230, 260, d));
+        useDither(m, lo, hi);
         m.name = rose ? 'roses' : 'shrubs';
         return { geo, mat: m, to: to[q], shadow: q === 0 };
       });
@@ -614,8 +631,8 @@ export class Life {
     const w = { x: 0, y: 0, z: 0, th: 0 };
     let n = 0;
     for (let z = Math.ceil(c.z0 / 6) * 6; z < c.z1; z += 6) {
-      if (late()) yield;
       for (const sg of [-1, 1]) {
+        if (late()) yield;
         for (let lat = 5.5; lat < 60; lat += 2.4 + lat * 0.03) {
           const seed = Math.round(z * 7) * 131 + Math.round(lat * 10) + (sg > 0 ? 7 : 0);
           // Flecken: großflächig dichter und dünner, je Fleck zwei Arten
@@ -698,6 +715,7 @@ export class Life {
   }
 
   // Kühe bei den Höfen und auf den Almwiesen, Schafherden weiter oben
+  private herded = new Set<number>();
   private *placeHerds(c: LifeCtx, late: () => boolean): Generator<void, void, void> {
     const cows = this.kinds.cows, sheep = this.kinds.sheep;
     const h = this.ground(c);
@@ -734,10 +752,13 @@ export class Life {
         placed++;
       }
     };
-    // Kühe bei jedem zweiten Hof (auf der Talseite vor dem Haus) und auf freien Almen
-    for (const p of c.houses) {
+    // Kühe bei jedem zweiten Hof (auf der Talseite vor dem Haus) und auf freien Almen – je Hof nur einmal (die
+    // Liste enthält alle Höfe der gebauten Strecke, nicht nur die dieses Abschnitts)
+    for (const p of c.farms ?? c.houses) {
       // je Hof fest (aus dem Ort), nicht aus der Reihenfolge
       const i = Math.round(p.x * 3 + p.z * 7);
+      if (this.herded.has(i)) continue;
+      this.herded.add(i);
       if (hash(i, 3) > 0.6) continue;
       const a = hash(i, 4) * 6.28;
       herd(p.x + Math.cos(a) * 34, p.z + Math.sin(a) * 34, 4 + Math.floor(hash(i, 5) * 5), 1000 + i, false);

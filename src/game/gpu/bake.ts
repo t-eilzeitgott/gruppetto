@@ -45,11 +45,9 @@ const asphalt: Recipe = {
     const stone2 = smoothstep(0.38, 0.1, g2.f1).mul(0.5);
     const fine = fbm(p.mul(64), 64, 4);
     const big = fbm(p.mul(3), 3, 4);
-    // Flicken: großflächig etwas dunkler und frischer
-    const patch = smoothstep(0.62, 0.66, fbm(p.mul(2).add(vec2(7.1, 2.3)), 2, 3));
-    // Teernähte (Risse, mit Bitumen vergossen)
-    const cr = voronoi(p.mul(vec2(2, 3)).add(vec2(fbm(p.mul(9), 9, 3), fbm(p.mul(9).add(4.1), 9, 3)).sub(0.5).mul(0.35)), 3);
-    const seam = smoothstep(0.022, 0.0, cr.f2.sub(cr.f1)).mul(smoothstep(0.58, 0.7, fbm(p.mul(5), 5, 2))).mul(0.7);
+    // Flicken und Fugen nicht hier (sie kämen alle 5,6 m wieder): die legt die Fahrbahn im Straßenraum (mats.ts)
+    const patch = float(0);
+    const seam = float(0);
     // Fahrspuren: glatter und dunkler (Reifenabrieb)
     const u = p.x;
     const lane = smoothstep(0.1, 0.0, abs(u.sub(0.27))).add(smoothstep(0.1, 0.0, abs(u.sub(0.73)))).min(1);
@@ -57,7 +55,7 @@ const asphalt: Recipe = {
     const h = stones.mul(0.55).add(fine.mul(0.25)).sub(seam.mul(0.35)).add(0.2);
     const tone = h21(vec2(g1.id, 7.7));
     const stoneCol = mix(lin(0.16, 0.155, 0.15), lin(0.3, 0.29, 0.27), tone).mul(mix(1, 0.75, lane));
-    const binder = lin(0.035, 0.036, 0.04).mul(fine.mul(0.5).add(0.75)).mul(big.mul(0.4).add(0.8));
+    const binder = lin(0.035, 0.036, 0.04).mul(fine.mul(0.5).add(0.75)).mul(big.mul(0.2).add(0.9));
     let col: N = mix(binder, stoneCol, stones.mul(0.75));
     col = mix(col, col.mul(0.7), patch);
     col = mix(col, lin(0.018, 0.018, 0.02), seam);
