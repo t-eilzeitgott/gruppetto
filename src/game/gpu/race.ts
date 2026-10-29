@@ -137,6 +137,8 @@ export class Race {
   /** GPU-Zeit geglättet; Auflösung, unter der es nicht schneller wird (gelernt), laufender Versuch */
   private avgGpu = 0;
   private dprFloor = 0;
+  private floorUntil = 0;
+  private probe: { from: number; ms: number; at: number } | null = null;
   readonly perf = new Perf();
   /** Messfahrt fertig */
   onReport: ((r: Report) => void) | null = null;
@@ -676,14 +678,32 @@ export class Race {
     const mn = Math.min(...this.intervals);
     this.period = mn < 9.6 ? 1000 / 120 : mn < 12.5 ? 1000 / 90 : 1000 / 60;
     if (this.intervals.length < 60 || now - this.lastDprChange < 1200 || this.paused) return;
-    // kein Zurückspringen nach GPU-Zeitstempeln: Apples Grafik taktet bei weniger Last herunter, die gemessene
-    // GPU-Zeit sinkt dann kaum, obwohl das Bild schneller fertig sein könnte – entschieden wird nach der Bildzeit
+    // letzter Schritt nach unten hat die Bildzeit nicht verbessert? Dann zurück zur schärferen Szene und eine Weile
+    // nicht wieder darunter (auf dem iPhone hängt die Bildzeit inzwischen kaum noch an den Bildpunkten: CPU und
+    // Grafik laufen dort nacheinander, feste Kosten überwiegen). Nicht nach GPU-Zeitstempeln: Apples Grafik taktet
+    // bei weniger Last herunter, die gemessene GPU-Zeit sinkt dann kaum.
+    if (this.probe && now - this.probe.at <= 2000) return;
+    if (this.probe) {
+      const p = this.probe;
+      this.probe = null;
+      if (this.avgMs > p.ms * 0.95) {
+        this.dprFloor = p.from;
+        this.floorUntil = now + 30000;
+        this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${p.from.toFixed(2)} (kleiner brachte nichts: Bildzeit ${p.ms.toFixed(1)}→${this.avgMs.toFixed(1)} ms)`);
+        this.setDpr(p.from);
+        this.lastDprChange = now;
+        this.slowFor = this.fastFor = 0;
+        return;
+      }
+    }
+    if (this.dprFloor && now > this.floorUntil) this.dprFloor = 0;
     const cpuBound = this.avgCpu > this.period * 0.75;
     if (this.avgMs > this.period * 1.22 && !cpuBound) { this.slowFor += dtMs; this.fastFor = 0; } else if (this.avgMs < this.period * 1.06) { this.fastFor += dtMs; this.slowFor = 0; } else { this.slowFor = 0; }
     let want = this.dpr;
     if (this.slowFor > 700) want = Math.max(Math.min(Math.max(this.settings.minDpr, this.dprFloor), this.maxDpr), this.dpr - 0.15);
     else if (this.fastFor > 3500) want = Math.min(this.maxDpr, this.dpr + 0.1);
     if (want !== this.dpr) {
+      if (want < this.dpr) this.probe = { from: this.dpr, ms: this.avgMs, at: now };
       this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${(Math.round(want * 100) / 100).toFixed(2)}`);
       this.setDpr(Math.round(want * 100) / 100);
       this.lastDprChange = now;

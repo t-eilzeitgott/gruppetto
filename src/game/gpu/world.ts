@@ -167,7 +167,7 @@ export class World {
     this.trees.addSpots(fill);
     yield;
     this.lbl = 'waldboden';
-    for (const geo of this.field.tilesIn(0, bx0, bz0, bx1, bz1)) { yield* this.forest.boostSteps(geo, 'aMat', this.late); if (this.late()) yield; }
+    for (const geo of this.field.tilesIn(0, bx0, bz0, bx1, bz1)) { yield* this.forest.boostSteps(geo, 'aMat', this.late); this.field.changed(geo); if (this.late()) yield; }
     // Straße und Rand
     this.lbl = 'strasse';
     const road = yield* this.corridor.buildRange(i0, i1);
@@ -244,6 +244,12 @@ export class World {
     const t0 = performance.now();
     this.until = until;
     try {
+      // geänderte Landschaftsblöcke zuerst zusammenlegen (die Kacheln dazu sind schon fertig)
+      if (this.field.dirtyCount) {
+        const ts = performance.now();
+        this.field.flush(until);
+        this.noteStep('bloecke', performance.now() - ts);
+      }
       while (performance.now() < until) {
         // Abbau hinten zuerst (in Schritten), dann der nächste Abschnitt voraus
         if (this.pruneJob) {
@@ -307,6 +313,7 @@ export class World {
         this.field.build(this.w.x, this.w.z, until, 2500);
         if (this.late()) return false;
       }
+      this.field.flush();
       return true;
     } finally {
       this.until = Infinity;

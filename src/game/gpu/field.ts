@@ -22,6 +22,13 @@ interface Tile {
 }
 
 const RADIUS = [230, 1600, 6500];
+/**
+ * Zeichenblöcke: je 2 × 2 Kacheln einer Stufe liegen in einem Netz (feinste Stufe 256 m, mittlere 1 km, grobe 4 km)
+ * – gut ein Viertel der Zeichenaufrufe (auf dem iPhone kostet jeder ~15 µs CPU). Die Kacheln selbst bleiben als
+ * Daten (Absenken, Waldboden, Abbau); ändert sich eine, wird ihr Block neu zusammengelegt.
+ */
+const BLOCK = 2;
+interface Block { key: string; lv: number; tiles: Set<Tile>; mesh: THREE.Mesh | null }
 /** so tief sinkt eine gröbere Stufe unter einer feineren ab */
 const DROP = [0, 70, 300];
 
@@ -41,6 +48,9 @@ export class Field {
   total = 0;
   /** Prüfmodus: Absenkung abschwächen (?drop=0.1) */
   dropK = 1;
+  private blocks = new Map<string, Block>();
+  private dirty = new Set<Block>();
+  private byGeo = new Map<THREE.BufferGeometry, Tile>();
 
   constructor(private terrain: Terrain, route: RouteSample[], private mats: THREE.Material[], private ev: FieldEvents = {}) {
     this.extend(route);
@@ -145,7 +155,10 @@ export class Field {
       this.sets[t.lv].delete(t.key);
       if (t.state === 'done') { this.doneSets[t.lv].delete(t.key); this.done--; }
       this.total--;
-      if (t.mesh) { t.mesh.removeFromParent(); t.mesh.geometry.dispose(); t.mesh = null; }
+      if (t.mesh) { this.byGeo.delete(t.mesh.geometry); t.mesh.geometry.dispose(); t.mesh = null; }
+      const b = this.blockOf(t);
+      b.tiles.delete(t);
+      this.dirty.add(b);
       if (t.lv === 0) dropped0.push(t.key);
     }
     // gröbere Kacheln über entfernten feineren wieder anheben (jede einmal, je Schritt eine)
@@ -244,6 +257,7 @@ export class Field {
     pos.needsUpdate = true;
     geo.computeBoundingSphere();
     t.mesh.visible = up > 0;
+    this.dirty.add(this.blockOf(t));
   }
 
   private finish(t: Tile, d: import('../abfahrt/terrain3d').TileData) {
@@ -259,7 +273,10 @@ export class Field {
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
     t.mesh = mesh;
-    this.group.add(mesh);
+    this.byGeo.set(geo, t);
+    const b = this.blockOf(t);
+    b.tiles.add(t);
+    this.dirty.add(b);
     if (t.lv > 0) {
       const pos = geo.getAttribute('position') as THREE.BufferAttribute;
       t.y0 = new Float32Array(pos.count);
@@ -280,50 +297,73 @@ export class Field {
     if (t.lv === 0 && d.trees.length) this.ev.onTrees?.(t.key, d.trees, t.cx, t.cz);
   }
 
+  private blockOf(t: Tile): Block {
+    const key = `${t.lv}:${Math.floor(t.tx / BLOCK)},${Math.floor(t.tz / BLOCK)}`;
+    let b = this.blocks.get(key);
+    if (!b) { b = { key, lv: t.lv, tiles: new Set(), mesh: null }; this.blocks.set(key, b); }
+    return b;
+  }
+
+  /** Geometrie einer Kachel wurde verändert (z. B. Waldboden): ihr Block muss neu zusammengelegt werden */
+  changed(geo: THREE.BufferGeometry) {
+    const t = this.byGeo.get(geo);
+    if (t) this.dirty.add(this.blockOf(t));
+  }
+
+  get dirtyCount(): number { return this.dirty.size; }
+
   /**
-   * Wenn alles gebaut ist: Kacheln zu größeren Stücken zusammenlegen (feinste Stufe 2 × 2 = 256 m, mittlere
-   * 2 × 2 = 1 km) – viel weniger Zeichenaufrufe; ganz verdeckte gröbere Kacheln fallen weg.
+   * geänderte Blöcke neu zusammenlegen (sichtbare Kacheln; ganz verdeckte gröbere fallen weg), bis zur Zeit until.
+   * Feine Stufen zuerst: ist die Zeit um, liegt höchstens für ein Bild eine noch nicht abgesenkte gröbere Kachel
+   * über der neuen feinen – nie ein Loch, weil eine gröbere schon abgesenkt wäre und die feine fehlte.
    */
-  merge() {
-    if (this.progress < 1) return;
-    for (const t of this.tiles) {
-      if (t.mesh && !t.mesh.visible) { this.group.remove(t.mesh); t.mesh.geometry.dispose(); t.mesh = null; t.y0 = null; }
-    }
-    for (const [lv, B] of [[0, 2], [1, 2]] as const) {
-      const groups = new Map<string, Tile[]>();
-      for (const t of this.tiles) {
-        if (t.lv !== lv || !t.mesh) continue;
-        const k = `${Math.floor(t.tx / B)},${Math.floor(t.tz / B)}`;
-        const g = groups.get(k);
-        if (g) g.push(t); else groups.set(k, [t]);
+  flush(until = Infinity) {
+    const order = [...this.dirty].sort((a, b) => a.lv - b.lv);
+    let n = 0;
+    for (const b of order) {
+      if (n++ > 0 && performance.now() > until) break;
+      this.dirty.delete(b);
+      const geos: THREE.BufferGeometry[] = [];
+      for (const t of b.tiles) if (t.mesh?.visible) geos.push(t.mesh.geometry);
+      if (!geos.length) {
+        if (b.mesh) { b.mesh.removeFromParent(); b.mesh.geometry.dispose(); b.mesh = null; }
+        if (!b.tiles.size) this.blocks.delete(b.key);
+        continue;
       }
-      for (const list of groups.values()) {
-        if (list.length < 2) continue;
-        const mesh = new THREE.Mesh(mergeGeos(list.map((t) => t.mesh!.geometry)), this.mats[lv]);
-        mesh.receiveShadow = lv === 0;
+      const geo = mergeGeos(geos);
+      if (b.mesh) {
+        b.mesh.geometry.dispose();
+        b.mesh.geometry = geo;
+      } else {
+        const mesh = new THREE.Mesh(geo, this.mats[b.lv]);
+        // Schatten nur empfangen: der Schattenausschnitt ist klein (110 m) – Hänge würfen sonst Schatten mit harter Kante
+        mesh.receiveShadow = b.lv === 0;
         mesh.castShadow = false;
         mesh.matrixAutoUpdate = false;
         mesh.updateMatrix();
-        mesh.userData.lv = lv;
+        mesh.userData.lv = b.lv;
         this.group.add(mesh);
-        this.merged.push(mesh);
-        for (const t of list) { this.group.remove(t.mesh!); t.mesh!.geometry.dispose(); t.mesh = null; t.y0 = null; }
+        b.mesh = mesh;
       }
     }
   }
-  private merged: THREE.Mesh[] = [];
 
-  /** Geometrien einer Stufe (zusammengelegte und einzelne Kacheln) */
+  /** (früher: am Ende zusammenlegen) – die Blöcke entstehen jetzt laufend */
+  merge() { this.flush(); }
+
+  /** Geometrien einer Stufe (die Kacheln; nach Änderungen changed() und flush()) */
   geometries(lv: number): THREE.BufferGeometry[] {
     const out: THREE.BufferGeometry[] = [];
-    for (const m of this.merged) if (m.userData.lv === lv) out.push(m.geometry);
     for (const t of this.tiles) if (t.lv === lv && t.mesh) out.push(t.mesh.geometry);
     return out;
   }
 
+  /** Zeichenaufrufe der Landschaft (Blöcke mit Netz) */
+  get blockCount(): number { let n = 0; for (const b of this.blocks.values()) if (b.mesh) n++; return n; }
+
   dispose() {
     for (const t of this.tiles) t.mesh?.geometry.dispose();
-    for (const m of this.merged) m.geometry.dispose();
+    for (const b of this.blocks.values()) b.mesh?.geometry.dispose();
   }
 }
 

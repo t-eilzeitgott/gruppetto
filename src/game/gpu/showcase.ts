@@ -357,7 +357,8 @@ export class Showcase {
     await step(0.73, 'Bäume');
     this.updateCamera(0);
     field.merge();
-    for (const g of field.geometries(0)) forest.boost(g, 'aMat');
+    for (const g of field.geometries(0)) { forest.boost(g, 'aMat'); field.changed(g); }
+    field.flush();
     corridor.group.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh && m.geometry.getAttribute('aW')) forest.boost(m.geometry, 'aW');
