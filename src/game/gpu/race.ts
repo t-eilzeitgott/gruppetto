@@ -227,7 +227,7 @@ export class Race {
     const terrain = new Terrain(track);
     const adsM = adsMaterial(adsTex(this.opts.names));
     const world = (this.world = new World({
-      renderer: r, track, terrain, msaa: gpu, low,
+      renderer: r, track, terrain, msaa: gpu && this.settings.msaa > 0, low,
       terrainMats: [terrainMaterial(S, 0, dots), terrainMaterial(S, 1), terrainMaterial(S, 2)],
       corridorMats: {
         road: roadMaterial(S), marks: marksMaterial(S), sides: corridorMaterial(S, dots), metal: metalMaterial(), wood: woodMaterial(),

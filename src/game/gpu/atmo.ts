@@ -187,55 +187,64 @@ export class Atmo {
 
   /** Nachbearbeitung: Leuchten, dann Tonkurve, dann Farbfilter im Anzeigeraum (wie im Spiel) */
   outputNode(color: N, withBloom = true): N {
-    const glow = withBloom ? bloom(color, this.u.bloom, 0.3, this.u.bthr) : null;
-    // Szene kleiner gerechnet als angezeigt: beim Hochskalieren leicht nachschärfen (vier Nachbarn)
-    const t = this.texel;
-    const nb = color.sample(screenUV.add(vec2(t.x, 0))).add(color.sample(screenUV.sub(vec2(t.x, 0))))
-      .add(color.sample(screenUV.add(vec2(0, t.y)))).add(color.sample(screenUV.sub(vec2(0, t.y))));
-    const sharp = color.add(color.sub(nb.mul(0.25)).mul(this.sharp)).max(0);
-    let col: N = renderOutput(glow ? sharp.add(glow) : sharp).rgb;
-    const l = dot(col, vec3(0.2126, 0.7152, 0.0722));
-    const g = this.u;
-    let gr: N = mix(vec3(l, l, l), col, g.sat);
-    gr = gr.sub(0.5).mul(g.contrast).add(0.5);
-    gr = gr.mul(vec3(g.warm.mul(0.09).add(1), g.warm.mul(0.02).add(1), float(1).sub(g.warm.mul(0.1))));
-    gr = mix(gr, gr.mul(mix(g.splitS, g.splitH, smoothstep(0.12, 0.78, l))), g.split);
-    col = mix(col, gr, g.grade);
-    const sv = screenUV;
-    // Sonnenuntergangs-Licht: warmer Schein um die tiefe Sonne, ein feiner waagrechter Lichtstreif durch sie und
-    // ein Hauch Wärme im ganzen Bild – nur Rechnungen mit festen Werten, kein weiterer Durchgang (aus = Stärke 0)
-    const sk = this.sunsetK;
-    const dd = sv.sub(this.sunScr).mul(vec2(this.aspect, 1));
-    const halo = exp(dd.length().mul(-2.4)).mul(0.6).add(exp(dd.length().mul(-9)).mul(0.5));
-    const streak = exp(abs(dd.y).mul(-46)).mul(exp(abs(dd.x).mul(-1.4))).mul(0.4);
-    const wc = vec3(1, 0.6, 0.3);
-    col = col.add(wc.mul(halo.add(streak)).mul(sk.mul(0.22)).mul(float(1).sub(l.mul(0.55))));
-    col = mix(col, col.mul(vec3(1.05, 0.995, 0.93)), sk.mul(0.7));
-    // Tempo-Linien (wie im Spiel): helle Striche, die vom Bildrand nach außen fliegen; unten in der Mitte (Fahrer) keine
-    {
-      const c = sv.sub(vec2(0.5, 0.42)).mul(vec2(this.aspect, 1));
-      const r = c.length();
-      const ang = tsl.atan(c.y, c.x).div(Math.PI * 2).add(0.5);
-      const N = 44;
-      const sec = ang.mul(N);
-      const id = tsl.floor(sec);
-      const h = h21(vec2(id, 3.1));
-      const h2 = h21(vec2(id, 7.7));
-      const ph = tsl.fract(time.mul(h.mul(1.1).add(1.4)).add(h2));
-      const r0 = ph.mul(0.45).add(0.42);
-      const len = this.speedK.mul(0.07).add(0.05);
-      const seg = smoothstep(r0, r0.add(0.012), r).mul(float(1).sub(smoothstep(r0.add(len).sub(0.02), r0.add(len), r)));
-      const dl = abs(tsl.fract(sec).sub(0.5)).mul((Math.PI * 2) / N).mul(r).mul(screenSize.y);
-      const thin = float(1).sub(smoothstep(0.6, 1.4, dl));
-      const below = smoothstep(0.15, 0.25, c.y.div(max(r, float(1e-3)))).mul(float(1).sub(smoothstep(0.45, 0.55, abs(c.x).div(max(r, float(1e-3))))));
-      const on = smoothstep(0.7, 0.72, h);
-      col = col.add(vec3(1, 1, 1).mul(this.speedK.mul(0.2)).mul(on).mul(seg).mul(thin).mul(float(1).sub(below)));
-    }
-    const v = smoothstep(1.25, 0.4, sv.sub(0.5).mul(vec3(1, 1.3, 0).xy).length());
-    col = col.mul(mix(float(1), v, g.vignette));
-    const n = h21(sv.mul(screenSize).add(time.fract().mul(vec3(31.7, 17.3, 0).xy))).sub(0.5);
-    col = col.add(n.mul(g.grain).mul(0.09).mul(float(1).sub(l.mul(0.6))));
-    return tsl.vec4(col.clamp(0, 1), 1);
+    // alles, was nur manchmal wirkt (Nachschärfen, Sonnenuntergang, Tempo-Linien), hinter echten Verzweigungen:
+    // die Bedingungen hängen nur an Uniforms, ausgeschaltet kostet es dann (fast) nichts
+    return tsl.Fn(() => {
+      const glow = withBloom ? bloom(color, this.u.bloom, 0.3, this.u.bthr) : null;
+      // Szene kleiner gerechnet als angezeigt: beim Hochskalieren leicht nachschärfen (vier Nachbarn)
+      const base = color.toVar();
+      tsl.If(this.sharp.greaterThan(0.001), () => {
+        const t = this.texel;
+        const nb = color.sample(screenUV.add(vec2(t.x, 0))).add(color.sample(screenUV.sub(vec2(t.x, 0))))
+          .add(color.sample(screenUV.add(vec2(0, t.y)))).add(color.sample(screenUV.sub(vec2(0, t.y))));
+        base.assign(base.add(base.sub(nb.mul(0.25)).mul(this.sharp)).max(0));
+      });
+      let col: N = renderOutput(glow ? base.add(glow) : base).rgb;
+      const l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      const g = this.u;
+      let gr: N = mix(vec3(l, l, l), col, g.sat);
+      gr = gr.sub(0.5).mul(g.contrast).add(0.5);
+      gr = gr.mul(vec3(g.warm.mul(0.09).add(1), g.warm.mul(0.02).add(1), float(1).sub(g.warm.mul(0.1))));
+      gr = mix(gr, gr.mul(mix(g.splitS, g.splitH, smoothstep(0.12, 0.78, l))), g.split);
+      const out = mix(col, gr, g.grade).toVar();
+      const sv = screenUV;
+      // Sonnenuntergangs-Licht: warmer Schein um die tiefe Sonne, ein feiner waagrechter Lichtstreif durch sie und
+      // ein Hauch Wärme im ganzen Bild – nur Rechnungen mit festen Werten, kein weiterer Durchgang (aus = Stärke 0)
+      const sk = this.sunsetK;
+      tsl.If(sk.greaterThan(0.001), () => {
+        const dd = sv.sub(this.sunScr).mul(vec2(this.aspect, 1));
+        const halo = exp(dd.length().mul(-2.4)).mul(0.6).add(exp(dd.length().mul(-9)).mul(0.5));
+        const streak = exp(abs(dd.y).mul(-46)).mul(exp(abs(dd.x).mul(-1.4))).mul(0.4);
+        const wc = vec3(1, 0.6, 0.3);
+        const c1 = out.add(wc.mul(halo.add(streak)).mul(sk.mul(0.22)).mul(float(1).sub(l.mul(0.55))));
+        out.assign(mix(c1, c1.mul(vec3(1.05, 0.995, 0.93)), sk.mul(0.7)));
+      });
+      // Tempo-Linien (wie im Spiel): helle Striche, die vom Bildrand nach außen fliegen; unten in der Mitte (Fahrer) keine
+      tsl.If(this.speedK.greaterThan(0.001), () => {
+        const c = sv.sub(vec2(0.5, 0.42)).mul(vec2(this.aspect, 1));
+        const r = c.length();
+        const ang = tsl.atan(c.y, c.x).div(Math.PI * 2).add(0.5);
+        const N = 44;
+        const sec = ang.mul(N);
+        const id = tsl.floor(sec);
+        const h = h21(vec2(id, 3.1));
+        const h2 = h21(vec2(id, 7.7));
+        const ph = tsl.fract(time.mul(h.mul(1.1).add(1.4)).add(h2));
+        const r0 = ph.mul(0.45).add(0.42);
+        const len = this.speedK.mul(0.07).add(0.05);
+        const seg = smoothstep(r0, r0.add(0.012), r).mul(float(1).sub(smoothstep(r0.add(len).sub(0.02), r0.add(len), r)));
+        const dl = abs(tsl.fract(sec).sub(0.5)).mul((Math.PI * 2) / N).mul(r).mul(screenSize.y);
+        const thin = float(1).sub(smoothstep(0.6, 1.4, dl));
+        const below = smoothstep(0.15, 0.25, c.y.div(max(r, float(1e-3)))).mul(float(1).sub(smoothstep(0.45, 0.55, abs(c.x).div(max(r, float(1e-3))))));
+        const on = smoothstep(0.7, 0.72, h);
+        out.addAssign(vec3(1, 1, 1).mul(this.speedK.mul(0.2)).mul(on).mul(seg).mul(thin).mul(float(1).sub(below)));
+      });
+      const v = smoothstep(1.25, 0.4, sv.sub(0.5).mul(vec3(1, 1.3, 0).xy).length());
+      let fin: N = out.mul(mix(float(1), v, g.vignette));
+      const n = h21(sv.mul(screenSize).add(time.fract().mul(vec3(31.7, 17.3, 0).xy))).sub(0.5);
+      fin = fin.add(n.mul(g.grain).mul(0.09).mul(float(1).sub(l.mul(0.6))));
+      return vec4(fin.clamp(0, 1), 1);
+    })();
   }
 
   /** Sonne/Mond: helle Scheibe mit weichem Hof, weit weg in Lichtrichtung */

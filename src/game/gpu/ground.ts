@@ -8,7 +8,7 @@ import type { Surface, SurfaceId } from './bake';
 import { decodeAlbedo, planar, planarN, triplanar, tsl, type N } from './nodes';
 import { cheapMaterial } from './light';
 
-const { attribute, cameraPosition, float, fwidth, max, mix, normalize, normalWorldGeometry, positionWorld, smoothstep, texture, transformNormalToView, varying, vec3, vertexColor } = tsl;
+const { attribute, cameraPosition, float, fwidth, max, mix, normalize, normalWorldGeometry, positionWorld, select, smoothstep, texture, transformNormalToView, varying, vec3, vertexColor } = tsl;
 
 type Surfaces = Record<SurfaceId, Surface>;
 
@@ -149,18 +149,24 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   let rockCol: N;
   let rockN: N;
   let rockAo: N;
+  // nur wo Fels ist: select wird zu einer echten Verzweigung, Wiese und Wald sparen die Felszugriffe (nah sechs)
+  const hasRock = rkW.greaterThan(0.003);
   if (m.far) {
     const t = texture(S.rock.albedo, pos.xz.div(60));
-    rockCol = decodeAlbedo(t.rgb).div(meanOf(S.rock)).mul(m.rockTint).mul(0.95);
+    rockCol = select(hasRock, decodeAlbedo(t.rgb).div(meanOf(S.rock)).mul(m.rockTint).mul(0.95), vec3(0, 0, 0));
     rockN = n;
     rockAo = float(1);
   } else {
     const top = { albedo: S.rock.albedo, nra: S.rock.nra };
     const r = triplanar(S.cliff.albedo, S.cliff.nra, pos, nG, m.detail ? 9 : 27, 10, top, m.detail ? 1.5 : 2);
     const rRaw = decodeAlbedo(r.col).div(meanOf(S.cliff));
-    rockCol = rRaw.mul(m.rockTint).mul(0.6).add(rRaw.mul(vec3(0.2, 0.19, 0.17)).mul(0.4)).mul(1.15);
-    rockN = r.n;
-    rockAo = r.ao;
+    // eine Verzweigung für alles (Farbe, Normale, Verschattung als Spalten einer Matrix) – sonst baut three die
+    // Zugriffe für jede Verzweigung neu
+    const rc = rRaw.mul(m.rockTint).mul(0.6).add(rRaw.mul(vec3(0.2, 0.19, 0.17)).mul(0.4)).mul(1.15);
+    const M = select(hasRock, tsl.mat3(rc, r.n, vec3(r.ao, 0, 0)), tsl.mat3(vec3(0, 0, 0), nG, vec3(1, 0, 0)));
+    rockCol = M.element(0);
+    rockN = M.element(1);
+    rockAo = M.element(2).x;
   }
   rockCol = rockCol.mul(zone.z.mul(0.45).add(0.8)).mul(mix(vec3(1, 1, 1), vec3(1.12, 1.0, 0.84), smoothstep(0.55, 0.85, zone.x)));
   const ledgeG = smoothstep(0.82, 0.95, normalize(rockN).y).mul(float(1).sub(smoothstep(0.05, 0.4, m.sn))).mul(smoothstep(0.3, 0.6, zone.y.add(0.15)));
@@ -174,11 +180,12 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
     n = mix(n, gv.n, sr);
   }
   // Schnee: Altschnee in Flecken; auf Fels nur auf Simsen
-  const sA = decodeAlbedo(texture(S.snow.albedo, pos.xz.div(m.detail ? 6 : 17)).rgb).div(meanOf(S.snow));
   const ledge = smoothstep(0.72, 0.9, normalize(rockN).y);
   const snowRaw = m.sn.mul(V.patchy.mul(0.9).add(0.2)).mul(mix(float(1), ledge, rkW.mul(0.7)));
   const sn = smoothstep(0.36, 0.46, snowRaw);
-  const snowCol = sA.mul(vec3(0.83, 0.86, 0.9)).mul(sA.x.mul(0.25).add(0.75).clamp(0.6, 1.2));
+  // Schneetextur nur, wo Schnee liegt
+  const sA = decodeAlbedo(texture(S.snow.albedo, pos.xz.div(m.detail ? 6 : 17)).rgb).div(meanOf(S.snow));
+  const snowCol = select(sn.greaterThan(0.001), sA.mul(vec3(0.83, 0.86, 0.9)).mul(sA.x.mul(0.25).add(0.75).clamp(0.6, 1.2)), vec3(0, 0, 0));
   col = mix(col, snowCol, sn);
   ao = mix(ao, float(0.95), sn);
   n = mix(n, normalize(mix(nG, n, 0.35)), sn);
