@@ -213,7 +213,14 @@ export class Showcase {
     await r.init();
     if (this.disposed) return;
     const dev = (r.backend as unknown as { device?: { lost?: Promise<{ reason: string; message: string }> } }).device;
-    dev?.lost?.then((i) => { if (i.reason !== 'destroyed') this.opts.onError?.(`Grafik abgestürzt: ${i.message || i.reason}`); });
+    dev?.lost?.then((i) => { if (i.reason !== 'destroyed') { this.noteError('Grafik verloren', i.message || i.reason); this.opts.onError?.(`Grafik abgestürzt: ${i.message || i.reason}`); } });
+    (r as unknown as { onError: (e: { message?: string; type?: string }) => void }).onError = (e) => this.noteError(`WebGPU ${e.type ?? ''}`, e.message ?? e);
+    this.onWinError = (ev: Event) => {
+      const er = ev as ErrorEvent & PromiseRejectionEvent;
+      this.noteError(ev.type === 'unhandledrejection' ? 'Promise' : 'Seite', er.error ?? er.reason ?? er.message);
+    };
+    window.addEventListener('error', this.onWinError);
+    window.addEventListener('unhandledrejection', this.onWinError);
     const t0 = performance.now();
     const log = (m: string) => console.info(`[gpu] ${m} (${Math.round(performance.now() - t0)} ms)`);
     this.maxDpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -734,8 +741,27 @@ export class Showcase {
     }
   }
 
+  /** ein Bild: Fehler darin halten nichts an (werden in der Messfahrt vermerkt), Wartende kommen immer weiter */
   private frame(t: number) {
     if (this.disposed) return;
+    try {
+      this.frameBody(t);
+    } catch (e) {
+      this.noteError('Bild', e);
+    } finally {
+      if (this.frameWaiters.length) { const w = this.frameWaiters; this.frameWaiters = []; for (const f of w) f(); }
+    }
+  }
+
+  private errCount = 0;
+  /** Fehler vermerken (Messfahrt) und ins Protokoll – höchstens 20 je Sitzung, damit nichts überläuft */
+  noteError(where: string, e: unknown) {
+    const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    this.perf.event(EV.error, `${where}: ${msg.slice(0, 200)}`);
+    if (this.errCount++ < 20) console.error(`[gpu] ${where}:`, e);
+  }
+
+  private frameBody(t: number) {
     const P = this.perf;
     P.begin(t);
     const t0 = performance.now();
@@ -804,7 +830,6 @@ export class Showcase {
         cam: ['chase', 'low', 'side', 'drone'].indexOf(this._cam), opps: this.poolOf.size,
       });
     }
-    if (this.frameWaiters.length) { const w = this.frameWaiters; this.frameWaiters = []; for (const f of w) f(); }
     this.opts.onStats?.({
       fps: 1000 / this.avgMs, ms: this.avgMs, period: this.period, dpr: this.dpr, backend: this.backendName,
       tris: info.triangles, calls: info.drawCalls, cpu: this.avgCpu, loading: this.ready ? 1 : this.loadFrac, stage: this.stage,
@@ -813,7 +838,16 @@ export class Showcase {
   }
 
   private frameWaiters: (() => void)[] = [];
-  private nextFrame(): Promise<void> { return new Promise((res) => this.frameWaiters.push(res)); }
+  /** nächstes Bild abwarten – höchstens 4 s (falls die Schleife hängt, geht die Analyse trotzdem weiter) */
+  private nextFrame(): Promise<void> {
+    return new Promise((res) => {
+      const id = window.setTimeout(res, 4000);
+      this.frameWaiters.push(() => { window.clearTimeout(id); res(); });
+    });
+  }
+  /** laufende Kostenanalyse abbrechen */
+  abortAnalysis() { this.analysisAbort = true; }
+  private analysisAbort = false;
   /** Kostenanalyse läuft: Auflösung bleibt fest */
   private analysing = false;
 
@@ -828,6 +862,7 @@ export class Showcase {
     const dpr0 = this.dpr;
     this.paused = true;
     this.analysing = true;
+    this.analysisAbort = false;
     const groups: [string, THREE.Object3D | undefined][] = [
       ['trees', this.trees?.group], ['houses', this.houses?.group], ['field', this.field?.group], ['corridor', this.corridor?.group],
       ['grass', this.grass?.group], ['life', this.life?.group], ['crowd', this.crowd?.group],
@@ -840,8 +875,8 @@ export class Showcase {
     const steps: [string, () => void][] = [
       ['Basis (Auflösung ×' + base.toFixed(2) + ')', () => undefined],
       ['ohne Leuchten (Bloom-Kette)', () => this.applySettings({ ...S0, bloom: false }, true)],
-      ['ohne Sonnenschatten', () => this.applySettings({ ...S0, shadows: false }, true)],
-      ['Schatten 1024 statt ' + S0.shadowRes, () => this.applySettings({ ...S0, shadowRes: 1024 }, true)],
+      // nur den Schattendurchgang aussetzen (Karte bleibt stehen): Schatten aus- und einschalten baut alle Materialien neu
+      ['ohne Schattendurchgang', () => { this.atmo!.sun.shadow.autoUpdate = false; }],
       ['ohne Gegner', () => this.applySettings({ ...S0, oppMax: 0 }, true)],
       ['ohne Zuschauer', () => hide('crowd')],
       ['ohne Blumen, Sträucher, Tiere', () => hide('life')],
@@ -859,12 +894,13 @@ export class Showcase {
     const p90 = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * 0.9)]; };
     const rows: { name: string; gpu: number; gpu90: number; draw: number; cpu: number; frame: number; calls: number; tris: number; px: string }[] = [];
     const restore = () => {
+      if (this.atmo) this.atmo.sun.shadow.autoUpdate = S0.shadows;
       if (JSON.stringify(this.settings) !== JSON.stringify(S0)) this.applySettings(S0, true);
       groups.forEach(([, g], i) => { if (g) g.visible = vis0[i]; });
       setDpr(base);
     };
     try {
-      for (let i = 0; i < steps.length; i++) {
+      for (let i = 0; i < steps.length && !this.analysisAbort; i++) {
         const [name, set] = steps[i];
         progress?.(i, steps.length, name);
         restore();
@@ -895,9 +931,11 @@ export class Showcase {
       restore();
       setDpr(dpr0);
       this.place(0);
-      this.paused = paused0;
+      // im Prüfbild-Modus bleibt es angehalten, sonst geht die Fahrt immer weiter
+      this.paused = this.offscreen ? paused0 : false;
       this.analysing = false;
     }
+    if (!rows.length) return 'Kostenanalyse abgebrochen';
     const b = rows[0];
     const f = (x: number) => (x < 0 ? '–' : x.toFixed(2));
     const d = (x: number, y: number) => (x < 0 || y < 0 ? '' : ` (${y - x >= 0 ? '−' : '+'}${Math.abs(y - x).toFixed(2)})`);
@@ -1013,7 +1051,8 @@ export class Showcase {
     if (this.crowd) this.crowd.group.visible = s.crowd;
     if (this.life) this.life.group.visible = s.life;
     if (this.grass) this.grass.group.visible = s.grass;
-    if (prev.shadows !== s.shadows) this.renderer.shadowMap.enabled = s.shadows;
+    // Sonnenschatten: atmo.apply (Stärke und Durchgang) – shadowMap.enabled bleibt an, sonst baut three.js alles neu
+    void prev;
   }
 
   /** aktuelle Stimmung (beim Wetterwechsel die gezeigte) */
@@ -1028,8 +1067,11 @@ export class Showcase {
     this.eng?.setViewport(w);
   }
 
+  private onWinError: ((e: Event) => void) | null = null;
+
   dispose() {
     this.disposed = true;
+    if (this.onWinError) { window.removeEventListener('error', this.onWinError); window.removeEventListener('unhandledrejection', this.onWinError); }
     this.renderer.setAnimationLoop(null);
     this.renderer.domElement.remove();
     this.field?.dispose();

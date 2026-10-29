@@ -19,7 +19,7 @@ export type Section = (typeof SECTIONS)[number];
 const NS = SECTIONS.length;
 
 /** Ereignisse (als Bits je Bild, dazu als Liste mit Text) */
-export const EV = { cam: 1, mood: 2, opp: 4, dpr: 8, ui: 16, wrap: 32, settings: 64, drive: 128, shader: 256, vis: 512 } as const;
+export const EV = { cam: 1, mood: 2, opp: 4, dpr: 8, ui: 16, wrap: 32, settings: 64, drive: 128, shader: 256, vis: 512, error: 1024 } as const;
 const EV_NAMES: [number, string][] = Object.entries(EV).map(([k, v]) => [v, k]);
 
 export interface FrameInfo {

@@ -386,7 +386,7 @@ export function GpuTestPage() {
                 {lastReport ? <button type="button" className="gpu-chip" onClick={() => { void copyText(lastReport).then((ok) => { if (ok) { setReportCopied(true); setTimeout(() => setReportCopied(false), 1500); } }); }}>{reportCopied ? 'Kopiert ✓' : 'Letzten Bericht kopieren'}</button> : null}
               </div>
               <strong>Kostenanalyse</strong>
-              <span className="muted">Fahrt hält an, dann wird je Ebene (Leuchten, Schatten, Gegner, Bäume, Landschaft …) und Auflösung gemessen, was sie kostet. Dauert etwa 30 s, danach geht es weiter.</span>
+              <span className="muted">Die Fahrt hält dafür an der aktuellen Stelle an (das ist Absicht: gleiche Ansicht für alle Varianten). Dann wird je Ebene (Leuchten, Schattendurchgang, Gegner, Bäume, Landschaft …) und Auflösung gemessen, was sie kostet. Dauert etwa 25 s, danach fährt es weiter.</span>
               <div className="gpu-menu__row gpu-menu__actions">
                 <button type="button" className="gpu-chip is-on" onClick={runCost}>Kostenanalyse starten</button>
               </div>
@@ -476,6 +476,7 @@ export function GpuTestPage() {
         <div className="gpu-rec">
           <i />
           <span>Kostenanalyse {cost.i + 1}/{cost.n}: {cost.label}</span>
+          <button type="button" onClick={() => showRef.current?.abortAnalysis()}>Abbrechen</button>
         </div>
       ) : null}
       {costText ? (

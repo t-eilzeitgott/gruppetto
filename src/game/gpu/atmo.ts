@@ -129,7 +129,10 @@ export class Atmo {
   apply(s: Settings, instant = false) {
     const moodChanged = s.mood !== this.settings.mood || (s.cycle !== this.settings.cycle);
     this.settings = s;
-    this.sun.castShadow = s.shadows;
+    // Schatten an/aus ohne Neubau der Materialien: die Karte bleibt angeschlossen, aus = Stärke 0 und kein Durchgang
+    this.sun.castShadow = true;
+    this.sun.shadow.intensity = s.shadows ? 1 : 0;
+    this.sun.shadow.autoUpdate = s.shadows;
     const sh = this.sun.shadow;
     // three.js passt die Schattenkarte selbst an (nicht wegwerfen: sie steckt noch im laufenden Bild)
     if (sh.mapSize.x !== s.shadowRes) sh.mapSize.set(s.shadowRes, s.shadowRes);
