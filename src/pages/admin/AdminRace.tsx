@@ -110,6 +110,10 @@ export function RaceGpuPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [lastReport, setLastReport] = useState<string | null>(() => lsRead(LS_REPORT));
   const [copied, setCopied] = useState(false);
+  // Kostenanalyse: Fortschritt und Ergebnis
+  const [cost, setCost] = useState<{ i: number; n: number; label: string } | null>(null);
+  const [costText, setCostText] = useState<string | null>(null);
+  const [costCopied, setCostCopied] = useState(false);
   const hud = useRef<Record<string, HTMLElement | null>>({});
   const last = useRef<Record<string, string>>({});
   const bind = (key: string) => (el: HTMLElement | null) => { hud.current[key] = el; };
@@ -290,6 +294,13 @@ export function RaceGpuPage() {
     setMeasuring(false);
     if (r) { setReport(r); setCopied(false); lsWrite(LS_REPORT, r.text); setLastReport(r.text); }
   };
+  const runCost = () => {
+    const r = raceRef.current;
+    if (!r || cost) return;
+    setCost({ i: 0, n: 1, label: 'startet' });
+    void r.costAnalysis((i, n, label) => setCost({ i, n, label })).then((t) => { setCost(null); setCostText(t); setCostCopied(false); })
+      .catch((e: unknown) => { setCost(null); setError(String(e)); });
+  };
   useEffect(() => {
     if (!measuring) return;
     const id = window.setInterval(() => { const p = raceRef.current?.perf; if (p) setRecInfo({ s: p.recSeconds, hitches: p.hitches }); }, 500);
@@ -334,6 +345,11 @@ export function RaceGpuPage() {
             : <button type="button" className="btn btn--secondary btn--sm" onClick={startMeasure}>Messfahrt starten</button>}
           {lastReport ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { void copyText(lastReport).then((ok) => setCopied(ok)); }}>{copied ? 'Kopiert ✓' : 'Letzten Bericht kopieren'}</button> : null}
         </div>
+      </div>
+      <div className="race-sec">
+        <span className="abf-range__label">Kostenanalyse</span>
+        <span className="abf-range__hint">Misst an dieser Stelle je Ebene (Leuchten, Schatten, Gegner, Bäume, Landschaft …) und Auflösung, was sie kostet – etwa 30 s, das Spiel bleibt solange in der Pause.</span>
+        <button type="button" className="btn btn--secondary btn--sm" onClick={runCost} disabled={!!cost}>{cost ? `${cost.i + 1}/${cost.n}: ${cost.label}` : 'Kostenanalyse starten'}</button>
       </div>
       <button type="button" className="btn btn--ghost btn--sm" onClick={() => change({ ...RACE_DEFAULTS })}>Grafik zurücksetzen</button>
     </>
@@ -451,6 +467,16 @@ export function RaceGpuPage() {
         </div>
       ) : null}
 
+      {costText ? (
+        <div className="gpu-report">
+          <strong>Kostenanalyse fertig</strong>
+          <pre className="gpu-report__pre">{costText.split('\n').slice(3).join('\n')}</pre>
+          <div className="gpu-menu__row gpu-menu__actions">
+            <button type="button" className="gpu-chip is-on" onClick={() => { void copyText(costText).then((ok) => setCostCopied(ok)); }}>{costCopied ? 'Kopiert ✓' : 'Ergebnis kopieren'}</button>
+            <button type="button" className="gpu-chip" onClick={() => setCostText(null)}>Schließen</button>
+          </div>
+        </div>
+      ) : null}
       {report ? (
         <div className="gpu-report">
           <strong>Messfahrt fertig</strong>

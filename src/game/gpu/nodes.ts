@@ -13,14 +13,26 @@ export type N = any;
 
 /** TSL ohne die strengen Knotentypen (die Graphen hier sind zu verschachtelt für sie) */
 export const tsl = TSL as unknown as { [K in keyof typeof TSL]: N };
-const { abs, dot, float, floor, fract, If, max, mix, normalize, sin, sqrt, texture, vec2, vec3 } = tsl;
+const { abs, dot, float, floor, fract, If, max, mix, normalize, sqrt, texture, vec2, vec3 } = tsl;
 
 /** positiver Rest (x mod m), auch für negative x */
 export const pmod = (x: N, m: number | N): N => x.sub(floor(x.div(m)).mul(m));
 
-/** Zufall 0 … 1 aus einem vec2 (für kleine Zahlen – die Muster rechnen immer im Bereich der Kachel) */
-export const h21 = (p: N): N => fract(sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453));
-export const h22 = (p: N): N => fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))).mul(43758.5453));
+/**
+ * Zufall 0 … 1 aus einem vec2 – ohne sin: die Grafikkarte im iPhone rechnet sin für große Eingaben (Gitterpunkte
+ * ab ein paar Tausend) nur grob, der klassische sin-Hash zerfällt dort in Blöcke und Farbsäume. Dieser Hash
+ * (Inigo Quilez) bleibt bis in die Zehntausende sauber.
+ */
+export const h21 = (p: N): N => {
+  const q = fract(vec3(p.x, p.y, p.x).mul(0.1031));
+  const r = q.add(dot(q, vec3(q.y, q.z, q.x).add(33.33)));
+  return fract(r.x.add(r.y).mul(r.z));
+};
+export const h22 = (p: N): N => {
+  const q = fract(vec3(p.x, p.y, p.x).mul(vec3(0.1031, 0.103, 0.0973)));
+  const r = q.add(dot(q, vec3(q.y, q.z, q.x).add(33.33)));
+  return fract(vec2(r.x.add(r.y), r.x.add(r.z)).mul(vec2(r.z, r.y)));
+};
 
 /** Periode: gleich in beiden Richtungen oder je Achse (für gestreckte Muster: Klüfte, Wasserstreifen) */
 export type Per = number | [number, number];

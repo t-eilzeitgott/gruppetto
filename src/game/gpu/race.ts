@@ -640,7 +640,7 @@ export class Race {
 
   /** Auflösung nach der Bildzeit */
   private adapt(dtMs: number, now: number) {
-    if (!this.ready) return;
+    if (!this.ready || this.analysing) return;
     this.intervals.push(dtMs);
     if (this.intervals.length > 240) this.intervals.shift();
     const mn = Math.min(...this.intervals);
@@ -666,7 +666,122 @@ export class Race {
       this.frameBody(t);
     } catch (e) {
       this.noteError('Bild', e);
+    } finally {
+      if (this.frameWaiters.length) { const w = this.frameWaiters; this.frameWaiters = []; for (const f of w) f(); }
     }
+  }
+
+  private frameWaiters: (() => void)[] = [];
+  /** nächstes Bild abwarten – höchstens 4 s */
+  private nextFrame(): Promise<void> {
+    return new Promise((res) => {
+      const id = window.setTimeout(res, 4000);
+      this.frameWaiters.push(() => { window.clearTimeout(id); res(); });
+    });
+  }
+  abortAnalysis() { this.analysisAbort = true; }
+  private analysisAbort = false;
+  private analysing = false;
+  private gpuSamples: number[] | null = null;
+
+  /**
+   * Kostenanalyse: Spiel angehalten, Kamera fest; je Variante (Ebene aus, andere Auflösung) ~50 Bilder messen –
+   * GPU-Zeit (Median), CPU fürs Zeichnen, Bildzeit, Aufrufe, Dreiecke. Danach ist alles wie vorher.
+   */
+  async costAnalysis(progress?: (i: number, n: number, label: string) => void): Promise<string> {
+    const S0 = { ...this.settings };
+    const paused0 = this.paused;
+    const dpr0 = this.dpr;
+    const world = this.world!;
+    this.paused = true;
+    this.analysing = true;
+    this.analysisAbort = false;
+    const known = new Set<THREE.Object3D>([world.field.group, world.trees.group, world.grass.group, world.houses.group, world.life.group, ...(world.crowd ? [world.crowd.group] : [])]);
+    const pieces = world.group.children.filter((o) => !known.has(o));
+    const groups: [string, THREE.Object3D[]][] = [
+      ['trees', [world.trees.group]], ['houses', [world.houses.group]], ['field', [world.field.group]], ['road', pieces],
+      ['grass', [world.grass.group]], ['life', [world.life.group]], ['crowd', world.crowd ? [world.crowd.group] : []],
+      ['objects', this.objects ? [this.objects.group] : []], ['riders', [this.rider!.group, ...this.pool.map((r) => r.group)]],
+    ];
+    const vis0 = new Map<THREE.Object3D, boolean>();
+    for (const [, l] of groups) for (const o of l) vis0.set(o, o.visible);
+    const setDpr = (d: number) => { this.dpr = d; this.renderer.setPixelRatio(d); };
+    const hide = (...names: string[]) => { for (const [k, l] of groups) if (names.includes(k)) for (const o of l) o.visible = false; };
+    const base = Math.min(1, this.maxDpr);
+    const maxD = Math.min(2, window.devicePixelRatio || 1);
+    const steps: [string, () => void][] = [
+      ['Basis (Auflösung ×' + base.toFixed(2) + ')', () => undefined],
+      ['ohne Leuchten (Bloom-Kette)', () => this.applySettings({ ...S0, bloom: false }, true)],
+      ['ohne Schattendurchgang', () => { this.atmo!.sun.shadow.autoUpdate = false; }],
+      ['ohne Sonnenuntergangs-Licht', () => this.applySettings({ ...S0, sunset: false }, true)],
+      ['ohne Fahrer und Gegner', () => hide('riders')],
+      ['ohne Zuschauer', () => hide('crowd')],
+      ['ohne Blumen, Sträucher, Tiere', () => hide('life')],
+      ['ohne Grashalme', () => hide('grass')],
+      ['ohne Bäume', () => hide('trees')],
+      ['ohne Häuser', () => hide('houses')],
+      ['ohne Landschaft (Boden, Berge)', () => hide('field')],
+      ['ohne Straße, Rand, Tunnel', () => hide('road')],
+      ['ohne Dinge auf der Straße', () => hide('objects')],
+      ['nur Himmel + Nachbearbeitung', () => hide(...groups.map(([k]) => k))],
+      ['Auflösung ×0.7', () => setDpr(0.7)],
+      ['Auflösung ×1.5', () => setDpr(Math.min(1.5, maxD))],
+      ...(maxD >= 2 ? [['Auflösung ×2.0', () => setDpr(2)] as [string, () => void]] : []),
+    ];
+    const med = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+    const p90 = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * 0.9)]; };
+    const rows: { name: string; gpu: number; gpu90: number; draw: number; cpu: number; frame: number; calls: number; tris: number; px: string }[] = [];
+    const restore = () => {
+      if (this.atmo) this.atmo.sun.shadow.autoUpdate = S0.shadows;
+      if (JSON.stringify(this.settings) !== JSON.stringify(S0)) this.applySettings(S0, true);
+      for (const [o, v] of vis0) o.visible = v;
+      setDpr(base);
+    };
+    try {
+      for (let i = 0; i < steps.length && !this.analysisAbort; i++) {
+        const [name, set] = steps[i];
+        progress?.(i, steps.length, name);
+        restore();
+        set();
+        for (let k = 0; k < 14; k++) await this.nextFrame();
+        this.gpuSamples = [];
+        const draw: number[] = [], cpu: number[] = [], frame: number[] = [];
+        let calls = 0, tris = 0;
+        for (let k = 0; k < 50; k++) {
+          await this.nextFrame();
+          draw.push(this.perf.sec[8]);
+          const last = (this.perf.ringAt + 179) % 180;
+          frame.push(this.perf.ring[last * 2]);
+          cpu.push(this.perf.ring[last * 2 + 1]);
+          calls = this.renderer.info.render.drawCalls;
+          tris = this.renderer.info.render.triangles;
+        }
+        for (let k = 0; k < 4; k++) await this.nextFrame();
+        const g = this.gpuSamples;
+        this.gpuSamples = null;
+        const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+        rows.push({ name, gpu: med(g), gpu90: p90(g), draw: med(draw), cpu: med(cpu), frame: med(frame), calls, tris, px: `${size.x}×${size.y}` });
+      }
+    } finally {
+      this.gpuSamples = null;
+      restore();
+      setDpr(dpr0);
+      this.paused = this.offscreen ? paused0 : paused0;
+      this.analysing = false;
+    }
+    if (!rows.length) return 'Kostenanalyse abgebrochen';
+    const b = rows[0];
+    const f = (x: number) => (x < 0 ? '–' : x.toFixed(2));
+    const d = (x: number, y: number) => (x < 0 || y < 0 ? '' : ` (${y - x >= 0 ? '−' : '+'}${Math.abs(y - x).toFixed(2)})`);
+    const e = this.eng;
+    const lines = [
+      `gruppetto Abfahrt-WebGPU Kostenanalyse · ${new Date().toISOString()} · ${this.backendName} · GPU-Zeitstempel ${this.gpuTiming ? 'ja' : 'nein'}`,
+      `Gerät: ${navigator.userAgent}`,
+      `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, MSAA ${S0.msaa}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => (RACE_DEFAULTS as unknown as Record<string, unknown>)[k] !== v)))}`,
+      'Variante | GPU ms (Median, Ersparnis zur Basis) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms | Aufrufe | Dreiecke k | Bildpunkte',
+      ...rows.map((r) => `${r.name} | ${f(r.gpu)}${r === b ? '' : d(r.gpu, b.gpu)} | ${f(r.gpu90)} | ${f(r.draw)}${r === b ? '' : d(r.draw, b.draw)} | ${f(r.cpu)} | ${f(r.frame)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.px}`),
+    ];
+    return lines.join('\n');
   }
 
   noteError(where: string, e: unknown) {
@@ -745,6 +860,7 @@ export class Race {
         if (typeof v !== 'number' || !(v > 0)) return;
         P.gpu = v / nf;
         this.gpuMs = v / nf;
+        this.gpuSamples?.push(v / nf);
       }).catch(() => undefined).finally(() => { this.gpuPending = false; });
     }
     if (this.ready) {
