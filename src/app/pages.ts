@@ -23,3 +23,5 @@ export const WorldEditorPage = lazyPage(() => import('../pages/admin/AdminWorld'
 export const GpuTestPage = lazyPage(() => import('../pages/admin/AdminGpu').then((m) => m.GpuTestPage));
 /** Abfahrt auf WebGPU (Admin): das ganze Spiel mit der neuen Grafik – wird nicht vorab geladen */
 export const RaceGpuPage = lazyPage(() => import('../pages/admin/AdminRace').then((m) => m.RaceGpuPage));
+/** Zeitfahren auf WebGPU (Admin) */
+export const TtGpuPage = lazyPage(() => import('../pages/admin/AdminRace').then((m) => m.TtGpuPage));

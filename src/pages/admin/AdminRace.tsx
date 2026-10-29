@@ -4,9 +4,12 @@
  * Im Pausenmenü: Himmel und Licht (dramatischer Himmel, Sonnenuntergangs-Licht …), Welt, Kamera, Technik und
  * die Messfahrt für Berichte vom Gerät.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { navigate } from '../../app/router';
-import { useMembers } from '../../app/hooks';
+import { useMembers, useTourData } from '../../app/hooks';
+import { useApp } from '../../app/context';
+import { useQuery } from '../../app/query';
+import { source } from '../../app/config';
 import { cx, Segmented, useTitle } from '../../ui/kit';
 import { Icon } from '../../ui/Icon';
 import { useGameLock, PauseIcon, PlayIcon, lsGet, lsSet } from '../gameKit';
@@ -14,11 +17,18 @@ import { HudBanner, PowerRing, RaceBar, writeBar, writeRing, type HudBannerData 
 import { useBikes } from '../../ui/useBikes';
 import { BUILD_ID } from '../../app/config';
 import { berlinDayKey } from '../../game/abfahrt/rng';
-import { SCORE_LABEL, type GameEvent, type RunResult, type ScoreCat } from '../../game/abfahrt/engine';
+import { SCORE_LABEL, type GameEvent, type HudState, type RunResult, type ScoreCat } from '../../game/abfahrt/engine';
 import type { Kit } from '../../game/abfahrt/rider';
-import type { Race, RaceCam, RaceStats } from '../../game/gpu/race';
+import type { TtEvent, TtHud, TtResult } from '../../game/abfahrt/zeitfahren';
+import { stageRef } from '../../game/abfahrt/stageRef';
+import { TT_FINISH, TT_SPLITS, TT_TOP } from '../../game/abfahrt/track';
+import { firstName, fmtGap, fmtTime, pickGhosts, type GhostRider, type TtGhostRow } from '../../game/tt';
+import { buildGhosts, GhostRow, pacerOf } from '../Zeitfahren';
+import { dist, placeThumb } from '../finale';
+import { raceBar } from '../hud';
+import type { Race, RaceCam, RaceStats, TagView } from '../../game/gpu/race';
 import type { Report } from '../../game/gpu/perf';
-import { loadSettings, MOOD_IDS, MOODS, RACE_DEFAULTS, RACE_KEY, type MoodId, type Settings } from '../../game/gpu/mood';
+import { loadSettings, MOOD_IDS, MOODS, RACE_DEFAULTS, RACE_KEY, TT_DEFAULTS, TT_KEY, type MoodId, type Settings } from '../../game/gpu/mood';
 import { copyText, lsRead, lsWrite, shareFile } from './gpuKit';
 
 type Ui = 'loading' | 'ready' | 'countdown' | 'playing' | 'paused' | 'over';
@@ -80,11 +90,36 @@ function BrakeIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v15M8 15l4 4 4-4" /></svg>;
 }
 
-export function RaceGpuPage() {
-  useTitle('Abfahrt · WebGPU');
+/** Zeitfahren auf WebGPU: dieselbe Seite im Modus „tt“ */
+export function TtGpuPage() { return <RaceGpuPage mode="tt" />; }
+
+export function RaceGpuPage({ mode = 'abfahrt' }: { mode?: 'abfahrt' | 'tt' }) {
+  const tt = mode === 'tt';
+  useTitle(tt ? 'Zeitfahren · WebGPU' : 'Abfahrt · WebGPU');
   useGameLock();
   const members = useMembers();
   const bikes = useBikes();
+  const { me, tour } = useApp();
+  const tourData = useTourData(tt ? tour : null);
+  const day = berlinDayKey();
+  // Zeitfahren: Geister der Runde (beste Fahrt des Tages je Mitglied), echte Vorlage für Namen und Gegend
+  const ghostQ = useQuery<TtGhostRow[]>(tt ? `tt:ghosts:${day}` : 'tt:ghosts:none', () => (tt ? source.ttGhosts(day) : Promise.resolve([])));
+  const settled = !tt || ghostQ.data !== undefined || !!ghostQ.error;
+  const ghosts = useMemo(() => {
+    if (!tt) return [] as GhostRider[];
+    const all = buildGhosts(ghostQ.data ?? [], members.data ?? [], me, null, day);
+    const others = all.filter((g) => !g.me).length;
+    return pickGhosts(all, all.find((g) => g.me && !g.old)?.timeMs ?? null, others < 3 && settled ? pacerOf(day) : null);
+  }, [tt, ghostQ.data, settled, members.data, me, day]);
+  const town = useMemo(() => (tt ? stageRef('tt', tour?.name, tourData.data?.stages, day) : null), [tt, tour?.name, tourData.data, day]);
+  const ghostsRef = useRef(ghosts);
+  ghostsRef.current = ghosts;
+  const townRef = useRef(town);
+  townRef.current = town;
+  const DEFAULTS = tt ? TT_DEFAULTS : RACE_DEFAULTS;
+  const KEY = tt ? TT_KEY : RACE_KEY;
+  const [ttResult, setTtResult] = useState<TtResult | null>(null);
+  const tagEls = useRef<(HTMLDivElement | null)[]>([]);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const raceRef = useRef<Race | null>(null);
   const [ui, setUi] = useState<Ui>('loading');
@@ -97,7 +132,7 @@ export function RaceGpuPage() {
   const bannerKey = useRef(0);
   const [result, setResult] = useState<RunResult | null>(null);
   const [cruise, setCruise] = useState(0);
-  const [settings, setSettings] = useState<Settings>(() => loadSettings(RACE_KEY, RACE_DEFAULTS));
+  const [settings, setSettings] = useState<Settings>(() => loadSettings(KEY, DEFAULTS));
   const [cam, setCam] = useState<RaceCam>('chase');
   const [auto, setAuto] = useState(false);
   const [sheet, setSheet] = useState(false);
@@ -130,14 +165,29 @@ export function RaceGpuPage() {
   };
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
+  const onTtEvent = (e: TtEvent) => {
+    if (e.type === 'count') { setCount(e.n); if (e.n <= 0) window.setTimeout(() => { if (uiRef.current === 'countdown') setUi('playing'); }, 450); return; }
+    bannerKey.current += 1;
+    if (e.type === 'split') {
+      const sub = e.gapMs === null ? `${e.place}. Platz` : `${fmtGap(e.gapMs)} ${e.gapMs <= 0 ? 'vor' : 'hinter'} ${e.bestName ?? 'der Bestzeit'} · ${e.place}. von ${e.riders}`;
+      setBanner({ key: bannerKey.current, title: `Zwischenzeit ${e.index + 1} · ${fmtTime(e.timeMs)}`, sub, tone: e.gapMs !== null && e.gapMs <= 0 ? 'gold' : e.gapMs === null ? undefined : 'accent' });
+      try { navigator.vibrate?.(e.gapMs !== null && e.gapMs <= 0 ? [40, 60, 40] : 40); } catch { /* egal */ }
+      return;
+    }
+    setBanner({ key: bannerKey.current, title: e.title, sub: e.sub, tone: e.tone });
+  };
+  const onTtEventRef = useRef(onTtEvent);
+  onTtEventRef.current = onTtEvent;
 
   /** HUD jedes Bild direkt in die Elemente (kein React-Render) */
   const writeHud = () => {
     const r = raceRef.current;
     const u = uiRef.current;
     if (!r || (u !== 'playing' && u !== 'paused' && u !== 'countdown')) return;
-    const h = r.hud();
-    if (!h) return;
+    const h0 = r.hud();
+    if (!h0) return;
+    if (tt) { writeTtHud(r, h0 as TtHud, u); return; }
+    const h = h0 as HudState;
     const th = hud.current.thumb;
     if (th) {
       if (h.touch && u === 'playing') {
@@ -161,23 +211,70 @@ export function RaceGpuPage() {
     writeBar(hud.current, last.current, { place: '', gap: '', label: '', dist: km(h.meters), icon: 'road', lead: false, progress: (h.meters % 4000) / 4000 });
     writeRing(hud.current, last.current, { kmh: h.kmh, fill: Math.min(1, h.kmh / 100), tone: 'speed', mode: h.wantTuck ? 'go' : h.wantBrake > 0.3 ? 'ease' : 'sit', draft: h.draft });
   };
+  /** Zeitfahren: Uhr, Rückstand auf die Bestzeit, Vorrat, Streckenleiste, Namensschilder */
+  const writeTtHud = (r: Race, h: TtHud, u: Ui) => {
+    placeThumb(hud.current.thumb, h.touch, u === 'playing', h.mode === 'go', h.mode === 'ease');
+    const set = (key: string, val: string) => {
+      if (last.current[key] === val) return;
+      last.current[key] = val;
+      const el = hud.current[key];
+      if (el) el.textContent = val;
+    };
+    writeBar(hud.current, last.current, raceBar(h.board, h.toGo > 0 ? dist(h.toGo) : 'Ziel', 'flag', 1 - h.toGo / TT_FINISH));
+    const g = Math.round(h.grade);
+    writeRing(hud.current, last.current, { kmh: h.kmh, fill: h.energy, tone: 'energy', mode: h.mode, draft: 0, badge: h.toGo > 0 ? `${g > 0 ? '▲' : g < 0 ? '▼' : ''} ${Math.abs(g)} %` : '' });
+    set('clock', fmtTime(h.time * 1000));
+    if (h.gapBest !== null) {
+      const gapMs = Math.round(h.gapBest * 1000);
+      set('clockGap', `${fmtGap(gapMs)} · ${h.bestName ?? ''}`);
+      const key = gapMs <= 0 ? 'ahead' : 'behind';
+      if (last.current.gapTone !== key) {
+        last.current.gapTone = key;
+        hud.current.clockGap?.classList.toggle('is-ahead', gapMs <= 0);
+        hud.current.clockGap?.classList.toggle('is-behind', gapMs > 0);
+      }
+    } else set('clockGap', '');
+    // Namensschilder über den Geistern (Elemente, nur verschoben – kein Neuzeichnen)
+    const tags: TagView[] = u === 'playing' ? r.tags() : [];
+    tagEls.current.forEach((el, i) => {
+      if (!el) return;
+      const t = tags[i];
+      if (!t) { if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden'; return; }
+      el.style.visibility = 'visible';
+      el.style.transform = `translate(${t.x.toFixed(0)}px, ${t.y.toFixed(0)}px) translate(-50%, -100%) scale(${t.k.toFixed(2)})`;
+      const k = `tag${i}`;
+      const val = `${t.text}|${t.sub}|${t.color}`;
+      if (last.current[k] !== val) {
+        last.current[k] = val;
+        el.style.setProperty('--tag', t.color);
+        (el.firstElementChild as HTMLElement).textContent = t.text;
+        (el.lastElementChild as HTMLElement).textContent = t.sub;
+      }
+    });
+  };
   const writeHudRef = useRef(writeHud);
   writeHudRef.current = writeHud;
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    if (!host || !settled) return;
     let alive = true;
     let race: Race | null = null;
     let lastUi = 0;
     void import('../../game/gpu/race').then(({ Race: R }) => {
       if (!alive) return;
       const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#ff5fa2';
-      const kit: Kit = { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: '27', bike: bikeRef.current };
+      const kit: Kit = { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: tt ? '1' : '27', bike: bikeRef.current };
       race = new R(host, {
         dayKey: berlinDayKey(),
         names: namesRef.current,
         kit,
+        settingsKey: KEY,
+        defaults: DEFAULTS,
+        tt: tt ? {
+          rider: me.display_name ?? 'Du', ghosts: ghostsRef.current, myBest: ghostsRef.current.find((g) => g.me && !g.old)?.timeMs ?? null, town: townRef.current,
+          onEvent: (e) => onTtEventRef.current(e), onOver: (res) => { setTtResult(res); setUi('over'); },
+        } : undefined,
         onStats: (s) => {
           const now = performance.now();
           if (s.loading >= 1 && now - lastUi < 400) return;
@@ -209,7 +306,7 @@ export function RaceGpuPage() {
       delete (window as unknown as { __race?: Race }).__race;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [settled]);
 
   useEffect(() => {
     if (ui === 'loading') return;
@@ -228,12 +325,13 @@ export function RaceGpuPage() {
     if (!r) return;
     setCruise(k);
     setResult(null);
+    setTtResult(null);
     setBanner(null);
     setSheet(false);
     last.current = {};
     r.autopilot = auto;
     r.go(k);
-    setCount(3);
+    setCount(tt ? 5 : 3);
     setUi('countdown');
   };
   const pause = (on: boolean) => {
@@ -247,6 +345,7 @@ export function RaceGpuPage() {
   const toStart = () => {
     raceRef.current?.toStart();
     setResult(null);
+    setTtResult(null);
     setSheet(false);
     setUi('ready');
   };
@@ -283,7 +382,7 @@ export function RaceGpuPage() {
     const r = raceRef.current;
     if (!r) return;
     const diff: Partial<Settings> = {};
-    for (const k of Object.keys(settings) as (keyof Settings)[]) if (settings[k] !== RACE_DEFAULTS[k]) (diff as Record<string, unknown>)[k] = settings[k];
+    for (const k of Object.keys(settings) as (keyof Settings)[]) if (settings[k] !== DEFAULTS[k]) (diff as Record<string, unknown>)[k] = settings[k];
     r.startMeasure({ version: BUILD_ID, einstellungen: diff, aufnahme: new Date().toISOString() });
     setMeasuring(true);
     setReport(null);
@@ -353,7 +452,7 @@ export function RaceGpuPage() {
         <span className="abf-range__hint">Misst an dieser Stelle je Ebene (Leuchten, Schatten, Gegner, Bäume, Landschaft …) und Auflösung, was sie kostet – etwa 30 s, das Spiel bleibt solange in der Pause.</span>
         <button type="button" className="btn btn--secondary btn--sm" onClick={runCost} disabled={!!cost}>{cost ? `${cost.i + 1}/${cost.n}: ${cost.label}` : 'Kostenanalyse starten'}</button>
       </div>
-      <button type="button" className="btn btn--ghost btn--sm" onClick={() => change({ ...RACE_DEFAULTS })}>Grafik zurücksetzen</button>
+      <button type="button" className="btn btn--ghost btn--sm" onClick={() => change({ ...DEFAULTS })}>Grafik zurücksetzen</button>
     </>
   );
 
@@ -362,7 +461,30 @@ export function RaceGpuPage() {
       <div ref={hostRef} className="abf__stage" role="application" aria-label="Spielfeld: Daumen seitlich ziehen zum Lenken, nach oben zum Ducken, nach unten zum Bremsen"
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
 
-      {running ? (
+      {running && tt ? (
+        <div className="abf-hud hud" aria-hidden={ui === 'countdown'}>
+          <div className="hud-top">
+            <button type="button" className="abf-round" onClick={() => pause(ui !== 'paused')} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
+              {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
+            </button>
+            <RaceBar bind={bind} marks={[...TT_SPLITS.map((z) => ({ at: z / TT_FINISH, kind: 'friend' as const, color: '#ffd23f' })), { at: TT_TOP / TT_FINISH, kind: 'gpm' as const }]} />
+            <PowerRing bind={bind} badge />
+          </div>
+          <div className="tt-clock" aria-hidden="true">
+            <b ref={bind('clock')}>0:00,0</b>
+            <span className="tt-clock__gap" ref={bind('clockGap')} />
+          </div>
+          {[0, 1].map((i) => <div key={i} className="race-tag" ref={(el: HTMLDivElement | null) => { tagEls.current[i] = el; }} aria-hidden="true"><b /><span /></div>)}
+          {banner && ui !== 'paused' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
+          <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
+            <span className="abf-thumb__up"><TuckIcon /></span>
+            <span className="abf-thumb__dot" />
+            <span className="abf-thumb__down"><BrakeIcon /></span>
+          </div>
+        </div>
+      ) : null}
+
+      {running && !tt ? (
         <div className="abf-hud hud" aria-hidden={ui === 'countdown'}>
           <div className="hud-top hud-top--score">
             <button type="button" className="abf-round" onClick={() => pause(ui !== 'paused')} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
@@ -411,7 +533,7 @@ export function RaceGpuPage() {
             <h2 className="abf-title">Pause</h2>
             <button type="button" className="btn btn--primary btn--full" onClick={() => pause(false)}><span>Weiterfahren</span></button>
             <div className="race-row">
-              <button type="button" className="btn btn--secondary btn--sm" onClick={() => go(cruise)}>Neu starten</button>
+              <button type="button" className="btn btn--secondary btn--sm" onClick={() => go(tt ? 0 : cruise)}>Neu starten</button>
               <button type="button" className="btn btn--secondary btn--sm" onClick={toStart}>Zum Start</button>
               <button type="button" className="btn btn--ghost btn--sm" onClick={() => navigate('/admin')}>Aufhören</button>
             </div>
@@ -427,24 +549,62 @@ export function RaceGpuPage() {
             <div className="abf-head">
               <span className="race-badge">GPU</span>
               <div>
-                <h1 className="abf-title">Abfahrt</h1>
-                <p className="abf-sub">{title || 'Passabfahrt'} · WebGPU · Admin-Test</p>
+                <h1 className="abf-title">{tt ? 'Zeitfahren' : 'Abfahrt'}</h1>
+                <p className="abf-sub">{title || (tt ? 'Zeitfahren' : 'Passabfahrt')}{tt ? ` · ${(TT_FINISH / 1000).toLocaleString('de-DE', { minimumFractionDigits: 1 })} km` : ''} · WebGPU · Admin-Test</p>
               </div>
             </div>
-            <p className="abf-muted">Das ganze Spiel mit der neuen Grafik: endlose Strecke, Gegner, Flaschen, Hindernisse, Tunnel. Ohne Bestenliste – nichts wird gespeichert.</p>
-            <button type="button" className="btn btn--primary btn--full abf-go" onClick={() => go(0)}><span>Losfahren</span></button>
-            <div className="abf-cruise">
-              <span className="abf-muted">Testfahrt ohne Hindernisse, Zeitraffer</span>
-              <button type="button" className="btn btn--secondary btn--sm" onClick={() => go(2)}>2×</button>
-              <button type="button" className="btn btn--secondary btn--sm" onClick={() => go(3)}>3×</button>
-            </div>
+            {tt ? (
+              <>
+                <p className="abf-muted">3 km gegen die Uhr mit der neuen Grafik – Morgendunst, Torbögen, Publikum an Start und Ziel. Die Geister der Runde fahren mit; nichts wird gewertet oder gespeichert.</p>
+                <GhostRow ghosts={ghosts} members={members.data ?? []} me={me} loading={ghostQ.loading} />
+                <button type="button" className="btn btn--primary btn--full abf-go" onClick={() => go(0)}><span>Auf die Rampe</span></button>
+              </>
+            ) : (
+              <>
+                <p className="abf-muted">Das ganze Spiel mit der neuen Grafik: endlose Strecke, Gegner, Flaschen, Hindernisse, Tunnel. Ohne Bestenliste – nichts wird gespeichert.</p>
+                <button type="button" className="btn btn--primary btn--full abf-go" onClick={() => go(0)}><span>Losfahren</span></button>
+                <div className="abf-cruise">
+                  <span className="abf-muted">Testfahrt ohne Hindernisse, Zeitraffer</span>
+                  <button type="button" className="btn btn--secondary btn--sm" onClick={() => go(2)}>2×</button>
+                  <button type="button" className="btn btn--secondary btn--sm" onClick={() => go(3)}>3×</button>
+                </div>
+              </>
+            )}
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSheet((s) => !s)}>{sheet ? 'Grafik ausblenden' : 'Grafik und Technik'}</button>
             {sheet ? settingsPanel : null}
           </div>
         </div>
       ) : null}
 
-      {ui === 'over' && result ? (
+      {ui === 'over' && tt && ttResult ? (
+        <div className="abf-layer">
+          <button type="button" className="abf-round abf-close" onClick={() => navigate('/admin')} aria-label="Schließen"><Icon name="x" size={20} /></button>
+          <div className="abf-card abf-scroll race-card">
+            <span className="abf-eyebrow">{ttResult.dayBest ? 'Tagesbestzeit' : ttResult.pb ? 'Persönliche Bestzeit' : 'Im Ziel'} · zählt nicht</span>
+            <div className="race-result">
+              <div><strong>{fmtTime(ttResult.timeMs)}</strong><span>Zeit</span></div>
+              <div><strong>{ttResult.place}.</strong><span>von {ttResult.riders}</span></div>
+              <div><strong>{Math.round(ttResult.topKmh)}</strong><span>km/h max.</span></div>
+            </div>
+            <p className="abf-muted">
+              {ttResult.gapMs === null ? 'Allein gegen die Uhr.' : `${fmtGap(ttResult.gapMs)} ${ttResult.gapMs <= 0 ? 'vor' : 'hinter'} ${firstName(ttResult.leader?.name ?? '')} · Ø ${ttResult.avgKmh.toLocaleString('de-DE', { maximumFractionDigits: 1 })} km/h`}
+              {ttResult.reserve > 0.15 ? ` · noch ${Math.round(ttResult.reserve * 100)} % Vorrat im Ziel` : ''}
+            </p>
+            <ul className="race-parts">
+              {[...ttResult.splits, ttResult.timeMs].map((t, i) => <li key={i}><span>{['1 km', '2 km', 'Ziel'][i]}</span><b>{fmtTime(t)}</b></li>)}
+            </ul>
+            {ttResult.podium.length ? (
+              <ul className="race-parts">
+                {ttResult.podium.slice(0, 5).map((p, i) => <li key={i} className={cx(p.me && 'is-me')}><span>{i + 1}. {p.name}</span><b>{fmtTime(p.timeMs)}</b></li>)}
+              </ul>
+            ) : null}
+            <button type="button" className="btn btn--primary btn--full abf-go" onClick={() => go(0)}><span>Nochmal</span></button>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={toStart}>Zur Rampe</button>
+          </div>
+        </div>
+      ) : null}
+
+      {ui === 'over' && !tt && result ? (
         <div className="abf-layer">
           <button type="button" className="abf-round abf-close" onClick={() => navigate('/admin')} aria-label="Schließen"><Icon name="x" size={20} /></button>
           <div className="abf-card abf-scroll race-card">
@@ -502,7 +662,7 @@ export function RaceGpuPage() {
       {veil && !error ? (
         <div className={`gpu-load${ui === 'loading' ? '' : ' gpu-load--done'}`}>
           <div className="gpu-load__box">
-            <strong>Abfahrt</strong>
+            <strong>{tt ? 'Zeitfahren' : 'Abfahrt'}</strong>
             <span className="gpu-load__sub">WebGPU · Admin-Test</span>
             <div className="gpu-load__bar"><i style={{ transform: `scaleX(${(stats?.loading ?? 0).toFixed(3)})` }} /></div>
             <span className="gpu-load__stage">{ui === 'loading' ? `${stats?.stage ?? 'WebGPU startet'} … ${pct} %` : 'Los geht’s'}</span>

@@ -10,9 +10,16 @@ import * as THREE from 'three/webgpu';
 import { RiderModel } from '../abfahrt/rider3d';
 import { RiderAnim, type RiderState } from '../abfahrt/riderAnim';
 import { SKINS, TEAM_KITS, type Kit } from '../abfahrt/rider';
-import { tsl } from './nodes';
+import { tsl, type N } from './nodes';
 
-const { attribute, clamp, float, mix } = tsl;
+const { attribute, clamp, float, floor, mix, mod, screenCoordinate, select, userData } = tsl;
+
+/** Bayer-Raster 4 × 4 (0 … 1) je Bildpunkt – ordentliches Gitter für die Geister, auf jeder Grafik gleich */
+function bayer4(): N {
+  const px = floor(screenCoordinate.x), py = floor(screenCoordinate.y);
+  const b2 = (x: N, y: N): N => mod(x.mul(2).add(y.mul(3)), 4);
+  return b2(mod(px, 2), mod(py, 2)).mul(4).add(b2(mod(floor(px.div(2)), 2), mod(floor(py.div(2)), 2))).add(0.5).div(16);
+}
 
 /** Ursprungsmaterial (uuid, mit/ohne Glanz) → Knotenmaterial; gemeinsam für alle Fahrer */
 const MATS = new Map<string, THREE.Material>();
@@ -39,6 +46,14 @@ function convert(root: THREE.Object3D) {
       nm.alphaTest = src.alphaTest;
       nm.depthWrite = src.depthWrite;
       if (src.emissive) { nm.emissive.copy(src.emissive); nm.emissiveIntensity = (src.emissiveIntensity ?? 1) * 2; }
+      // Geister (Zeitfahren): halbdurchsichtig als Gitter (Bayer 4 × 4, je Objekt aus userData) – das Material bleibt
+      // undurchsichtig (keine Sortierung, ein Shader für alle Fahrer); die Alpha-Abdeckung der Kantenglättung wäre
+      // auf mancher Grafik nur ein harter Schwellwert
+      if (!src.transparent) {
+        const ghost = userData('ghost', 'float');
+        nm.opacityNode = select(ghost.lessThan(float(1).sub(bayer4())), float(1), float(0));
+        nm.alphaTestNode = float(0.5);
+      }
       if (gloss) {
         const g = attribute('gloss', 'float');
         const metal = clamp(g.mul(2).sub(1), 0, 1);
@@ -57,6 +72,7 @@ function convert(root: THREE.Object3D) {
       MATS.set(key, m);
     }
     mesh.material = m;
+    mesh.userData.ghost = 0;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
   });
@@ -78,6 +94,14 @@ export class Rider {
   private anim: RiderAnim;
   private shadowOn = true;
   private small: THREE.Object3D[] = [];
+  private ghostK = 0;
+
+  /** Geist: k = wie durchsichtig (0 = fest, 1 = unsichtbar) */
+  ghost(k: number) {
+    if (Math.abs(k - this.ghostK) < 0.01) return;
+    this.ghostK = k;
+    this.model.group.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.userData.ghost = k; });
+  }
 
   /** q = 1: volle Detailstufe (eigener Fahrer: Schriftzüge, Kette, Zähne …), 0: Gegner wie im Spiel */
   constructor(kit: Kit, q: 0 | 1, seed: number, player: boolean) {

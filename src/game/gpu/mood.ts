@@ -143,6 +143,9 @@ export const DEFAULT_SETTINGS: Settings = {
 export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'gold', drama: true, sunset: true, bloom: false, oppMax: 10, treeFar: 1100, maxDpr: 2, minDpr: 1.4 };
 /** v2: neue Grafik (günstiges Licht, Auflösung der Szene) – alte Einstellungen gelten nicht mehr */
 export const RACE_KEY = 'gruppetto.gpu.race2';
+/** Zeitfahren (Abfahrt auf WebGPU): Morgen im Dunst, dramatischer Himmel – Zeitfahren beginnen früh */
+export const TT_DEFAULTS: Settings = { ...RACE_DEFAULTS, mood: 'morgen' };
+export const TT_KEY = 'gruppetto.gpu.tt';
 
 const KEY = 'gruppetto.gpu.settings';
 

@@ -44,6 +44,7 @@ function Sections({ tour }: { tour: Tour }) {
     { to: '/admin/akku', icon: 'zap', title: 'Minispiel „Akku leer!“', sub: 'Prototyp · nur für Admins sichtbar' },
     { to: '/admin/welt', icon: 'mountain', title: 'Welt-Editor', sub: 'Durch die 3D-Welten fliegen, Requisiten und Gelände ändern, Notizen für Claude' },
     { to: '/admin/abfahrt', icon: 'mountain', title: 'Abfahrt · WebGPU', sub: 'Das ganze Spiel mit neuer Grafik: endlos, Gegner, Tunnel, dramatischer Himmel – ohne Wertung' },
+    { to: '/admin/zeitfahren', icon: 'clock', title: 'Zeitfahren · WebGPU', sub: 'Gegen die Uhr und die Geister der Runde, mit der neuen Grafik: Morgendunst, Torbögen, Publikum – ohne Wertung' },
     { to: '/admin/gpu', icon: 'zap', title: 'WebGPU-Test', sub: 'Passabfahrt mit neuer Grafik-Technik – Vergleich zum Spiel' },
   ];
   return (

@@ -40,7 +40,7 @@ const COACH: Record<Coach, { t: string; s: string; g: string }> = {
 
 /** Tempomacher des Tages (einmal je Tag durchgerechnet) */
 const pacers = new Map<string, GhostRider>();
-function pacerOf(day: string): GhostRider {
+export function pacerOf(day: string): GhostRider {
   let g = pacers.get(day);
   if (!g) {
     const r = simulateGhost(day, { strength: 1, line: 0.8, seed: 7 });
@@ -54,7 +54,7 @@ function pacerOf(day: string): GhostRider {
  * Geister aus den gespeicherten Fahrten: je Mitglied die beste Fahrt von heute, sonst seine letzte (als älterer
  * Geist mit Tag). Der eigene Geist ebenso – heute der Bestlauf (auch der gerade gefahrene, bevor er gespeichert ist).
  */
-function buildGhosts(rows: TtGhostRow[], members: Profile[], me: Profile, local: TtGhostRow | null, day: string): GhostRider[] {
+export function buildGhosts(rows: TtGhostRow[], members: Profile[], me: Profile, local: TtGhostRow | null, day: string): GhostRider[] {
   const list: GhostRider[] = [];
   const latest = new Map<string, TtGhostRow>();
   for (const r of [...rows, ...(local ? [local] : [])]) {
@@ -530,7 +530,7 @@ function HotSeat({ leader, myBest, today, meId, members, error }: { leader: Ghos
 }
 
 /** Wer heute als Geist mitfährt – mit seinem Rad */
-function GhostRow({ ghosts, members, me, loading }: { ghosts: GhostRider[]; members: Profile[]; me: Profile; loading: boolean }) {
+export function GhostRow({ ghosts, members, me, loading }: { ghosts: GhostRider[]; members: Profile[]; me: Profile; loading: boolean }) {
   if (loading) return <p className="abf-muted tt-ghosts">Geister werden geladen …</p>;
   if (!ghosts.length) return <p className="abf-muted tt-ghosts">Noch niemand auf der Strecke – du fährst allein gegen die Uhr.</p>;
   // heute zuerst (nach Zeit), dann die älteren Geister

@@ -15,6 +15,9 @@ import { Track, SEG, EDGE, ROAD_HALF } from '../abfahrt/track';
 import { Terrain } from '../abfahrt/terrain3d';
 import { adsTex } from '../abfahrt/tex3d';
 import { Abfahrt, type GameEvent, type HudState, type Phase, type RunResult } from '../abfahrt/engine';
+import { TimeTrial, type TtEvent, type TtHud, type TtResult } from '../abfahrt/zeitfahren';
+import type { StageRef } from '../abfahrt/stageRef';
+import type { GhostRider } from '../tt';
 import type { Kit } from '../abfahrt/rider';
 import { bakeFlowerDots, bakeSurfaces, type Surface, type SurfaceId } from './bake';
 import { Atmo } from './atmo';
@@ -51,10 +54,28 @@ export interface RaceStats {
   backend: string;
 }
 
+/** Zeitfahren statt Abfahrt: Geister der Runde, eigener Name, echte Vorlage (Namen, Gegend) */
+export interface TtSetup {
+  rider: string;
+  ghosts: GhostRider[];
+  myBest: number | null;
+  town: StageRef | null;
+  onEvent?: (e: TtEvent) => void;
+  onOver?: (r: TtResult) => void;
+}
+
+/** Namensschild über einem Geist (Bildschirmlage in CSS-Pixeln) */
+export interface TagView { id: number; text: string; sub: string; color: string; x: number; y: number; k: number }
+
 export interface RaceOptions {
   dayKey: string;
   names: string[];
   kit: Kit;
+  /** Zeitfahren (sonst Abfahrt) */
+  tt?: TtSetup;
+  /** Einstellungen: Schlüssel auf dem Gerät und Standard (Abfahrt und Zeitfahren getrennt) */
+  settingsKey?: string;
+  defaults?: Settings;
   onStats?: (s: RaceStats) => void;
   onReady?: () => void;
   onError?: (e: unknown) => void;
@@ -85,7 +106,7 @@ export class Race {
   private get pipeline(): THREE.RenderPipeline | null { return this.atmo?.bloomOn ? this.pipeBloom : this.pipeFlat; }
   private scenePass: ReturnType<typeof pass> | null = null;
   private atmo: Atmo | null = null;
-  settings: Settings = loadSettings(RACE_KEY, RACE_DEFAULTS);
+  settings: Settings;
   private track: Track | null = null;
   private world: World | null = null;
   private objects: Objects | null = null;
@@ -96,7 +117,11 @@ export class Race {
   private poolOf = new Map<number, number>();
   private poolFree: number[] = [];
   /** laufende Fahrt (auch vor dem Start: Fahrer stehen am Start) */
-  private eng: Abfahrt | null = null;
+  private eng: Abfahrt | TimeTrial | null = null;
+  /** Zeitfahren? */
+  get isTt(): boolean { return !!this.opts.tt; }
+  /** Intro: Kamera kreist vor dem Start langsam um den Fahrer (Zeitfahren) */
+  private introT = 0;
   private cruise = 0;
   /** angehalten (Pausenmenü): Spiel steht, die Welt baut weiter voraus */
   paused = false;
@@ -152,6 +177,7 @@ export class Race {
   private screenPos = new THREE.Vector3();
 
   constructor(private host: HTMLElement, private opts: RaceOptions) {
+    this.settings = loadSettings(opts.settingsKey ?? RACE_KEY, opts.defaults ?? RACE_DEFAULTS);
     this.renderer = new THREE.WebGPURenderer({ antialias: false, powerPreference: 'high-performance', reversedDepthBuffer: true, trackTimestamp: true } as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
   }
 
@@ -227,7 +253,7 @@ export class Race {
     if (this.disposed) return;
 
     await step(0.1, 'Strecke');
-    const track = (this.track = new Track(this.opts.dayKey, this.opts.names, 'descent'));
+    const track = (this.track = new Track(this.opts.dayKey, this.opts.names, this.opts.tt ? 'tt' : 'descent', this.opts.tt?.town ?? null));
     const terrain = new Terrain(track);
     const adsM = adsMaterial(adsTex(this.opts.names));
     const world = (this.world = new World({
@@ -240,6 +266,7 @@ export class Race {
       adsMap: adsM.map ?? null,
       surfaces: S,
       crowd: gpu,
+      accent: this.opts.kit.jersey,
     }));
     this.scene.add(world.group);
     world.trees.sunDir.value.copy(atmo.sunDir);
@@ -248,17 +275,18 @@ export class Race {
     this.scene.add(objects.group);
     const particles = (this.particles = new Particles());
     this.scene.add(particles.mesh);
-    // eigener Fahrer (volle Detailstufe) und der Vorrat an Gegnern (Teamtrikots)
+    // eigener Fahrer (volle Detailstufe) und der Vorrat an Gegnern (Teamtrikots; im Zeitfahren die Trikots der Geister)
     this.rider = new Rider(this.opts.kit, 1, 1, true);
     this.scene.add(this.rider.group);
+    this.eng = this.makeEngine(0);
+    const ghostKits = this.eng.opps.map((o) => o.kit);
     for (let i = 0; i < POOL; i++) {
-      const R = new Rider(teamKit(i), 0, i * 7.31 + 3, false);
+      const R = new Rider(this.opts.tt ? ghostKits[i] ?? teamKit(i) : teamKit(i), 0, i * 7.31 + 3, false);
       R.group.visible = false;
       this.pool.push(R);
       this.poolFree.push(POOL - 1 - i);
       this.scene.add(R.group);
     }
-    this.eng = this.makeEngine(0);
 
     const scenePass = (this.scenePass = pass(this.scene, this.camera, { samples: gpu ? this.settings.msaa : 0 }));
     // Kantenglättung auf den Kacheln der Grafikkarte: die vierfachen Proben nach dem Auflösen verwerfen statt in den
@@ -355,7 +383,16 @@ export class Race {
 
   // ------------------------------------------------------------------ Fahrt
 
-  private makeEngine(cruise: number): Abfahrt {
+  private makeEngine(cruise: number): Abfahrt | TimeTrial {
+    const tt = this.opts.tt;
+    if (tt) {
+      const e = new TimeTrial({
+        dayKey: this.opts.dayKey, names: this.opts.names, rider: tt.rider, kit: this.opts.kit, town: tt.town, ghosts: tt.ghosts, myBest: tt.myBest,
+        onEvent: (ev) => tt.onEvent?.(ev), onOver: (res) => tt.onOver?.(res),
+      });
+      e.setViewport(this.host.clientWidth || window.innerWidth);
+      return e;
+    }
     const e = new Abfahrt({
       dayKey: this.opts.dayKey, names: this.opts.names, friends: [], kit: this.opts.kit, best: 0,
       missions: [], missionsDone: new Set(), tutorial: false, cruise: cruise || undefined,
@@ -394,9 +431,28 @@ export class Race {
   pointerMove(x: number, y: number) { if (!this.autopilot) this.eng?.pointerMove(x, y); }
   pointerUp() { this.eng?.pointerUp(); }
   key(name: 'left' | 'right' | 'up' | 'down', down: boolean) { if (!this.autopilot) this.eng?.key(name, down); }
-  hud(): HudState | null { return this.eng?.hud() ?? null; }
+  hud(): HudState | TtHud | null { return this.eng?.hud() ?? null; }
   /** Testfahrt: Zeitraffer, Stehenbleiben (Prüfpult wie im Spiel) */
-  get dbg() { return this.eng?.dbg ?? null; }
+  get dbg() { return this.eng instanceof Abfahrt ? this.eng.dbg : null; }
+
+  /** Namensschilder (Zeitfahren: der nächste Geist voraus) mit Bildschirmlage – die Seite setzt sie als Elemente */
+  tags(): TagView[] {
+    const e = this.eng;
+    if (!e || !('tags' in e) || !e.tags.length || this.free) return [];
+    const w = this.host.clientWidth || window.innerWidth;
+    const h = this.host.clientHeight || window.innerHeight;
+    const out: TagView[] = [];
+    for (const tg of e.tags) {
+      const i = this.poolOf.get(tg.id);
+      if (i === undefined || !this.pool[i].group.visible) continue;
+      const g = this.pool[i].group;
+      this.screenPos.set(g.position.x, g.position.y + 1.95, g.position.z).project(this.camera);
+      if (this.screenPos.z > 1 || Math.abs(this.screenPos.x) > 1.2) continue;
+      const d = this.camera.position.distanceTo(g.position);
+      out.push({ id: tg.id, text: tg.text, sub: tg.sub ?? '', color: tg.color ?? '#fff', x: (this.screenPos.x * 0.5 + 0.5) * w, y: (0.5 - this.screenPos.y * 0.5) * h, k: clamp(14 / Math.max(6, d), 0.55, 1) });
+    }
+    return out;
+  }
 
   /** Autopilot: Ideallinie (Krümmung voraus), Hindernissen ausweichen, Flaschen mitnehmen, auf Geraden ducken */
   private steerAuto() {
@@ -476,7 +532,8 @@ export class Race {
     const t = e.track;
     const p = e.p;
     const max = Math.min(POOL, Math.round(this.settings.oppMax));
-    const list = e.opps.filter((o) => o.z > p.z - 40 && o.z < p.z + 300).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, max);
+    // Geister (Zeitfahren) erst, wenn sie eingeblendet sind (vor dem Start steht der Fahrer allein auf der Rampe)
+    const list = e.opps.filter((o) => o.z > p.z - 40 && o.z < p.z + 300 && !('ghost' in o && (o as { ghost: number }).ghost <= 0)).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, max);
     const keep = new Set(list.map((o) => o.id));
     for (const [id, i] of this.poolOf) {
       if (keep.has(id)) continue;
@@ -501,7 +558,9 @@ export class Race {
       R.group.rotation.y = -this.w.th;
       const d = cp.distanceTo(R.group.position);
       R.far(d);
-      R.shadows(d < 45);
+      const ghost = 'ghost' in o ? (o as { ghost: number }).ghost : 0;
+      R.ghost(ghost > 0 ? 1 - ghost : 0);
+      R.shadows(d < 45 && ghost <= 0);
       R.pose({
         lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, stand: o.stand ?? 0, sprint: 0,
         v: o.v, air: 0, surface: t.segAt(o.z).surface, wobble: o.bump, light, roll: o.z / 0.34,
@@ -590,6 +649,31 @@ export class Race {
     const e = this.eng!;
     const p = e.p;
     e.track.world(p.z, p.x, 0, this.w);
+    // Zeitfahren, vor dem Start: die Kamera kreist langsam um den Fahrer auf der Rampe (Intro); mit dem Countdown
+    // blendet sie in die Fahrkamera
+    // … und nach dem Ziel kreist sie um den ausrollenden Fahrer (Zieleinlauf)
+    if (this.opts.tt && e.phase === 'over') {
+      this.introT += dt;
+      const R = this.rider!.group.position;
+      const a = this.w.th + Math.PI * 0.35 + this.introT * 0.09;
+      this.camera.position.set(R.x + Math.sin(a) * 9, R.y + 2.6, R.z + Math.cos(a) * 9);
+      this.camera.lookAt(R.x, R.y + 0.9, R.z);
+      if (this.camera.fov !== 40) { this.camera.fov = 40; this.cam.fov = 40; this.camera.updateProjectionMatrix(); }
+      this.cam.init = false;
+      return;
+    }
+    if (this.opts.tt && e.phase === 'ready') {
+      this.introT += dt;
+      // auf der Straße vor dem Fahrer (dort steht nichts im Weg), langsam von der einen Seite zur anderen
+      const R = this.rider!.group.position;
+      const side = Math.sin(this.introT * 0.16) * 2.1;
+      e.track.world(p.z + 6.5 - Math.cos(this.introT * 0.16) * 0.8, side, 0, this.w);
+      this.camera.position.set(this.w.x, Math.max(this.w.y, R.y) + 1.35 + Math.sin(this.introT * 0.3) * 0.15, this.w.z);
+      this.camera.lookAt(R.x, R.y + 1.05, R.z);
+      if (this.camera.fov !== 44) { this.camera.fov = 44; this.cam.fov = 44; this.camera.updateProjectionMatrix(); }
+      this.cam.init = false;
+      return;
+    }
     const yaw = this.w.th + Math.atan2(p.vx, Math.max(5, p.v)) * 0.3;
     if (!this.cam.init || e.phase === 'ready' || e.phase === 'countdown') { this.cam.th = yaw; this.camFrom = null; this.camBlend = 1; }
     this.cam.th += angDiff(yaw, this.cam.th) * Math.min(1, dt * 6);
@@ -845,7 +929,7 @@ export class Race {
     const lines = [
       `gruppetto Abfahrt-WebGPU Kostenanalyse · ${new Date().toISOString()} · ${this.backendName} · GPU-Zeitstempel ${this.gpuTiming ? 'ja' : 'nein'}`,
       `Gerät: ${navigator.userAgent}`,
-      `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, MSAA ${S0.msaa}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => (RACE_DEFAULTS as unknown as Record<string, unknown>)[k] !== v)))}`,
+      `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, MSAA ${S0.msaa}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => ((this.opts.defaults ?? RACE_DEFAULTS) as unknown as Record<string, unknown>)[k] !== v)))}`,
       'Variante | GPU ms (Median, Ersparnis zur Basis im Wechsel gemessen) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms | Aufrufe | Dreiecke k | Szene in Bild (Bildpunkte)',
       ...rows.map((r) => `${r.name} | ${f(r.gpu)}${r === b ? '' : d(r.gpu, r.base)} | ${f(r.gpu90)} | ${f(r.draw)}${r === b ? '' : d(r.draw, b.draw)} | ${f(r.cpu)} | ${f(r.frame)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.px}`),
     ];
@@ -1042,7 +1126,7 @@ export class Race {
     };
   }
   /** Prüfhilfe: Spiel (Engine) */
-  get engine(): Abfahrt | null { return this.eng; }
+  get engine(): Abfahrt | TimeTrial | null { return this.eng; }
 
   // ------------------------------------------------------------------ Messfahrt
 
@@ -1080,7 +1164,7 @@ export class Race {
     const diff = (Object.keys(s) as (keyof Settings)[]).filter((k) => s[k] !== prev[k]).map((k) => `${k}=${String(s[k])}`).join(' ');
     if (diff) this.perf.event(EV.settings, diff);
     this.settings = s;
-    saveSettings(s, RACE_KEY);
+    saveSettings(s, this.opts.settingsKey ?? RACE_KEY);
     this.dprFloor = 0;
     this.atmo?.apply(s, instant);
     const md = Math.min(window.devicePixelRatio || 1, s.maxDpr);

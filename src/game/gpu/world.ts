@@ -22,6 +22,7 @@ import { Houses } from './houses';
 import { Life } from './life';
 import { Trees } from './trees';
 import { Tunnels } from './tunnel';
+import { Arches } from './arches';
 import { tsl } from './nodes';
 import { cheapMaterial } from './light';
 
@@ -56,6 +57,8 @@ export interface WorldParts {
   adsMap: THREE.Texture | null;
   surfaces: ConstructorParameters<typeof Houses>[0];
   crowd: boolean;
+  /** Akzentfarbe (Start-, Ziel- und GPM-Bögen) */
+  accent?: string;
 }
 
 export class World {
@@ -69,6 +72,7 @@ export class World {
   readonly life: Life;
   readonly forest: ForestEdge;
   readonly tunnels: Tunnels;
+  readonly arches: Arches;
   private track: Track;
   private terrain: Terrain;
   private pieces = new Map<number, Piece>();
@@ -97,6 +101,7 @@ export class World {
     this.life = new Life(p.msaa);
     this.forest = new ForestEdge(p.track, p.terrain, 0, 0);
     this.tunnels = new Tunnels(p.track, p.corridorMats.sides);
+    this.arches = new Arches(p.track, p.accent ?? '#ff5fa2');
     if (p.adsMap) {
       const m = cheapMaterial({ col: select(frontFacing, texture(p.adsMap, uv()).rgb, vec3(0.3, 0.2, 0.11)), nWorld: normalWorldGeometry, params: { side: THREE.DoubleSide } });
       m.name = 'signs';
@@ -180,6 +185,9 @@ export class World {
     this.lbl = 'tunnel';
     const tun = yield* this.tunnels.buildRange(i0, i1);
     if (tun) piece.group.add(tun);
+    // Torbögen (Start, Zwischenzeiten, Gipfel, Ziel)
+    this.lbl = 'boegen';
+    this.arches.addRange(piece.group, i0, i1);
     // Zuschauer und ihre Schilder
     this.lbl = 'zuschauer';
     if (this.crowd) {
@@ -423,6 +431,7 @@ export class World {
     } finally {
       this.corridor.onTufts = tufts;
     }
+    group.add(this.arches.warm());
     if (this.signMat) {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
@@ -460,6 +469,7 @@ export class World {
     this.life.dispose();
     this.crowd?.dispose();
     (this.tunnels.mat as THREE.Material).dispose();
+    this.arches.dispose();
     this.signMat?.dispose();
   }
 }

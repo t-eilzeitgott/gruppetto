@@ -2416,6 +2416,17 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .race-result { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; text-align: center; }
 .race-result div { display: flex; flex-direction: column; gap: 2px; padding: 10px 4px; border-radius: 14px; background: var(--surface-2, rgba(127, 127, 127, 0.12)); }
 .race-result strong { font-size: 22px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.race-parts li.is-me { color: var(--accent); font-weight: 700; }
+/* Namensschilder über den Geistern (Zeitfahren auf WebGPU): nur verschoben, nicht neu gezeichnet */
+.race-tag {
+  position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; transform-origin: 50% 100%;
+  display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 4px 9px 5px; border-radius: 10px;
+  background: rgba(14, 16, 22, 0.62); color: #fff; border: 1.5px solid var(--tag, #fff); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  font-size: 13px; line-height: 1.1; white-space: nowrap; will-change: transform;
+}
+.race-tag b { font-weight: 800; color: var(--tag, #fff); }
+.race-tag span { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; opacity: 0.92; }
+.race-tag span:empty { display: none; }
 .race-result span { font-size: 12px; color: var(--muted); }
 .race-parts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 .race-parts li { display: flex; justify-content: space-between; gap: 10px; }

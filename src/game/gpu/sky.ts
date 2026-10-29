@@ -141,11 +141,13 @@ function dramaClouds(plain: THREE.Texture, L: CloudLight, p: SkyParams): THREE.M
     const lit: N = front.mul(0.6).add(smoothstep(0.05, 0.9, h01).mul(0.45)).add(relief.sub(0.5).mul(0.4)).sub(0.12).clamp(0, 1);
     let col: N = mix(shadowCol, litCol, smoothstep(0.08, 0.85, lit));
     // Lichtsaum oben an der Kante, im Gegenlicht kräftig
-    const rim: N = exp(inside.div(-0.0035)).mul(max(facing, float(0)).mul(0.9 * low).add(0.2));
+    // nur innerhalb der Wolke (inside ≥ 0): oberhalb der Kante lief exp() ins Unendliche, und ∞ × Deckkraft 0 ist beim
+    // Überblenden NaN – auf dem iPhone (Metal) war der ganze Himmel darüber schwarz
+    const rim: N = exp(max(inside, float(0)).div(-0.0035)).mul(max(facing, float(0)).mul(0.9 * low).add(0.2));
     col = col.add(warm.mul(max(lum(behind), base)).mul(rim).mul(0.65));
     // unten im Dunst
     col = mix(col, behind, pow(float(1).sub(h01), 3).mul(0.55));
-    m.colorNode = col.max(0);
+    m.colorNode = col.clamp(0, 64);
     m.opacityNode = mask;
     sphere(2400, m, 2);
   }
@@ -180,7 +182,7 @@ function dramaClouds(plain: THREE.Texture, L: CloudLight, p: SkyParams): THREE.M
     const halo: N = max(lum(behind), base);
     col = mix(col, shadowCol.mul(0.85).add(warm.mul(halo).mul(light).mul(1.15)), back.mul(0.85));
     col = mix(col, behind, smoothstep(0.24, 0.03, el).mul(0.55));
-    m.colorNode = col.max(0);
+    m.colorNode = col.clamp(0, 64);
     m.opacityNode = alpha;
     sphere(2200, m, 3);
   }
@@ -196,7 +198,7 @@ function dramaClouds(plain: THREE.Texture, L: CloudLight, p: SkyParams): THREE.M
     const rays: N = smoothstep(0.45, 0.8, vnoise(vec2(phi.mul(R), 0.5), [R, 8])).mul(smoothstep(0.5, 0.8, vnoise(vec2(phi.mul(R * 0.25), 3.5), [R / 4, 8])).mul(0.6).add(0.4));
     const ang: N = tsl.acos(cosS.clamp(-1, 1));
     const fall: N = exp(ang.mul(-2.6)).mul(smoothstep(0.03, 0.14, ang)).mul(smoothstep(-0.02, 0.05, el));
-    m.colorNode = warm.mul(base).mul(rays).mul(fall).mul(0.5 * low);
+    m.colorNode = warm.mul(base).mul(rays).mul(fall).mul(0.5 * low).clamp(0, 64);
     m.opacityNode = float(1);
     sphere(2000, m, 4);
   }
