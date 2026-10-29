@@ -19,7 +19,7 @@ import { between, hashStr, mulberry32, type Rng } from './rng';
 import { SKINS, type Kit } from './rider';
 import { pedalStep } from './motion';
 import type { StageRef } from './stageRef';
-import { TRACE_DT, firstName, ghostAt, ghostTimeAt, type GhostRider } from '../tt';
+import { TRACE_DT, firstName, ghostAt, ghostName, ghostTimeAt, type GhostRider } from '../tt';
 
 export interface TtOptions {
   dayKey: string;
@@ -260,7 +260,9 @@ export class TimeTrial {
     });
   }
 
-  get riders(): number { return this.opps.length + 1; }
+  get riders(): number { return this.ranked.length + 1; }
+  /** Geister von heute – nur sie zählen für Platz, Zwischenzeiten und Tagesbestzeit (ältere fuhren eine andere Strecke) */
+  private get ranked(): GhostOpp[] { return this.opps.filter((o) => !o.rider.old); }
 
   setViewport(w: number) { this.viewW = Math.max(240, w); }
 
@@ -344,7 +346,8 @@ export class TimeTrial {
   hud(): TtHud {
     const seg = this.track.segAt(this.p.z);
     const board = this.standings();
-    const best = this.opps.length ? this.opps.reduce((a, o) => (o.rider.timeMs < a.rider.timeMs ? o : a)) : null;
+    const ranked = this.ranked;
+    const best = ranked.length ? ranked.reduce((a, o) => (o.rider.timeMs < a.rider.timeMs ? o : a)) : null;
     return {
       time: this.finT >= 0 ? this.finT : this.time,
       toGo: Math.max(0, Math.round(TT_FINISH - this.p.z)),
@@ -373,7 +376,7 @@ export class TimeTrial {
   private standings(): Standing[] {
     const me = this.finT >= 0 ? this.finT : this.time;
     const all = [
-      ...this.opps.map((o) => ({ name: o.rider.bot ? 'Tempo' : o.rider.me ? 'Bestzeit' : firstName(o.rider.name), t: this.finT >= 0 ? o.rider.timeMs / 1000 : ghostTimeAt(o.rider.trace, this.p.z), me: false })),
+      ...this.ranked.map((o) => ({ name: o.rider.bot ? 'Tempo' : o.rider.me ? 'Bestzeit' : firstName(o.rider.name), t: this.finT >= 0 ? o.rider.timeMs / 1000 : ghostTimeAt(o.rider.trace, this.p.z), me: false })),
       { name: 'Du', t: me, me: true },
     ].sort((a, b) => a.t - b.t);
     const out: Standing[] = [];
@@ -494,7 +497,7 @@ export class TimeTrial {
       if (p.z >= TT_FINISH) {
         this.finT = this.time - (p.z - TT_FINISH) / Math.max(1, p.v);
         const pl = this.place();
-        if (pl === 1 && this.opps.some((o) => !o.rider.me)) { this.pop('Tagesbestzeit!', 'gold', undefined, true); this.confetti(); }
+        if (pl === 1 && this.ranked.some((o) => !o.rider.me)) { this.pop('Tagesbestzeit!', 'gold', undefined, true); this.confetti(); }
         else if (this.opts.myBest !== null && this.finT * 1000 < this.opts.myBest) { this.pop('Bestzeit!', 'gold', 'persönlich', true); this.confetti(); }
         else this.pop(`${pl}. Platz`, pl <= 3 ? 'gold' : 'white', undefined, true);
       }
@@ -560,11 +563,12 @@ export class TimeTrial {
 
   private split(i: number, t: number) {
     const sz = TT_SPLITS[i];
-    const times = this.opps.map((o) => ghostTimeAt(o.rider.trace, sz));
+    const ranked = this.ranked;
+    const times = ranked.map((o) => ghostTimeAt(o.rider.trace, sz));
     let bi = -1;
     for (let k = 0; k < times.length; k++) if (bi < 0 || times[k] < times[bi]) bi = k;
     const best = bi >= 0 ? times[bi] : null;
-    const bestRider = bi >= 0 ? this.opps[bi].rider : null;
+    const bestRider = bi >= 0 ? ranked[bi].rider : null;
     const gapMs = best !== null ? Math.round((t - best) * 1000) : null;
     const place = 1 + times.filter((x) => x < t).length;
     const bestName = bestRider ? (bestRider.bot ? 'Tempomacher' : bestRider.me ? 'dein Bestlauf' : firstName(bestRider.name)) : null;
@@ -589,8 +593,8 @@ export class TimeTrial {
       if (!o.passedBy && dz < -0.8 && Math.abs(o.x - p.x) < 2.5 && o.v < p.v + 6) {
         o.passedBy = true;
         o.passedMe = false;
-        if (!o.rider.me) this.passedNames.push(o.rider.name);
-        this.pop(o.rider.me ? 'Schneller als dein Bestlauf' : `${firstName(o.rider.name)} überholt`, o.rider.me ? 'gold' : 'accent', undefined, false, true);
+        if (!o.rider.me && !o.rider.old) this.passedNames.push(o.rider.name);
+        this.pop(o.rider.me ? (o.rider.old ? `${ghostName(o.rider)} überholt` : 'Schneller als dein Bestlauf') : `${ghostName(o.rider)} überholt`, o.rider.me && !o.rider.old ? 'gold' : 'accent', undefined, false, true);
       } else if (o.passedBy && dz > 2.5) {
         o.passedBy = false;
       }
@@ -598,7 +602,7 @@ export class TimeTrial {
         if (this.flags.has(`pm:${o.id}`)) continue;
         this.flags.add(`pm:${o.id}`);
         o.passedMe = true;
-        this.pop(o.rider.me ? 'Dein Bestlauf zieht vorbei' : `${firstName(o.rider.name)} zieht vorbei`, 'muted', undefined, false, true);
+        this.pop(`${ghostName(o.rider, true)} zieht vorbei`, 'muted', undefined, false, true);
       }
       if (o.passedMe && dz < -1) o.passedMe = false;
     }
@@ -630,7 +634,8 @@ export class TimeTrial {
       o.lean += (clamp(-o.vx * 0.12 + Math.atan2(seg.curve * o.v * o.v, G) * 0.8, -0.55, 0.55) - o.lean) * Math.min(1, dt * 6);
       pedalStep(o, downhill && o.m !== 1 && o.v > 12 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / this.warp, dt);
       // sichtbar ab „Los“: in den ersten Metern einblenden
-      const want = playing ? GHOST_ALPHA : 0;
+      // ältere Geister (andere Tage) etwas blasser
+      const want = playing ? GHOST_ALPHA * (o.rider.old ? 0.65 : 1) : 0;
       o.ghost += (want - o.ghost) * Math.min(1, dr * 2.5);
       if (o.ghost < 0.01) o.ghost = want > 0 ? 0.01 : 0;
       // Namensschild: der nächste Geist voraus (bis 45 m)
@@ -639,7 +644,7 @@ export class TimeTrial {
     }
     if (tagged) {
       const gap = this.gapTo(tagged);
-      const name = tagged.rider.bot ? 'Tempomacher' : tagged.rider.me ? 'Dein Bestlauf' : firstName(tagged.rider.name);
+      const name = ghostName(tagged.rider, true);
       this.tags = [{ id: tagged.id, text: name, sub: `${gap >= 0 ? '+' : '−'}${Math.abs(gap).toFixed(1).replace('.', ',')}″`, color: tagged.rider.bot ? '#9aa0a8' : tagged.rider.color }];
     } else this.tags = [];
   }
@@ -651,7 +656,7 @@ export class TimeTrial {
     this.phaseT = 0;
     const timeMs = Math.round(this.finT * 1000);
     const splits = this.splitT.map((t) => Math.round(t * 1000));
-    const others = this.opps.filter((o) => !o.rider.me);
+    const others = this.ranked.filter((o) => !o.rider.me);
     const times = others.map((o) => o.rider.timeMs);
     const bestO = others.length ? others.reduce((a, o) => (o.rider.timeMs < a.rider.timeMs ? o : a)) : null;
     const place = 1 + times.filter((t) => t < timeMs).length;
@@ -665,7 +670,7 @@ export class TimeTrial {
       let best: number | null = null;
       let bestName: string | null = null;
       let leader: number | null = null;
-      for (const o of this.opps) {
+      for (const o of this.ranked) {
         const s = o.rider.splits;
         const m0 = i === 0 ? 0 : s[i - 1];
         const m1 = i === marks.length - 2 ? o.rider.timeMs : s[i];

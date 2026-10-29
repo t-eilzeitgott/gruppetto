@@ -1,5 +1,5 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
-import type { TtGhostRow } from '../game/tt';
+import type { GameGhostRow, TtGhostRow } from '../game/tt';
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, PointScale, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
   Tour, TourData, StageSyncInfo, SyncLogEntry, SyncMode, SyncStatus,
@@ -306,7 +306,10 @@ export class SupabaseSource implements DataSource {
   }
 
   async ttGhosts(day: string): Promise<TtGhostRow[]> {
-    const rows = await this.rest<TtGhostRow[]>(`tt_ghosts?day=eq.${encodeURIComponent(day)}&select=user_id,day,time_ms,bike,splits,trace,created_at&order=time_ms.asc&limit=60`);
+    // je Mitglied der letzte Geist (heute oder davor) – eine Zeile je Mitglied; ohne die Sicht (ältere Datenbank) nur heute
+    const sel = 'select=user_id,day,time_ms,bike,splits,trace,created_at';
+    const rows = await this.rest<TtGhostRow[]>(`tt_ghosts_latest?day=lte.${encodeURIComponent(day)}&${sel}&order=day.desc,time_ms.asc&limit=80`)
+      .catch(() => this.rest<TtGhostRow[]>(`tt_ghosts?day=eq.${encodeURIComponent(day)}&${sel}&order=time_ms.asc&limit=60`));
     return rows.map((r) => ({ ...r, splits: Array.isArray(r.splits) ? r.splits.map(Number) : [], trace: Array.isArray(r.trace) ? r.trace : [] }));
   }
 
@@ -315,6 +318,20 @@ export class SupabaseSource implements DataSource {
     await this.rest('tt_ghosts?on_conflict=user_id,day', {
       method: 'POST',
       body: { user_id: this.me(), day: g.day, time_ms: Math.round(g.time_ms), bike: g.bike, splits: g.splits.map((x) => Math.round(x)), trace: g.trace, created_at: new Date().toISOString() },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+    });
+  }
+
+  async gameGhosts(game: GameGhostRow['game']): Promise<GameGhostRow[]> {
+    const rows = await this.rest<GameGhostRow[]>(`game_ghosts_latest?game=eq.${game}&select=user_id,game,day,score,meters,bike,trace,created_at&order=day.desc,score.desc&limit=80`);
+    return rows.map((r) => ({ ...r, score: Number(r.score), meters: Number(r.meters), trace: Array.isArray(r.trace) ? r.trace : [] }));
+  }
+
+  async saveGameGhost(g: Omit<GameGhostRow, 'user_id' | 'created_at'>): Promise<void> {
+    // ein Eintrag je Mitglied, Spiel und Tag; hat der gespeicherte Lauf mehr Punkte, behält die Datenbank ihn (Trigger)
+    await this.rest('game_ghosts?on_conflict=user_id,game,day', {
+      method: 'POST',
+      body: { user_id: this.me(), game: g.game, day: g.day, score: Math.max(0, Math.round(g.score)), meters: Math.max(0, Math.round(g.meters)), bike: g.bike, trace: g.trace, created_at: new Date().toISOString() },
       prefer: 'resolution=merge-duplicates,return=minimal',
     });
   }

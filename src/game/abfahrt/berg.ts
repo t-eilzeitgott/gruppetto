@@ -22,6 +22,8 @@ import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { RiderType, SprintRider } from './sprint';
 import type { StageRef } from './stageRef';
 import { pedalStep } from './motion';
+import { GhostPack, GhostRecorder } from './ghosts';
+import type { GhostRider } from '../tt';
 
 /** Fahrertypen im Bergfinale: Dauerleistung (W/kg), Antritt (W/kg darüber), Abfahrtskönnen, Punktebonus */
 export const BERG_STATS: Record<RiderType, { label: string; cp: number; kick: number; desc: number; bonus: number }> = {
@@ -51,6 +53,8 @@ export interface BergOptions {
   mate?: string | null;
   onEvent?: (e: BergEvent) => void;
   onOver?: (r: BergResult) => void;
+  /** Geister: eigener Lauf und die der Runde (heute oder der letzte) */
+  ghosts?: GhostRider[];
 }
 
 export type BergEvent =
@@ -70,6 +74,8 @@ export interface BergResult {
   gpmPlace: number;
   slides: number;
   podium: { name: string; me: boolean }[];
+  /** eigene Fahrspur (Geist) ab dem Countdown – Rennzeit → Streckenmeter, Lage, Haltung */
+  trace: number[];
 }
 
 export type BergStage = 'climb' | 'descent' | 'final';
@@ -178,6 +184,11 @@ export class BergRace {
   shake = 0;
   crashSpin = 0;
   tags: RiderTag[] = [];
+  /** Geister in der Darstellung (siehe ghosts.ts) */
+  ghosts: Opp[] = [];
+  private pack!: GhostPack;
+  private rec = new GhostRecorder();
+  private ghostT = 0;
   tx = 0;
   draft = 0;
   energy = 1;
@@ -234,6 +245,10 @@ export class BergRace {
     this.phase = 'ready';
     this.phaseT = 0;
     this.time = 0;
+    this.pack = new GhostPack(this.track, this.opts.ghosts ?? []);
+    this.ghosts = this.pack.opps;
+    this.rec.reset();
+    this.ghostT = 0;
     this.energy = 1;
     this.draft = 0;
     this.finT = -1;
@@ -387,6 +402,7 @@ export class BergRace {
     // Namensschild: an wessen Hinterrad du gerade fährst
     const w = this.phase === 'playing' && this.finT < 0 ? (this.wheelAhead(this.p.z, this.p.x, 7) as Racer | null) : null;
     this.tags = w && w.name ? [{ id: w.id, text: lastName(w.name), mate: w.role === 'mate' }] : [];
+    this.stepGhosts(dt, this.warp);
     for (const q of this.parts) {
       q.life -= dr; q.z += q.vz * dr; q.x += q.vx * dr; q.h += q.vh * dr;
       q.vh -= 2.5 * dr; q.vx *= 0.98; q.rot += dr * 8;
@@ -925,6 +941,23 @@ export class BergRace {
 
   // ------------------------------------------------------------ Ende
 
+  /**
+   * Geister: eigene Spur ab dem Countdown bis zur Ziellinie mitschreiben (gleicher Takt wie beim Abspielen),
+   * Geister nachfahren lassen; ohne Hinterrad-Schild bekommt der nächste Geist voraus das Namensschild
+   */
+  private stepGhosts(dt: number, warp: number) {
+    const live = this.phase !== 'ready';
+    if (live) this.ghostT += dt;
+    const p = this.p;
+    if ((this.phase === 'countdown' || this.phase === 'playing') && this.finT < 0) this.rec.step(dt, p.z, p.x, p.v, this.mode === 'go' ? 1 : this.mode === 'ease' ? 2 : 0);
+    if (!this.pack.count) return;
+    this.pack.step(this.ghostT, live, dt, warp);
+    if (!this.tags.length && this.phase === 'playing' && this.finT < 0) {
+      const tag = this.pack.tag(this.ghostT, p.z);
+      if (tag) this.tags = [tag];
+    }
+  }
+
   private finish() {
     this.phase = 'over';
     this.phaseT = 0;
@@ -957,6 +990,7 @@ export class BergRace {
       gpmPlace,
       slides: this.slides,
       podium: all.slice(0, 3).map((x) => ({ name: x.me ? this.opts.rider.name : x.name, me: x.me })),
+      trace: this.rec.trace.slice(),
     });
   }
 

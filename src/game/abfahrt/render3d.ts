@@ -4713,7 +4713,8 @@ export class Renderer3D {
     const seen = new Set<number>();
     // in den Rennfinals das ganze Feld; Fahrer zwischen Kamera und Spieler werden durchsichtig
     const sprint = track.kind !== 'descent';
-    const list = g.opps.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, sprint ? 32 : 14);
+    const field = g.ghosts?.length ? [...g.opps, ...g.ghosts] : g.opps;
+    const list = field.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, sprint ? 32 : 14);
     const cp = this.camera.position;
     const rsOn = this.rs.ready;
     this.rs.begin();
@@ -4723,7 +4724,7 @@ export class Renderer3D {
       if (m && m.kitKey !== riderKitKey(o.kit)) { this.scene.remove(m.group); m = undefined; }
       if (!m) {
         m = new RiderModel(o.kit, this.shadowTex);
-        if (sprint) m.prepareFade();
+        if (sprint || o.ghost !== undefined) m.prepareFade();
         appearifyTree(m.group);
         // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen
         this.warmUp(m.group);
@@ -4767,7 +4768,7 @@ export class Renderer3D {
           this.tagView.set(o.id, tv);
         }
       }
-      if (sprint) {
+      if (sprint || o.ghost !== undefined) {
         const dz = o.z - p.z;
         const block = dz < 0.8 && dz > -SPRINT_BACK - 1 && Math.abs(o.x - p.x) < 1.05 + Math.max(0, -dz) * 0.06;
         // Geist (Zeitfahren): seine eigene Deckkraft, davor noch durchsichtiger
@@ -4781,10 +4782,10 @@ export class Renderer3D {
     // alle Fahrer vorab anlegen (ausgeblendet), damit beim Auftauchen nichts gebaut werden muss –
     // in den Finals immer, sonst in Ruhe auf der Startkarte
     if (sprint || this.idleBuild) {
-      for (const o of g.opps) {
+      for (const o of field) {
         if (this.riders.has(o.id)) continue;
         const m = new RiderModel(o.kit, this.shadowTex);
-        if (sprint) m.prepareFade();
+        if (sprint || o.ghost !== undefined) m.prepareFade();
         appearifyTree(m.group);
         // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen
         this.warmUp(m.group);
@@ -4793,7 +4794,7 @@ export class Renderer3D {
         this.scene.add(m.group);
       }
     }
-    const alive = new Set(g.opps.map((o) => o.id));
+    const alive = new Set(field.map((o) => o.id));
     for (const [id, m] of this.riders) {
       if (seen.has(id)) continue;
       // außer Sicht: nur ausblenden – kommt der Fahrer zurück, ist er sofort wieder da (kein Neuaufbau, kein Ruckler);

@@ -5,7 +5,7 @@ import type {
 } from '../lib/types';
 import { DEFAULT_SCALE, tipLimit } from '../lib/scoring';
 import { bonusDeadline } from '../lib/time';
-import { ttScore, type TtGhostRow } from '../game/tt';
+import { ttScore, type GameGhostRow, type TtGhostRow } from '../game/tt';
 import { berlinDayKey, hashStr } from '../game/abfahrt/rng';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
@@ -20,6 +20,12 @@ const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms));
 
 /** Demo-Modus: alle Daten im Speicher, gleiche Regeln wie in der Datenbank. */
+/** Demo-Zeitfahrer: Stärke, Linie */
+const DEMO_TT: [string, number, number][] = [['u-felix', 1.03, 0.9], ['u-julian', 1.0, 0.7], ['u-lena', 0.99, 0.95], ['u-tobi', 0.96, 0.5], ['u-anna', 0.94, 0.8], ['u-ben', 0.91, 0.3], ['u-me-demo', 0.97, 0.75]];
+/** wer in der Demo heute schon gefahren ist */
+const DEMO_TT_TODAY = ['u-felix', 'u-lena', 'u-ben'];
+const shiftDay = (day: string, n: number) => { const d = new Date(`${day}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
 export class DemoSource implements DataSource {
   readonly mode = 'demo' as const;
   private readonly started = Date.now();
@@ -216,25 +222,57 @@ export class DemoSource implements DataSource {
   private ttDays = new Map<string, TtGhostRow[]>();
   private myGhost = new Map<string, TtGhostRow>();
 
-  private async ttDemo(day: string): Promise<TtGhostRow[]> {
-    let rows = this.ttDays.get(day);
+  /**
+   * Demo-Geister eines Tages. who: nur diese Mitglieder (heute fahren drei, die übrigen zeigen ihren letzten Lauf
+   * von einem Tag davor – wie in der echten Runde)
+   */
+  private async ttDemo(day: string, who?: string[]): Promise<TtGhostRow[]> {
+    const key = `${day}:${who?.join(',') ?? '*'}`;
+    let rows = this.ttDays.get(key);
     if (rows) return rows;
     const { simulateGhost } = await import('../game/abfahrt/zeitfahren');
     const bikes = ['aero', 'acciaio', 'zeit', 'feder', 'titan', 'pave', 'allround'];
-    const people: [string, number, number][] = [['u-felix', 1.03, 0.9], ['u-julian', 1.0, 0.7], ['u-lena', 0.99, 0.95], ['u-tobi', 0.96, 0.5], ['u-anna', 0.94, 0.8], ['u-ben', 0.91, 0.3]];
-    rows = people.map(([id, strength, line], i) => {
+    const people = DEMO_TT.filter(([id]) => !who || who.includes(id));
+    const noon = new Date(`${day}T11:00:00Z`).getTime();
+    const today = day === berlinDayKey();
+    rows = people.map(([id, strength, line]) => {
+      const i = DEMO_TT.findIndex(([x]) => x === id);
       const g = simulateGhost(day, { strength, line, seed: hashStr(`${id}:${day}`) });
-      return { user_id: id, day, time_ms: g.timeMs, bike: bikes[i % bikes.length], splits: g.splits, trace: g.trace, created_at: new Date(Date.now() - (i + 1) * 1700e3).toISOString() };
+      return { user_id: id, day, time_ms: g.timeMs, bike: bikes[i % bikes.length], splits: g.splits, trace: g.trace, created_at: new Date(today ? Date.now() - (i + 1) * 1700e3 : noon + i * 1700e3).toISOString() };
     }).filter((g) => g.time_ms > 0);
-    this.ttDays.set(day, rows);
-    for (const g of rows) this.scores.push({ user_id: g.user_id, game: 'zeitfahren', score: ttScore(g.time_ms), meters: 3000, at: g.created_at });
+    this.ttDays.set(key, rows);
+    for (const g of rows) if (g.user_id !== 'u-me-demo') this.scores.push({ user_id: g.user_id, game: 'zeitfahren', score: ttScore(g.time_ms), meters: 3000, at: g.created_at });
     return rows;
   }
 
   async ttGhosts(day: string): Promise<TtGhostRow[]> {
-    const rows = await this.ttDemo(day);
-    const mine = this.myGhost.get(day);
+    // heute drei Mitglieder, die übrigen mit ihrer letzten Fahrt (gestern bzw. vor ein paar Tagen)
+    const rows = [...await this.ttDemo(day, DEMO_TT_TODAY)];
+    for (const [k, [id]] of DEMO_TT.entries()) {
+      if (DEMO_TT_TODAY.includes(id) || id === 'u-me-demo') continue;
+      rows.push(...await this.ttDemo(shiftDay(day, -1 - (k % 3)), [id]));
+    }
+    // eigener Geist: heute der Bestlauf, sonst der letzte (in der Demo: vorgestern)
+    const mine = [...this.myGhost.values()].filter((g) => g.day <= day).sort((a, b) => (a.day < b.day ? 1 : -1) || a.time_ms - b.time_ms)[0]
+      ?? (await this.ttDemo(shiftDay(day, -2), ['u-me-demo'])).map((g) => ({ ...g, user_id: DEMO_ME }))[0];
     return [...rows, ...(mine ? [mine] : [])].sort((a, b) => a.time_ms - b.time_ms);
+  }
+
+  private gameGhostStore = new Map<string, GameGhostRow>();
+
+  async gameGhosts(game: GameGhostRow['game']): Promise<GameGhostRow[]> {
+    await wait(60);
+    // nur eigene Läufe (die Demo hat keine Fahrspuren der anderen): je Spiel der letzte
+    const mine = [...this.gameGhostStore.values()].filter((g) => g.game === game).sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : b.score - a.score));
+    return mine.slice(0, 1);
+  }
+
+  async saveGameGhost(g: Omit<GameGhostRow, 'user_id' | 'created_at'>): Promise<void> {
+    await wait(60);
+    const key = `${g.game}:${g.day}`;
+    const prev = this.gameGhostStore.get(key);
+    if (prev && prev.score >= g.score) return;
+    this.gameGhostStore.set(key, { ...g, user_id: DEMO_ME, created_at: new Date().toISOString() });
   }
 
   async saveTtGhost(g: Omit<TtGhostRow, 'user_id' | 'created_at'>): Promise<void> {
@@ -251,7 +289,7 @@ export class DemoSource implements DataSource {
 
   async gameLeaderboard(game: GameId, since?: string): Promise<GameBest[]> {
     await wait(80);
-    if (game === 'zeitfahren') await this.ttDemo(berlinDayKey());
+    if (game === 'zeitfahren') await this.ttDemo(berlinDayKey(), DEMO_TT_TODAY);
     const by = new Map<string, GameBest>();
     for (const s of this.scores.filter((x) => x.game === game && (!since || x.at >= since))) {
       const b = by.get(s.user_id);

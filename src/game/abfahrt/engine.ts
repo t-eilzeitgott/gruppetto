@@ -8,6 +8,8 @@ import { EDGE, ROAD_HALF, SEG, Track, difficulty, type Obj, type Seg, type Side,
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { Mission, MissionStat } from './missions';
 import { cadenceFor, pedalStep, smooth } from './motion';
+import { GhostPack, GhostRecorder } from './ghosts';
+import type { GhostRider } from '../tt';
 
 export const G = 9.81;
 const CD = 0.00105;          // Luftwiderstand in Abfahrtshaltung (1/m)
@@ -93,6 +95,8 @@ export interface RaceView {
   phaseT: number;
   p: Player;
   opps: Opp[];
+  /** Geister (Abfahrt, Sprint, Berg): halbdurchsichtige Fahrer ohne Physik, nur in der Darstellung */
+  ghosts?: Opp[];
   popups: Popup[];
   parts: Particle[];
   friends: Friend[];
@@ -123,6 +127,8 @@ export interface RunResult {
   missionsDone: string[];
   friendsBeaten: string[];
   sectionName: string;
+  /** eigene Fahrspur (Geist) – Rennzeit → Streckenmeter, Lage, Haltung */
+  trace: number[];
 }
 
 export interface GameOptions {
@@ -136,6 +142,8 @@ export interface GameOptions {
   tutorial: boolean;
   /** Testfahrt (Admin): Zeitraffer (2 oder 3), keine Hindernisse, kein Sturz – zählt nicht in den Tabellen */
   cruise?: number;
+  /** Geister: eigener Lauf und die der Runde (heute oder der letzte) */
+  ghosts?: GhostRider[];
   onEvent?: (e: GameEvent) => void;
   onOver?: (r: RunResult) => void;
 }
@@ -153,9 +161,15 @@ export class Abfahrt {
   phaseT = 0;
   p!: Player;
   opps: Opp[] = [];
+  /** Geister in der Darstellung (siehe ghosts.ts) */
+  ghosts: Opp[] = [];
+  tags: RiderTag[] = [];
   parts: Particle[] = [];
   popups: Popup[] = [];
   friends: Friend[];
+  private pack!: GhostPack;
+  private rec = new GhostRecorder();
+  private ghostT = 0;
   score = emptyParts();
   stats = emptyStats();
   chain = 0;
@@ -229,6 +243,11 @@ export class Abfahrt {
     this.recordShown = false;
     this.lastBarrierZ = 0;
     this.friends.forEach((f) => { f.passed = false; });
+    this.pack = new GhostPack(this.track, this.opts.cruise ? [] : this.opts.ghosts ?? []);
+    this.ghosts = this.pack.opps;
+    this.rec.reset();
+    this.ghostT = 0;
+    this.tags = [];
     // ein paar Fahrer stehen mit am Start
     this.spawnStartGroup();
   }
@@ -323,6 +342,7 @@ export class Abfahrt {
       left -= h;
     }
     this.stepFx(dt, dtReal);
+    this.stepGhosts(dt);
 
     if (this.phase === 'crash') {
       this.timeScale = this.phaseT < 0.9 ? 0.35 : Math.min(1, this.timeScale + dtReal * 2);
@@ -983,6 +1003,18 @@ export class Abfahrt {
     try { navigator.vibrate?.(140); } catch { /* egal */ }
   }
 
+  /** eigene Spur mitschreiben, Geister nachfahren lassen, Namensschild für den nächsten voraus */
+  private stepGhosts(dt: number) {
+    const p = this.p;
+    if (this.phase === 'playing') this.rec.step(dt, p.z, p.x, p.v, this.wantTuck ? 1 : this.wantBrake > 0.3 ? 2 : 0);
+    const live = this.phase === 'playing' || this.phase === 'crash' || this.phase === 'over';
+    if (live) this.ghostT += dt;
+    if (!this.pack.count) return;
+    this.pack.step(this.ghostT, live, dt);
+    const tag = this.phase === 'playing' ? this.pack.tag(this.ghostT, p.z) : null;
+    this.tags = tag ? [tag] : [];
+  }
+
   private stepCrash(dt: number) {
     const p = this.p;
     p.v = Math.max(0, p.v - 14 * dt);
@@ -1009,6 +1041,7 @@ export class Abfahrt {
       missionsDone: done,
       friendsBeaten: this.friends.filter((f) => f.passed).map((f) => f.name),
       sectionName: this.track.sections[Math.max(0, this.sectionIdx)]?.name ?? '',
+      trace: this.rec.trace.slice(),
     });
   }
 }

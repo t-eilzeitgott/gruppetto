@@ -2308,3 +2308,5 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .page-crash p { margin: 0; color: var(--muted); line-height: 1.45; }
 .page-crash__detail { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; opacity: 0.8; }
 .page-crash__actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.tt-ghosts__list li.is-old { opacity: 0.72; }
+.tt-ghosts__old { font-size: 11.5px; color: var(--muted); white-space: nowrap; }

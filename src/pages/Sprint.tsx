@@ -17,6 +17,7 @@ import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
 import { useBikes, type Bikes } from '../ui/useBikes';
+import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { SprintIcon } from '../ui/GameIcon';
@@ -72,6 +73,7 @@ export function SprintPage() {
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>('game:sprint:season', () => source.gameLeaderboard('sprint'));
   const bikes = useBikes();
+  const gh = useGameGhosts('sprint');
   const today = useQuery<GameBest[]>(`game:sprint:day:${day}`, () => source.gameLeaderboard('sprint', since));
 
   const stageEl = useRef<HTMLDivElement | null>(null);
@@ -114,6 +116,7 @@ export function SprintPage() {
       mate: teamMate(tourData.data, chosen.id, 'sprint')?.name ?? null,
       kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number, bike: bikes.current },
       town: ref,
+      ghosts: gh.ghosts,
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
@@ -135,6 +138,7 @@ export function SprintPage() {
     lsSet(LS_RUNS, String((Number(lsGet(LS_RUNS)) || 0) + 1));
     if (r.score > (Number(lsGet(LS_BEST)) || 0)) { lsSet(LS_BEST, String(r.score)); setBest(r.score); }
     if (r.score > 0) source.submitScore('sprint', r.score, SPRINT_FINISH).then(() => invalidate('game:sprint')).catch(() => undefined);
+    gh.save({ score: r.score, meters: SPRINT_FINISH, trace: r.trace, bike: bikes.current });
   };
 
   /** Tutorial der ersten Sprints: Hinterrad wechseln am Anfang, Antreten im Finale */

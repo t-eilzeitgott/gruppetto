@@ -45,6 +45,11 @@ export interface GhostRider {
   trace: number[];
   me?: boolean;
   bot?: boolean;
+  /**
+   * Älterer Geist (letzte Fahrt eines Tages davor, z. B. „gestern“ oder „Mo.“): fährt mit, zählt aber nicht für Platz,
+   * Zwischenzeiten und Tagesbestzeit – die Strecke war an dem Tag eine andere
+   */
+  old?: string;
 }
 
 /** Geist, wie er in der Datenbank liegt (beste Fahrt des Tages je Mitglied) */
@@ -54,6 +59,18 @@ export interface TtGhostRow {
   time_ms: number;
   bike: string;
   splits: number[];
+  trace: number[];
+  created_at: string;
+}
+
+/** Geist aus Abfahrt, Sprint- oder Bergfinale (beste Fahrt des Tages je Mitglied und Spiel) */
+export interface GameGhostRow {
+  user_id: string;
+  game: 'abfahrt' | 'sprint' | 'berg';
+  day: string;
+  score: number;
+  meters: number;
+  bike: string;
   trace: number[];
   created_at: string;
 }
@@ -101,23 +118,48 @@ export function ghostTimeAt(trace: number[], z: number): number {
   return (lo + u) * TRACE_DT;
 }
 
+/** „gestern“, „Mo.“ (bis vor sechs Tagen) oder „26.10.“ – wann ein älterer Geist gefahren ist */
+export function ghostDayLabel(day: string, today: string): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  const t = new Date(`${today}T12:00:00Z`);
+  const diff = Math.round((t.getTime() - d.getTime()) / 864e5);
+  if (diff <= 0) return 'heute';
+  if (diff === 1) return 'gestern';
+  if (diff < 7) return `${['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][d.getUTCDay()]}.`;
+  return `${d.getUTCDate()}.${d.getUTCMonth() + 1}.`;
+}
+
+/** Name eines Geistes für Schilder, Meldungen und Listen */
+export function ghostName(g: GhostRider, long = false): string {
+  if (g.bot) return 'Tempomacher';
+  if (g.me) return g.old ? `Dein Lauf ${g.old}` : long ? 'Dein Bestlauf' : 'Bestzeit';
+  return g.old ? `${firstName(g.name)} (${g.old})` : firstName(g.name);
+}
+
 /** Höchstens so viele Geister auf der Strecke (Rechenzeit und Übersicht) */
 export const MAX_GHOSTS = 10;
 
 /**
- * Welche Geister mitfahren: immer die Tagesbestzeit und der eigene Bestlauf, dazu die, deren Zeit der eigenen am
- * nächsten liegt (ohne eigene Zeit: die schnellsten). Fehlen Mitspieler, fährt der Tempomacher mit.
+ * Welche Geister mitfahren: immer die Tagesbestzeit und der eigene Geist (Bestlauf von heute, sonst der letzte),
+ * dazu die Geister von heute, deren Zeit der eigenen am nächsten liegt (ohne eigene Zeit: die schnellsten), danach
+ * die letzten Fahrten derer, die heute noch nicht gefahren sind. Fehlen Mitspieler, fährt der Tempomacher mit.
  */
 export function pickGhosts(all: GhostRider[], myBest: number | null, pacer: GhostRider | null, max = MAX_GHOSTS): GhostRider[] {
-  const sorted = [...all].filter((g) => g.trace.length >= 6).sort((a, b) => a.timeMs - b.timeMs);
+  const usable = all.filter((g) => g.trace.length >= 6);
+  const fresh = usable.filter((g) => !g.old).sort((a, b) => a.timeMs - b.timeMs);
+  const older = usable.filter((g) => g.old).sort((a, b) => a.timeMs - b.timeMs);
   const out: GhostRider[] = [];
-  const add = (g: GhostRider | undefined) => { if (g && !out.includes(g)) out.push(g); };
-  add(sorted[0]);
-  add(sorted.find((g) => g.me));
-  const ref = myBest ?? sorted[0]?.timeMs ?? 0;
-  const rest = sorted.filter((g) => !out.includes(g)).sort((a, b) => Math.abs(a.timeMs - ref) - Math.abs(b.timeMs - ref) || a.timeMs - b.timeMs);
-  for (const g of rest) { if (out.length >= max) break; add(g); }
-  if (pacer && sorted.filter((g) => !g.me).length < 3) add(pacer);
+  const add = (g: GhostRider | undefined) => { if (g && !out.includes(g) && out.length < max) out.push(g); };
+  add(fresh[0]);
+  add(fresh.find((g) => g.me) ?? older.find((g) => g.me));
+  const ref = myBest ?? fresh[0]?.timeMs ?? older[0]?.timeMs ?? 0;
+  const near = (list: GhostRider[]) => list.filter((g) => !out.includes(g)).sort((a, b) => Math.abs(a.timeMs - ref) - Math.abs(b.timeMs - ref) || a.timeMs - b.timeMs);
+  for (const g of near(fresh)) add(g);
+  for (const g of near(older)) add(g);
+  if (pacer && usable.filter((g) => !g.me).length < 3) {
+    if (out.length >= max) out.pop();
+    add(pacer);
+  }
   return out;
 }
 

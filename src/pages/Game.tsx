@@ -20,6 +20,7 @@ import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, Segmented, cx, useTitle } from '../ui/kit';
 import { useBikes, type Bikes } from '../ui/useBikes';
+import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { GameIcon } from '../ui/GameIcon';
@@ -90,6 +91,7 @@ export function GamePage() {
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>('game:abfahrt:season', () => source.gameLeaderboard('abfahrt'));
   const bikes = useBikes();
+  const gh = useGameGhosts('abfahrt');
   const today = useQuery<GameBest[]>(`game:abfahrt:day:${day}`, () => source.gameLeaderboard('abfahrt', since));
   const missions = useMemo(() => dailyMissions(day), [day]);
   const [doneIds, setDoneIds] = useState<string[]>(() => { try { return JSON.parse(lsGet(missionKey(day)) ?? '[]'); } catch { return []; } });
@@ -144,6 +146,7 @@ export function GamePage() {
       missionsDone: new Set(doneIds),
       tutorial: !(playing && cruiseRef.current) && (Number(lsGet(LS_TUTORIAL)) || 0) < 4,
       cruise: playing && cruiseRef.current ? cruiseRef.current : undefined,
+      ghosts: playing ? gh.ghosts : [],
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });
@@ -204,6 +207,7 @@ export function GamePage() {
     if (r.score > (Number(lsGet(LS_BEST)) || 0)) { lsSet(LS_BEST, String(r.score)); setBest(r.score); }
     if (r.score > 0) {
       source.submitScore('abfahrt', r.score, r.meters).then(() => invalidate('game:abfahrt')).catch(() => undefined);
+      gh.save({ score: r.score, meters: r.meters, trace: r.trace, bike: bikes.current });
     }
   };
 

@@ -12,7 +12,7 @@ import { shortTour, stageRef, type StageRef } from '../game/abfahrt/stageRef';
 import { LOOKS } from '../game/abfahrt/region';
 import { TT_FINISH, TT_SPLITS, TT_TOP, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
-import { firstName, fmtGap, fmtTime, pickGhosts, ttMs, ttScore, type GhostRider, type TtGhostRow } from '../game/tt';
+import { firstName, fmtGap, fmtTime, ghostDayLabel, pickGhosts, ttMs, ttScore, type GhostRider, type TtGhostRow } from '../game/tt';
 import { bikeById } from '../game/bikes';
 import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { Avatar, cx, useTitle } from '../ui/kit';
@@ -50,16 +50,27 @@ function pacerOf(day: string): GhostRider {
   return g;
 }
 
-/** Geister aus den gespeicherten Fahrten: Mitglieder in ihrer Avatarfarbe, der eigene Bestlauf als „Du“ */
-function buildGhosts(rows: TtGhostRow[], members: Profile[], me: Profile, local: TtGhostRow | null): GhostRider[] {
+/**
+ * Geister aus den gespeicherten Fahrten: je Mitglied die beste Fahrt von heute, sonst seine letzte (als älterer
+ * Geist mit Tag). Der eigene Geist ebenso – heute der Bestlauf (auch der gerade gefahrene, bevor er gespeichert ist).
+ */
+function buildGhosts(rows: TtGhostRow[], members: Profile[], me: Profile, local: TtGhostRow | null, day: string): GhostRider[] {
   const list: GhostRider[] = [];
-  const mineRow = [...rows.filter((r) => r.user_id === me.id), ...(local ? [local] : [])].sort((a, b) => a.time_ms - b.time_ms)[0] ?? null;
-  for (const r of rows) {
-    if (r.user_id === me.id) continue;
-    const m = members.find((x) => x.id === r.user_id);
-    list.push({ id: r.user_id, name: m?.display_name ?? 'Jemand', color: m?.avatar_color ?? '#888888', bike: r.bike || 'allround', timeMs: r.time_ms, splits: r.splits, trace: r.trace });
+  const latest = new Map<string, TtGhostRow>();
+  for (const r of [...rows, ...(local ? [local] : [])]) {
+    if (r.day > day) continue;
+    const prev = latest.get(r.user_id);
+    if (!prev || r.day > prev.day || (r.day === prev.day && r.time_ms < prev.time_ms)) latest.set(r.user_id, r);
   }
-  if (mineRow) list.push({ id: 'me', name: 'Du', color: me.avatar_color, bike: mineRow.bike || 'allround', timeMs: mineRow.time_ms, splits: mineRow.splits, trace: mineRow.trace, me: true });
+  for (const r of latest.values()) {
+    const old = r.day < day ? ghostDayLabel(r.day, day) : undefined;
+    if (r.user_id === me.id) {
+      list.push({ id: 'me', name: 'Du', color: me.avatar_color, bike: r.bike || 'allround', timeMs: r.time_ms, splits: r.splits, trace: r.trace, me: true, old });
+      continue;
+    }
+    const m = members.find((x) => x.id === r.user_id);
+    list.push({ id: r.user_id, name: m?.display_name ?? 'Jemand', color: m?.avatar_color ?? '#888888', bike: r.bike || 'allround', timeMs: r.time_ms, splits: r.splits, trace: r.trace, old });
+  }
   return list;
 }
 
@@ -122,12 +133,13 @@ export function ZeitfahrenPage() {
   // Geister stehen fest (geladen oder nicht erreichbar): bei weniger als drei Mitspielern fährt der Tempomacher mit
   const settled = ghostRows !== undefined || !!ghostQ.error;
   const ghosts = useMemo(() => {
-    const all = buildGhosts(ghostRows ?? [], members.data ?? [], me, local);
+    const all = buildGhosts(ghostRows ?? [], members.data ?? [], me, local, day);
     const others = all.filter((g) => !g.me).length;
-    return pickGhosts(all, all.find((g) => g.me)?.timeMs ?? null, others < 3 && settled ? pacerOf(day) : null);
+    return pickGhosts(all, all.find((g) => g.me && !g.old)?.timeMs ?? null, others < 3 && settled ? pacerOf(day) : null);
   }, [ghostRows, settled, members.data, me, local, day]);
-  const myBest = ghosts.find((g) => g.me)?.timeMs ?? null;
-  const leader = useMemo(() => [...ghosts].filter((g) => !g.bot).sort((a, b) => a.timeMs - b.timeMs)[0] ?? null, [ghosts]);
+  // Bestzeit und Tagesführung: nur Fahrten von heute (ältere Geister fuhren eine andere Strecke)
+  const myBest = ghosts.find((g) => g.me && !g.old)?.timeMs ?? null;
+  const leader = useMemo(() => [...ghosts].filter((g) => !g.bot && !g.old).sort((a, b) => a.timeMs - b.timeMs)[0] ?? null, [ghosts]);
 
   const makeEngine = () => {
     const accent = readAccent();
@@ -521,20 +533,21 @@ function HotSeat({ leader, myBest, today, meId, members, error }: { leader: Ghos
 function GhostRow({ ghosts, members, me, loading }: { ghosts: GhostRider[]; members: Profile[]; me: Profile; loading: boolean }) {
   if (loading) return <p className="abf-muted tt-ghosts">Geister werden geladen …</p>;
   if (!ghosts.length) return <p className="abf-muted tt-ghosts">Noch niemand auf der Strecke – du fährst allein gegen die Uhr.</p>;
-  const sorted = [...ghosts].sort((a, b) => a.timeMs - b.timeMs);
+  // heute zuerst (nach Zeit), dann die älteren Geister
+  const sorted = [...ghosts].sort((a, b) => Number(!!a.old) - Number(!!b.old) || a.timeMs - b.timeMs);
   return (
     <div className="tt-ghosts" aria-label="Geister auf der Strecke">
       <span className="tt-ghosts__label">Auf der Strecke</span>
       <ul className="tt-ghosts__list">
         {sorted.map((g) => {
           const m = g.me ? me : members.find((x) => x.id === g.id);
-          const name = g.bot ? 'Tempomacher' : g.me ? 'Dein Bestlauf' : m?.display_name ?? g.name;
+          const name = g.bot ? 'Tempomacher' : g.me ? (g.old ? 'Dein letzter Lauf' : 'Dein Bestlauf') : m?.display_name ?? g.name;
           return (
-            <li key={g.id} title={`${name} · ${fmtTime(g.timeMs)} · ${bikeById(g.bike).name}`}>
-              <Avatar name={g.bot ? 'T' : name} color={g.bot ? '#9aa0a8' : g.me ? me.avatar_color : g.color} size={22} />
-              <span className="tt-ghosts__name">{firstName(name)}</span>
+            <li key={g.id} className={cx(g.old && 'is-old')} title={`${name} · ${fmtTime(g.timeMs)} · ${bikeById(g.bike).name}${g.old ? ` · ${g.old}, andere Strecke` : ''}`}>
+              <Avatar name={g.bot ? 'T' : g.me ? me.display_name ?? 'Du' : name} color={g.bot ? '#9aa0a8' : g.me ? me.avatar_color : g.color} size={22} />
+              <span className="tt-ghosts__name">{g.me ? 'Du' : firstName(name)}</span>
               <span className="tt-ghosts__bike"><Icon name="bike" size={12} />{bikeById(g.bike).name}</span>
-              <b>{fmtTime(g.timeMs)}</b>
+              {g.old ? <span className="tt-ghosts__old">{g.old}</span> : <b>{fmtTime(g.timeMs)}</b>}
             </li>
           );
         })}
