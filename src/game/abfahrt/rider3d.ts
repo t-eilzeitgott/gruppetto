@@ -987,6 +987,72 @@ export class RiderModel {
     }
   }
 
+  // ------------------------------------------------------------ Ragdoll (ragdoll.ts)
+
+  private rv = new THREE.Vector3();
+  private rv2 = new THREE.Vector3();
+  private rm = new THREE.Matrix4();
+  private rq = new THREE.Quaternion();
+  private rx = new THREE.Vector3();
+  private ry = new THREE.Vector3();
+  private rz = new THREE.Vector3();
+  private rJ: THREE.Vector3[] = Array.from({ length: 15 }, () => new THREE.Vector3());
+
+  /**
+   * Gelenke der aktuellen Haltung in Weltkoordinaten (Reihenfolge wie ragdoll.ts J): Becken, Brust, Kopf, Schulter/
+   * Ellbogen/Hand links und rechts, Hüfte/Knie/Knöchel links und rechts. Vorher die Weltmatrix aktualisieren.
+   */
+  ragdollJoints(out: Float32Array) {
+    this.group.updateMatrixWorld(true);
+    const P = this.torso.position;
+    const put = (i: number, v: THREE.Vector3) => { const w = this.rv.copy(v).applyMatrix4(this.body.matrixWorld); out[i * 3] = w.x; out[i * 3 + 1] = w.y; out[i * 3 + 2] = w.z; };
+    const end = (b: THREE.Object3D, len: number) => this.rv2.set(0, len, 0).applyQuaternion(b.quaternion).add(b.position);
+    put(0, P);
+    put(1, this.rv2.set(0, SPINE - 0.035, 0).applyQuaternion(this.torso.quaternion).add(P).clone());
+    put(2, this.head.position);
+    for (let s = 0; s < 2; s++) {
+      const o = s === 0 ? 3 : 6;
+      put(o, this.uppers[s].position);
+      put(o + 1, this.fores[s].position);
+      put(o + 2, end(this.fores[s], FORE).clone());
+      const h = s === 0 ? 9 : 12;
+      put(h, this.thighs[s].position);
+      put(h + 1, this.shins[s].position);
+      put(h + 2, end(this.shins[s], SHIN).clone());
+    }
+  }
+
+  /** Körper aus den Ragdoll-Punkten (Welt) setzen – das Rad bleibt, wo crashPose es hingelegt hat */
+  ragdollPose(p: Float32Array) {
+    this.group.updateMatrixWorld(true);
+    const inv = this.rm.copy(this.body.matrixWorld).invert();
+    const J = this.rJ;
+    for (let i = 0; i < 15; i++) J[i].set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]).applyMatrix4(inv);
+    // Rumpf: aufwärts zum Brustbein, quer von Schulter zu Schulter
+    const y = this.ry.subVectors(J[1], J[0]).normalize();
+    const x = this.rx.subVectors(J[6], J[3]);
+    x.addScaledVector(y, -x.dot(y)).normalize();
+    const z = this.rz.crossVectors(x, y);
+    this.rm.makeBasis(x, y, z);
+    this.rq.setFromRotationMatrix(this.rm);
+    this.torso.position.copy(J[0]);
+    this.torso.quaternion.copy(this.rq);
+    this.head.position.copy(J[2]);
+    this.head.quaternion.copy(this.rq);
+    for (let s = 0; s < 2; s++) {
+      const o = s === 0 ? 3 : 6;
+      bone(this.uppers[s], J[o], J[o + 1]);
+      bone(this.fores[s], J[o + 1], J[o + 2]);
+      const h = s === 0 ? 9 : 12;
+      bone(this.thighs[s], J[h], J[h + 1]);
+      bone(this.shins[s], J[h + 1], J[h + 2]);
+      // Schuh am Knöchel, Spitze vom Schienbein weg nach vorn
+      const sh = this.shoes[s];
+      sh.quaternion.copy(this.shins[s].quaternion);
+      sh.position.copy(J[h + 2]).sub(this.rv.copy(ANKLE).applyQuaternion(sh.quaternion));
+    }
+  }
+
   private wq = new THREE.Quaternion();
   private wq2 = new THREE.Quaternion();
   private we = new THREE.Euler(0, 0, 0, 'YZX');

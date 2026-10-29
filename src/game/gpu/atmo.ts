@@ -213,10 +213,10 @@ export class Atmo {
       const sk = this.sunsetK;
       tsl.If(sk.greaterThan(0.001), () => {
         const dd = sv.sub(this.sunScr).mul(vec2(this.aspect, 1));
-        const halo = exp(dd.length().mul(-2.4)).mul(0.6).add(exp(dd.length().mul(-9)).mul(0.5));
-        const streak = exp(abs(dd.y).mul(-46)).mul(exp(abs(dd.x).mul(-1.4))).mul(0.4);
+        const halo = exp(dd.length().mul(-2.4)).mul(0.35).add(exp(dd.length().mul(-9)).mul(0.3));
+        const streak = exp(abs(dd.y).mul(-46)).mul(exp(abs(dd.x).mul(-1.4))).mul(0.22);
         const wc = vec3(1, 0.6, 0.3);
-        const c1 = out.add(wc.mul(halo.add(streak)).mul(sk.mul(0.22)).mul(float(1).sub(l.mul(0.55))));
+        const c1 = out.add(wc.mul(halo.add(streak)).mul(sk.mul(0.14)).mul(float(1).sub(l.mul(0.55))));
         out.assign(mix(c1, c1.mul(vec3(1.05, 0.995, 0.93)), sk.mul(0.7)));
       });
       // Tempo-Linien (wie im Spiel): helle Striche, die vom Bildrand nach außen fliegen; unten in der Mitte (Fahrer) keine
@@ -252,8 +252,8 @@ export class Atmo {
     const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     m.fog = false;
     const r = uv().sub(0.5).mul(2).length();
-    const core = smoothstep(0.085, 0.06, r).mul(60);
-    const halo = exp(r.mul(-7)).mul(1.1).add(exp(r.mul(-22)).mul(5));
+    const core = smoothstep(0.085, 0.06, r).mul(32);
+    const halo = exp(r.mul(-7)).mul(0.5).add(exp(r.mul(-22)).mul(2.2));
     m.colorNode = vec3(this.glowCol.x, this.glowCol.y, this.glowCol.z).mul(core.add(halo).mul(float(1).sub(smoothstep(0.85, 1, r)))).mul(this.glowK);
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), m);
     mesh.frustumCulled = false;

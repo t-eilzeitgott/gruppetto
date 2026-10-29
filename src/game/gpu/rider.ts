@@ -130,6 +130,9 @@ export class Rider {
     this.model.shadow.visible = k < 0.05;
   }
 
+  /** Schlagschatten an/aus (aus: Sturz – der Körper liegt woanders; Geister haben keinen) */
+  blob(on: boolean) { this.model.shadow.visible = on && this.ghostK < 0.05; }
+
   /** q = 1: volle Detailstufe (eigener Fahrer: Schriftzüge, Kette, Zähne …), 0: Gegner wie im Spiel */
   constructor(kit: Kit, q: 0 | 1, seed: number, player: boolean) {
     this.anim = new RiderAnim(seed, player);

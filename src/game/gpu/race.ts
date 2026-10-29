@@ -19,7 +19,8 @@ import { TimeTrial, type TtEvent, type TtHud, type TtResult } from '../abfahrt/z
 import type { StageRef } from '../abfahrt/stageRef';
 import type { GhostRider } from '../tt';
 import type { Kit } from '../abfahrt/rider';
-import { wreckPose } from '../abfahrt/wreck';
+import { wreckPose, type Wreck } from '../abfahrt/wreck';
+import { JOINTS, Ragdoll, type Ground } from '../abfahrt/ragdoll';
 import { bakeFlowerDots, bakeSurfaces, type Surface, type SurfaceId } from './bake';
 import { Atmo } from './atmo';
 import { loadSettings, MOOD_U, MOODS, RACE_DEFAULTS, RACE_KEY, saveSettings, type Settings } from './mood';
@@ -435,6 +436,7 @@ export class Race {
 
   /** Regie zurück: keep = vom Startbild (Kran) aus weiterfliegen */
   private resetDirector(keep: boolean) {
+    this.dolls.clear();
     this.tv = null;
     this.tvLast = -1;
     this.crashCam = null;
@@ -530,7 +532,8 @@ export class Race {
     const light = this.lampLevel();
     if ((light > 0.05) !== this.lampOn) { this.lampOn = light > 0.05; this.perf.event(EV.vis, this.lampOn ? 'Rücklichter an' : 'Rücklichter aus'); }
     const wk = this.wreck;
-    if (wk) R.model.crashPose(wreckPose(wk));
+    R.blob(!wk);
+    if (wk) this.ragdoll(-1, R, wk, dt);
     else if (e.phase === 'crash' || e.phase === 'over') R.model.crash(e.phaseT, e.crashSpin);
     else {
       R.model.resetCrash();
@@ -578,7 +581,8 @@ export class Race {
       const ghost = 'ghost' in o ? (o as { ghost: number }).ghost : 0;
       R.ghost(ghost > 0 ? 1 - ghost : 0);
       R.shadows(d < 45 && ghost <= 0);
-      if (o.wreck) R.model.crashPose(wreckPose(o.wreck));
+      R.blob(!o.wreck);
+      if (o.wreck) this.ragdoll(o.id, R, o.wreck, dt);
       else {
         R.model.resetCrash();
         R.pose({
@@ -588,6 +592,45 @@ export class Race {
       }
       R.lamp(light > 0.05);
     }
+  }
+
+  // ------------------------------------------------------------------ Ragdolls
+
+  /** Körper der Gestürzten (Schlüssel: Gegner-Nummer, −1 = du) mit ihrem Boden */
+  private dolls = new Map<number, { d: Ragdoll; g: Ground }>();
+  private dollBuf = new Float32Array(JOINTS * 3);
+  private gw = { x: 0, y: 0, z: 0, th: 0 };
+
+  /**
+   * Sturz darstellen: das Rad nach wreck.ts (kippt, schlittert), der Körper als Ragdoll – beim ersten Bild aus der
+   * Fahrhaltung gestartet, danach frei mit Schwerkraft, Aufprall und Reibung, im Takt der Zeitlupe des Spiels
+   */
+  private ragdoll(key: number, R: Rider, w: Wreck, dt: number) {
+    const e = this.eng!;
+    const t = e.track;
+    let D = this.dolls.get(key);
+    if (!D) {
+      // Fahrhaltung des letzten Bilds (die Knochen stehen noch so) als Start
+      R.model.ragdollJoints(this.dollBuf);
+      t.world(w.z0, w.x0, 0, this.gw);
+      const th = this.gw.th;
+      const fx = Math.sin(th), fz = -Math.cos(th);
+      const grade = t.segAt(w.z0).grade;
+      const v = w.v0;
+      const d = new Ragdoll(this.dollBuf, [fx * v, grade * v, fz * v], [fx, fz], clamp((v - 3) / 14, 0.25, 1), w.side, w.seed);
+      // Boden: Straßenhöhe entlang der Fahrtrichtung vom Sturzort aus (die paar Meter Rutschen)
+      t.world(w.z0, 0, 0, this.gw);
+      const ox = this.gw.x, oz = this.gw.z;
+      const g: Ground = (x, z) => t.heightAt(Math.max(0, w.z0 + (x - ox) * fx + (z - oz) * fz));
+      D = { d, g };
+      this.dolls.set(key, D);
+    }
+    R.model.crashPose(wreckPose(w));
+    const scale = e instanceof Abfahrt ? e.timeScale : 1;
+    const others: Ragdoll[] = [];
+    for (const x of this.dolls.values()) others.push(x.d);
+    D.d.step(dt * scale, D.g, others);
+    R.model.ragdollPose(D.d.p);
   }
 
   /** wie tief im Tunnel (m bis zum nächsten Portal; 0 draußen) */

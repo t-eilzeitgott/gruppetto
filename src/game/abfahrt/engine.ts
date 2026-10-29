@@ -892,11 +892,22 @@ export class Abfahrt {
         if (k > 0.002) vC = Math.min(vC, Math.sqrt((0.82 * G) / k) + d * 0.18);
       }
       let target = Math.min(vEq, vC, VMAX - 2);
-      // nicht auf den Vordermann auffahren
+      // Vordermann: langsamer und in der Spur → überholen, wo Platz ist; geht das (noch) nicht, dahinter bleiben
+      let pass: number | null = null;
       for (const q of this.opps) {
         if (q === o || q.wreck) continue;
         const dz = q.z - o.z;
-        if (dz > 0 && dz < 2.6 && Math.abs(q.x - o.x) < 0.7) target = Math.min(target, q.v);
+        const dx = q.x - o.x;
+        if (dz <= 0 || dz > 10 || Math.abs(dx) > 0.85) continue;
+        if (o.v > q.v + 0.2 || dz < 3) {
+          const left = q.x - 0.95, right = q.x + 0.95;
+          const okL = left > -ROAD_HALF + 0.45, okR = right < ROAD_HALF - 0.45;
+          // die Seite, auf der er schon halb ist, sonst die freie
+          const want = okL && okR ? (dx > 0 ? left : right) : okL ? left : okR ? right : null;
+          if (want !== null && (pass === null || Math.abs(want - o.x) < Math.abs(pass - o.x))) pass = want;
+        }
+        // noch nicht seitlich vorbei: Abstand halten (≥ 1,9 m Rad an Rad)
+        if (Math.abs(dx) < 0.7 && dz < 4) target = Math.min(target, q.v + Math.max(-2, (dz - 1.9) * 1.2));
       }
       // Sturz voraus: erst nach der Schrecksekunde bremsen (voll) und an der Seite vorbei, wo Platz ist
       let dodge: number | null = null;
@@ -930,6 +941,7 @@ export class Abfahrt {
       }
       const p = this.p;
       if (Math.abs(p.z - o.z) < 2.4 && Math.abs(p.x - o.x) < 0.95) tx = o.x + (o.x > p.x ? 0.6 : -0.6);
+      if (pass !== null) tx = pass;
       if (dodge !== null) tx = dodge;
       tx = clamp(tx, -ROAD_HALF + 0.45, ROAD_HALF - 0.45);
       o.vx += ((tx - o.x) * 3.2 - o.vx * 2.6) * dt;
@@ -942,6 +954,7 @@ export class Abfahrt {
       o.tuck += ((1 - 0.8 * drive) - o.tuck) * Math.min(1, dt * 2);
       pedalStep(o, drive * cadenceFor(o.v), dt);
     }
+    if (live) this.separateOpps();
     if (this.pileAt) this.wreckHits();
     // Kühe laufen
     if (live) {
@@ -951,6 +964,38 @@ export class Abfahrt {
         if (s.objs) for (const ob of s.objs) if (ob.k === 'cow' && ob.vx) {
           ob.x += ob.vx * dt;
           if (Math.abs(ob.x) > EDGE + 2.5) ob.vx = 0;
+        }
+      }
+    }
+  }
+
+  /**
+   * Fahrer sind fest: zwei Räder belegen nie denselben Platz. Überlappen sie, schieben sie sich seitlich auseinander
+   * (Schulter an Schulter), und wer hinten ist, bleibt hinter dem Hinterrad des anderen
+   */
+  private separateOpps() {
+    const os = this.opps;
+    for (let i = 0; i < os.length; i++) {
+      const a = os[i];
+      if (a.wreck) continue;
+      for (let j = i + 1; j < os.length; j++) {
+        const b = os[j];
+        if (b.wreck) continue;
+        const dz = b.z - a.z, dx = b.x - a.x;
+        const az = Math.abs(dz), ax = Math.abs(dx);
+        if (az >= 1.85 || ax >= 0.62) continue;
+        const front = dz >= 0 ? b : a, back = dz >= 0 ? a : b;
+        // seitlich nebeneinander (mehr als halb vorbei) → auseinanderdrücken; sonst der Hintere zurück
+        if (az < 1.1 || ax > 0.35) {
+          const sd = dx === 0 ? (a.id < b.id ? 1 : -1) : Math.sign(dx);
+          const push = (0.62 - ax) / 2;
+          a.x = clamp(a.x - sd * push, -ROAD_HALF + 0.3, ROAD_HALF - 0.3);
+          b.x = clamp(b.x + sd * push, -ROAD_HALF + 0.3, ROAD_HALF - 0.3);
+          a.vx -= sd * 0.3; b.vx += sd * 0.3;
+          if (az < 1.1 && Math.abs(b.x - a.x) < 0.5) { back.z = front.z - 1.1; back.v = Math.min(back.v, front.v); }
+        } else {
+          back.z = front.z - 1.85;
+          back.v = Math.min(back.v, front.v);
         }
       }
     }
