@@ -4,9 +4,10 @@
  */
 import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
-import { decodeAlbedo, tsl } from './nodes';
+import { decodeAlbedo, tsl, type N } from './nodes';
+import { MOOD_U } from './mood';
 
-const { attribute, float, normalize, normalWorldGeometry, texture, transformNormalToView, uv, vec2, vec3 } = tsl;
+const { attribute, float, mix, normalize, normalWorldGeometry, texture, transformNormalToView, uv, vec2, vec3 } = tsl;
 
 type Surfaces = Record<SurfaceId, Surface>;
 
@@ -18,8 +19,10 @@ export function roadMaterial(S: Surfaces): THREE.MeshStandardNodeMaterial {
   const t = texture(S.asphalt.nra, p);
   // großflächig: Flicken, Abrieb, Sonnenbleiche
   const big = decodeAlbedo(texture(S.asphalt.albedo, p.mul(vec2(0.071, 0.043))).rgb).dot(vec3(0.33, 0.33, 0.34)).div(0.075);
-  m.colorNode = decodeAlbedo(a.rgb).mul(big.mul(0.35).add(0.7));
-  m.roughnessNode = t.z;
+  // nass (Regen): dunkler und spiegelnd
+  const wet = MOOD_U.wet as unknown as N;
+  m.colorNode = decodeAlbedo(a.rgb).mul(big.mul(0.35).add(0.7)).mul(mix(1, 0.55, wet));
+  m.roughnessNode = mix(t.z, t.z.mul(0.45).add(0.08), wet);
   m.metalnessNode = float(0);
   m.aoNode = t.w;
   const T = attribute('aT', 'vec4');
@@ -36,8 +39,9 @@ export function marksMaterial(S: Surfaces): THREE.MeshStandardNodeMaterial {
   const m = new THREE.MeshStandardNodeMaterial();
   const p = uv();
   const a = decodeAlbedo(texture(S.asphalt.albedo, p).rgb).dot(vec3(0.33, 0.33, 0.34));
-  m.colorNode = vec3(0.78, 0.78, 0.76).mul(a.div(0.075).mul(0.18).add(0.72));
-  m.roughnessNode = float(0.55);
+  const wet = MOOD_U.wet as unknown as N;
+  m.colorNode = vec3(0.78, 0.78, 0.76).mul(a.div(0.075).mul(0.18).add(0.72)).mul(mix(1, 0.7, wet));
+  m.roughnessNode = mix(float(0.55), float(0.15), wet);
   m.name = 'marks';
   return m;
 }

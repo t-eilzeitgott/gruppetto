@@ -14,8 +14,9 @@ import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
 import { decodeAlbedo, tsl, type N } from './nodes';
 import { instNodes } from './inst';
+import { MOOD_U } from './mood';
 
-const { attribute, float, mix, normalize, positionGeometry, smoothstep, texture, transformNormalToView, uv, varying, vec3, vertexColor } = tsl;
+const { attribute, float, mix, normalize, positionGeometry, select, smoothstep, texture, transformNormalToView, uv, varying, vec3, vertexColor } = tsl;
 
 type V3 = [number, number, number];
 export type HMat = 'plaster' | 'wood' | 'roof' | 'stone' | 'detail';
@@ -819,10 +820,11 @@ export function buildHouse(lod: 0 | 1 | 2): Record<HMat, THREE.BufferGeometry> {
 
 /** Materialien der Häuser (Instanzen: iP Ort/Drehung, iS.w Putzfarbe 0 … 1, iC Farbe der Läden) */
 export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnType<typeof instNodes>) => N) | null): Record<HMat, THREE.MeshStandardNodeMaterial> {
-  const make = (name: string, shade: (I: ReturnType<typeof instNodes>) => { col: N; rough: N; ao?: N; xy?: N; metal?: N; k?: number }) => {
+  const make = (name: string, shade: (I: ReturnType<typeof instNodes>) => { col: N; rough: N; ao?: N; xy?: N; metal?: N; k?: number }, emissive?: (I: ReturnType<typeof instNodes>) => N) => {
     const I = instNodes();
     const m = new THREE.MeshStandardNodeMaterial();
     m.positionNode = I.world;
+    if (emissive) m.emissiveNode = emissive(I);
     // weiche Überblendung zwischen den Stufen (Deckung über die Kantenglättung)
     if (fade) { m.opacityNode = fade(I); m.alphaToCoverage = true; }
     const o = shade(I);
@@ -870,6 +872,12 @@ export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnT
     detail: make('house-detail', (I) => {
       const e = attribute('aE', 'vec4');
       return { col: mix(vertexColor(), I.color, e.z), rough: e.x, metal: e.y };
+    }, (I) => {
+      // Nacht: Fensterscheiben leuchten warm (je Haus unterschiedlich viele)
+      const e = attribute('aE', 'vec4');
+      const glass = e.x.lessThan(0.1).and(e.z.lessThan(0.5));
+      const on = smoothstep(0.35, 0.5, I.extra.add(positionGeometry.x.mul(0.37).add(positionGeometry.z.mul(0.23)).sin().mul(0.5)));
+      return select(glass, vec3(1.0, 0.72, 0.38).mul(on).mul(MOOD_U.night as unknown as N).mul(2.5), vec3(0, 0, 0));
     }),
   };
 }

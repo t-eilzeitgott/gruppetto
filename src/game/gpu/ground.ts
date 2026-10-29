@@ -12,7 +12,7 @@ const { attribute, cameraPosition, float, max, mix, normalize, normalWorldGeomet
 type Surfaces = Record<SurfaceId, Surface>;
 
 /** gemeinsame Wiesenfarbe: Landschaft und Straßenrand kommen aus verschiedenen Farbtabellen – beide ziehen hierhin */
-export const MEADOW = new THREE.Color(0.2, 0.32, 0.085);
+export const MEADOW = new THREE.Color(0.225, 0.315, 0.072);
 
 interface Mix {
   tint: N;       // Grundfarbe Wiese (linear)

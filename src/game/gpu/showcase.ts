@@ -7,12 +7,12 @@
  * Ziel: 120 Bilder/s auf einem iPhone 15 Pro. Die Auflösung regelt sich nach der gemessenen Bildzeit.
  */
 import * as THREE from 'three/webgpu';
-import { bloom } from '../../../vendor/three/addons/BloomNode.js';
 import { Track, SEG, EDGE } from '../abfahrt/track';
 import { Terrain } from '../abfahrt/terrain3d';
 import { adsTex } from '../abfahrt/tex3d';
 import { bakeFlowerDots, bakeSurfaces, type Surface, type SurfaceId } from './bake';
-import { buildSky, type SkySetup } from './sky';
+import { Atmo } from './atmo';
+import { loadSettings, MOODS, saveSettings, type Settings } from './mood';
 import { corridorMaterial, terrainMaterial } from './ground';
 import { adsMaterial, marksMaterial, metalMaterial, paintMaterial, roadMaterial, woodMaterial } from './mats';
 import { Corridor } from './corridor';
@@ -26,7 +26,7 @@ import { Crowd } from './crowd';
 import { Life } from './life';
 import { tsl } from './nodes';
 
-const { cameraPosition, cubeTexture, dot, exp, float, fog, frontFacing, max, mix, normalize, pass, positionView, positionWorld, pow, select, smoothstep, texture, uniform, uv, vec3 } = tsl;
+const { float, frontFacing, pass, select, texture, uv, vec3 } = tsl;
 
 export interface ShowcaseStats {
   fps: number;
@@ -69,7 +69,8 @@ export class Showcase {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(60, 1, 0.3, 24000);
   private pipeline: THREE.RenderPipeline | null = null;
-  private sky: SkySetup | null = null;
+  private atmo: Atmo | null = null;
+  settings: Settings = loadSettings();
   private track: Track | null = null;
   private corridor: Corridor | null = null;
   private field: Field | null = null;
@@ -151,7 +152,6 @@ export class Showcase {
     const m = new RegExp(`[?&]${k}=([0-9.]+)`).exec(location.search);
     return m ? Number(m[1]) : d;
   }
-  private fogK = 1;
 
   /** Testhilfe: an eine Stelle der Strecke springen (m) */
   jump(z: number) { this.z = clamp(z, Z0, Z1); this.camInit = false; this.place(0); }
@@ -208,19 +208,12 @@ export class Showcase {
     await step(0.02, 'Oberflächen werden gebacken');
     const S: Record<SurfaceId, Surface> = bakeSurfaces(r, low ? 0.25 : 1);
     const dots = bakeFlowerDots(r, low ? 256 : 512);
-    await step(0.06, 'Himmel');
-    this.sky = await buildSky(r, 26, 205, low ? 128 : 512);
+    await step(0.06, 'Himmel (fünf Stimmungen)');
+    const moodParam = /[?&]mood=([a-z]+)/.exec(location.search)?.[1] as Settings['mood'] | undefined;
+    if (moodParam) this.settings = { ...this.settings, mood: moodParam };
+    const atmo = (this.atmo = new Atmo(r, this.scene, this.settings, low ? 96 : 256));
+    this.maxDpr = Math.min(window.devicePixelRatio || 1, this.settings.maxDpr);
     if (this.disposed) return;
-    this.scene.background = this.sky.background;
-    this.scene.environment = this.sky.environment;
-    // abgestimmt: kräftige Sonne, wenig Himmelslicht (Kontrast wie an einem klaren Tag in den Bergen)
-    this.scene.environmentIntensity = this.param('env', 0.3);
-    this.sky.sun.intensity = this.param('sun', 3.4);
-    r.toneMappingExposure = this.param('exp', 0.48);
-    this.fogK = this.param('fog', 0.5);
-    this.scene.add(this.sky.sun, this.sky.sun.target);
-    this.setupFog();
-    this.setupSunGlow();
 
     // Strecke und Landschaft wie im Spiel
     await step(0.09, 'Straße');
@@ -254,7 +247,7 @@ export class Showcase {
       log(`Zuschauer: ${crowd.count}, ${crowd.signs.pos.length / 18} Schilder`);
     }
     const trees = (this.trees = new Trees(r, !!(r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend, low));
-    trees.sunDir.value.copy(this.sky.sunDir);
+    trees.sunDir.value.copy(atmo.sunDir);
     this.scene.add(trees.group);
     const field = (this.field = new Field(terrain, route, [terrainMaterial(S, 0, dots), terrainMaterial(S, 1), terrainMaterial(S, 2)], {
       onTrees: (_k, list, cx, cz) => trees.addTile(list, cx, cz),
@@ -267,12 +260,12 @@ export class Showcase {
 
     // Kantenglättung 4× (auf Apples Kacheln billig); im WebGL-Ersatz ohne (dort scheitert das Umkopieren oft)
     const gpu = !!(r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend;
-    const scenePass = (this.scenePass = pass(this.scene, this.camera, { samples: gpu ? 4 : 0 }));
+    const scenePass = (this.scenePass = pass(this.scene, this.camera, { samples: gpu ? this.settings.msaa : 0 }));
     const color = scenePass.getTextureNode('output');
     this.pipeline = new THREE.RenderPipeline(r);
-    // Nachleuchten nur auf Wunsch (?bloom=0.06): kaum sichtbar, kostet aber ein Dutzend Durchgänge je Bild
-    const bl = this.param('bloom', 0);
-    this.pipeline.outputNode = bl > 0 ? color.add(bloom(color, bl, 0.3, this.param('bthr', 4))) : color;
+    // Leuchten, Tonkurve und Farbfilter in einem Durchgang (atmo.ts)
+    this.pipeline.outputColorTransform = false;
+    this.pipeline.outputNode = atmo.outputNode(color);
 
     // die ganze Landschaft vorab – unterwegs wird nichts mehr gebaut (das ruckelte)
     track.world(this.z, 0, 0, this.w);
@@ -372,41 +365,6 @@ export class Showcase {
     if (this.rider) this.crowd?.update(this.camera.position, this.rider.group.position, true);
     this.grass?.update(this.camera.position);
     progress(1);
-  }
-
-  /** Sonne: helle Scheibe mit weichem Hof, weit weg in Sonnenrichtung (Berge verdecken sie) */
-  private sunGlow: THREE.Mesh | null = null;
-  private setupSunGlow() {
-    const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
-    m.fog = false;
-    const r = uv().sub(0.5).mul(2).length();
-    const core = smoothstep(0.085, 0.06, r).mul(60);
-    const halo = exp(r.mul(-7)).mul(1.1).add(exp(r.mul(-22)).mul(5));
-    m.colorNode = vec3(1, 0.93, 0.82).mul(core.add(halo).mul(float(1).sub(smoothstep(0.85, 1, r))));
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), m);
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 10;
-    this.sunGlow = mesh;
-    this.scene.add(mesh);
-  }
-
-  /** Luftperspektive: Dunst in der Farbe des Himmels in Blickrichtung (zur Sonne hin wärmer), mit der Höhe dünner */
-  private setupFog() {
-    const sky = this.sky!;
-    const sun = uniform(sky.sunDir.clone());
-    const dir = normalize(positionWorld.sub(cameraPosition));
-    const d = positionView.length();
-    const look = vec3(dir.x, max(dir.y, float(0.03)), dir.z).normalize();
-    // Helligkeit begrenzen: zur Sonne hin ist der Himmel so hell, dass schon wenig Dunst alles grau machte
-    const sky0 = cubeTexture(sky.background, look).rgb;
-    const skyCol = sky0.div(max(float(1), sky0.dot(vec3(0.3, 0.55, 0.15)).div(1.4)));
-    const toSun = pow(max(float(0), dot(dir, sun)), 12);
-    const col = mix(skyCol.mul(0.9), vec3(sky.haze.r, sky.haze.g, sky.haze.b).mul(skyCol.dot(vec3(0.3, 0.5, 0.2))), toSun.mul(0.15));
-    // dichter in der Tiefe der Täler, dünner nach oben
-    const h = positionWorld.y.sub(cameraPosition.y);
-    const thin = exp(h.max(-600).mul(-0.0012)).clamp(0.35, 2.2);
-    const f = float(1).sub(exp(d.mul(-0.000085 * this.fogK).mul(thin))).mul(0.92);
-    this.scene.fogNode = fog(col, f);
   }
 
   /** Tempo- und Linienprofil der Fahrt: vor Kurven bremsen, Kehren eng, auf Geraden laufen lassen */
@@ -566,17 +524,13 @@ export class Showcase {
 
   /** Schattenausschnitt folgt dem Fahrer, im Lichtraster eingerastet (kein Flimmern der Schattenkanten) */
   private updateSun() {
-    const sky = this.sky!;
-    if (this.sunGlow) {
-      this.sunGlow.position.copy(this.camera.position).addScaledVector(sky.sunDir, 15000);
-      this.sunGlow.lookAt(this.camera.position);
-      this.sunGlow.scale.setScalar(1500);
-    }
-    const sun = sky.sun;
+    const atmo = this.atmo!;
+    const sun = atmo.sun;
+    if (this.trees) this.trees.sunDir.value.copy(atmo.sunDir);
     const t = this.track!;
     t.world(this.z + 22, 0, 0, this.w);
     const c = this.free ? this.free.at.clone() : new THREE.Vector3(this.w.x, this.w.y, this.w.z);
-    const d = sky.sunDir;
+    const d = atmo.sunDir;
     const right = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0, 1, 0)).normalize();
     const up = new THREE.Vector3().crossVectors(right, d).normalize();
     const texel = 110 / 2048;
@@ -623,6 +577,7 @@ export class Showcase {
     if (this.ready && this.track && this.rider) {
       if (!this.paused) this.place(dt);
       this.updateCamera(dt);
+      this.atmo?.update(this.paused ? 0 : dt, this.camera.position);
       this.updateSun();
       this.trees?.update(this.camera.position, this.wrapped);
       this.houses?.update(this.camera.position);
@@ -662,7 +617,7 @@ export class Showcase {
   async snapshot(): Promise<string> {
     const r = this.renderer;
     r.info.reset();
-    if (this.track && this.rider) { this.updateCamera(1); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); this.houses?.update(this.camera.position, true); this.life?.update(this.camera.position, true); this.crowd?.update(this.camera.position, this.rider.group.position, true); }
+    if (this.track && this.rider) { this.updateCamera(1); this.atmo?.update(0, this.camera.position); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); this.houses?.update(this.camera.position, true); this.life?.update(this.camera.position, true); this.crowd?.update(this.camera.position, this.rider.group.position, true); }
     const size = new THREE.Vector2();
     r.getDrawingBufferSize(size);
     const rt = new THREE.RenderTarget(size.x, size.y, { depthBuffer: false });
@@ -692,6 +647,23 @@ export class Showcase {
 
   get isReady() { return this.ready; }
 
+  /** Einstellungen aus dem Menü übernehmen und merken */
+  applySettings(s: Settings, instant = false) {
+    const prev = this.settings;
+    this.settings = s;
+    saveSettings(s);
+    this.atmo?.apply(s, instant);
+    this.maxDpr = Math.min(window.devicePixelRatio || 1, s.maxDpr);
+    if (this.dpr > this.maxDpr) { this.dpr = this.maxDpr; this.renderer.setPixelRatio(this.dpr); }
+    if (this.crowd) this.crowd.group.visible = s.crowd;
+    if (this.life) this.life.group.visible = s.life;
+    if (this.grass) this.grass.group.visible = s.grass;
+    if (prev.shadows !== s.shadows) this.renderer.shadowMap.enabled = s.shadows;
+  }
+
+  /** aktuelle Stimmung (beim Wetterwechsel die gezeigte) */
+  get moodName(): string { return this.atmo ? MOODS[(this.atmo as unknown as { shown: Settings['mood'] }).shown].name : ''; }
+
   resize() {
     const w = this.host.clientWidth || window.innerWidth;
     const h = this.host.clientHeight || window.innerHeight;
@@ -711,7 +683,7 @@ export class Showcase {
     this.houses?.dispose();
     this.life?.dispose();
     this.crowd?.dispose();
-    this.sky?.dispose();
+    this.atmo?.dispose();
     this.frameRT?.dispose();
     this.renderer.dispose();
   }
