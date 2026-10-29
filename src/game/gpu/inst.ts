@@ -55,9 +55,9 @@ export function disposeGroup(g: InstGroup) {
 /**
  * Knoten einer Instanz: Ecke in Weltkoordinaten (ohne Wind), Normale für das Material, Farbe der Instanz,
  * Ort der Instanz. Drehung wie Matrix4.makeRotationY. fade: zwischen diesen Abständen zur Kamera (m) schrumpft
- * die Instanz auf null (fern weglassen, ohne Aufploppen).
+ * die Instanz auf null (fern weglassen, ohne Aufploppen). local: eigene Ecke vor dem Einsetzen (Bewegung je Teil).
  */
-export function instNodes(fade?: [number, number]) {
+export function instNodes(fade?: [number, number], local?: N) {
   const iP = attribute('iP', 'vec4');
   const iS = attribute('iS', 'vec4');
   const c = cos(iP.w);
@@ -65,7 +65,7 @@ export function instNodes(fade?: [number, number]) {
   const rotY = (v: N): N => vec3(v.x.mul(c).add(v.z.mul(s)), v.y, v.z.mul(c).sub(v.x.mul(s)));
   let scale: N = iS.xyz;
   if (fade) scale = scale.mul(float(1).sub(smoothstep(fade[0], fade[1], iP.xz.sub(cameraPosition.xz).length())));
-  const world: N = rotY(positionGeometry.mul(scale)).add(iP.xyz);
+  const world: N = rotY((local ?? positionGeometry).mul(scale)).add(iP.xyz);
   const nWorld: N = varying(rotY(normalGeometry), 'vInstN');
   return { world, nWorld, rot: rotY, normal: transformNormalToView(normalize(nWorld)), color: attribute('iC', 'vec4').xyz as N, at: iP.xyz as N, extra: iS.w as N };
 }

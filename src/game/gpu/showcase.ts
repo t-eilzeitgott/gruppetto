@@ -22,9 +22,10 @@ import { Rider } from './rider';
 import { Grass } from './grass';
 import { ForestEdge } from './forest';
 import { Houses } from './houses';
+import { Crowd } from './crowd';
 import { tsl } from './nodes';
 
-const { cameraPosition, cubeTexture, dot, exp, float, fog, max, mix, normalize, pass, positionView, positionWorld, pow, smoothstep, uniform, uv, vec3 } = tsl;
+const { cameraPosition, cubeTexture, dot, exp, float, fog, frontFacing, max, mix, normalize, pass, positionView, positionWorld, pow, select, smoothstep, texture, uniform, uv, vec3 } = tsl;
 
 export interface ShowcaseStats {
   fps: number;
@@ -75,6 +76,7 @@ export class Showcase {
   private rider: Rider | null = null;
   private grass: Grass | null = null;
   private houses: Houses | null = null;
+  private crowd: Crowd | null = null;
   private disposed = false;
   private last = 0;
   private avgMs = 1000 / 60;
@@ -225,15 +227,24 @@ export class Showcase {
       track.world(z, 0, 0, this.w);
       route.push({ x: this.w.x, z: this.w.z });
     }
+    const adsM = adsMaterial(adsTex(this.opts.names));
     const corridor = (this.corridor = new Corridor(track, terrain, {
       road: roadMaterial(S), marks: marksMaterial(S), sides: corridorMaterial(S), metal: metalMaterial(), wood: woodMaterial(),
-      paint: paintMaterial(), ads: adsMaterial(adsTex(this.opts.names)),
+      paint: paintMaterial(), ads: adsM,
     }));
     const grass = (this.grass = new Grass());
     if (!this.param('nograss', 0)) corridor.onTufts = (t) => grass.addChunk(t);
     corridor.build(i0, i1);
     this.scene.add(grass.group);
     this.scene.add(corridor.group);
+    // Zuschauer wie im Spiel (Bewegung in WGSL – nur mit WebGPU)
+    if ((r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend && !this.param('nocrowd', 0)) {
+      const crowd = (this.crowd = new Crowd());
+      crowd.build(track, (sg0, sg, dx) => corridor.edgeHeight(sg0, sg, dx), (i, sg) => terrain.lim(i)[sg < 0 ? 0 : 1], i0, i1);
+      this.scene.add(crowd.group);
+      if (crowd.signs.pos.length) this.scene.add(signMesh(crowd.signs, adsM.map!));
+      log(`Zuschauer: ${crowd.count}, ${crowd.signs.pos.length / 18} Schilder`);
+    }
     const trees = (this.trees = new Trees());
     trees.sunDir.value.copy(this.sky.sunDir);
     this.scene.add(trees.group);
@@ -318,6 +329,7 @@ export class Showcase {
     this.trees?.warm(true);
     this.grass?.warm();
     this.houses?.warm(true);
+    this.crowd?.warm(true);
     // 3) Shader im Hintergrund übersetzen (für das Bildformat des Szenendurchgangs), Daten hochladen
     const rt = this.scenePass?.renderTarget ?? null;
     const prev = r.getRenderTarget();
@@ -339,6 +351,8 @@ export class Showcase {
     this.trees?.update(this.camera.position, true);
     this.houses?.warm(false);
     this.houses?.update(this.camera.position, true);
+    this.crowd?.warm(false);
+    if (this.rider) this.crowd?.update(this.camera.position, this.rider.group.position, true);
     this.grass?.update(this.camera.position);
     progress(1);
   }
@@ -595,6 +609,7 @@ export class Showcase {
       this.updateSun();
       this.trees?.update(this.camera.position, this.wrapped);
       this.houses?.update(this.camera.position);
+      this.crowd?.update(this.camera.position, this.rider.group.position);
       this.wrapped = false;
       this.grass?.update(this.camera.position);
     }
@@ -629,7 +644,7 @@ export class Showcase {
   async snapshot(): Promise<string> {
     const r = this.renderer;
     r.info.reset();
-    if (this.track && this.rider) { this.updateCamera(1); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); this.houses?.update(this.camera.position, true); }
+    if (this.track && this.rider) { this.updateCamera(1); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); this.houses?.update(this.camera.position, true); this.crowd?.update(this.camera.position, this.rider.group.position, true); }
     const size = new THREE.Vector2();
     r.getDrawingBufferSize(size);
     const rt = new THREE.RenderTarget(size.x, size.y, { depthBuffer: false });
@@ -676,8 +691,28 @@ export class Showcase {
     this.trees?.dispose();
     this.grass?.dispose();
     this.houses?.dispose();
+    this.crowd?.dispose();
     this.sky?.dispose();
     this.frameRT?.dispose();
     this.renderer.dispose();
   }
+}
+
+/** Pappschilder der Zuschauer: Atlas der Banden vorn, Pappe hinten */
+function signMesh(sg: { pos: number[]; uv: number[] }, map: THREE.Texture): THREE.Mesh {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(sg.pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(sg.uv, 2));
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  const m = new THREE.MeshStandardNodeMaterial({ side: THREE.DoubleSide });
+  m.colorNode = select(frontFacing, texture(map, uv()).rgb, vec3(0.3, 0.2, 0.11));
+  m.roughnessNode = float(0.85);
+  m.metalnessNode = float(0);
+  m.name = 'signs';
+  const mesh = new THREE.Mesh(g, m);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.matrixAutoUpdate = false;
+  return mesh;
 }

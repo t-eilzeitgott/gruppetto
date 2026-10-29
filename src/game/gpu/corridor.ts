@@ -11,7 +11,7 @@ import { EDGE, ROAD_HALF, SEG, type Seg, type Side, type Track } from '../abfahr
 import type { Terrain } from '../abfahrt/terrain3d';
 import { BIOME_PALETTES } from '../abfahrt/palette';
 import { lin255 } from '../abfahrt/models3d';
-import { AD_COUNT } from '../abfahrt/tex3d';
+import { adCell, AD_COUNT } from '../abfahrt/tex3d';
 import type { Tuft } from './grass';
 
 /** Abschnitt = so viele Segmente (64 m) */
@@ -160,6 +160,17 @@ export class Corridor {
   }
 
   private P(r: Row, x: number, h: number): number[] { return [r.x + r.rx * x, r.y + h, r.z + r.rz * x]; }
+
+  /** Höhe des Straßenrands (über der Fahrbahn) in Abstand dx von der Bankettkante – dort stehen die Zuschauer */
+  edgeHeight(s: Seg, sg: number, dx: number): number {
+    const side = sg < 0 ? s.L : s.R;
+    const pr = this.profile(side, s, sg, this.terrain.lim(s.i)[sg < 0 ? 0 : 1]);
+    const o = pr.o;
+    for (let k = 0; k < o.length - 1; k++) {
+      if (dx <= o[k + 1]) return pr.h[k] + (pr.h[k + 1] - pr.h[k]) * Math.max(0, Math.min(1, (dx - o[k]) / Math.max(1e-6, o[k + 1] - o[k])));
+    }
+    return pr.h[pr.h.length - 1];
+  }
 
   /** Querprofil wie im Spiel (Höhen, Abstände ab Bankettkante), am Korridorrand abgeschnitten */
   private profile(side: Side, s: Seg, sg: number, lim: number): Profile {
@@ -437,8 +448,7 @@ export class Corridor {
         // Bande: bedruckt zur Straße (Atlas der Werbebanden), Pfosten
         if (this.mats.ads) {
           const cell = Math.floor(hash(s.i * 2 + (sg > 0 ? 1 : 0)) * AD_COUNT);
-          const cx = cell % 4, cy = Math.floor(cell / 4);
-          const u0 = cx / 4 + 0.002, u1 = (cx + 1) / 4 - 0.002, v0 = 1 - (cy + 1) / 16 + 0.001, v1 = 1 - cy / 16 - 0.001;
+          const [u0, v0, u1, v1] = adCell(cell, false);
           const x = sg * (EDGE - 0.07);
           const A0 = this.P(a, x, 0.17), B0 = this.P(b, x, 0.17), A1 = this.P(a, x, 0.93), B1 = this.P(b, x, 0.93);
           if (sg > 0) ads.quad(B0, A0, A1, B1, [1, 1, 1], [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
