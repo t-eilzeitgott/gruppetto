@@ -186,7 +186,7 @@ export function GpuTestPage() {
             <label key={sl.k} className="gpu-menu__row gpu-menu__slider">
               <span>{sl.label} <em>{Number(settings[sl.k]).toFixed(sl.step >= 1 ? 0 : 2)}</em></span>
               <input type="range" min={sl.min} max={sl.max} step={sl.step} value={Number(settings[sl.k])}
-                onInput={(e) => change({ [sl.k]: Number((e.target as HTMLInputElement).value) } as Partial<Settings>)}
+                onInput={(e: React.FormEvent<HTMLInputElement>) => change({ [sl.k]: Number((e.target as HTMLInputElement).value) } as Partial<Settings>)}
                 onChange={(e) => change({ [sl.k]: Number(e.target.value) } as Partial<Settings>)} />
             </label>
           )) : null}
