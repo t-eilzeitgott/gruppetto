@@ -21,14 +21,15 @@ export function useGameLock() {
     const stop = (e: Event) => e.preventDefault();
     const touchMove = (e: TouchEvent) => {
       const el = e.target as HTMLElement | null;
-      if (el?.closest('.abf-scroll') && e.touches.length === 1) return;
+      // Listen dürfen scrollen, Schieberegler sich ziehen lassen
+      if (el?.closest('.abf-scroll, input[type=range]') && e.touches.length === 1) return;
       e.preventDefault();
     };
     const touchStart = (e: TouchEvent) => { if (e.touches.length > 1) e.preventDefault(); };
     let lastTap = 0;
     const touchEnd = (e: TouchEvent) => {
       const now = Date.now();
-      if (now - lastTap < 320 && !(e.target as HTMLElement | null)?.closest('button, a')) e.preventDefault();
+      if (now - lastTap < 320 && !(e.target as HTMLElement | null)?.closest('button, a, label, input')) e.preventDefault();
       lastTap = now;
     };
     document.addEventListener('gesturestart', stop, { passive: false } as AddEventListenerOptions);

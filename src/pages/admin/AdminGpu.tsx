@@ -28,6 +28,14 @@ const TOGGLES: { k: keyof Settings; label: string }[] = [
   { k: 'grass', label: 'Grashalme' },
   { k: 'cinema', label: 'Kinoformat (Balken)' },
 ];
+type Tab = 'look' | 'light' | 'tech';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'look', label: 'Stimmung' },
+  { id: 'light', label: 'Licht & Farbe' },
+  { id: 'tech', label: 'Technik' },
+];
+/** welche Regler auf welchem Reiter stehen (der Rest: Licht & Farbe) */
+const TECH: (keyof Settings)[] = ['maxDpr', 'shadowRes', 'shadowRange', 'msaa', 'rainK', 'wetK'];
 const SLIDERS: { k: keyof Settings; label: string; min: number; max: number; step: number }[] = [
   { k: 'exposure', label: 'Belichtung', min: 0.5, max: 1.6, step: 0.02 },
   { k: 'warm', label: 'Wärme', min: -1, max: 1, step: 0.05 },
@@ -73,6 +81,7 @@ export function GpuTestPage() {
   // Ladeschirm nach dem Laden noch kurz zum Ausblenden stehen lassen
   const [veil, setVeil] = useState(true);
   const [menu, setMenu] = useState(false);
+  const [tab, setTab] = useState<Tab>('look');
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [copied, setCopied] = useState(false);
   const change = (patch: Partial<Settings>) => {
@@ -152,24 +161,35 @@ export function GpuTestPage() {
         </button>
       ) : null}
       {menu ? (
-        <div className="gpu-menu" onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}>
-          <div className="gpu-menu__row gpu-menu__moods">
-            {MOOD_IDS.map((id) => (
-              <button key={id} type="button" className={`gpu-chip${settings.mood === id && !settings.cycle ? ' is-on' : ''}`} onClick={() => change({ mood: id, cycle: false })}>{MOODS[id].name}</button>
+        <div className="gpu-menu abf-scroll" onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}>
+          <div className="gpu-menu__tabs">
+            {TABS.map((t) => (
+              <button key={t.id} type="button" className={`gpu-tab${tab === t.id ? ' is-on' : ''}`} onClick={(e) => { setTab(t.id); e.currentTarget.closest('.gpu-menu')?.scrollTo(0, 0); }}>{t.label}</button>
             ))}
           </div>
-          {TOGGLES.map((t) => (
-            <label key={t.k} className="gpu-menu__row">
-              <input type="checkbox" checked={!!settings[t.k]} onChange={(e) => change({ [t.k]: e.target.checked } as Partial<Settings>)} />
-              <span>{t.label}</span>
-            </label>
-          ))}
-          {SLIDERS.map((sl) => (
+          {tab === 'look' ? (
+            <>
+              <div className="gpu-menu__row gpu-menu__moods">
+                {MOOD_IDS.map((id) => (
+                  <button key={id} type="button" className={`gpu-chip${settings.mood === id && !settings.cycle ? ' is-on' : ''}`} onClick={() => change({ mood: id, cycle: false })}>{MOODS[id].name}</button>
+                ))}
+              </div>
+              {TOGGLES.map((t) => (
+                <label key={t.k} className="gpu-menu__row gpu-menu__check">
+                  <input type="checkbox" checked={!!settings[t.k]} onChange={(e) => change({ [t.k]: e.target.checked } as Partial<Settings>)} />
+                  <span>{t.label}</span>
+                </label>
+              ))}
+            </>
+          ) : null}
+          {tab !== 'look' ? SLIDERS.filter((sl) => (tab === 'tech') === TECH.includes(sl.k)).map((sl) => (
             <label key={sl.k} className="gpu-menu__row gpu-menu__slider">
-              <span>{sl.label} <em>{Number(settings[sl.k]).toFixed(2)}</em></span>
-              <input type="range" min={sl.min} max={sl.max} step={sl.step} value={Number(settings[sl.k])} onChange={(e) => change({ [sl.k]: Number(e.target.value) } as Partial<Settings>)} />
+              <span>{sl.label} <em>{Number(settings[sl.k]).toFixed(sl.step >= 1 ? 0 : 2)}</em></span>
+              <input type="range" min={sl.min} max={sl.max} step={sl.step} value={Number(settings[sl.k])}
+                onInput={(e) => change({ [sl.k]: Number((e.target as HTMLInputElement).value) } as Partial<Settings>)}
+                onChange={(e) => change({ [sl.k]: Number(e.target.value) } as Partial<Settings>)} />
             </label>
-          ))}
+          )) : null}
           <div className="gpu-menu__row gpu-menu__actions">
             <button type="button" className="gpu-chip" onClick={() => change({ ...DEFAULT_SETTINGS, mood: settings.mood })}>Zurücksetzen</button>
             <button type="button" className="gpu-chip" onClick={copy}>{copied ? 'Kopiert ✓' : 'Einstellungen + fps kopieren'}</button>
