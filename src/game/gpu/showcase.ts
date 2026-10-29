@@ -715,6 +715,7 @@ export class Showcase {
     const snapped = right.multiplyScalar(a).add(up.multiplyScalar(b)).addScaledVector(d, e);
     sun.target.position.copy(snapped);
     sun.position.copy(snapped).addScaledVector(d, 1500);
+    (sun.shadow.camera as THREE.OrthographicCamera).updateProjectionMatrix();
     sun.target.updateMatrixWorld();
   }
 

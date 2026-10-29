@@ -19,6 +19,7 @@ import { TimeTrial, type TtEvent, type TtHud, type TtResult } from '../abfahrt/z
 import type { StageRef } from '../abfahrt/stageRef';
 import type { GhostRider } from '../tt';
 import type { Kit } from '../abfahrt/rider';
+import { wreckPose } from '../abfahrt/wreck';
 import { bakeFlowerDots, bakeSurfaces, type Surface, type SurfaceId } from './bake';
 import { Atmo } from './atmo';
 import { loadSettings, MOOD_U, MOODS, RACE_DEFAULTS, RACE_KEY, saveSettings, type Settings } from './mood';
@@ -108,6 +109,7 @@ export class Race {
   private atmo: Atmo | null = null;
   settings: Settings;
   private track: Track | null = null;
+  private terrain: Terrain | null = null;
   private world: World | null = null;
   private objects: Objects | null = null;
   private particles: Particles | null = null;
@@ -254,7 +256,7 @@ export class Race {
 
     await step(0.1, 'Strecke');
     const track = (this.track = new Track(this.opts.dayKey, this.opts.names, this.opts.tt ? 'tt' : 'descent', this.opts.tt?.town ?? null));
-    const terrain = new Terrain(track);
+    const terrain = (this.terrain = new Terrain(track));
     const adsM = adsMaterial(adsTex(this.opts.names));
     const world = (this.world = new World({
       renderer: r, track, terrain, msaa: gpu && this.settings.msaa > 0, low,
@@ -396,6 +398,8 @@ export class Race {
     const e = new Abfahrt({
       dayKey: this.opts.dayKey, names: this.opts.names, friends: [], kit: this.opts.kit, best: 0,
       missions: [], missionsDone: new Set(), tutorial: false, cruise: cruise || undefined,
+      // keine Hindernisse, dafür Massenstürze (zu schnell aufs Hinterrad)
+      pileups: true,
       onEvent: (ev) => this.opts.onEvent?.(ev),
       onOver: (res) => this.opts.onOver?.(res),
     });
@@ -412,6 +416,7 @@ export class Race {
     this.poolOf.clear();
     this.cam.init = false;
     this.paused = false;
+    this.resetDirector(e?.phase === 'ready' && cruise === this.cruise);
     this.rider?.model.resetCrash();
     this.eng!.start();
     this.perf.event(EV.phase, `Start${cruise ? ` Testfahrt ${cruise}×` : ''}`);
@@ -422,9 +427,19 @@ export class Race {
     this.eng = this.makeEngine(this.cruise);
     for (const [, i] of this.poolOf) { this.pool[i].group.visible = false; this.poolFree.push(i); }
     this.poolOf.clear();
+    this.resetDirector(false);
     this.cam.init = false;
     this.paused = false;
     this.rider?.model.resetCrash();
+  }
+
+  /** Regie zurück: keep = vom Startbild (Kran) aus weiterfliegen */
+  private resetDirector(keep: boolean) {
+    this.tv = null;
+    this.tvLast = -1;
+    this.crashCam = null;
+    this.swing = 0;
+    if (!keep) { this.dirLast.ok = false; this.dirKind = 'intro'; this.dirT = 1; }
   }
 
   pointerDown(x: number, y: number) { if (!this.autopilot) this.eng?.pointerDown(x, y); }
@@ -514,7 +529,9 @@ export class Race {
     R.group.rotation.y = -this.w.th;
     const light = this.lampLevel();
     if ((light > 0.05) !== this.lampOn) { this.lampOn = light > 0.05; this.perf.event(EV.vis, this.lampOn ? 'Rücklichter an' : 'Rücklichter aus'); }
-    if (e.phase === 'crash' || e.phase === 'over') R.model.crash(e.phaseT, e.crashSpin);
+    const wk = this.wreck;
+    if (wk) R.model.crashPose(wreckPose(wk));
+    else if (e.phase === 'crash' || e.phase === 'over') R.model.crash(e.phaseT, e.crashSpin);
     else {
       R.model.resetCrash();
       R.pose({
@@ -561,10 +578,14 @@ export class Race {
       const ghost = 'ghost' in o ? (o as { ghost: number }).ghost : 0;
       R.ghost(ghost > 0 ? 1 - ghost : 0);
       R.shadows(d < 45 && ghost <= 0);
-      R.pose({
-        lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, stand: o.stand ?? 0, sprint: 0,
-        v: o.v, air: 0, surface: t.segAt(o.z).surface, wobble: o.bump, light, roll: o.z / 0.34,
-      }, dt, this.time);
+      if (o.wreck) R.model.crashPose(wreckPose(o.wreck));
+      else {
+        R.model.resetCrash();
+        R.pose({
+          lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, stand: o.stand ?? 0, sprint: 0,
+          v: o.v, air: 0, surface: t.segAt(o.z).surface, wobble: o.bump, light, roll: o.z / 0.34,
+        }, dt, this.time);
+      }
       R.lamp(light > 0.05);
     }
   }
@@ -607,7 +628,9 @@ export class Race {
         this.cam.y += (ty - this.cam.y) * Math.min(1, dt * 7);
         this.cam.y = Math.max(this.cam.y, roadY + 1.2);
         const sh = e.shake * 0.04;
-        out.pos.set(rx - fx * CAM_BACK + (Math.random() - 0.5) * sh, this.cam.y + (Math.random() - 0.5) * sh, rz - fz * CAM_BACK);
+        // in Kurven schwingt die Kamera nach außen (wie ein Motorrad mit Kameramann), auf Geraden zurück hinters Rad
+        const sw = this.swing;
+        out.pos.set(rx - fx * CAM_BACK + sx * sw + (Math.random() - 0.5) * sh, this.cam.y + (Math.random() - 0.5) * sh, rz - fz * CAM_BACK + sz * sw);
         const aheadY = t.heightAt(p.z + 15);
         out.look.set(rx + fx * 15, roadY + (aheadY - roadY) * 0.55 + 0.9 + air * 0.4, rz + fz * 15);
         out.fov = (portrait ? 72 - (aspect - 0.45) * 22 : 56) + Math.min(9, Math.max(0, (p.v - 14) * 0.38));
@@ -675,8 +698,14 @@ export class Race {
       return;
     }
     const yaw = this.w.th + Math.atan2(p.vx, Math.max(5, p.v)) * 0.3;
-    if (!this.cam.init || e.phase === 'ready' || e.phase === 'countdown') { this.cam.th = yaw; this.camFrom = null; this.camBlend = 1; }
+    const still = !this.cam.init || e.phase === 'ready' || e.phase === 'countdown';
+    if (still) { this.cam.th = yaw; this.camFrom = null; this.camBlend = 1; }
+    const th0 = this.cam.th;
     this.cam.th += angDiff(yaw, this.cam.th) * Math.min(1, dt * 6);
+    // Schwung nach außen: aus der Drehgeschwindigkeit der Fahrtrichtung (rechts herum → Kamera nach links)
+    const omega = dt > 0 ? angDiff(this.cam.th, th0) / dt : 0;
+    const swingT = still || e.phase !== 'playing' ? 0 : clamp(-omega * Math.min(1, p.v / 14) * 2.4, -1.7, 1.7);
+    this.swing += (swingT - this.swing) * Math.min(1, dt * 1.6);
     const A = this.poseA;
     this.camPose(this._cam, A, dt);
     if (this.camFrom && this.camBlend < 1) {
@@ -690,12 +719,189 @@ export class Race {
       A.fov = B.fov + (A.fov - B.fov) * k;
       if (this.camBlend >= 1) this.camFrom = null;
     }
+    // Regie (nur Verfolger-Kamera): TV-Kran am Start, TV-Kameras an Spitzkehren, Sturz aus der Fernsehperspektive
+    if (this._cam === 'chase') this.direct(A, dt);
     this.cam.init = true;
     this.camera.position.copy(A.pos);
     this.camera.lookAt(A.look);
-    // Sichtfeld weich (Tempo)
-    this.cam.fov += (A.fov - this.cam.fov) * Math.min(1, dt > 0 ? dt * 2 : 1);
+    // leicht in die Kurve legen (Motorradkamera)
+    if (this.dirKind === 'chase' && this._cam === 'chase') this.camera.rotateZ(clamp(p.lean, -0.7, 0.7) * 0.07 * (1 - (this.dirT < 1 ? 1 - this.dirT : 0)));
+    // Sichtfeld weich (Tempo); bei Regiewechseln folgt es direkt der Überblendung
+    const direct = this.dirKind !== 'chase' || this.dirT < 1;
+    this.cam.fov += (A.fov - this.cam.fov) * (direct ? 1 : Math.min(1, dt > 0 ? dt * 2 : 1));
     if (Math.abs(this.camera.fov - this.cam.fov) > 0.01) { this.camera.fov = this.cam.fov; this.camera.updateProjectionMatrix(); }
+  }
+
+  // ------------------------------------------------------------------ Regie
+
+  /** eigener Sturz im Massensturz (nur Abfahrt) */
+  private get wreck() { const e = this.eng; return e instanceof Abfahrt ? e.wreck : null; }
+
+  private dirKind: 'intro' | 'chase' | 'tv' | 'crash' = 'intro';
+  private dirFrom = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
+  private dirLast = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60, ok: false };
+  private dirT = 1;
+  private dirDur = 1;
+  private dirPose = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
+  private lookS = new THREE.Vector3();
+  private lookOk = false;
+  private swing = 0;
+  /** TV-Kamera an einer Spitzkehre: Abschnitte der Kehre (von, bis) und Standort */
+  private tv: { a: number; b: number; pos: THREE.Vector3 } | null = null;
+  private tvLast = -1;
+  private crashCam: THREE.Vector3 | null = null;
+  private tvV = { x: 0, y: 0, z: 0, th: 0 };
+
+  /** Regie: welche Einstellung jetzt – und weich (geflogen) von der letzten hinüber */
+  private direct(A: { pos: THREE.Vector3; look: THREE.Vector3; fov: number }, dt: number) {
+    const e = this.eng!;
+    let want: 'intro' | 'chase' | 'tv' | 'crash' = 'chase';
+    if (e.phase === 'ready') want = 'intro';
+    else if (this.wreck) want = 'crash';
+    else if (e.phase === 'playing' && this.tvShot()) want = 'tv';
+    if (!this.dirLast.ok) { this.dirKind = want; this.dirT = 1; }
+    if (want !== this.dirKind) {
+      // vom aktuellen Bild aus hinüberfliegen
+      this.dirFrom.pos.copy(this.dirLast.pos);
+      this.dirFrom.look.copy(this.dirLast.look);
+      this.dirFrom.fov = this.dirLast.fov;
+      this.dirDur = this.dirKind === 'intro' ? 2.7 : want === 'tv' ? 1.05 : want === 'crash' ? 0.9 : 0.95;
+      this.dirKind = want;
+      this.dirT = 0;
+      this.lookOk = false;
+      if (want !== 'crash') this.crashCam = null;
+    }
+    const D = this.dirPose;
+    if (this.dirKind === 'chase') { D.pos.copy(A.pos); D.look.copy(A.look); D.fov = A.fov; } else this.shotPose(this.dirKind, D, dt);
+    if (this.dirT < 1) {
+      this.dirT = Math.min(1, this.dirT + (dt > 0 ? dt : 0) / this.dirDur);
+      const u = this.dirT;
+      const k = u * u * u * (u * (u * 6 - 15) + 10);
+      const F = this.dirFrom;
+      const span = F.pos.distanceTo(D.pos);
+      A.pos.lerpVectors(F.pos, D.pos, k);
+      // im Bogen fliegen (nicht durch den Hang)
+      A.pos.y += Math.sin(Math.PI * k) * Math.min(6, span * 0.18);
+      A.look.lerpVectors(F.look, D.look, k);
+      A.fov = F.fov + (D.fov - F.fov) * k;
+    } else {
+      A.pos.copy(D.pos);
+      A.look.copy(D.look);
+      A.fov = D.fov;
+    }
+    this.dirLast.pos.copy(A.pos);
+    this.dirLast.look.copy(A.look);
+    this.dirLast.fov = A.fov;
+    this.dirLast.ok = true;
+  }
+
+  /** Ort des Fahrers in der Welt (Körpermitte) */
+  private riderAt(out: THREE.Vector3, up = 1.0): THREE.Vector3 {
+    const e = this.eng!;
+    e.track.world(e.p.z, e.p.x, 0, this.tvV);
+    return out.set(this.tvV.x, this.tvV.y + up, this.tvV.z);
+  }
+
+  /** Blick weich auf den Fahrer (die TV-Kamera schwenkt mit wie ein Kameramann) */
+  private follow(target: THREE.Vector3, dt: number): THREE.Vector3 {
+    if (!this.lookOk) { this.lookS.copy(target); this.lookOk = true; }
+    this.lookS.lerp(target, dt > 0 ? Math.min(1, dt * 5) : 1);
+    return this.lookS;
+  }
+
+  private groundY(x: number, z: number): number {
+    try { return this.terrain?.groundAt(x, z) ?? -Infinity; } catch { return -Infinity; }
+  }
+
+  private shotPose(kind: 'intro' | 'tv' | 'crash', out: { pos: THREE.Vector3; look: THREE.Vector3; fov: number }, dt: number) {
+    const e = this.eng!;
+    const t = e.track;
+    const R = this.riderAt(new THREE.Vector3(), 1.0);
+    const portrait = this.camera.aspect < 1;
+    if (kind === 'intro') {
+      // TV-Kran vor dem Start: schwenkt langsam vor dem Feld hin und her, Blick auf dich
+      t.world(e.p.z, 0, 0, this.tvV);
+      const th = this.tvV.th;
+      // vor dem Feld, leicht seitlich (über der Straße), schwenkt langsam hin und her; Blick zurück auf dich
+      const ang = (e.p.x > 0 ? -1 : 1) * (0.3 + 0.22 * Math.sin(this.time * 0.17));
+      const fx = Math.sin(th + ang), fz = -Math.cos(th + ang);
+      const r = 9.5;
+      const x = R.x + fx * r, z = R.z + fz * r;
+      const y = Math.max(R.y + 2.6 + 0.4 * Math.sin(this.time * 0.11), this.groundY(x, z) + 1.8);
+      out.pos.set(x, y, z);
+      out.look.copy(R).add(new THREE.Vector3(-Math.sin(th) * 3, -0.2, Math.cos(th) * 3));
+      out.fov = portrait ? 50 : 38;
+      return;
+    }
+    if (kind === 'tv' && this.tv) {
+      out.pos.copy(this.tv.pos);
+      out.look.copy(this.follow(R, dt));
+      const d = out.pos.distanceTo(R);
+      out.fov = clamp((2 * Math.atan((portrait ? 7.5 : 5.5) / d) * 180) / Math.PI, 18, portrait ? 62 : 50);
+      return;
+    }
+    // Sturz: Fernsehbild vom Straßenrand hinter dem Sturz, Blick die Straße hinunter auf den Haufen – die
+    // Nachfolgenden fahren an der Kamera vorbei hinein; langsam näher heran (hinten ist die Welt schon abgebaut)
+    if (!this.crashCam) {
+      const at = (e instanceof Abfahrt ? e.pileAt : null) ?? { z: e.p.z, x: e.p.x };
+      const side = at.x > 0 ? -1 : 1;
+      const cz = Math.max(0, at.z - 9);
+      t.world(cz, side * (EDGE + 1.8), 0, this.tvV);
+      const y = Math.max(t.heightAt(cz) + 2.3, this.groundY(this.tvV.x, this.tvV.z) + 1.6);
+      this.crashCam = new THREE.Vector3(this.tvV.x, y, this.tvV.z);
+    }
+    out.pos.copy(this.crashCam);
+    const L = this.riderAt(new THREE.Vector3(), 0.45);
+    out.look.copy(this.follow(L, dt));
+    const d = out.pos.distanceTo(L);
+    const push = clamp(e.phaseT / 4, 0, 1);
+    out.fov = clamp((2 * Math.atan(((portrait ? 9 : 6.5) - 2 * push) / d) * 180) / Math.PI, 16, 60);
+  }
+
+  /**
+   * Spitzkehre voraus? Dann steht dort eine TV-Kamera außen am Scheitel (erhöht), vor der Kehre fliegt die Kamera
+   * hinüber, nach der Kehre zurück hinters Rad. Nicht im Tunnel, nicht zweimal dieselbe Kehre.
+   */
+  private tvShot(): boolean {
+    const e = this.eng!;
+    const t = e.track;
+    const z = e.p.z;
+    if (this.tv) {
+      if (z < this.tv.b * SEG + 12) return z >= this.tv.a * SEG - 36;
+      this.tv = null;
+      return false;
+    }
+    const i0 = Math.floor(z / SEG);
+    for (let i = i0; i < i0 + Math.ceil(80 / SEG); i++) {
+      const s = t.seg(i);
+      if (!(s.hairpin > 0) || i <= this.tvLast) continue;
+      let a = i;
+      while (a > i0 && t.seg(a - 1).hairpin > 0) a--;
+      let b = i;
+      while (b < i + 40 && t.seg(b + 1).hairpin > 0) b++;
+      this.tvLast = b;
+      let tunnel = false;
+      let m = a, km = 0;
+      for (let k = a; k <= b; k++) { const q = t.seg(k); if (q.tunnel) tunnel = true; if (Math.abs(q.curve) > km) { km = Math.abs(q.curve); m = k; } }
+      if (tunnel || b - a < 2) return false;
+      const w = this.tvV;
+      t.world(m * SEG + SEG / 2, 0, 0, w);
+      const ax = w.x, ay = w.y, az = w.z;
+      t.world(a * SEG - 20, 0, 0, w);
+      const bx = w.x, bz = w.z;
+      t.world(b * SEG + 20, 0, 0, w);
+      let ox = ax - (bx + w.x) / 2, oz = az - (bz + w.z) / 2;
+      const len = Math.hypot(ox, oz);
+      if (len < 1) return false;
+      ox /= len; oz /= len;
+      const r = EDGE + 11;
+      const px = ax + ox * r, pz = az + oz * r;
+      const py = Math.max(ay + 6.5, this.groundY(px, pz) + 3.2);
+      this.tv = { a, b, pos: new THREE.Vector3(px, py, pz) };
+      this.perf.event(EV.cam, `TV-Kamera Kehre ${Math.round(a * SEG)}–${Math.round(b * SEG)} m`);
+      return z >= a * SEG - 36;
+    }
+    return false;
   }
 
   /** Prüfhilfe: freie Kamera um einen Punkt; null: zurück zum Fahrer */
@@ -722,6 +928,9 @@ export class Race {
     sun.target.position.copy(snapped);
     sun.position.copy(snapped).addScaledVector(d, 1500);
     sun.target.updateMatrixWorld();
+    // Ausschnitt und Tiefe der Schattenkamera wirklich anwenden (beim Start blieb sonst die Voreinstellung von
+    // three.js stehen – 10 × 10 m bis 500 m, das Licht steht aber 1500 m weit weg: keine Schatten im Spiel)
+    (sun.shadow.camera as THREE.OrthographicCamera).updateProjectionMatrix();
   }
 
   /** Tunnel: Licht von außen weg (Sonne, Himmel), Lampenlicht; Tageslicht der Portale in der Farbe der Stimmung */
@@ -1065,7 +1274,8 @@ export class Race {
     r.info.reset();
     const e = this.eng;
     if (e && this.rider && this.world) {
-      this.updateCamera(1);
+      // läuft die Kamera schon, nichts weiterschieben (sonst springt eine Regie-Überblendung im Prüfbild)
+      this.updateCamera(this.cam.init ? 0 : 1);
       this.updateTunnel(0);
       this.atmo?.update(0, this.camera.position, this.camera);
       this.updateSun();

@@ -9,6 +9,7 @@
  * passen. Auf dem Zeitfahrrad liegen die Unterarme auf den Polstern, die Hände vorn am Auflieger.
  */
 import * as THREE from 'three';
+import type { WreckPose } from './wreck';
 import type { Kit } from './rider';
 import { alphaTex, lin, type RGBf } from './models3d';
 import { BIKE_BB, bikeBuild, type BikeFit } from './bike3d';
@@ -535,6 +536,10 @@ export class RiderModel {
   private far = false;
   private minor: THREE.Object3D[] = [];
   private crank: THREE.Bone;
+  /** Rahmen (fester Knochen) – für den Sturz (Rad und Fahrer getrennt) */
+  private frameBone!: THREE.Bone;
+  /** Haltung im Moment des Sturzes (Lage, Drehung je Knochen); null = fährt */
+  private wreckSnap: { b: THREE.Object3D; p: THREE.Vector3; q: THREE.Quaternion }[] | null = null;
   readonly shadow: THREE.Mesh;
   readonly lamp: THREE.Mesh;
   kitKey = '';
@@ -569,6 +574,7 @@ export class RiderModel {
     const bones: THREE.Bone[] = [];
     const joint = (parent: THREE.Object3D) => { const b = new THREE.Bone(); parent.add(b); bones.push(b); return b; };
     const fixed = joint(this.body);
+    this.frameBone = fixed;
     this.wheelF = joint(this.body);
     this.wheelF.position.copy(bike.fit.front);
     this.wheelR = joint(this.body);
@@ -972,5 +978,82 @@ export class RiderModel {
   resetCrash() {
     this.body.rotation.x = 0;
     this.body.position.y = 0;
+    if (this.wreckSnap) {
+      this.wreckSnap = null;
+      this.body.rotation.set(0, 0, 0);
+    }
+  }
+
+  private wq = new THREE.Quaternion();
+  private wq2 = new THREE.Quaternion();
+  private we = new THREE.Euler(0, 0, 0, 'YZX');
+  private wv = new THREE.Vector3();
+  private wPiv = new THREE.Vector3();
+
+  /**
+   * Sturz wie im Feld (wreck.ts): Rad und Fahrer trennen sich. Ausgangspunkt ist die Fahrhaltung im Moment des
+   * Aufpralls; das Rad dreht als Ganzes (Nicken um den Aufstandspunkt vorn, dann Kippen und Drehen), der Körper um
+   * das Becken; die Arme gehen zum Abstützen nach vorn, die Beine ziehen sich an.
+   */
+  crashPose(c: WreckPose) {
+    const body = this.body;
+    if (!this.wreckSnap) {
+      body.rotation.set(0, 0, 0);
+      body.position.set(0, 0, 0);
+      const list = [this.frameBone, this.wheelF, this.wheelR, this.crank, this.lamp, this.torso, this.head, ...this.thighs, ...this.shins, ...this.shoes, ...this.uppers, ...this.fores];
+      this.wreckSnap = list.map((b) => ({ b, p: b.position.clone(), q: b.quaternion.clone() }));
+    }
+    const snap = this.wreckSnap;
+    const at = (b: THREE.Object3D) => snap.find((x) => x.b === b)!;
+    body.rotation.set(0, 0, 0);
+    body.position.set(0, 0, 0);
+    // ---- Rad: Nicken um den Aufstandspunkt des Vorderrads, dann Kippen/Drehen um den Boden unter dem Tretlager
+    const fz = at(this.wheelF).p.z;
+    const qp = this.wq2.setFromAxisAngle(XAXIS, c.bike.pitch);
+    const qb = this.wq.setFromEuler(this.we.set(0, c.bike.yaw, c.bike.roll, 'YZX'));
+    for (const b of [this.frameBone, this.wheelF, this.wheelR, this.crank, this.lamp]) {
+      const s0 = at(b);
+      const v = this.wv.copy(s0.p);
+      v.z -= fz;
+      v.applyQuaternion(qp);
+      v.z += fz;
+      v.applyQuaternion(qb);
+      b.position.set(v.x + c.bike.x, v.y + c.bike.y, v.z + c.bike.z);
+      b.quaternion.copy(qb).multiply(qp).multiply(s0.q);
+    }
+    // ---- Körper: Arme und Beine im Körper bewegen, dann alles um das Becken drehen
+    const piv = this.wPiv.copy(at(this.torso).p);
+    const qr = this.we.set(c.rider.pitch, c.rider.yaw, c.rider.roll, 'YZX');
+    const QR = new THREE.Quaternion().setFromEuler(qr);
+    const place = (b: THREE.Object3D, p: THREE.Vector3, q: THREE.Quaternion) => {
+      const v = this.wv.copy(p).sub(piv).applyQuaternion(QR).add(piv);
+      b.position.set(v.x + c.rider.x, v.y + c.rider.y, v.z + c.rider.z);
+      b.quaternion.copy(QR).multiply(q);
+    };
+    place(this.torso, at(this.torso).p, at(this.torso).q);
+    place(this.head, at(this.head).p, at(this.head).q);
+    // Arme: um die Schulter nach vorn/oben (abstützen), leicht nach außen
+    for (let s = 0; s < 2; s++) {
+      const sx = s === 0 ? -1 : 1;
+      const up = at(this.uppers[s]);
+      const fo = at(this.fores[s]);
+      const sh = up.p;
+      const rot = new THREE.Quaternion().setFromAxisAngle(XAXIS, 1.25 * c.brace)
+        .premultiply(new THREE.Quaternion().setFromAxisAngle(ZAXIS, -sx * 0.35 * c.brace));
+      place(this.uppers[s], sh, new THREE.Quaternion().copy(rot).multiply(up.q));
+      const el = new THREE.Vector3().copy(fo.p).sub(sh).applyQuaternion(rot).add(sh);
+      place(this.fores[s], el, new THREE.Quaternion().copy(rot).multiply(fo.q));
+    }
+    // Beine: um die Hüfte angezogen (Knie zur Brust), Unterschenkel und Schuh folgen
+    for (let s = 0; s < 2; s++) {
+      const th = at(this.thighs[s]);
+      const sn = at(this.shins[s]);
+      const so = at(this.shoes[s]);
+      const hip = th.p;
+      const rot = new THREE.Quaternion().setFromAxisAngle(XAXIS, (s === 0 ? 0.55 : 0.25) * c.tuck);
+      place(this.thighs[s], hip, new THREE.Quaternion().copy(rot).multiply(th.q));
+      place(this.shins[s], new THREE.Vector3().copy(sn.p).sub(hip).applyQuaternion(rot).add(hip), new THREE.Quaternion().copy(rot).multiply(sn.q));
+      place(this.shoes[s], new THREE.Vector3().copy(so.p).sub(hip).applyQuaternion(rot).add(hip), new THREE.Quaternion().copy(rot).multiply(so.q));
+    }
   }
 }

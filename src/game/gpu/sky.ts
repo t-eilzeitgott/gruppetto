@@ -210,12 +210,18 @@ export function makeSun(): THREE.DirectionalLight {
   const sun = new THREE.DirectionalLight(0xfff1dc, 3.1);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.04;
+  // Versatz gegen Schattenakne: relativ zur Tiefe der Schattenkamera (hier gut 2,7 km) – also klein, sonst wird
+  // er meterweit (vorher −0,0004 auf 6 km = 2,4 m: Fahrer, Leitplanken und Zuschauer warfen gar keinen Schatten)
+  sun.shadow.bias = -0.00002;
+  sun.shadow.normalBias = 0.03;
   sun.shadow.radius = 3;
   const sc = sun.shadow.camera as THREE.OrthographicCamera;
-  // weit nach hinten: mit umgekehrter Tiefe galt alles hinter der fernen Ebene als verschattet (Täler schwarz)
-  sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1; sc.far = 6000;
+  // das Licht steht 1500 m vor der Mitte (Race/Showcase.updateSun); nach hinten weit genug, dass auch tiefe Täler
+  // drin liegen (mit umgekehrter Tiefe galt alles hinter der fernen Ebene als verschattet: Täler schwarz)
+  sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1350; sc.far = 4100;
+  // ohne das bliebe die Voreinstellung (10 × 10 m, bis 500 m) – das Licht steht aber 1500 m weit weg: die
+  // Schattenkarte war leer, im Spiel gab es keine Sonnenschatten
+  sc.updateProjectionMatrix();
   return sun;
 }
 

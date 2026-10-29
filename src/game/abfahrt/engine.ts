@@ -9,6 +9,7 @@ import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { Mission, MissionStat } from './missions';
 import { cadenceFor, pedalStep, smooth } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
+import { wreckSettled, wreckTravel, type Wreck } from './wreck';
 import type { GhostRider } from '../tt';
 
 export const G = 9.81;
@@ -46,6 +47,10 @@ export interface Opp {
   cad?: number;
   /** Geist (Zeitfahren): halbdurchsichtig mit dieser Deckkraft (0 = unsichtbar) */
   ghost?: number;
+  /** gestürzt (Massensturz, WebGPU-Abfahrt): liegt und rutscht nach wreck.ts */
+  wreck?: Wreck;
+  /** sieht den Sturz voraus und reagiert ab dieser Spielzeit (s) – vorher fährt er ahnungslos weiter */
+  sees?: number;
 }
 
 export interface Particle {
@@ -144,6 +149,11 @@ export interface GameOptions {
   cruise?: number;
   /** Geister: eigener Lauf und die der Runde (heute oder der letzte) */
   ghosts?: GhostRider[];
+  /**
+   * WebGPU-Abfahrt: keine Hindernisse auf der Straße; dafür Massenstürze – wer zu schnell auf ein Hinterrad fährt,
+   * reißt sich und den Vordermann um, und wer dahinter zu spät reagiert, fällt drüber
+   */
+  pileups?: boolean;
   onEvent?: (e: GameEvent) => void;
   onOver?: (r: RunResult) => void;
 }
@@ -170,6 +180,12 @@ export class Abfahrt {
   private pack!: GhostPack;
   private rec = new GhostRecorder();
   private ghostT = 0;
+  /** eigener Sturz im Massensturz (wreck.ts); null = kein solcher Sturz */
+  wreck: Wreck | null = null;
+  /** Gestürzte im aktuellen Massensturz (mit dir) */
+  pileCount = 0;
+  /** Ort des ersten Aufpralls (Kamera) */
+  pileAt: { z: number; x: number } | null = null;
   score = emptyParts();
   stats = emptyStats();
   chain = 0;
@@ -214,14 +230,18 @@ export class Abfahrt {
     this.missionsDone = new Set(opts.missionsDone);
     this.track = new Track(opts.dayKey, opts.names);
     if (opts.cruise) { this.track.dropHazards(); this.dbg.speed = opts.cruise; }
+    else if (opts.pileups) this.track.dropHazards();
     this.rng = mulberry32(this.track.seed ^ 0x5eed);
     this.reset();
   }
 
   reset() {
     this.track = new Track(this.opts.dayKey, this.opts.names);
-    if (this.opts.cruise) this.track.dropHazards();
+    if (this.opts.cruise || this.opts.pileups) this.track.dropHazards();
     this.rng = mulberry32(this.track.seed ^ 0x5eed);
+    this.wreck = null;
+    this.pileCount = 0;
+    this.pileAt = null;
     this.p = {
       z: 6, x: 0.9, vx: 0, v: 0, y: 0, vy: 0, air: false, airT: 0,
       lean: 0, pedal: 0, tuck: 0, brake: 0, wobble: 0, slip: 0, grip: 1, slick: 0,
@@ -345,8 +365,15 @@ export class Abfahrt {
     this.stepGhosts(dt);
 
     if (this.phase === 'crash') {
-      this.timeScale = this.phaseT < 0.9 ? 0.35 : Math.min(1, this.timeScale + dtReal * 2);
-      if (this.phaseT > 1.8) this.finish();
+      if (this.wreck) {
+        // Massensturz: kurz Zeitlupe, dann in Echtzeit zusehen, wie das Feld drüberfällt – Ende, wenn alles liegt
+        this.timeScale = this.phaseT < 1.1 ? 0.4 : Math.min(1, this.timeScale + dtReal * 1.5);
+        const moving = this.opps.some((o) => o.wreck && !wreckSettled(o.wreck));
+        if ((this.phaseT > 3.2 && !moving && wreckSettled(this.wreck)) || this.phaseT > 6.5) this.finish();
+      } else {
+        this.timeScale = this.phaseT < 0.9 ? 0.35 : Math.min(1, this.timeScale + dtReal * 2);
+        if (this.phaseT > 1.8) this.finish();
+      }
     }
     this.track.trim(Math.floor(this.p.z / SEG) - 200);
   }
@@ -680,6 +707,7 @@ export class Abfahrt {
   private oppContacts() {
     const p = this.p;
     for (const o of this.opps) {
+      if (o.wreck) continue;
       const dz = o.z - p.z;
       const dx = o.x - p.x;
       // überholt?
@@ -697,6 +725,8 @@ export class Abfahrt {
       if (dz > 0.9) {
         // von hinten aufs Hinterrad
         const closing = p.v - o.v;
+        if (this.opts.pileups && !o.wreck && closing > 3.4 && this.phaseT > 2) { this.pileup(o, closing); return; }
+        if (o.wreck) continue;
         if (closing > 8 && this.phaseT > 4) { this.crash('Auffahrunfall im Feld'); return; }
         p.v = Math.min(p.v, o.v - 0.4);
         p.z = Math.min(p.z, o.z - 1.75);
@@ -839,6 +869,15 @@ export class Abfahrt {
     const live = this.phase === 'playing' || this.phase === 'crash';
     for (const o of this.opps) {
       const seg = this.track.segAt(o.z);
+      if (o.wreck) {
+        const w = o.wreck;
+        w.t += dt;
+        const tr = wreckTravel(w);
+        o.z = w.z0 + tr.s;
+        o.v = tr.v;
+        o.vx = 0;
+        continue;
+      }
       if (!live) {
         o.pedal += dt * 0.3;
         continue;
@@ -855,11 +894,27 @@ export class Abfahrt {
       let target = Math.min(vEq, vC, VMAX - 2);
       // nicht auf den Vordermann auffahren
       for (const q of this.opps) {
-        if (q === o) continue;
+        if (q === o || q.wreck) continue;
         const dz = q.z - o.z;
         if (dz > 0 && dz < 2.6 && Math.abs(q.x - o.x) < 0.7) target = Math.min(target, q.v);
       }
-      const acc = clamp((target - o.v) * 0.9, -6.5, o.v < 13 ? 2.6 : 1.6);
+      // Sturz voraus: erst nach der Schrecksekunde bremsen (voll) und an der Seite vorbei, wo Platz ist
+      let dodge: number | null = null;
+      if (this.pileAt) {
+        if (o.sees === undefined && this.pileAt.z - o.z < 60 && this.pileAt.z > o.z - 2) o.sees = this.time + 0.35 + this.rng() * 0.55;
+        if (o.sees !== undefined && this.time >= o.sees) {
+          let near = Infinity;
+          let wx = 0;
+          for (const w of this.wrecks()) { const d = w.z - o.z; if (d > -1 && d < near) { near = d; wx = w.x; } }
+          if (near < 45) {
+            target = 0;
+            o.brake = 1;
+            dodge = wx > 0 ? -ROAD_HALF + 0.6 : ROAD_HALF - 0.6;
+          }
+        }
+      }
+      const hardBrake = dodge !== null;
+      const acc = clamp((target - o.v) * 0.9, hardBrake ? -7.5 : -6.5, o.v < 13 ? 2.6 : 1.6);
       // Bremshaltung weich (vorher ein Schalter: der Oberkörper sprang hoch und wieder runter)
       o.brake += ((acc < -1.5 ? 1 : 0) - o.brake) * Math.min(1, dt * 6);
       o.v = Math.max(0, o.v + acc * dt);
@@ -875,6 +930,7 @@ export class Abfahrt {
       }
       const p = this.p;
       if (Math.abs(p.z - o.z) < 2.4 && Math.abs(p.x - o.x) < 0.95) tx = o.x + (o.x > p.x ? 0.6 : -0.6);
+      if (dodge !== null) tx = dodge;
       tx = clamp(tx, -ROAD_HALF + 0.45, ROAD_HALF - 0.45);
       o.vx += ((tx - o.x) * 3.2 - o.vx * 2.6) * dt;
       o.x = clamp(o.x + o.vx * dt, -ROAD_HALF + 0.3, ROAD_HALF - 0.3);
@@ -886,6 +942,7 @@ export class Abfahrt {
       o.tuck += ((1 - 0.8 * drive) - o.tuck) * Math.min(1, dt * 2);
       pedalStep(o, drive * cadenceFor(o.v), dt);
     }
+    if (this.pileAt) this.wreckHits();
     // Kühe laufen
     if (live) {
       const i0 = Math.floor(this.p.z / SEG);
@@ -1003,6 +1060,64 @@ export class Abfahrt {
     try { navigator.vibrate?.(140); } catch { /* egal */ }
   }
 
+  // ------------------------------------------------------------ Massensturz (WebGPU-Abfahrt)
+
+  /** zu schnell aufs Hinterrad: du und der Vordermann geht zu Boden – der Anfang eines Massensturzes */
+  private pileup(o: Opp, closing: number) {
+    const p = this.p;
+    const side = o.x >= p.x ? -1 : 1;
+    this.pileAt = { z: o.z, x: (o.x + p.x) / 2 };
+    this.wreckOpp(o, o.v + closing * 0.35, -side);
+    this.wreck = { t: 0, v0: p.v, side, seed: this.rng() * 100, z0: p.z, x0: p.x };
+    this.pileCount += 1;
+    this.crash('Massensturz – zu schnell aufs Hinterrad');
+  }
+
+  private wreckOpp(o: Opp, v: number, side: number) {
+    o.wreck = { t: 0, v0: v, side, seed: o.id * 1.37 + this.rng(), z0: o.z, x0: o.x };
+    o.brake = 0;
+    o.bump = 0;
+    this.pileCount += 1;
+    if (!this.pileAt) this.pileAt = { z: o.z, x: o.x };
+    if (this.pileCount >= 3 && this.phase === 'crash') this.pop(`Massensturz! ${this.pileCount} Fahrer`, 'red', undefined, true);
+    for (let i = 0; i < 6; i++) this.dust(o.z, o.x + (this.rng() - 0.5), 'verge');
+    this.shake = Math.max(this.shake, 0.5);
+  }
+
+  /** wer gerade am Boden liegt: Ort des Körpers und wie weit das Rad dahinter liegt */
+  private wrecks(): { z: number; x: number; back: number }[] {
+    const out: { z: number; x: number; back: number }[] = [];
+    const add = (w: Wreck, z: number) => { const back = Math.min(3, Math.max(0.8, wreckTravel(w).s * 0.3)); out.push({ z, x: w.x0, back }); };
+    if (this.wreck) add(this.wreck, this.p.z);
+    for (const o of this.opps) if (o.wreck) add(o.wreck, o.z);
+    return out;
+  }
+
+  /** wer in Körper oder Rad am Boden fährt, stürzt drüber (Vorderrad zwischen Rad und Körper, seitlich überlappend) */
+  private wreckHits() {
+    const ws = this.wrecks();
+    if (!ws.length) return;
+    const hits = (z: number, x: number) => {
+      const front = z + 0.9;
+      for (const w of ws) if (front > w.z - w.back - 0.9 && front < w.z + 0.35 && Math.abs(x - w.x) < 0.78) return w;
+      return null;
+    };
+    for (const o of this.opps) {
+      if (o.wreck || o.v < 1.5) continue;
+      const w = hits(o.z, o.x);
+      if (w) this.wreckOpp(o, o.v, o.x >= w.x ? 1 : -1);
+    }
+    const p = this.p;
+    if (this.phase === 'playing' && !this.wreck) {
+      const w = hits(p.z, p.x);
+      if (w) {
+        this.wreck = { t: 0, v0: p.v, side: p.x >= w.x ? 1 : -1, seed: this.rng() * 100, z0: p.z, x0: p.x };
+        this.pileCount += 1;
+        this.crash('In den Massensturz gefahren');
+      }
+    }
+  }
+
   /** eigene Spur mitschreiben, Geister nachfahren lassen, Namensschild für den nächsten voraus */
   private stepGhosts(dt: number) {
     const p = this.p;
@@ -1017,6 +1132,17 @@ export class Abfahrt {
 
   private stepCrash(dt: number) {
     const p = this.p;
+    if (this.wreck) {
+      const w = this.wreck;
+      w.t += dt;
+      const tr = wreckTravel(w);
+      p.z = w.z0 + tr.s;
+      p.v = tr.v;
+      p.vx = 0;
+      p.y = this.track.heightAt(p.z);
+      this.wreckHits();
+      return;
+    }
     p.v = Math.max(0, p.v - 14 * dt);
     p.z += p.v * dt;
     p.x += p.vx * dt * 0.5;
