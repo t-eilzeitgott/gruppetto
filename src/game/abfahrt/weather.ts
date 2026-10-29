@@ -371,7 +371,7 @@ export class WeatherFx {
       const mat = m.material as THREE.Material;
       if (!mat || (mat as THREE.ShaderMaterial).isShaderMaterial || (mat as THREE.SpriteMaterial).isSpriteMaterial) return;
       m.receiveShadow = true;
-      m.castShadow = !noCast.includes(mat) && !mat.transparent;
+      m.castShadow = !noCast.includes(mat) && !mat.transparent && !o.userData.noShadow;
     });
   }
 

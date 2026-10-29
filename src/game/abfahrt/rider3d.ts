@@ -190,8 +190,12 @@ function torsoMat(kit: Kit): THREE.MeshLambertMaterial {
   const H = 128;
   const cv = document.createElement('canvas');
   cv.width = W;
-  cv.height = H;
+  // unten ein weißer Streifen (TORSO_PAD): dorthin zeigen Arme und Beine, die mit dem Rumpf in einem Netz
+  // stecken und ihre Farbe je Ecke tragen
+  cv.height = H + TORSO_PAD;
   const c = cv.getContext('2d')!;
+  c.fillStyle = '#ffffff';
+  c.fillRect(0, H, W, TORSO_PAD);
   const vy = (y: number) => H * (1 - (y - TORSO_Y0) / (TORSO_Y1 - TORSO_Y0));
   c.fillStyle = kit.jersey;
   c.fillRect(0, 0, W, H);
@@ -237,10 +241,14 @@ function torsoMat(kit: Kit): THREE.MeshLambertMaterial {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;
   tex.anisotropy = 4;
-  const m = new THREE.MeshLambertMaterial({ map: tex });
+  const m = new THREE.MeshLambertMaterial({ map: tex, vertexColors: true });
   torsoCache.set(key, m);
   return m;
 }
+/** weißer Streifen unter der Trikottextur (Bildpunkte) */
+const TORSO_PAD = 16;
+/** Texturkoordinate (v) der Glieder: mitten im weißen Streifen */
+const LIMB_V = TORSO_PAD / 2 / (128 + TORSO_PAD);
 
 /** Rumpf mit Gesäß, Taille, Brust, rundem Rücken und Schultern; y = Wirbelsäule (0 = Hüfte) */
 function torsoGeo(): THREE.BufferGeometry {
@@ -254,7 +262,12 @@ function torsoGeo(): THREE.BufferGeometry {
   const rings: Ring[] = rows.map(([y, a, b]) => ({ y, a, b, cz: back(y) + (y < 0 ? 0.012 : 0), c: w }));
   const mb = new MB();
   loft(mb, rings, 20, 0, 1);
-  return mb.build();
+  const g = mb.build();
+  // Textur hat unten den weißen Streifen der Glieder: den Rumpf in den Teil darüber legen
+  const uv = g.getAttribute('uv');
+  const k = 128 / (128 + TORSO_PAD);
+  for (let i = 0; i < uv.count; i++) uv.setY(i, 1 - k + uv.getY(i) * k);
+  return g;
 }
 
 /** Unterarm mit Handschuh: Hand flach und breit, Finger leicht eingerollt, Daumen innen (sx = Seite) */
@@ -313,9 +326,6 @@ export function riderKitKey(kit: Kit): string {
   return `${kit.jersey}|${kit.side}|${kit.helmet}|${kit.shorts}|${kit.skin}|${kit.shoes}|${kit.number}|${kit.bike ?? ''}`;
 }
 
-let smoothMat: THREE.MeshLambertMaterial | null = null;
-const baseMat = () => (smoothMat ??= new THREE.MeshLambertMaterial({ vertexColors: true }));
-
 let lamp: { geo: THREE.BufferGeometry; mat: THREE.MeshLambertMaterial } | null = null;
 function lampParts() {
   return (lamp ??= {
@@ -353,15 +363,12 @@ function blurParts() {
   blur = { mat: new LambertFarMaterial({ map: alphaTex(cv, [40, 40, 44]), transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }), geos: new Map() };
   return blur;
 }
-function blurDisc(r: number): THREE.Mesh {
+function blurDiscGeo(r: number): THREE.BufferGeometry {
   const b = blurParts();
   const key = Math.round(r * 1000);
   let geo = b.geos.get(key);
   if (!geo) { geo = new THREE.CircleGeometry(r, 28).rotateY(Math.PI / 2); b.geos.set(key, geo); }
-  const m = new THREE.Mesh(geo, b.mat);
-  m.renderOrder = 2;
-  m.visible = false;
-  return m;
+  return geo;
 }
 
 let shadowGeo: THREE.PlaneGeometry | null = null;
@@ -434,33 +441,107 @@ function trunkAngle(pelvis: THREE.Vector3, target: THREE.Vector3, len: number, d
   return Math.atan2(Dz, Dy) + Math.asin(Math.max(-1, Math.min(1, K / Rr)));
 }
 
+/**
+ * Ein Fahrer besteht aus gut zwanzig bewegten Teilen (Rad, Räder, Kurbel, Glieder, Kopf …). Jedes als eigenes
+ * Netz hieße gut zwanzig Zeichenaufrufe je Fahrer – im Feld des Sprints mehrere hundert je Bild, auf dem Handy
+ * der teuerste Posten. Deshalb sind die Teile je Material zu einem Netz verschmolzen und hängen über
+ * „Knochen“ (Skinning, ein Knochen je Teil) an den bewegten Gelenken: die Animation setzt wie bisher Lage und
+ * Drehung der Gelenke, das Netz folgt im Vertex-Shader. Die Knochenmatrizen sind relativ zum Körper (nicht
+ * Weltkoordinaten): so bleiben sie klein und genau, obwohl die Welt kilometerweit reicht.
+ */
+class RelSkeleton extends THREE.Skeleton {
+  private inv = new THREE.Matrix4();
+  private rel = new THREE.Matrix4();
+  constructor(bones: THREE.Bone[], private ref: THREE.Object3D) {
+    super(bones, bones.map(() => new THREE.Matrix4()));
+  }
+  override update() {
+    const inv = this.inv.copy(this.ref.matrixWorld).invert();
+    for (let i = 0; i < this.bones.length; i++) {
+      this.rel.multiplyMatrices(inv, this.bones[i].matrixWorld);
+      this.rel.toArray(this.boneMatrices!, i * 16);
+    }
+    if (this.boneTexture) this.boneTexture.needsUpdate = true;
+  }
+}
+
+const IDENTITY = new THREE.Matrix4();
+
+/** Teile (je in eigenen Koordinaten) zu einer Geometrie mit Knochenindex je Ecke */
+function skinGeo(parts: { g: THREE.BufferGeometry; bone: number; pad?: boolean }[]): THREE.BufferGeometry {
+  const g = new THREE.BufferGeometry();
+  let n = 0;
+  let ni = 0;
+  for (const { g: a } of parts) { n += a.getAttribute('position').count; ni += a.index ? a.index.count : a.getAttribute('position').count; }
+  // Attribute, die alle Teile haben (Farbe und Glanz ergänzt, wo sie fehlen – das Material liest sie dann nicht)
+  const names = new Set(Object.keys(parts[0].g.attributes));
+  for (const { g: a } of parts) for (const k of names) if (!a.getAttribute(k) && k !== 'color' && k !== 'gloss' && k !== 'uv') names.delete(k);
+  const out: Record<string, { arr: Float32Array; size: number }> = {};
+  for (const k of names) {
+    const size = parts[0].g.getAttribute(k).itemSize;
+    out[k] = { arr: new Float32Array(n * size), size };
+  }
+  const si = new Float32Array(n * 4);
+  const sw = new Float32Array(n * 4);
+  const idx = n > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+  let ov = 0;
+  let oi = 0;
+  for (const { g: a, bone, pad } of parts) {
+    const c = a.getAttribute('position').count;
+    for (const k of names) {
+      const A = a.getAttribute(k) as THREE.BufferAttribute | undefined;
+      const o = out[k];
+      // pad: Teil ohne Textur (Farbe je Ecke) – zeigt auf den weißen Streifen der Trikottextur
+      if (A && A.itemSize === o.size && !(pad && k === 'uv')) o.arr.set(A.array as Float32Array, ov * o.size);
+      else if (k === 'color') o.arr.fill(1, ov * 3, (ov + c) * 3);
+      else if (k === 'gloss') o.arr.fill(0.3, ov, ov + c);
+      else if (k === 'uv') for (let i = 0; i < c; i++) { o.arr[(ov + i) * 2] = 0.5; o.arr[(ov + i) * 2 + 1] = LIMB_V; }
+    }
+    for (let i = 0; i < c; i++) { si[(ov + i) * 4] = bone; sw[(ov + i) * 4] = 1; }
+    if (a.index) for (let i = 0; i < a.index.count; i++) idx[oi + i] = a.index.getX(i) + ov;
+    else for (let i = 0; i < c; i++) idx[oi + i] = ov + i;
+    ov += c;
+    oi += a.index ? a.index.count : c;
+  }
+  for (const k of names) g.setAttribute(k, new THREE.BufferAttribute(out[k].arr, out[k].size));
+  g.setAttribute('skinIndex', new THREE.BufferAttribute(si, 4));
+  g.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  // die Teile bewegen sich um höchstens gut einen Meter: eine feste Hülle statt je Bild neu
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.8, 0), 2.4);
+  return g;
+}
+
 export class RiderModel {
   readonly group = new THREE.Group();
   private body = new THREE.Group();
-  private torso: THREE.Mesh;
-  private head: THREE.Mesh;
-  private thighs: THREE.Mesh[] = [];
-  private shins: THREE.Mesh[] = [];
-  private uppers: THREE.Mesh[] = [];
-  private fores: THREE.Mesh[] = [];
-  private shoes: THREE.Mesh[] = [];
-  private wheelF: THREE.Mesh;
-  private wheelR: THREE.Mesh;
-  /** Speichen und ihre Unschärfe-Scheiben (vorn, hinten) */
-  private spokes: THREE.Mesh[] = [];
-  private blurs: THREE.Mesh[] = [];
+  private torso: THREE.Bone;
+  private head: THREE.Bone;
+  private thighs: THREE.Bone[] = [];
+  private shins: THREE.Bone[] = [];
+  private uppers: THREE.Bone[] = [];
+  private fores: THREE.Bone[] = [];
+  private shoes: THREE.Bone[] = [];
+  private wheelF: THREE.Bone;
+  private wheelR: THREE.Bone;
+  /** Speichen und ihre Unschärfe-Scheiben (beide Räder je ein Netz) */
+  private spokes: THREE.Object3D[] = [];
+  private blurs: THREE.Object3D[] = [];
   private lastRoll = 0;
   private blurOn = false;
   /** weit weg: kleine Teile (Kurbel, Schriftzüge, Schuhe, Gelenkkappen, Speichen) nicht zeichnen */
   private far = false;
   private minor: THREE.Object3D[] = [];
-  private crank: THREE.Mesh;
+  private crank: THREE.Bone;
   readonly shadow: THREE.Mesh;
   readonly lamp: THREE.Mesh;
   kitKey = '';
   /** Anhänger (Wohnwagen): hängt in der Kupplung, folgt der gefahrenen Spur, neigt sich nicht mit */
   private trailer: THREE.Group | null = null;
-  private trailerWheels: THREE.Mesh[] = [];
+  private trailerWheels: THREE.Bone[] = [];
+  /** alle Netze (zum Umschalten der Materialien beim Durchsichtigwerden) */
+  private meshes: THREE.Mesh[] = [];
+  private skel: RelSkeleton;
   private hitch = new THREE.Vector3();
   private trailerSpin = 1;
   private trailerAxle = 0;
@@ -477,74 +558,81 @@ export class RiderModel {
     this.group.add(this.body);
     // Geometrien und Materialien werden je Aussehen nur einmal gebaut und von allen Fahrern geteilt –
     // ein neuer Fahrer im Bild kostet so kaum Rechenzeit (sonst ruckelt es, wenn Fahrer auftauchen)
-    const smooth = baseMat();
     const gloss = glossMat();
     // kleine Teile: lösen sich in der Ferne gerastert auf (kein Aufploppen)
     const glossFar = glossFarMat();
     const bike = bikeBuild(kit.bike, kit, q);
     this.fit = bike.fit;
-    const frame = new THREE.Mesh(bike.frame, gloss);
-    this.wheelF = new THREE.Mesh(bike.wheelF, gloss);
+    // Gelenke (Knochen): ein Teil je Knochen, die Geometrien hängen als verschmolzene Netze daran
+    const bones: THREE.Bone[] = [];
+    const joint = (parent: THREE.Object3D) => { const b = new THREE.Bone(); parent.add(b); bones.push(b); return b; };
+    const fixed = joint(this.body);
+    this.wheelF = joint(this.body);
     this.wheelF.position.copy(bike.fit.front);
-    this.wheelR = new THREE.Mesh(bike.wheelR, gloss);
+    this.wheelR = joint(this.body);
     this.wheelR.position.copy(bike.fit.rear);
-    this.crank = new THREE.Mesh(bike.crank, glossFar);
+    this.crank = joint(this.body);
     // Hochrad: die Kurbel sitzt an der Vorderradnabe
     this.crank.position.copy(bike.fit.bb ?? BB);
-    this.body.add(frame, this.wheelF, this.wheelR, this.crank);
+    const bi = (b: THREE.Bone) => bones.indexOf(b);
+    // Netze je Material: Glanz (Rahmen, Räder, Kopf, Anhänger), kleine Glanzteile (Kurbel, Schuhe), Glieder
+    const glossParts: { g: THREE.BufferGeometry; bone: number }[] = [{ g: bike.frame, bone: bi(fixed) }, { g: bike.wheelF, bone: bi(this.wheelF) }, { g: bike.wheelR, bone: bi(this.wheelR) }];
+    const farParts: { g: THREE.BufferGeometry; bone: number }[] = [{ g: bike.crank, bone: bi(this.crank) }];
+    const spokeParts: { g: THREE.BufferGeometry; bone: number }[] = [];
+    const blurParts2: { g: THREE.BufferGeometry; bone: number }[] = [];
     for (const [w, geo, r] of [[this.wheelF, bike.spokes.f, bike.spokes.rF], [this.wheelR, bike.spokes.r, bike.spokes.rR]] as const) {
       if (!geo) continue;
-      const sp = new THREE.Mesh(geo, glossFar);
-      const bd = blurDisc(r);
-      w.add(sp, bd);
-      this.spokes.push(sp);
-      this.blurs.push(bd);
+      spokeParts.push({ g: geo, bone: bi(w) });
+      blurParts2.push({ g: blurDiscGeo(r), bone: bi(w) });
     }
+    const decalParts: { g: THREE.BufferGeometry; bone: number; mat: THREE.Material }[] = [];
     if (bike.decal) {
-      const d = new THREE.Mesh(bike.decal.frame, bike.decal.mat);
-      this.body.add(d);
-      this.minor.push(d);
-      if (bike.decal.rimF) { const m = new THREE.Mesh(bike.decal.rimF, bike.decal.rimMat); this.wheelF.add(m); this.minor.push(m); }
-      if (bike.decal.rimR) { const m = new THREE.Mesh(bike.decal.rimR, bike.decal.rimMat); this.wheelR.add(m); this.minor.push(m); }
+      decalParts.push({ g: bike.decal.frame, bone: bi(fixed), mat: bike.decal.mat });
+      if (bike.decal.rimF) decalParts.push({ g: bike.decal.rimF, bone: bi(this.wheelF), mat: bike.decal.rimMat });
+      if (bike.decal.rimR) decalParts.push({ g: bike.decal.rimR, bone: bi(this.wheelR), mat: bike.decal.rimMat });
     }
-    this.minor.push(this.crank);
     const g = limbGeos(kit);
     const shoe = shoeBuild(kit, bike.spec.pedals, q);
+    const limbParts: { g: THREE.BufferGeometry; bone: number; pad: boolean }[] = [];
     for (let s = 0; s < 2; s++) {
-      const t = new THREE.Mesh(g.thigh, smooth);
-      const c = new THREE.Mesh(g.shin, smooth);
-      const u = new THREE.Mesh(g.upper, smooth);
-      const f = new THREE.Mesh(s === 0 ? g.foreL : g.foreR, smooth);
-      const sh = new THREE.Mesh(shoe, glossFar);
+      const t = joint(this.body);
+      const c = joint(this.body);
+      const u = joint(this.body);
+      const f = joint(this.body);
+      const sh = joint(this.body);
       this.thighs.push(t);
       this.shins.push(c);
       this.uppers.push(u);
       this.fores.push(f);
       this.shoes.push(sh);
-      this.body.add(t, c, u, f, sh);
-      this.minor.push(sh);
+      limbParts.push({ g: g.thigh, bone: bi(t), pad: true }, { g: g.shin, bone: bi(c), pad: true }, { g: g.upper, bone: bi(u), pad: true }, { g: s === 0 ? g.foreL : g.foreR, bone: bi(f), pad: true });
+      farParts.push({ g: shoe, bone: bi(sh) });
     }
-    this.torso = new THREE.Mesh(cached('torso', () => torsoGeo()), torsoMat(kit));
+    this.torso = joint(this.body);
     // manche Räder bringen ihren eigenen Helm mit (Weltmeisterweiß, Gold)
-    this.head = new THREE.Mesh(headBuild(bike.spec.helmet ? { ...kit, helmet: bike.spec.helmet } : kit, bike.spec.head, q), gloss);
-    this.body.add(this.torso, this.head);
+    this.head = joint(this.body);
+    glossParts.push({ g: headBuild(bike.spec.helmet ? { ...kit, helmet: bike.spec.helmet } : kit, bike.spec.head, q), bone: bi(this.head) });
 
     const lamp = lampParts();
     this.lamp = new THREE.Mesh(lamp.geo, lamp.mat);
     this.lamp.position.copy(bike.fit.lamp);
     this.body.add(this.lamp);
+    // (in der Ferne kein eigener Zeichenaufruf für das Rücklicht: ein paar Zentimeter groß)
+    this.minor.push(this.lamp);
+    let plate: { g: THREE.BufferGeometry; bone: number; mat: THREE.Material } | null = null;
     if (bike.trailer) {
       const t = bike.trailer;
       const tr = new THREE.Group();
       tr.rotation.order = 'YXZ';
-      tr.add(new THREE.Mesh(t.body, gloss));
+      const tb = joint(tr);
+      glossParts.push({ g: t.body, bone: bi(tb) });
       for (const w of t.wheels) {
-        const m = new THREE.Mesh(t.wheel, gloss);
+        const m = joint(tr);
         m.position.copy(w);
-        tr.add(m);
         this.trailerWheels.push(m);
+        glossParts.push({ g: t.wheel, bone: bi(m) });
       }
-      if (t.plate) tr.add(new THREE.Mesh(t.plate.geo, t.plate.mat));
+      if (t.plate) plate = { g: t.plate.geo, bone: bi(tb), mat: t.plate.mat };
       const sh = new THREE.Mesh(SHADOW_GEO(), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.5 }));
       sh.rotation.x = -Math.PI / 2;
       sh.scale.set(0.95, 0.85, 1);
@@ -559,12 +647,44 @@ export class RiderModel {
       this.trailer = tr;
       this.group.add(tr);
     }
+    // verschmolzene Netze (Geometrie je Aussehen geteilt, Skelett je Fahrer)
+    const skel = new RelSkeleton(bones, this.body);
+    this.skel = skel;
+    const key = `${riderKitKey(kit)}|${q}`;
+    const skinned = (name: string, parts: { g: THREE.BufferGeometry; bone: number }[], mat: THREE.Material, order = 0) => {
+      const geo = cached(`skin:${name}:${key}`, () => skinGeo(parts));
+      const m = new THREE.SkinnedMesh(geo, mat);
+      m.bindMode = THREE.DetachedBindMode;
+      m.bind(skel, IDENTITY);
+      m.boundingSphere = geo.boundingSphere!.clone();
+      m.renderOrder = order;
+      this.body.add(m);
+      this.meshes.push(m);
+      return m;
+    };
+    skinned('gloss', glossParts, gloss);
+    // Rumpf (Trikottextur) und Glieder (Farbe je Ecke) in einem Netz: die Glieder zeigen auf den weißen Streifen
+    skinned('body', [{ g: cached('torso', () => torsoGeo()), bone: bi(this.torso) }, ...limbParts], torsoMat(kit));
+    this.minor.push(skinned('far', farParts, glossFar));
+    if (spokeParts.length) {
+      this.spokes.push(skinned('spokes', spokeParts, glossFar));
+      const bd = skinned('blur', blurParts2, blurParts().mat, 2);
+      bd.visible = false;
+      this.blurs.push(bd);
+    }
+    decalParts.forEach((d, i) => this.minor.push(skinned(`decal${i}`, [d], d.mat)));
+    if (plate) skinned('plate', [plate], plate.mat);
     this.shadow = new THREE.Mesh(SHADOW_GEO(), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.55 }));
     this.shadow.rotation.x = -Math.PI / 2;
     this.shadow.position.y = 0.03;
     this.shadow.renderOrder = 1;
     this.group.add(this.shadow);
     this.kitKey = riderKitKey(kit);
+  }
+
+  /** Skelett (Knochentextur) freigeben; Geometrien und Materialien sind geteilt und bleiben */
+  dispose() {
+    this.skel.dispose();
   }
 
   /** In der Ferne zeigt ein 2D-Bild den Fahrer (riderSprites): Körper und Rad nicht zeichnen – der Schatten bleibt */
@@ -609,14 +729,13 @@ export class RiderModel {
     if (this.fadeMats) return;
     const list: THREE.Material[] = [];
     const cache = new Map<THREE.Material, THREE.Material>();
-    this.body.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (!m.isMesh || Array.isArray(m.material)) return;
+    for (const m of this.meshes) {
+      if (Array.isArray(m.material)) continue;
       const src = m.material as THREE.Material;
       let c = cache.get(src);
       if (!c) { c = src.clone(); c.transparent = true; appearify(c); cache.set(src, c); list.push(c); }
       m.material = c;
-    });
+    }
     this.fadeMats = list;
   }
 

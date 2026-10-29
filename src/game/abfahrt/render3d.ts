@@ -118,8 +118,11 @@ const shadeF = (c: RGBf, f: number): RGBf => [c[0] * f, c[1] * f, c[2] * f];
 const rgbLin = (c: RGB): RGBf => lin255(c[0], c[1], c[2]);
 
 interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg }
-interface CrowdBatch { near: THREE.Mesh[]; mid: THREE.Mesh[]; spr: THREE.Mesh | null; c: THREE.Vector3; r: number; lod: number }
+/** Zuschauergruppe: 3D-Netze (fein, einfach) für 10 m Straße, die Bilder (spr) decken 20 m (zwei Gruppen teilen sich eins) */
+interface CrowdBatch { near: THREE.Mesh[]; mid: THREE.Mesh[]; spr: THREE.Mesh | null; c: THREE.Vector3; r: number; sc: THREE.Vector3; sr: number; lod: number }
 interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[]; detail: Detail | null }
+/** Zubehör der Zuschauer, das die einfache Stufe (ab 16 m) weglässt */
+const MID_SKIP = new Set<string>(['small']);
 /** Kleinteile der Häuser eines Abschnitts: nur in der Nähe sichtbar */
 interface Detail { mesh: THREE.Mesh; c: THREE.Vector3; r: number }
 /** bis zu diesem Abstand (m, waagrecht bis zum Rand) zeigen Häuser Balkone, Fensterbänke und Blumen */
@@ -2714,6 +2717,8 @@ export class Renderer3D {
     tiles.uv = true;
     const signGB = new GB();
     signGB.uv = true;
+    const fans = new GB();
+    fans.uv = true;
     const detailGB = new GB();
     const town: Town = { facade, tiles, plain: roof, signs: signGB, lanterns: [], bulbs: [], detail: detailGB, occ: [] };
     let detail: Detail | null = null;
@@ -2724,7 +2729,7 @@ export class Renderer3D {
     this.adsGB = ads;
     const anim: number[] = [];
     const glows: number[] = [];
-    const people: Person[][] = [[], [], [], []];
+    const people: Person[][] = [[], [], [], [], [], [], [], []];
     const inst = new Map<Prop3D, { m: THREE.Matrix4[]; c: THREE.Color[] }>();
     this.cTrees = [];
     const cTrees = this.cTrees;
@@ -2803,7 +2808,7 @@ export class Renderer3D {
       if (s.sprites) {
         for (const sp of s.sprites) {
           const l = sp.x < 0 ? lim.L[r] : lim.R[r];
-          if (sp.k === 'crowd') this.crowdPeople(people[Math.min(3, Math.floor(r / 10))], s, sp.x < 0 ? -1 : 1, l, sp.v, Math.abs(sp.x) - EDGE);
+          if (sp.k === 'crowd') this.crowdPeople(people[Math.min(7, Math.floor(r / 5))], s, sp.x < 0 ? -1 : 1, l, sp.v, Math.abs(sp.x) - EDGE);
           else this.prop(group, disp, inst, bill, anim, glows, a, sp, s, l);
           if (this.late()) { yield; resume(); }
         }
@@ -2817,7 +2822,7 @@ export class Renderer3D {
       }
       // Fan-Bogen mit Spruchband (nicht dort, wo die Bestmarke eines Freundes steht)
       const fan = this.fanAt(s.i);
-      if (fan !== null && !g.friends.some((f) => Math.abs(Math.floor(f.meters / SEG) - s.i) <= 7)) this.fanArch(group, a, fan);
+      if (fan !== null && !g.friends.some((f) => Math.abs(Math.floor(f.meters / SEG) - s.i) <= 7)) this.fanArch(fans, roof, a, fan);
       for (const f of g.friends) {
         if (Math.floor(f.meters / SEG) !== s.i) continue;
         if (this.soon(2)) { yield; resume(); }
@@ -2889,6 +2894,7 @@ export class Renderer3D {
       },
       () => add(signGB, this.mats.sign, 0),
       () => add(ads, this.mats.ads, 0, true),
+      () => { if (this.fanMat) add(fans, this.fanMat, 0, true); },
     ];
     for (const f of parts) {
       // großes Teil nicht erst kurz vor Schluss des Budgets beginnen
@@ -2932,16 +2938,26 @@ export class Renderer3D {
     const crowd: CrowdBatch[] = [];
     const crowdGeos: THREE.BufferGeometry[] = [];
     const sprGeos: THREE.BufferGeometry[] = [];
-    for (const list of people) {
-      if (!list.length) continue;
-      if (this.late()) yield;
+    const sphereOf = (list: Person[]) => {
       const c = new THREE.Vector3();
       for (const pp of list) { c.x += pp.x; c.y += pp.y; c.z += pp.z; }
       c.divideScalar(list.length);
       let rad = 0;
       for (const pp of list) rad = Math.max(rad, Math.hypot(pp.x - c.x, pp.y - c.y, pp.z - c.z));
+      return { c, rad };
+    };
+    // 3D-Menschen in Gruppen je 10 m: so laufen nur für Menschen nahe der Kamera die feinen Netze durch den
+    // Shader (der je Person nach Abstand ausblendet – aber erst nach der Arbeit je Ecke); Bilder je 20 m
+    for (let pi = 0; pi < people.length; pi++) {
+      const list = people[pi];
+      if (!list.length) continue;
+      if (this.late()) yield;
+      const { c, rad } = sphereOf(list);
       const sphere = new THREE.Sphere(c, rad + 4);
-      const batch: CrowdBatch = { near: [], mid: [], spr: null, c, r: rad, lod: -1 };
+      // Bilder: beide 10-m-Hälften zusammen (die zweite Hälfte verweist auf dasselbe Netz)
+      const pair = pi % 2 === 0 ? [...list, ...people[pi + 1]] : [...people[pi - 1], ...list];
+      const sp = sphereOf(pair);
+      const batch: CrowdBatch = { near: [], mid: [], spr: null, c, r: rad, sc: sp.c, sr: sp.rad, lod: -1 };
       // nah: echte 3D-Menschen (ganz nah fein, bis 30 m vereinfacht)
       for (const kind of KINDS) {
         const sub = list.filter((pp) => needs(pp, kind));
@@ -2951,24 +2967,33 @@ export class Renderer3D {
         const data = new Float32Array(sub.length * STRIDE);
         sub.forEach((pp, k) => packPerson(pp, data, k));
         for (const lod of [0, 1] as const) {
+          // Kleinkram (Brille, Becher, Handy) ab 16 m: unter zwei Bildpunkte – weglassen spart einen Zeichenaufruf je
+          // Gruppe, sehen kann man es nicht
+          if (lod && MID_SKIP.has(kind)) continue;
           const geo = crowdGeometry(kind, lod, data, sub.length);
           if (!geo) continue;
           geo.boundingSphere = sphere.clone();
           crowdGeos.push(geo);
           const m = new THREE.Mesh(geo, this.crowdMat);
           m.visible = false;
+          // Zuschauer werfen keine Schatten: ihr Shader wählt die Stufe nach dem Abstand zur Kamera – in der
+          // Schattenkarte (Kamera = Sonne, weit weg) fiele ohnehin jeder heraus; der Aufruf wäre umsonst
+          m.userData.noShadow = true;
           group.add(m);
           (lod ? batch.mid : batch.near).push(m);
         }
       }
-      // weiter weg: alle als Bilder in einem Zeichenaufruf
-      const sg = spriteGeometry(list);
-      sg.boundingSphere = sphere.clone();
-      sprGeos.push(sg);
-      const sm = new THREE.Mesh(sg, this.sprMat);
-      sm.visible = false;
-      group.add(sm);
-      batch.spr = sm;
+      // weiter weg: alle als Bilder in einem Zeichenaufruf (je 20 m; die erste Hälfte baut es, die zweite teilt es)
+      if (pi % 2 === 0 || !people[pi - 1].length) {
+        const sg = spriteGeometry(pair);
+        sg.boundingSphere = new THREE.Sphere(sp.c, sp.rad + 4);
+        sprGeos.push(sg);
+        const sm = new THREE.Mesh(sg, this.sprMat);
+        sm.visible = false;
+        sm.userData.noShadow = true;
+        group.add(sm);
+        batch.spr = sm;
+      } else batch.spr = crowd[crowd.length - 1].spr;
       crowd.push(batch);
     }
     let glow: THREE.Points | null = null;
@@ -4426,24 +4451,36 @@ export class Renderer3D {
     return { pole: fg.pole, pennant: fg.pennant, ...c };
   }
 
-  /** Fan-Bogen: zwei Masten knapp hinter der Absperrung, dazwischen ein Spruchband quer über die Straße */
-  private fanArch(group: THREE.Group, a: Row, cell: number) {
+  /**
+   * Fan-Bogen: zwei Masten knapp hinter der Absperrung, dazwischen ein Spruchband quer über die Straße. Masten und
+   * Wimpel landen im Sammler der einfarbigen Teile, die Bänder in einem je Abschnitt (statt sechs Netze je Bogen)
+   */
+  private fanArch(fans: GB, plain: GB, a: Row, cell: number) {
     if (!this.fanMat) return;
     const parts = this.fanParts(cell);
-    const poleMat = this.matFor('fan:pole', () => new THREE.MeshLambertMaterial({ color: 0xd8d2c4 }));
-    const flagMat = this.matFor('fan:pennant', () => new THREE.MeshLambertMaterial({ color: 0xff5fa2, side: THREE.DoubleSide }));
-    const g = new THREE.Group();
-    g.add(new THREE.Mesh(parts.front, this.fanMat), new THREE.Mesh(parts.back, this.fanMat));
+    const m = new THREE.Matrix4().makeRotationY(-a.th).setPosition(a.x, a.y, a.z);
+    const uvOf = (g: THREE.BufferGeometry) => {
+      const src = g.index ? g.toNonIndexed() : g;
+      const pos = src.getAttribute('position');
+      const uv = src.getAttribute('uv');
+      const v = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        fans.vert(v.x, v.y, v.z, [1, 1, 1], uv.getX(i), uv.getY(i));
+      }
+    };
+    uvOf(parts.front);
+    uvOf(parts.back);
+    const pole = lin('#d8d2c4');
+    const flag = lin('#ff5fa2');
+    const pm = new THREE.Matrix4();
     for (const sg of [-1, 1]) {
-      const m = new THREE.Mesh(parts.pole, poleMat);
-      m.position.set((sg * FAN_SPAN) / 2, 0, 0);
-      const f = new THREE.Mesh(parts.pennant, flagMat);
-      f.position.set((sg * FAN_SPAN) / 2, FAN_POLE - 0.05, 0);
-      g.add(m, f);
+      pm.makeTranslation((sg * FAN_SPAN) / 2, 0, 0).premultiply(m);
+      plain.add(parts.pole, pm, pole);
+      pm.makeTranslation((sg * FAN_SPAN) / 2, FAN_POLE - 0.05, 0).premultiply(m);
+      // Wimpel beidseitig (das Material der einfarbigen Teile ist beidseitig – nur die Normale muss stimmen)
+      plain.add(parts.pennant, pm, flag);
     }
-    g.position.set(a.x, a.y, a.z);
-    g.rotation.y = -a.th;
-    group.add(g);
   }
 
   // ------------------------------------------------------------------ Fahrer, Objekte, Partikel
@@ -4591,7 +4628,8 @@ export class Renderer3D {
         const df = d + b.r + 0.5;
         const near = dn < 22;
         const mid = dn < 54 && df > 16;
-        const spr = df > 46;
+        // Bilder: nach der ganzen 20-m-Gruppe (zwei Hälften teilen sich das Netz – sichtbar, wenn eine es braucht)
+        const spr = Math.hypot(cp.x - b.sc.x, cp.z - b.sc.z) + b.sr + 0.5 > 46;
         const lod = (near ? 1 : 0) + (mid ? 2 : 0) + (spr ? 4 : 0);
         if (lod === b.lod) continue;
         b.lod = lod;
@@ -4680,7 +4718,7 @@ export class Renderer3D {
     for (const t of this.tagView.values()) t.on = false;
     const kitKey = riderKitKey(p.kit);
     if (!this.player || this.playerKit !== kitKey) {
-      if (this.player) this.scene.remove(this.player.group);
+      if (this.player) { this.scene.remove(this.player.group); this.player.dispose(); }
       this.player = new RiderModel(p.kit, this.shadowTex, 1);
       this.playerKit = kitKey;
       this.player.group.userData.nopick = true;
@@ -4721,7 +4759,7 @@ export class Renderer3D {
     for (const o of list) {
       seen.add(o.id);
       let m = this.riders.get(o.id);
-      if (m && m.kitKey !== riderKitKey(o.kit)) { this.scene.remove(m.group); m = undefined; }
+      if (m && m.kitKey !== riderKitKey(o.kit)) { this.scene.remove(m.group); m.dispose(); m = undefined; }
       if (!m) {
         m = new RiderModel(o.kit, this.shadowTex);
         if (sprint || o.ghost !== undefined) m.prepareFade();
@@ -4800,7 +4838,7 @@ export class Renderer3D {
       // außer Sicht: nur ausblenden – kommt der Fahrer zurück, ist er sofort wieder da (kein Neuaufbau, kein Ruckler);
       // wer nicht mehr im Rennen ist, fliegt raus
       if (alive.has(id)) m.group.visible = false;
-      else { this.scene.remove(m.group); this.riders.delete(id); this.anims.delete(id); }
+      else { this.scene.remove(m.group); m.dispose(); this.riders.delete(id); this.anims.delete(id); }
     }
   }
 

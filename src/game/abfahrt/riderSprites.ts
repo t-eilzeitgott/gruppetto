@@ -57,14 +57,22 @@ export function spriteable(kit: Kit): boolean {
   return !kit.bike;
 }
 
+// (die Fahrer sind Skinning-Netze – ihre Knochen gelten auch hier)
 const NORMAL_BAKE = new THREE.ShaderMaterial({
   side: THREE.DoubleSide,
   blending: THREE.NoBlending,
   vertexShader: /* glsl */ `
+#include <common>
+#include <skinning_pars_vertex>
 varying vec3 vN;
 void main() {
-  vN = normalize(normalMatrix * normal);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec3 objectNormal = vec3(normal);
+  #include <skinbase_vertex>
+  #include <skinnormal_vertex>
+  vN = normalize(normalMatrix * objectNormal);
+  vec3 transformed = vec3(position);
+  #include <skinning_vertex>
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
 }`,
   fragmentShader: /* glsl */ `
 varying vec3 vN;

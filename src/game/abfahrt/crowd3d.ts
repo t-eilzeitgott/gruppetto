@@ -135,13 +135,26 @@ class IB {
 const M = (x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0) =>
   new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
 
-/** Körper für alle, Zubehör nur für die, die es tragen */
-export const KINDS = ['body', 'cap', 'sunhat', 'beanie', 'longHair', 'glasses', 'phone', 'flag', 'helmet', 'horns', 'beard', 'backpack', 'trident', 'ponytail', 'cup'] as const;
+/**
+ * Körper für alle, Zubehör nur für die, die es tragen. Kopfbedeckungen (Kappe, Sonnenhut, Mütze, Radhelm,
+ * Hörner) stecken zusammen in einer Geometrie „hat“ – jede Person zeigt nur ihre (der Shader blendet die anderen
+ * aus): ein Zeichenaufruf je Gruppe statt fünf, für ein paar Dutzend Dreiecke mehr je Person.
+ */
+export const KINDS = ['body', 'hat', 'hair', 'small', 'flag', 'gear'] as const;
 export type Kind = typeof KINDS[number];
+type Piece = Kind | 'cap' | 'sunhat' | 'beanie' | 'helmet' | 'horns' | 'longHair' | 'beard' | 'ponytail' | 'glasses' | 'phone' | 'cup' | 'backpack' | 'trident';
+/** Zubehör je Geometrie: Kopfbedeckungen; Haar und Bart; Kleinkram (nur nah); Rucksack und Dreizack */
+const GROUPS: Record<Exclude<Kind, 'body' | 'flag'>, Set<Piece>> = {
+  hat: new Set<Piece>(['cap', 'sunhat', 'beanie', 'helmet', 'horns']),
+  hair: new Set<Piece>(['longHair', 'beard', 'ponytail']),
+  small: new Set<Piece>(['glasses', 'phone', 'cup']),
+  gear: new Set<Piece>(['backpack', 'trident']),
+};
 
 /** Ein Mensch (oder sein Zubehör), 1,75 m, Blick nach +z. lod 1 = vereinfacht für die Ferne */
 function personGeometry(kind: Kind, lod: 0 | 1): THREE.BufferGeometry | null {
   const b = new IB();
+  const has = (k: Piece) => kind === k || (kind !== 'body' && kind !== 'flag' && GROUPS[kind].has(k));
   const n = lod ? 5 : 7;
   const cyl = (r0: number, r1: number, h: number, seg = n, open = true) => new THREE.CylinderGeometry(r0, r1, h, seg, 1, open);
   const ball = (w: number, h: number) => new THREE.SphereGeometry(1, w, h);
@@ -179,24 +192,24 @@ function personGeometry(kind: Kind, lod: 0 | 1): THREE.BufferGeometry | null {
       b.add(lod ? new THREE.BoxGeometry(0.07, 0.1, 0.06) : ball(6, 4), lod ? M(sg * 0.25, 0.815) : M(sg * 0.25, 0.81, 0.008, 0.044, 0.058, 0.04), S.skin, F);
     }
   }
-  if (kind === 'longHair') b.add(new THREE.BoxGeometry(0.2, 0.27, 0.06), M(0, 1.5, -0.088), S.hair, P.longHair);
+  if (has('longHair')) b.add(new THREE.BoxGeometry(0.2, 0.27, 0.06), M(0, 1.5, -0.088), S.hair, P.longHair);
   // Kopfbedeckungen: Kappe, Sonnenhut, Mütze
-  if (kind === 'cap') {
+  if (has('cap')) {
     b.add(cap(lod ? 6 : 8, 3), M(0, 1.668, -0.005, 0.11, 0.075, 0.12, -0.15), S.hat, P.cap);
     b.add(new THREE.BoxGeometry(0.17, 0.016, 0.13), M(0, 1.675, 0.145, 1, 1, 1, 0.18), S.hat, P.cap);
   }
-  if (kind === 'sunhat') {
+  if (has('sunhat')) {
     b.add(cyl(0.21, 0.21, 0.012, lod ? 7 : 10, false), M(0, 1.7, 0), S.hat, P.sunhat);
     b.add(cyl(0.1, 0.112, 0.11, lod ? 6 : 8, false), M(0, 1.755, 0), S.hat, P.sunhat);
     if (!lod) b.add(cyl(0.114, 0.114, 0.026, 8), M(0, 1.715, 0), S.accent, P.sunhat);
   }
-  if (kind === 'beanie') {
+  if (has('beanie')) {
     b.add(cap(lod ? 6 : 8, lod ? 3 : 4), M(0, 1.655, -0.006, 0.11, 0.135, 0.118, -0.1), S.hat, P.beanie);
     b.add(ball(5, 3), M(0, 1.795, -0.012, 0.038, 0.038, 0.038), S.accent, P.beanie);
   }
-  if (kind === 'glasses' && !lod) b.add(new THREE.BoxGeometry(0.17, 0.034, 0.02), M(0, 1.648, 0.108), S.dark, P.glasses);
+  if (has('glasses') && !lod) b.add(new THREE.BoxGeometry(0.17, 0.034, 0.02), M(0, 1.648, 0.108), S.dark, P.glasses);
   // Handy (rechte Hand) – zeigt nach vorn, sobald der Arm gehoben ist
-  if (kind === 'phone' && !lod) b.add(new THREE.BoxGeometry(0.072, 0.012, 0.14), M(0.25, 0.785, 0.035), S.dark, P.phone);
+  if (has('phone') && !lod) b.add(new THREE.BoxGeometry(0.072, 0.012, 0.14), M(0.25, 0.785, 0.035), S.dark, P.phone);
   // Fahne am Stock (rechte Hand)
   if (kind === 'flag') {
     b.add(cyl(0.013, 0.013, 1.42, 4), M(0.252, 0.27, 0), S.pole, P.pole);
@@ -215,27 +228,27 @@ function personGeometry(kind: Kind, lod: 0 | 1): THREE.BufferGeometry | null {
     }
   }
   // Radhelm der Hobby-Radler (raufgefahren, um zuzuschauen): länglich, mit Lüftungsschlitzen
-  if (kind === 'helmet') {
+  if (has('helmet')) {
     b.add(cap(lod ? 6 : 10, lod ? 3 : 5), M(0, 1.668, -0.014, 0.124, 0.108, 0.146, -0.14), S.hat, P.helmet);
     if (!lod) for (const x of [-0.048, 0, 0.048]) b.add(new THREE.BoxGeometry(0.016, 0.012, 0.19), M(x, 1.772, -0.02, 1, 1, 1, -0.14), S.dark, P.helmet);
   }
   // Teufelskostüm: Hörner und Dreizack (rot), Hörner auf dem Kopf
-  if (kind === 'horns') {
+  if (has('horns')) {
     for (const sg of [-1, 1]) b.add(new THREE.ConeGeometry(0.022, 0.1, lod ? 4 : 6), M(sg * 0.055, 1.755, 0.02, 1, 1, 1, 0.15, 0, -sg * 0.38), S.hat, P.horns);
   }
   // Dreizack in der rechten Hand: im Ruhezustand nach vorn, bei angewinkeltem Arm senkrecht nach oben
-  if (kind === 'trident') {
+  if (has('trident')) {
     b.add(cyl(0.014, 0.014, 1.5, 4), M(0.252, 0.8, 0.28, 1, 1, 1, Math.PI / 2), S.dark, P.trident);
     b.add(new THREE.BoxGeometry(0.17, 0.024, 0.024), M(0.252, 0.8, 1.03), S.hat, P.trident);
     for (const x of [-0.072, 0, 0.072]) b.add(new THREE.ConeGeometry(0.016, 0.15, 4), M(0.252 + x, 0.8, 1.11, 1, 1, 1, Math.PI / 2), S.hat, P.trident);
   }
   // Vollbart mit Schnauzer
-  if (kind === 'beard') {
+  if (has('beard')) {
     b.add(ball(lod ? 5 : 7, lod ? 3 : 4), M(0, 1.566, 0.058, 0.074, 0.043, 0.05), S.hair, P.beard);
     if (!lod) b.add(new THREE.BoxGeometry(0.064, 0.014, 0.018), M(0, 1.602, 0.104), S.hair, P.beard);
   }
   // Rucksack der Wanderer, mit Trägern vorn
-  if (kind === 'backpack') {
+  if (has('backpack')) {
     b.add(new THREE.BoxGeometry(0.27, 0.36, 0.14), M(0, 1.2, -0.2), S.bag, P.backpack);
     if (!lod) {
       b.add(new THREE.BoxGeometry(0.2, 0.05, 0.13), M(0, 1.04, -0.205), S.dark, P.backpack);
@@ -243,9 +256,9 @@ function personGeometry(kind: Kind, lod: 0 | 1): THREE.BufferGeometry | null {
     }
   }
   // Pferdeschwanz
-  if (kind === 'ponytail') b.add(ball(lod ? 5 : 6, lod ? 3 : 4), M(0, 1.575, -0.13, 0.042, 0.105, 0.042, 0.45), S.hair, P.ponytail);
+  if (has('ponytail')) b.add(ball(lod ? 5 : 6, lod ? 3 : 4), M(0, 1.575, -0.13, 0.042, 0.105, 0.042, 0.45), S.hair, P.ponytail);
   // Becher in der linken Hand (Spritz oder Bier), steht aufrecht, wenn der Unterarm vorgestreckt ist
-  if (kind === 'cup') b.add(cyl(0.036, 0.029, 0.12, lod ? 5 : 7, false), M(-0.25, 0.8, 0.075, 1, 1, 1, Math.PI / 2), S.drink, P.cup);
+  if (has('cup')) b.add(cyl(0.036, 0.029, 0.12, lod ? 5 : 7, false), M(-0.25, 0.8, 0.075, 1, 1, 1, Math.PI / 2), S.drink, P.cup);
   if (b.empty) return null;
   const g = b.build();
   // Detailstufe der Grundform (der Shader blendet je Person zwischen den Stufen über)
@@ -583,19 +596,11 @@ export function packPerson(p: Person, out: Float32Array, i: number) {
 export function needs(p: Person, k: Kind): boolean {
   switch (k) {
     case 'body': return true;
-    case 'cap': return p.hatType === 1;
-    case 'sunhat': return p.hatType === 2;
-    case 'beanie': return p.hatType === 3;
-    case 'longHair': return p.longHair;
-    case 'glasses': return p.glasses;
-    case 'phone': return p.act === Act.film;
+    case 'hat': return p.hatType >= 1;
+    case 'hair': return p.longHair || !!p.beard || !!p.ponytail;
+    case 'small': return p.glasses || p.act === Act.film || !!p.cup;
     case 'flag': return p.act === Act.flag || p.act === Act.runFlag || p.act === Act.jogFlag;
-    case 'helmet': return p.hatType === 4;
-    case 'horns': case 'trident': return p.hatType === 5;
-    case 'beard': return !!p.beard;
-    case 'backpack': return !!p.backpack;
-    case 'ponytail': return !!p.ponytail;
-    case 'cup': return !!p.cup;
+    case 'gear': return !!p.backpack || p.hatType === 5;
   }
 }
 
