@@ -12,6 +12,32 @@ import type { CamMode, DriveMode, Showcase, ShowcaseStats } from '../../game/gpu
 import type { HudState } from '../../game/abfahrt/engine';
 import type { Kit } from '../../game/abfahrt/rider';
 import { useBikes } from '../../ui/useBikes';
+import { BUILD_ID } from '../../app/config';
+import type { Report } from '../../game/gpu/perf';
+
+const LS_REPORT = 'gruppetto.gpu.lastReport';
+const lsRead = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsWrite = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* voll oder gesperrt */ } };
+
+/** Text in die Zwischenablage (Fallback: Auswahl-Dialog) */
+async function copyText(text: string): Promise<boolean> {
+  try { await navigator.clipboard.writeText(text); return true; } catch { prompt('Bericht (alles markieren und kopieren)', text.slice(0, 20000)); return false; }
+}
+
+/** Datei teilen (iPhone: Teilen-Blatt) oder herunterladen */
+async function shareFile(text: string, name: string) {
+  const file = new File([text], name, { type: 'application/json' });
+  const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean };
+  if (nav.canShare?.({ files: [file] })) {
+    try { await nav.share({ files: [file], title: name }); return; } catch { /* abgebrochen: herunterladen */ }
+  }
+  const url = URL.createObjectURL(file);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
 import { DEFAULT_SETTINGS, loadSettings, MOOD_IDS, MOODS, type Settings } from '../../game/gpu/mood';
 
 /** feste Tagesstrecke: Dolomiten, vier Kehren, kein Tunnel – die schönsten 2,5 km zum Vergleichen */
@@ -93,6 +119,14 @@ export function GpuTestPage() {
   const [thumb, setThumb] = useState<{ x0: number; y0: number; x: number; y: number } | null>(null);
   const [help, setHelp] = useState(false);
   const bikes = useBikes();
+  // Messfahrt
+  const [measuring, setMeasuring] = useState(false);
+  const [recInfo, setRecInfo] = useState({ s: 0, hitches: 0 });
+  const [report, setReport] = useState<Report | null>(null);
+  const [lastReport, setLastReport] = useState<string | null>(() => lsRead(LS_REPORT));
+  const [reportCopied, setReportCopied] = useState(false);
+  const [graph, setGraph] = useState(false);
+  const graphRef = useRef<HTMLCanvasElement | null>(null);
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [copied, setCopied] = useState(false);
   const change = (patch: Partial<Settings>) => {
@@ -132,12 +166,20 @@ export function GpuTestPage() {
           // selbst fahren: Tempo flüssiger anzeigen
           if (now - lastUi < (driveRef.current === 'manual' ? 90 : 250)) return;
           lastUi = now;
+          show?.perf.event(16); // EV.ui: Seite zeichnet neu (kostet Zeit vor dem nächsten Bild)
           setStats({ ...s });
           if (driveRef.current === 'manual') setRide(show?.hud() ?? null);
         },
         onError: (e) => setError(String(e)),
       });
       showRef.current = show;
+      show.onReport = (r) => {
+        setMeasuring(false);
+        setReport(r);
+        setReportCopied(false);
+        lsWrite(LS_REPORT, r.text);
+        setLastReport(r.text);
+      };
       // Test-Hilfe (Prüfbilder ohne Bedienung)
       (window as unknown as { __gpu?: Showcase }).__gpu = show;
       show.start().catch((e) => { console.error(e); setError(e instanceof Error ? e.message : String(e)); });
@@ -207,6 +249,76 @@ export function GpuTestPage() {
     return () => window.clearTimeout(id);
   }, [help]);
 
+  const startMeasure = (lap: boolean) => {
+    const sh = showRef.current;
+    if (!sh) return;
+    const diff: Partial<Settings> = {};
+    for (const k of Object.keys(settings) as (keyof Settings)[]) if (settings[k] !== DEFAULT_SETTINGS[k]) (diff as Record<string, unknown>)[k] = settings[k];
+    sh.startMeasure(lap, { version: BUILD_ID, einstellungen: diff, aufnahme: new Date().toISOString() });
+    setMeasuring(true);
+    setReport(null);
+    setMenu(false);
+  };
+  const stopMeasure = () => {
+    const r = showRef.current?.stopMeasure() ?? null;
+    setMeasuring(false);
+    if (r) {
+      setReport(r);
+      setReportCopied(false);
+      lsWrite(LS_REPORT, r.text);
+      setLastReport(r.text);
+    }
+  };
+  // Anzeige während der Messung (Dauer, Ruckler)
+  useEffect(() => {
+    if (!measuring) return;
+    const id = window.setInterval(() => {
+      const p = showRef.current?.perf;
+      if (p) setRecInfo({ s: p.recSeconds, hitches: p.hitches });
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [measuring]);
+  // Live-Kurve: Bildzeit (Balken) und CPU-Anteil, Linien bei 1× und 2× Takt
+  useEffect(() => {
+    const sh = showRef.current;
+    if (sh) sh.graph = graph;
+    if (!graph) return;
+    let raf = 0;
+    let k = 0;
+    const draw = () => {
+      raf = requestAnimationFrame(draw);
+      if (k++ % 4) return;
+      const cv = graphRef.current;
+      const p = showRef.current?.perf;
+      if (!cv || !p) return;
+      const c = cv.getContext('2d');
+      if (!c) return;
+      const W = cv.width, H = cv.height;
+      const period = stats?.period ?? 16.7;
+      const scale = H / (period * 3);
+      c.clearRect(0, 0, W, H);
+      c.fillStyle = 'rgba(10,14,22,0.7)';
+      c.fillRect(0, 0, W, H);
+      const bw = W / 180;
+      for (let j = 0; j < 180; j++) {
+        const i = (p.ringAt + j) % 180;
+        const d = p.ring[i * 2], cpu = p.ring[i * 2 + 1];
+        if (!d) continue;
+        c.fillStyle = d > period * 1.5 + 1 ? '#ff5a5a' : d > period * 1.15 ? '#ffc94a' : '#57d38c';
+        const h = Math.min(H, d * scale);
+        c.fillRect(j * bw, H - h, Math.max(1, bw - 0.5), h);
+        c.fillStyle = 'rgba(111,183,255,0.9)';
+        const hc = Math.min(H, cpu * scale);
+        c.fillRect(j * bw, H - hc, Math.max(1, bw - 0.5), hc);
+      }
+      c.strokeStyle = 'rgba(255,255,255,0.45)';
+      c.lineWidth = 1;
+      for (const m of [1, 2]) { const y = H - period * m * scale; c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke(); }
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [graph, stats?.period]);
+
   const loading = stats ? stats.loading < 1 : true;
   useEffect(() => {
     if (loading) return;
@@ -248,6 +360,22 @@ export function GpuTestPage() {
               ))}
             </>
           ) : null}
+          {tab === 'tech' ? (
+            <div className="gpu-menu__measure">
+              <strong>Messfahrt</strong>
+              <span className="muted">Zeichnet jedes Bild auf (Bildzeit, CPU je Baustein, GPU falls möglich, Aufrufe, Ort, Kamera, Gegner). Danach Bericht kopieren und mir schicken.</span>
+              <div className="gpu-menu__row gpu-menu__actions">
+                <button type="button" className="gpu-chip is-on" onClick={() => startMeasure(true)}>Eine Runde von vorn</button>
+                <button type="button" className="gpu-chip" onClick={() => startMeasure(false)}>Ab hier bis Stopp</button>
+                {lastReport ? <button type="button" className="gpu-chip" onClick={() => { void copyText(lastReport).then((ok) => { if (ok) { setReportCopied(true); setTimeout(() => setReportCopied(false), 1500); } }); }}>{reportCopied ? 'Kopiert ✓' : 'Letzten Bericht kopieren'}</button> : null}
+              </div>
+              <label className="gpu-menu__row gpu-menu__check">
+                <input type="checkbox" checked={graph} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGraph(e.target.checked)} />
+                <span>Bildzeit-Kurve (grün ok, gelb knapp, rot Ruckler; blau CPU)</span>
+              </label>
+              <span className="muted">GPU-Zeit: {showRef.current?.gpuTiming ? 'wird gemessen' : 'auf diesem Gerät nicht messbar'}</span>
+            </div>
+          ) : null}
           {tab !== 'look' ? SLIDERS.filter((sl) => (tab === 'tech') === TECH.includes(sl.k)).map((sl) => (
             <label key={sl.k} className="gpu-menu__row gpu-menu__slider">
               <span>{sl.label} <em>{Number(settings[sl.k]).toFixed(sl.step >= 1 ? 0 : 2)}</em></span>
@@ -281,7 +409,7 @@ export function GpuTestPage() {
       {!loading ? (
         <div className="gpu-bar">
           <button type="button" className="gpu-pill" onClick={nextCam}>
-            {CAMS.find((c) => c.id === cam)?.label}{drive === 'auto' ? ' · tippen wechselt' : ''}{settings.cycle ? ` · ${showRef.current?.moodName ?? ''}` : ''}
+            Kamera: {CAMS.find((c) => c.id === cam)?.label}{settings.cycle ? ` · ${showRef.current?.moodName ?? ''}` : ''}
           </button>
           <div className="gpu-seg" role="group" aria-label="Fahren">
             <button type="button" className={drive === 'auto' ? 'is-on' : ''} onClick={() => { if (drive !== 'auto') toggleDrive(); }}>Autopilot</button>
@@ -313,6 +441,34 @@ export function GpuTestPage() {
           <strong>Steuerung wie im Spiel</strong>
           <span>Daumen auflegen und ziehen: <b>seitlich</b> lenken · <b>hoch</b> schieben ducken (schneller) · <b>runter</b> ziehen bremsen.</span>
           <span className="muted">Vor Kehren hilft der Bremsassistent. Am Rechner: Pfeiltasten. Ohne Hindernisse und ohne Sturz.</span>
+        </div>
+      ) : null}
+      {graph && !loading ? <canvas ref={graphRef} className="gpu-graph" width={360} height={120} /> : null}
+      {measuring ? (
+        <div className="gpu-rec">
+          <i />
+          <span>Messung {Math.floor(recInfo.s / 60)}:{String(Math.floor(recInfo.s % 60)).padStart(2, '0')} · {recInfo.hitches} Ruckler</span>
+          <button type="button" onClick={stopMeasure}>Stopp</button>
+        </div>
+      ) : null}
+      {report ? (
+        <div className="gpu-report">
+          <strong>Messfahrt fertig</strong>
+          <div className="gpu-report__grid">
+            <span>Dauer</span><b>{report.summary.s.toFixed(0)} s</b>
+            <span>Bildrate</span><b>{report.summary.fps.toFixed(0)} fps (Takt {Math.round(1000 / report.summary.period)} Hz)</b>
+            <span>1 % langsamste</span><b>{report.summary.low1.toFixed(0)} fps</b>
+            <span>Ruckler</span><b>{report.summary.hitches}</b>
+            <span>schlimmstes Bild</span><b>{report.summary.worst.toFixed(0)} ms</b>
+            <span>CPU (95 %)</span><b>{report.summary.cpuP95.toFixed(1)} ms</b>
+            <span>GPU (95 %)</span><b>{report.summary.gpuP95 !== null ? `${report.summary.gpuP95.toFixed(1)} ms` : 'nicht messbar'}</b>
+          </div>
+          <div className="gpu-menu__row gpu-menu__actions">
+            <button type="button" className="gpu-chip is-on" onClick={() => { void copyText(report.text).then((ok) => setReportCopied(ok)); }}>{reportCopied ? 'Kopiert ✓' : 'Bericht kopieren'}</button>
+            <button type="button" className="gpu-chip" onClick={() => { void shareFile(report.full, `messfahrt-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`); }}>Vollständig als Datei</button>
+            <button type="button" className="gpu-chip" onClick={() => setReport(null)}>Schließen</button>
+          </div>
+          <span className="muted">„Bericht kopieren“ reicht meist ({Math.round(report.text.length / 1000)} kB). Die Datei enthält zusätzlich jedes einzelne Bild.</span>
         </div>
       ) : null}
       {veil && !error ? (

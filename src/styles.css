@@ -2359,6 +2359,26 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .gpu-menu__slider input::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.25); }
 .gpu-menu__slider input::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #6fb7ff; border: 2px solid #fff; }
 .gpu-menu__actions { flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.gpu-menu__measure { display: grid; gap: 6px; padding: 8px 0 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.12); margin-bottom: 4px; }
+.gpu-menu__measure .muted, .gpu-report .muted { opacity: 0.65; font-size: 12px; line-height: 1.35; }
+.gpu-graph {
+  position: absolute; right: 12px; top: calc(env(safe-area-inset-top) + 146px); width: 180px; height: 60px; border-radius: 8px; pointer-events: none; z-index: 2;
+}
+.gpu-rec {
+  position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 104px); transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
+  padding: 6px 6px 6px 12px; border-radius: 999px; background: rgba(10, 14, 22, 0.78); font-size: 12px; white-space: nowrap; z-index: 3;
+}
+.gpu-rec i { width: 9px; height: 9px; border-radius: 50%; background: #ff4d4d; animation: gpu-rec 1s ease-in-out infinite alternate; }
+@keyframes gpu-rec { from { opacity: 1; } to { opacity: 0.3; } }
+.gpu-rec button { padding: 5px 10px; border: 0; border-radius: 999px; background: #fff; color: #0b0f16; font-size: 12px; font-weight: 700; }
+.gpu-report {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100% - 24px)); display: grid; gap: 10px;
+  padding: 16px; border-radius: 16px; background: rgba(10, 14, 22, 0.92); font-size: 13px; z-index: 4;
+}
+.gpu-report strong { font-size: 16px; }
+.gpu-report__grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+.gpu-report__grid span { opacity: 0.7; }
+.gpu-report__grid b { font-variant-numeric: tabular-nums; text-align: right; }
 .gpu-bars { position: absolute; inset: 0; pointer-events: none; z-index: 1; border-top: 11vh solid #000; border-bottom: 11vh solid #000; box-sizing: border-box; }
 
 /* Auffangnetz, wenn eine Seite abstürzt (PageBoundary) */

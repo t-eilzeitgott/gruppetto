@@ -19,6 +19,7 @@ import { Corridor } from './corridor';
 import { Field, type RouteSample } from './field';
 import { Trees } from './trees';
 import { Rider, playerKit, teamKit } from './rider';
+import { EV, Perf, type Report } from './perf';
 import { Abfahrt, type HudState } from '../abfahrt/engine';
 import type { Kit } from '../abfahrt/rider';
 import { Grass } from './grass';
@@ -136,17 +137,29 @@ export class Showcase {
   private camTh = 0;
   /** angehalten (Prüfbilder) */
   paused = false;
+  /** Messfahrt: Zeiten je Bild und Baustein (perf.ts) */
+  readonly perf = new Perf();
+  /** Messfahrt über eine Runde: endet von selbst am Ende der Strecke */
+  private measureLap = false;
+  /** Bericht fertig (Runde zu Ende) */
+  onReport: ((r: Report) => void) | null = null;
+  /** Live-Kurve sichtbar: GPU-Zeit auch ohne Messung abfragen */
+  graph = false;
+  private gpuPending = false;
+  private shownMood = '';
   /** Fahrt von vorn: Bäume sofort ganz neu verteilen */
   private wrapped = false;
 
   constructor(private host: HTMLElement, private opts: ShowcaseOptions) {
-    this.renderer = new THREE.WebGPURenderer({ antialias: false, powerPreference: 'high-performance', reversedDepthBuffer: true });
+    // Zeitstempel (GPU-Zeit je Bild für die Messfahrt) – nur, wenn das Gerät sie kann; sonst ohne Wirkung
+    this.renderer = new THREE.WebGPURenderer({ antialias: false, powerPreference: 'high-performance', reversedDepthBuffer: true, trackTimestamp: true } as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
   }
 
   get camMode(): CamMode { return this._cam; }
   /** Kamera wechseln: weich in 0,7 s von der alten Einstellung hinüber (beide fahren dabei mit) */
   set camMode(m: CamMode) {
     if (m === this._cam) return;
+    this.perf.event(EV.cam, `${this._cam}→${m}`);
     if (m === 'side') this.sideSign = this.x > 0 ? -1 : 1;
     this.camFrom = this.camInit ? this._cam : null;
     this.camBlend = this.camFrom ? 0 : 1;
@@ -464,6 +477,7 @@ export class Showcase {
   get drive(): DriveMode { return this._drive; }
   set drive(m: DriveMode) {
     if (m === this._drive) return;
+    this.perf.event(EV.drive, m);
     this._drive = m;
     const e = this.eng;
     if (!e) return;
@@ -505,7 +519,13 @@ export class Showcase {
     if (dt > 0) {
       if (this._drive === 'auto') this.autopilot();
       e.update(dt);
-      if (p.z > Z1 - 40) { this.startRun(Z0); this.camInit = false; this.wrapped = true; }
+      if (p.z > Z1 - 40) {
+        this.perf.event(EV.wrap, 'Runde zu Ende, wieder vorn');
+        if (this.measureLap) this.finishMeasure();
+        this.startRun(Z0);
+        this.camInit = false;
+        this.wrapped = true;
+      }
     }
     this.z = p.z;
     this.x = p.x;
@@ -547,6 +567,7 @@ export class Showcase {
         if (i === undefined) continue;
         this.poolOf.set(o.id, i);
         this.pool[i].reseed(o.id * 7.31 + 3);
+        this.perf.event(EV.opp, `Gegner ${o.id} im Bild (${Math.round(o.z - p.z)} m)`);
       }
       const R = this.pool[i];
       R.group.visible = true;
@@ -688,6 +709,7 @@ export class Showcase {
     if (this.slowFor > 700) want = Math.max(0.7, this.dpr - 0.15);
     else if (this.fastFor > 3500) want = Math.min(this.maxDpr, this.dpr + 0.1);
     if (want !== this.dpr) {
+      this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${(Math.round(want * 100) / 100).toFixed(2)}`);
       this.dpr = Math.round(want * 100) / 100;
       this.renderer.setPixelRatio(this.dpr);
       this.lastDprChange = now;
@@ -697,34 +719,100 @@ export class Showcase {
 
   private frame(t: number) {
     if (this.disposed) return;
+    const P = this.perf;
+    P.begin(t);
     const t0 = performance.now();
-    const dtMs = this.last ? Math.min(100, t - this.last) : 16.7;
+    const rawMs = this.last ? t - this.last : 16.7;
+    const dtMs = Math.min(100, rawMs);
     this.last = t;
     this.avgMs += (dtMs - this.avgMs) * 0.05;
     const dt = Math.min(0.05, dtMs / 1000);
     this.time += dt;
     if (this.ready && this.track && this.rider) {
       if (!this.paused) this.place(dt);
+      P.mark(0);
       this.updateCamera(dt);
+      P.mark(1);
       this.atmo?.update(this.paused ? 0 : dt, this.camera.position);
       this.updateSun();
+      const mood = this.moodName;
+      if (mood !== this.shownMood) { if (this.shownMood) P.event(EV.mood, mood); this.shownMood = mood; }
+      P.mark(2);
       this.trees?.update(this.camera.position, this.wrapped);
+      P.mark(3);
       this.houses?.update(this.camera.position);
+      P.mark(4);
       this.life?.update(this.camera.position);
+      P.mark(5);
       this.crowd?.update(this.camera.position, this.rider.group.position);
+      P.mark(6);
       this.wrapped = false;
       this.grass?.update(this.camera.position);
     }
     this.adapt(dtMs, t);
+    P.mark(7);
     // Prüfbilder: nur auf Abruf zeichnen (Software-Grafik ist zu langsam für jedes Bild); beim Laden gar nicht
     if (this.ready && !this.offscreen) this.draw();
+    P.mark(8);
     if (this.ready) this.avgCpu += (performance.now() - t0 - this.avgCpu) * 0.05;
+    // GPU-Zeit (nur mit Zeitstempeln): während der Messung oder bei sichtbarer Kurve, höchstens eine Abfrage offen
+    const be = this.renderer.backend as unknown as { trackTimestamp?: boolean };
+    if (this.ready && be.trackTimestamp && (P.rec || this.graph) && !this.gpuPending) {
+      this.gpuPending = true;
+      this.renderer.resolveTimestampsAsync('render').then((ms) => { P.gpu = typeof ms === 'number' ? ms : -1; }).catch(() => undefined).finally(() => { this.gpuPending = false; });
+    }
     const info = this.renderer.info.render;
+    if (this.ready) {
+      P.end({
+        dt: rawMs, period: this.period, calls: info.drawCalls, tris: info.triangles, dpr: this.dpr, z: this.z, v: this.v,
+        cam: ['chase', 'low', 'side', 'drone'].indexOf(this._cam), opps: this.poolOf.size,
+      });
+    }
     this.opts.onStats?.({
       fps: 1000 / this.avgMs, ms: this.avgMs, period: this.period, dpr: this.dpr, backend: this.backendName,
       tris: info.triangles, calls: info.drawCalls, cpu: this.avgCpu, loading: this.ready ? 1 : this.loadFrac, stage: this.stage,
       note: this.ready && this.period > 14 ? 'Safari begrenzt auf 60 Hz (siehe Hinweis)' : '',
     });
+  }
+
+  /** GPU-Zeitstempel verfügbar? (Gerät und Browser) */
+  get gpuTiming(): boolean { return !!(this.renderer.backend as unknown as { trackTimestamp?: boolean }).trackTimestamp; }
+
+  /** Gerät und Grafik für den Bericht */
+  private deviceInfo(): Record<string, unknown> {
+    const be = this.renderer.backend as unknown as { device?: { adapterInfo?: Record<string, string> }; adapter?: { info?: Record<string, string> } };
+    const ai = be.device?.adapterInfo ?? be.adapter?.info;
+    const pick = ai ? { vendor: ai.vendor, architecture: ai.architecture, device: ai.device, description: ai.description } : null;
+    return {
+      ua: navigator.userAgent, bildschirm: `${screen.width}×${screen.height}`, pixeldichte: window.devicePixelRatio, fenster: `${window.innerWidth}×${window.innerHeight}`,
+      technik: this.backendName, grafik: pick, gpu_zeitstempel: this.gpuTiming,
+    };
+  }
+
+  /**
+   * Messfahrt starten: eine Runde von vorn (lap) oder ab hier bis „Stopp“. extra: Angaben der Seite (Version,
+   * geänderte Einstellungen …)
+   */
+  startMeasure(lap: boolean, extra: Record<string, unknown> = {}) {
+    if (lap) { this.startRun(Z0); this.camInit = false; this.wrapped = true; }
+    this.measureLap = lap;
+    this.perf.startRec({
+      ...extra, ...this.deviceInfo(), fahren: this._drive, kamera_start: this._cam, stimmung: this.moodName,
+      gegner_max: this.settings.oppMax, start_z: Math.round(this.z), runde: lap,
+    });
+  }
+
+  get measuring(): boolean { return !!this.perf.rec; }
+
+  /** Messfahrt beenden: Bericht (oder null, wenn zu kurz) */
+  stopMeasure(): Report | null {
+    this.measureLap = false;
+    return this.perf.stopRec();
+  }
+
+  private finishMeasure() {
+    const r = this.stopMeasure();
+    if (r) this.onReport?.(r);
   }
 
   private draw() {
@@ -779,6 +867,8 @@ export class Showcase {
   /** Einstellungen aus dem Menü übernehmen und merken */
   applySettings(s: Settings, instant = false) {
     const prev = this.settings;
+    const diff = (Object.keys(s) as (keyof Settings)[]).filter((k) => s[k] !== prev[k]).map((k) => `${k}=${String(s[k])}`).join(' ');
+    if (diff) this.perf.event(EV.settings, diff);
     this.settings = s;
     saveSettings(s);
     this.atmo?.apply(s, instant);
