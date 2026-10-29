@@ -117,12 +117,14 @@ export interface Settings {
   shadowRange: number;
   /** Kantenglättung (wirkt nach Neuladen) */
   msaa: number;
+  /** Gegner im Bild (höchstens; die nächsten zur Kamera) */
+  oppMax: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   mood: 'mittag', cycle: false, shadows: true, bloom: true, grade: true, vignette: true, grain: true, fog: true, rain: true, crowd: true, life: true, grass: true, cinema: false,
   exposure: 1, warm: 0, sat: 1, contrast: 1, sun: 1, env: 1, fogK: 1, bloomK: 1, vignetteK: 1, grainK: 1, maxDpr: 2,
-  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4,
+  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4, oppMax: 12,
 };
 
 const KEY = 'gruppetto.gpu.settings';

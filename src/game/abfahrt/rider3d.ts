@@ -266,7 +266,9 @@ function torsoGeo(): THREE.BufferGeometry {
   // Textur hat unten den weißen Streifen der Glieder: den Rumpf in den Teil darüber legen
   const uv = g.getAttribute('uv');
   const k = 128 / (128 + TORSO_PAD);
-  for (let i = 0; i < uv.count; i++) uv.setY(i, 1 - k + uv.getY(i) * k);
+  // unterster Ring und Deckel ein paar Texel über der Grenze: sonst mischt die Filterung den weißen Streifen
+  // hinein (grauer Fleck hinten auf der Hose, aus tiefer Kamera sichtbar)
+  for (let i = 0; i < uv.count; i++) uv.setY(i, 1 - k + Math.max(uv.getY(i), 0.035) * k);
   return g;
 }
 

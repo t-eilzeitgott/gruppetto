@@ -2276,10 +2276,39 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 }
 .gpu-hud strong { font-size: 15px; font-weight: 700; }
 .gpu-hud--off { padding: 6px 10px; font-size: 12px; }
-.gpu-cam {
-  position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 14px); transform: translateX(-50%); padding: 6px 12px;
-  border-radius: 999px; background: rgba(10, 14, 22, 0.6); font-size: 12px; pointer-events: none; white-space: nowrap;
+.gpu-bar {
+  position: absolute; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 12px); display: flex; gap: 8px; justify-content: center;
+  align-items: center; flex-wrap: wrap; pointer-events: none; z-index: 2;
 }
+.gpu-bar > * { pointer-events: auto; }
+.gpu-pill { padding: 8px 12px; border: 0; border-radius: 999px; background: rgba(10, 14, 22, 0.62); color: #fff; font-size: 12px; white-space: nowrap; }
+.gpu-seg { display: flex; padding: 3px; border-radius: 999px; background: rgba(10, 14, 22, 0.62); }
+.gpu-seg button { padding: 6px 12px; border: 0; border-radius: 999px; background: transparent; color: #fff; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.gpu-seg button.is-on { background: #6fb7ff; color: #0b0f16; }
+/* Selbst fahren: Tempo und Zustände wie im Spiel */
+.gpu-ride {
+  position: absolute; left: 14px; bottom: calc(env(safe-area-inset-bottom) + 58px); display: grid; gap: 6px; pointer-events: none;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+.gpu-ride strong { font-size: 40px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.gpu-ride strong small { font-size: 14px; font-weight: 600; opacity: 0.8; }
+.gpu-ride__chips { display: flex; gap: 5px; }
+.gpu-ride__chips span { padding: 3px 8px; border-radius: 999px; background: rgba(10, 14, 22, 0.5); font-size: 11px; opacity: 0.45; text-shadow: none; }
+.gpu-ride__chips span.is-on { opacity: 1; background: #6fb7ff; color: #0b0f16; }
+.gpu-ride__chips span.is-red { background: #ff5a5a; color: #fff; }
+.gpu-ride__chips span.is-blue { background: #8fd3ff; }
+.gpu-thumb { position: absolute; pointer-events: none; transform: translate(-50%, -50%); border-radius: 50%; z-index: 2; }
+.gpu-thumb--anchor { width: 74px; height: 74px; border: 2px solid rgba(255, 255, 255, 0.45); background: rgba(255, 255, 255, 0.06); }
+.gpu-thumb--finger { width: 30px; height: 30px; background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 4px rgba(111, 183, 255, 0.35); }
+.gpu-thumb__up, .gpu-thumb__down { position: absolute; left: 50%; transform: translateX(-50%); font-size: 11px; opacity: 0.75; white-space: nowrap; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); }
+.gpu-thumb__up { top: -40px; }
+.gpu-thumb__down { bottom: -40px; }
+.gpu-help {
+  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(340px, calc(100% - 32px)); display: grid; gap: 6px;
+  padding: 14px 16px; border-radius: 16px; background: rgba(10, 14, 22, 0.82); font-size: 13px; line-height: 1.4; text-align: center; z-index: 2;
+}
+.gpu-help strong { font-size: 15px; }
+.gpu-help .muted { opacity: 0.65; font-size: 12px; }
 .gpu-load {
   position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
   background: radial-gradient(120% 80% at 50% 30%, #1b2a3c 0%, #0b0f16 70%); transition: opacity 0.6s ease;
@@ -2297,7 +2326,7 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .gpu-load--err { background: rgba(11, 15, 22, 0.85); }
 .gpu-load--err span { padding: 10px 16px; border-radius: 12px; background: rgba(160, 30, 40, 0.85); font-size: 14px; max-width: 80vw; text-align: center; }
 .gpu-hint {
-  position: absolute; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 52px); padding: 10px 12px;
+  position: absolute; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 58px); padding: 10px 12px;
   border-radius: 12px; background: rgba(10, 14, 22, 0.78); font-size: 12px; line-height: 1.4;
 }
 .gpu-hint .muted { opacity: 0.65; }

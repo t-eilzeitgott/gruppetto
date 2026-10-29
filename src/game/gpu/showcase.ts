@@ -7,18 +7,20 @@
  * Ziel: 120 Bilder/s auf einem iPhone 15 Pro. Die Auflösung regelt sich nach der gemessenen Bildzeit.
  */
 import * as THREE from 'three/webgpu';
-import { Track, SEG, EDGE } from '../abfahrt/track';
+import { Track, SEG, EDGE, ROAD_HALF } from '../abfahrt/track';
 import { Terrain } from '../abfahrt/terrain3d';
 import { adsTex } from '../abfahrt/tex3d';
 import { bakeFlowerDots, bakeSurfaces, type Surface, type SurfaceId } from './bake';
 import { Atmo } from './atmo';
-import { loadSettings, MOODS, saveSettings, type Settings } from './mood';
+import { loadSettings, MOOD_U, MOODS, saveSettings, type Settings } from './mood';
 import { corridorMaterial, terrainMaterial } from './ground';
 import { adsMaterial, marksMaterial, metalMaterial, paintMaterial, roadMaterial, woodMaterial } from './mats';
 import { Corridor } from './corridor';
 import { Field, type RouteSample } from './field';
 import { Trees } from './trees';
-import { Rider } from './rider';
+import { Rider, playerKit, teamKit } from './rider';
+import { Abfahrt, type HudState } from '../abfahrt/engine';
+import type { Kit } from '../abfahrt/rider';
 import { Grass } from './grass';
 import { ForestEdge } from './forest';
 import { Houses } from './houses';
@@ -50,12 +52,19 @@ export interface ShowcaseStats {
 export interface ShowcaseOptions {
   dayKey: string;
   names: string[];
+  /** eigener Fahrer (Trikot, Rad aus der Garage) – wie im Spiel */
+  kit?: Kit;
   onStats?: (s: ShowcaseStats) => void;
   onReady?: () => void;
   onError?: (e: unknown) => void;
 }
 
 export type CamMode = 'chase' | 'side' | 'drone' | 'low';
+/** Fahren: Autopilot (Linie und Ducken von selbst) oder selbst – beides mit der Fahrlogik des Spiels */
+export type DriveMode = 'auto' | 'manual';
+
+/** Vorrat an Gegner-Modellen (beim Laden gebaut und vorgewärmt – unterwegs entsteht keiner neu) */
+const POOL = 20;
 
 /** Teststrecke: über die Almwiesen mit den vier Kehren hinunter in den Bergwald (dicht ab ~1,6 km und 2,6–3,3 km) */
 const Z0 = 600;
@@ -105,19 +114,21 @@ export class Showcase {
   private offscreen = /[?&]shots\b/.test(location.search);
   private frameRT: THREE.RenderTarget | null = null;
 
-  // Fahrt
+  // Fahrt: die Spiellogik des Spiels (Abfahrt, als Testfahrt ohne Hindernisse und Sturz)
+  private eng: Abfahrt | null = null;
+  private _drive: DriveMode = 'auto';
   private z = Z0;
   private x = 0;
   private v = 14;
-  private vProf: Float32Array = new Float32Array(0);
+  /** Ideallinie und Krümmung (für den Autopiloten) */
   private kProf: Float32Array = new Float32Array(0);
   private xProf: Float32Array = new Float32Array(0);
   private profI0 = 0;
-  private lean = 0;
-  private pedal = 0;
-  private tuck = 0;
-  private brake = 0;
   private time = 0;
+  /** Gegner: Vorrat an Modellen, Zuordnung Fahrer-Kennung → Modell */
+  private pool: Rider[] = [];
+  private poolOf = new Map<number, number>();
+  private poolFree: number[] = [];
   private w = { x: 0, y: 0, z: 0, th: 0 };
   private cam = new THREE.Vector3();
   private camLook = new THREE.Vector3();
@@ -154,7 +165,7 @@ export class Showcase {
   }
 
   /** Testhilfe: an eine Stelle der Strecke springen (m) */
-  jump(z: number) { this.z = clamp(z, Z0, Z1); this.camInit = false; this.place(0); }
+  jump(z: number) { this.startRun(clamp(z, Z0, Z1 - 60)); this.camInit = false; this.place(0); }
 
   /** Testhilfe: freie Kamera um einen Punkt (Azimut, Höhe in Grad, Abstand in m); null: zurück zum Fahrer */
   private free: { at: THREE.Vector3; az: number; el: number; dist: number } | null = null;
@@ -254,8 +265,18 @@ export class Showcase {
     }));
     field.dropK = this.param('drop', 1);
     this.scene.add(field.group);
-    this.rider = new Rider(0);
+    // eigener Fahrer (Trikot und Rad wie im Spiel, volle Detailstufe), Gegner aus dem Vorrat (Teamtrikots)
+    this.rider = new Rider(this.opts.kit ?? playerKit('#ff5fa2'), 1, 1, true);
     this.scene.add(this.rider.group);
+    for (let i = 0; i < POOL; i++) {
+      const R = new Rider(teamKit(i), 0, i * 7.31 + 3, false);
+      R.group.visible = false;
+      this.pool.push(R);
+      this.poolFree.push(POOL - 1 - i);
+      this.scene.add(R.group);
+    }
+    this.eng = this.makeEngine(track);
+    this.startRun(Z0);
     this.place(0);
 
     // Kantenglättung 4× (auf Apples Kacheln billig); im WebGL-Ersatz ohne (dort scheitert das Umkopieren oft)
@@ -367,7 +388,7 @@ export class Showcase {
     progress(1);
   }
 
-  /** Tempo- und Linienprofil der Fahrt: vor Kurven bremsen, Kehren eng, auf Geraden laufen lassen */
+  /** Linienprofil für den Autopiloten: geglättete Krümmung, Ideallinie in Kurven innen */
   private profileRide(i0: number, i1: number) {
     const t = this.track!;
     const n = i1 - i0 + 1;
@@ -380,11 +401,6 @@ export class Showcase {
       for (let j = -6; j <= 6; j++) { const qq = clamp(q + j, 0, n - 1); const ww = 7 - Math.abs(j); s += k[qq] * ww; w += ww; }
       ks[q] = s / w;
     }
-    const v = new Float32Array(n);
-    for (let q = 0; q < n; q++) v[q] = clamp(Math.sqrt(4.6 / Math.max(1e-4, Math.abs(ks[q]))), 6.5, 21);
-    // rückwärts: rechtzeitig bremsen; vorwärts: nur langsam beschleunigen
-    for (let q = n - 2; q >= 0; q--) v[q] = Math.min(v[q], Math.sqrt(v[q + 1] * v[q + 1] + 2 * 3.2 * SEG));
-    for (let q = 1; q < n; q++) v[q] = Math.min(v[q], Math.sqrt(v[q - 1] * v[q - 1] + 2 * 1.3 * SEG));
     // Linie: in Kurven innen, sanft
     const xl = new Float32Array(n);
     for (let q = 0; q < n; q++) {
@@ -393,7 +409,6 @@ export class Showcase {
       xl[q] = s / w;
     }
     this.kProf = ks;
-    this.vProf = v;
     this.xProf = xl;
     this.profI0 = i0;
   }
@@ -405,34 +420,148 @@ export class Showcase {
     return arr[q] * (1 - u) + arr[q + 1] * u;
   }
 
-  /** Fahrer bewegen und auf die Strecke stellen */
-  private place(dt: number) {
+  /** Spiellogik wie im Spiel; die Strecke (und ihre Landschaft) liegt fest – nichts wird verworfen */
+  private makeEngine(track: Track): Abfahrt {
+    const e = new Abfahrt({
+      dayKey: this.opts.dayKey, names: this.opts.names, friends: [], kit: this.opts.kit ?? playerKit('#ff5fa2'), best: 0,
+      missions: [], missionsDone: new Set(), tutorial: false, cruise: 1,
+    });
+    // dieselbe Strecke wie die Darstellung (gleicher Tag, gleiche Namen): ohne Hindernisse (die zeigt der Test nicht),
+    // und sie wird nie gekürzt – die Fahrt beginnt am Ende wieder vorn
+    track.dropHazards();
+    (track as unknown as { trim: (b: number) => void }).trim = () => undefined;
+    e.track = track;
+    e.setViewport(window.innerWidth);
+    return e;
+  }
+
+  /** Fahrt (neu) beginnen bei z: Fahrer auf der Straße, eine kleine Gruppe vorweg, weitere setzt die Spiellogik */
+  private startRun(z: number) {
+    const e = this.eng!;
     const t = this.track!;
-    const vT = this.prof(this.vProf, this.z + 6);
-    if (dt > 0) {
-      const acc = vT > this.v ? 1.2 : -3.4;
-      this.v = acc > 0 ? Math.min(vT, this.v + acc * dt) : Math.max(vT, this.v + acc * dt);
-      this.brake += ((vT < this.v - 0.4 ? 1 : 0) - this.brake) * Math.min(1, dt * 6);
-      this.z += this.v * dt;
-      if (this.z > Z1) { this.z = Z0; this.camInit = false; this.wrapped = true; }
+    const E = e as unknown as { txs: number; nextSpawn: number; oppId: number; rng: () => number };
+    const p = e.p;
+    Object.assign(p, { z, x: 0.9, vx: 0, v: 11, y: t.heightAt(z), vy: 0, air: false, airT: 0, lean: 0, tuck: 0, brake: 0, wobble: 0, slip: 0, slick: 0 });
+    e.tx = p.x;
+    E.txs = p.x;
+    e.opps = [];
+    const r = E.rng;
+    for (let i = 0; i < 5; i++) {
+      const x = (i % 2 ? -0.55 : 0.65) + (r() - 0.5) * 0.3;
+      e.opps.push({
+        id: E.oppId++, z: z + 14 + i * 2.4, x, vx: 0, v: 10.5, tx: x, f: 0.64 + r() * 0.06, kit: teamKit(i), pedal: r() * 6,
+        lean: 0, tuck: 0, brake: 0, passed: false, group: -2, bump: 0, attacker: false,
+      });
     }
-    const xT = this.prof(this.xProf, this.z);
-    this.x += (xT - this.x) * (dt > 0 ? Math.min(1, dt * 1.5) : 1);
-    const k = this.prof(this.kProf, this.z);
-    const lean = clamp(Math.atan2(k * this.v * this.v, 9.81) * 0.85, -0.62, 0.62);
-    this.lean += (lean - this.lean) * (dt > 0 ? Math.min(1, dt * 4) : 1);
-    const straight = Math.abs(k) < 0.006 && this.brake < 0.2;
-    this.tuck += ((straight && this.v > 13 ? 1 : 0) - this.tuck) * Math.min(1, dt * 2.5);
-    // treten nur aus den Kehren heraus
-    if (this.v < 12 && this.brake < 0.2) this.pedal += dt * 1.45;
-    t.world(this.z, this.x, 0, this.w);
+    E.nextSpawn = z + 50;
+    e.phase = 'playing';
+    e.phaseT = 10;
+    for (const [, i] of this.poolOf) { this.pool[i].group.visible = false; this.poolFree.push(i); }
+    this.poolOf.clear();
+  }
+
+  /** Fahren: Autopilot oder selbst (Daumen wie im Spiel, Pfeiltasten) */
+  get drive(): DriveMode { return this._drive; }
+  set drive(m: DriveMode) {
+    if (m === this._drive) return;
+    this._drive = m;
+    const e = this.eng;
+    if (!e) return;
+    e.pointerUp();
+    for (const k of ['left', 'right', 'up', 'down'] as const) e.key(k, false);
+    if (m === 'manual') this.camMode = 'chase';
+  }
+  /** Daumen (Bildschirmkoordinaten): seitlich ziehen lenkt, hoch schieben duckt, runter ziehen bremst */
+  pointerDown(x: number, y: number) { if (this._drive === 'manual') this.eng?.pointerDown(x, y); }
+  pointerMove(x: number, y: number) { if (this._drive === 'manual') this.eng?.pointerMove(x, y); }
+  pointerUp() { this.eng?.pointerUp(); }
+  key(name: 'left' | 'right' | 'up' | 'down', down: boolean) { if (this._drive === 'manual') this.eng?.key(name, down); }
+  /** Anzeige: Tempo, Ducken, Bremsen, Windschatten (wie im Spiel) */
+  hud(): HudState | null { return this.eng?.hud() ?? null; }
+
+  /** Autopilot: Ideallinie, an Gegnern vorbei, auf Geraden ducken – bremsen tut der Bremsassistent des Spiels */
+  private autopilot() {
+    const e = this.eng!;
+    const p = e.p;
+    let tx = this.prof(this.xProf, p.z + 5);
+    for (const o of e.opps) {
+      const dz = o.z - p.z;
+      if (dz < 0.4 || dz > 16) continue;
+      if (Math.abs(o.x - tx) < 1.05 && p.v > o.v - 0.6) tx = o.x + (o.x > tx ? -1.3 : 1.3);
+    }
+    e.tx = clamp(tx, -ROAD_HALF + 0.5, ROAD_HALF - 0.5);
+    const k = this.prof(this.kProf, p.z + 10);
+    e.key('up', Math.abs(k) < 0.006 && p.v > 11);
+  }
+
+  /** Rücklicht: nachts und bei Regen */
+  private lampLevel(): number { return clamp(MOOD_U.night.value + MOOD_U.rain.value * 0.6, 0, 1); }
+
+  /** Fahrer bewegen (Spiellogik) und alle Fahrer auf die Strecke stellen */
+  private place(dt: number) {
+    const e = this.eng!;
+    const t = this.track!;
+    const p = e.p;
+    if (dt > 0) {
+      if (this._drive === 'auto') this.autopilot();
+      e.update(dt);
+      if (p.z > Z1 - 40) { this.startRun(Z0); this.camInit = false; this.wrapped = true; }
+    }
+    this.z = p.z;
+    this.x = p.x;
+    this.v = p.v;
+    const roadY = t.heightAt(p.z);
+    const air = Math.max(0, p.y - roadY);
+    t.world(p.z, p.x, 0, this.w);
     const R = this.rider!;
-    R.group.position.set(this.w.x, this.w.y, this.w.z);
+    R.group.position.set(this.w.x, this.w.y + air, this.w.z);
     R.group.rotation.y = -this.w.th;
-    R.model.pose(R.anim.step({
-      lean: this.lean, pedal: this.pedal, tuck: this.tuck, brake: this.brake, stand: 0, sprint: 0,
-      v: this.v, air: 0, surface: 'asphalt', wobble: 0, light: 0, roll: this.z / 0.34,
-    }, Math.max(1e-3, dt), this.time));
+    const light = this.lampLevel();
+    R.pose({
+      lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, stand: p.stand ?? 0, sprint: 0,
+      v: p.v, air, surface: t.segAt(p.z).surface, wobble: p.wobble, light, roll: p.z / 0.34,
+    }, dt, this.time);
+    R.lamp(light > 0.05);
+    this.placeOpps(dt, light);
+  }
+
+  /** Gegner: die nächsten (höchstens so viele wie eingestellt) bekommen ein Modell aus dem Vorrat */
+  private placeOpps(dt: number, light: number) {
+    const e = this.eng!;
+    const t = this.track!;
+    const p = e.p;
+    const max = Math.min(POOL, Math.round(this.settings.oppMax));
+    const list = e.opps.filter((o) => o.z > p.z - 40 && o.z < p.z + 300).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, max);
+    const keep = new Set(list.map((o) => o.id));
+    for (const [id, i] of this.poolOf) {
+      if (keep.has(id)) continue;
+      this.pool[i].group.visible = false;
+      this.poolOf.delete(id);
+      this.poolFree.push(i);
+    }
+    const cp = this.camera.position;
+    for (const o of list) {
+      let i = this.poolOf.get(o.id);
+      if (i === undefined) {
+        i = this.poolFree.pop();
+        if (i === undefined) continue;
+        this.poolOf.set(o.id, i);
+        this.pool[i].reseed(o.id * 7.31 + 3);
+      }
+      const R = this.pool[i];
+      R.group.visible = true;
+      t.world(o.z, o.x, 0, this.w);
+      R.group.position.set(this.w.x, this.w.y, this.w.z);
+      R.group.rotation.y = -this.w.th;
+      const d = cp.distanceTo(R.group.position);
+      R.far(d);
+      R.shadows(d < 45);
+      R.pose({
+        lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, stand: o.stand ?? 0, sprint: 0,
+        v: o.v, air: 0, surface: t.segAt(o.z).surface, wobble: o.bump, light, roll: o.z / 0.34,
+      }, dt, this.time);
+      R.lamp(light > 0.05);
+    }
   }
 
   /** Kameraeinstellung je Modus – fest am Fahrer (bzw. an seiner geglätteten Fahrtrichtung), ohne Nachziehen */
@@ -670,6 +799,7 @@ export class Showcase {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.eng?.setViewport(w);
   }
 
   dispose() {
@@ -683,6 +813,8 @@ export class Showcase {
     this.houses?.dispose();
     this.life?.dispose();
     this.crowd?.dispose();
+    this.rider?.dispose();
+    for (const R of this.pool) R.dispose();
     this.atmo?.dispose();
     this.frameRT?.dispose();
     this.renderer.dispose();

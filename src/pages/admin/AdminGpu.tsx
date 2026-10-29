@@ -8,7 +8,10 @@ import { useMembers } from '../../app/hooks';
 import { useTitle } from '../../ui/kit';
 import { Icon } from '../../ui/Icon';
 import { useGameLock } from '../gameKit';
-import type { CamMode, Showcase, ShowcaseStats } from '../../game/gpu/showcase';
+import type { CamMode, DriveMode, Showcase, ShowcaseStats } from '../../game/gpu/showcase';
+import type { HudState } from '../../game/abfahrt/engine';
+import type { Kit } from '../../game/abfahrt/rider';
+import { useBikes } from '../../ui/useBikes';
 import { DEFAULT_SETTINGS, loadSettings, MOOD_IDS, MOODS, type Settings } from '../../game/gpu/mood';
 
 /** feste Tagesstrecke: Dolomiten, vier Kehren, kein Tunnel – die schönsten 2,5 km zum Vergleichen */
@@ -35,7 +38,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'tech', label: 'Technik' },
 ];
 /** welche Regler auf welchem Reiter stehen (der Rest: Licht & Farbe) */
-const TECH: (keyof Settings)[] = ['maxDpr', 'shadowRes', 'shadowRange', 'msaa', 'rainK', 'wetK'];
+const TECH: (keyof Settings)[] = ['oppMax', 'maxDpr', 'shadowRes', 'shadowRange', 'msaa', 'rainK', 'wetK'];
 const SLIDERS: { k: keyof Settings; label: string; min: number; max: number; step: number }[] = [
   { k: 'exposure', label: 'Belichtung', min: 0.5, max: 1.6, step: 0.02 },
   { k: 'warm', label: 'Wärme', min: -1, max: 1, step: 0.05 },
@@ -58,6 +61,7 @@ const SLIDERS: { k: keyof Settings; label: string; min: number; max: number; ste
   { k: 'shadowRes', label: 'Schattenauflösung (1024 / 2048 / 4096)', min: 1024, max: 4096, step: 1024 },
   { k: 'shadowRange', label: 'Schattenweite (m um den Fahrer)', min: 30, max: 120, step: 5 },
   { k: 'msaa', label: 'Kantenglättung (0 / 4 – wirkt nach Neuladen)', min: 0, max: 4, step: 4 },
+  { k: 'oppMax', label: 'Gegner im Bild (höchstens)', min: 0, max: 20, step: 1 },
 ];
 
 const CAMS: { id: CamMode; label: string }[] = [
@@ -82,6 +86,13 @@ export function GpuTestPage() {
   const [veil, setVeil] = useState(true);
   const [menu, setMenu] = useState(false);
   const [tab, setTab] = useState<Tab>('look');
+  // Fahren: Autopilot oder selbst (Steuerung wie im Spiel)
+  const [drive, setDrive] = useState<DriveMode>('auto');
+  const driveRef = useRef<DriveMode>('auto');
+  const [ride, setRide] = useState<HudState | null>(null);
+  const [thumb, setThumb] = useState<{ x0: number; y0: number; x: number; y: number } | null>(null);
+  const [help, setHelp] = useState(false);
+  const bikes = useBikes();
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [copied, setCopied] = useState(false);
   const change = (patch: Partial<Settings>) => {
@@ -98,6 +109,8 @@ export function GpuTestPage() {
   const names = (members.data ?? []).map((m) => (m.display_name ?? '').trim()).filter(Boolean);
   const namesRef = useRef<string[]>(names);
   namesRef.current = names;
+  const bikesRef = useRef<string>(bikes.current);
+  bikesRef.current = bikes.current;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -107,14 +120,20 @@ export function GpuTestPage() {
     let lastUi = 0;
     void import('../../game/gpu/showcase').then(({ Showcase: S }) => {
       if (!alive) return;
+      const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#ff5fa2';
+      // eigener Fahrer wie im Spiel: Trikot in der Akzentfarbe, Rad aus der Garage
+      const kit: Kit = { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: '27', bike: bikesRef.current };
       show = new S(host, {
         dayKey: DAY,
         names: namesRef.current,
+        kit,
         onStats: (s) => {
           const now = performance.now();
-          if (now - lastUi < 250) return;
+          // selbst fahren: Tempo flüssiger anzeigen
+          if (now - lastUi < (driveRef.current === 'manual' ? 90 : 250)) return;
           lastUi = now;
           setStats({ ...s });
+          if (driveRef.current === 'manual') setRide(show?.hud() ?? null);
         },
         onError: (e) => setError(String(e)),
       });
@@ -141,6 +160,53 @@ export function GpuTestPage() {
     if (showRef.current) showRef.current.camMode = n;
   };
 
+  const toggleDrive = () => {
+    const m: DriveMode = drive === 'auto' ? 'manual' : 'auto';
+    setDrive(m);
+    driveRef.current = m;
+    setThumb(null);
+    if (showRef.current) showRef.current.drive = m;
+    if (m === 'manual') { setCam('chase'); setHelp(true); setMenu(false); } else setRide(null);
+  };
+  // Leinwand: im Autopilot wechselt Tippen die Kamera, beim Selbstfahren steuert der Daumen (wie im Spiel)
+  const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (drive !== 'manual') { nextCam(); return; }
+    e.currentTarget.setPointerCapture(e.pointerId);
+    showRef.current?.pointerDown(e.clientX, e.clientY);
+    setThumb({ x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY });
+    setHelp(false);
+  };
+  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (drive !== 'manual' || !thumb) return;
+    showRef.current?.pointerMove(e.clientX, e.clientY);
+    setThumb({ ...thumb, x: e.clientX, y: e.clientY });
+  };
+  const onUp = () => {
+    showRef.current?.pointerUp();
+    setThumb(null);
+  };
+  // am Rechner: Pfeiltasten (oder WASD) wie im Spiel
+  useEffect(() => {
+    const map: Record<string, 'left' | 'right' | 'up' | 'down'> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', a: 'left', d: 'right', w: 'up', s: 'down' };
+    const on = (down: boolean) => (e: KeyboardEvent) => {
+      const k = map[e.key];
+      if (!k || driveRef.current !== 'manual') return;
+      e.preventDefault();
+      showRef.current?.key(k, down);
+      if (down) setHelp(false);
+    };
+    const kd = on(true);
+    const ku = on(false);
+    window.addEventListener('keydown', kd);
+    window.addEventListener('keyup', ku);
+    return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); };
+  }, []);
+  useEffect(() => {
+    if (!help) return;
+    const id = window.setTimeout(() => setHelp(false), 7000);
+    return () => window.clearTimeout(id);
+  }, [help]);
+
   const loading = stats ? stats.loading < 1 : true;
   useEffect(() => {
     if (loading) return;
@@ -150,7 +216,7 @@ export function GpuTestPage() {
   const pct = Math.round((stats?.loading ?? 0) * 100);
   return (
     <div className="gpu-root">
-      <div ref={hostRef} className="gpu-canvas" onPointerDown={nextCam} />
+      <div ref={hostRef} className="gpu-canvas" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
       <button type="button" className="gpu-back" onClick={() => navigate('/admin')} aria-label="Zurück">
         <Icon name="chevron" size={18} />
       </button>
@@ -204,7 +270,7 @@ export function GpuTestPage() {
           <span>{(stats.tris / 1000).toFixed(0)}k Dreiecke · {stats.calls} Aufrufe</span>
         </div>
       ) : null}
-      {hud && !menu && stats && stats.loading >= 1 && stats.period > 14 && !hint60 ? (
+      {hud && !menu && drive === 'auto' && stats && stats.loading >= 1 && stats.period > 14 && !hint60 ? (
         <div className="gpu-hint" onClick={() => setHint60(true)}>
           <strong>Nur 60 Hz?</strong> Safari zeichnet Webseiten auf dem iPhone meist mit 60 Bildern/s. Für 120 Hz:
           Einstellungen → Apps → Safari → Erweitert → Feature Flags → „Prefer Page Rendering Updates near 60fps“
@@ -212,7 +278,43 @@ export function GpuTestPage() {
         </div>
       ) : null}
       {!hud ? <button type="button" className="gpu-hud gpu-hud--off" onClick={() => setHud(true)}>fps</button> : null}
-      {!loading ? <div className="gpu-cam">{CAMS.find((c) => c.id === cam)?.label} · tippen wechselt{settings.cycle ? ` · ${showRef.current?.moodName ?? ''}` : ''}</div> : null}
+      {!loading ? (
+        <div className="gpu-bar">
+          <button type="button" className="gpu-pill" onClick={nextCam}>
+            {CAMS.find((c) => c.id === cam)?.label}{drive === 'auto' ? ' · tippen wechselt' : ''}{settings.cycle ? ` · ${showRef.current?.moodName ?? ''}` : ''}
+          </button>
+          <div className="gpu-seg" role="group" aria-label="Fahren">
+            <button type="button" className={drive === 'auto' ? 'is-on' : ''} onClick={() => { if (drive !== 'auto') toggleDrive(); }}>Autopilot</button>
+            <button type="button" className={drive === 'manual' ? 'is-on' : ''} onClick={() => { if (drive !== 'manual') toggleDrive(); }}>Selbst fahren</button>
+          </div>
+        </div>
+      ) : null}
+      {drive === 'manual' && ride ? (
+        <div className="gpu-ride">
+          <strong>{Math.round(ride.kmh)}<small> km/h</small></strong>
+          <div className="gpu-ride__chips">
+            <span className={ride.tuck > 0.5 ? 'is-on' : ''}>Ducken</span>
+            <span className={ride.brake > 0.25 ? 'is-on is-red' : ''}>Bremsen</span>
+            <span className={ride.draft > 0.3 ? 'is-on is-blue' : ''}>Windschatten</span>
+          </div>
+        </div>
+      ) : null}
+      {thumb ? (
+        <>
+          <div className="gpu-thumb gpu-thumb--anchor" style={{ left: thumb.x0, top: thumb.y0 }}>
+            <span className="gpu-thumb__up">ducken</span>
+            <span className="gpu-thumb__down">bremsen</span>
+          </div>
+          <div className="gpu-thumb gpu-thumb--finger" style={{ left: thumb.x, top: thumb.y }} />
+        </>
+      ) : null}
+      {help && drive === 'manual' ? (
+        <div className="gpu-help" onClick={() => setHelp(false)}>
+          <strong>Steuerung wie im Spiel</strong>
+          <span>Daumen auflegen und ziehen: <b>seitlich</b> lenken · <b>hoch</b> schieben ducken (schneller) · <b>runter</b> ziehen bremsen.</span>
+          <span className="muted">Vor Kehren hilft der Bremsassistent. Am Rechner: Pfeiltasten. Ohne Hindernisse und ohne Sturz.</span>
+        </div>
+      ) : null}
       {veil && !error ? (
         <div className={`gpu-load${loading ? '' : ' gpu-load--done'}`}>
           <div className="gpu-load__box">
