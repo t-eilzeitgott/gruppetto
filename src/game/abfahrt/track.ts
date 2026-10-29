@@ -632,7 +632,7 @@ export class Track {
       }
     }
     const buildings = p.biome === 'village' ? this.villageBuildings(start, n, 'town', curve, marks)
-      : hamlet ? this.villageBuildings(start + hamlet[0], hamlet[1] - hamlet[0], 'hamlet') : { L: [], R: [] };
+      : hamlet ? this.villageBuildings(start + hamlet[0], hamlet[1] - hamlet[0], 'hamlet', undefined, undefined, p.biome) : { L: [], R: [] };
 
     let sideRun = 0;
     let L: Side = { ground: 'meadow', tilt: 0, barrier: 'none', wall: 0, drop: false };
@@ -1259,7 +1259,7 @@ export class Track {
    * Häuserzeilen: Stil, Geschosse, Läden mit Schildern je nach Landessprache und Ortsgröße.
    * Eigener Zufall je Abschnitt – die Strecke selbst bleibt davon unberührt.
    */
-  private villageBuildings(start: number, n: number, mode: 'town' | 'hamlet', curve?: number[], marks?: number[]) {
+  private villageBuildings(start: number, n: number, mode: 'town' | 'hamlet', curve?: number[], marks?: number[], biome: BiomeId = 'village') {
     const r = mulberry32((this.seed ^ Math.imul(start + 17, 2654435761)) >>> 0);
     // Zielstadt im Sprint: Piazza auf einem geraden Stück in der ersten Hälfte (vor den Finalkurven)
     let piazza: [number, number] | null = null;
@@ -1280,7 +1280,7 @@ export class Track {
     // Bergdörfer (Bergfinale, Dolomiten-Abfahrt, Weiler) mit Chalets und Bruchstein, Städte mit Bürgerhäusern
     const look = LOOKS[this.region];
     // Anteil Berghäuser: Abfahrt (Dolomiten) wie gehabt, Finale nach der Gegend
-    const alpine = this.kind === 'descent' ? (mode === 'hamlet' ? 0.8 : 0.45) : mode === 'hamlet' ? Math.min(1, look.alpine + 0.3) : look.alpine;
+    const alpine = biome === 'vineyard' ? 0.1 : this.kind === 'descent' ? (mode === 'hamlet' ? 0.8 : 0.45) : mode === 'hamlet' ? Math.min(1, look.alpine + 0.3) : look.alpine;
     const byLang: number[] = lang === 'en' ? [S.backstein, S.backstein, S.backstein, S.backstein, S.creme, S.haussmann, S.fachwerk]
       : lang === 'fr' ? [S.ocker, S.lachs, S.creme, S.gelb, S.haussmann, S.haussmann, S.terrakotta, S.fachwerk, S.creme]
         : lang === 'es' ? [S.ocker, S.creme, S.creme, S.gelb, S.terrakotta, S.terrakotta, S.haussmann]
@@ -1352,7 +1352,8 @@ export class Track {
     if (this.kind === 'mountain') { want = sec === 1; len = 40; }
     else if (this.kind === 'sprint') { want = sec === 0; len = 70; }
     else if (this.kind === 'tt') { want = sec === 1; len = 50; }
-    else { want = biome === 'alpine' && chance(r, 0.55); len = 50; }
+    // Abfahrt: Weiler auf den Almen und zwischen den Weinbergen
+    else { want = (biome === 'alpine' && chance(r, 0.55)) || (biome === 'vineyard' && chance(r, 0.6)); len = biome === 'vineyard' ? 60 : 50; }
     if (!want || n < len + 60) return null;
     const ok = (k: number) => marks[k] === 0 && Math.abs(curve[k]) < (this.kind === 'mountain' ? 0.02 : 0.012);
     const startAt = Math.floor(between(r, 0.25, 0.5) * n);

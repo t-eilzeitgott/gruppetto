@@ -62,6 +62,39 @@ const STYLES: Style[] = [
 
 /** Wandfarbe je Stil (für Giebel und Kamine) */
 export const STYLE_WALL: string[] = STYLES.map((s) => s.wall);
+/** Gesimsfarbe je Stil (Gesims, Gurtband, Fensterbänke als Körper) */
+export const STYLE_TRIM: string[] = STYLES.map((s) => s.trim);
+/** Art je Stil */
+export const STYLE_KIND: Style['kind'][] = STYLES.map((s) => s.kind);
+/**
+ * Stile mit eigener Wandfarbe je Haus: Putz und Fachwerkfelder sind im Atlas ausgespart (Maske im Alpha), der
+ * Shader setzt die Farbe aus WALL_PAL ein – so hat jedes Haus seine eigene, statt fünf Farben für alle.
+ */
+export const TINTABLE: boolean[] = STYLES.map((s) => s.kind === 'town' || s.kind === 'timber');
+
+/**
+ * Wandfarben (sRGB) für die Häuser mit eigener Farbe, nach Gegend gruppiert (WALL_SETS: Indizes). Der Index steht
+ * im ganzzahligen Anteil der u-Koordinate der Fassade (die Textur wiederholt sich waagrecht – sie sieht ihn nicht).
+ */
+export const WALL_PAL: string[] = [
+  // 0–11 Italien: Ocker, Siena, Gelb, Lachs, Terrakotta, Rosa, Creme, Pfirsich, Altrosa, Blassgrün, Hellblau, Orange
+  '#d9a35f', '#c98552', '#e8c46a', '#e09a7a', '#c9734f', '#e6a6a0', '#ecdcbc', '#efb98a', '#d99a8e', '#c3c99c', '#b3c6cc', '#df9550',
+  // 12–19 Frankreich: Creme, Sand, Hellgelb, Grau-Beige, Rosé, Weiß, helles Ocker, Taubenblau
+  '#ece0c4', '#ddc9a2', '#ead9a4', '#d6cdbd', '#e3bfae', '#f0ebe0', '#dcb880', '#c4cbd0',
+  // 20–25 Spanien: Kalkweiß (mehrfach), Creme, Ocker, Terrakotta, Hellgelb
+  '#f3f0e8', '#f0ece2', '#eadfc8', '#d8aa68', '#c87e56', '#eed69c',
+  // 26–31 Norden/England: Creme, Weiß, Pastellblau, Pastellgrün, Rosa, Hellgelb
+  '#efe7d4', '#f2f0ea', '#b9cdd8', '#c4d3b0', '#e7c0b8', '#ecd99a',
+  // 32–37 Alpen: Weiß, Creme, Hellgelb, Mint, Hellrosa, Sand
+  '#f2eee4', '#ece2ca', '#eedfaa', '#d6e2d0', '#ecd2c6', '#e2d4b4',
+  // 38–43 Küste (Ligurien): kräftig – Gelb, Orange, Rot, Rosa, Ocker, Grün
+  '#f0c25a', '#e88b4c', '#cf5f45', '#ea9d9a', '#dba24e', '#a9b98a',
+];
+const range = (a: number, b: number) => Array.from({ length: b - a }, (_, i) => a + i);
+export const WALL_SETS = {
+  it: range(0, 12), fr: range(12, 20), es: [20, 20, 21, 21, 22, 23, 24, 25], en: range(26, 32), alp: range(32, 38), coast: range(38, 44),
+  toskana: [0, 1, 4, 6, 7, 11, 2], po: [2, 3, 7, 0, 6, 8, 11],
+} as const;
 /** Dachfarbe je Stil (Ziegel, Schiefer, Holz) */
 export const STYLE_ROOF: string[] = ['#a8492a', '#9a4426', '#a24e2e', '#a8492a', '#566070', '#b05430', '#4a3a30', '#8a7d6c', '#5c6068', '#6a3524', '#4f5560', '#5a6270'];
 /** Dachneigung je Stil (Höhe je Meter) */
@@ -89,10 +122,13 @@ function shade(hex: string, f: number): string {
  * Zeichnet den Atlas. Fenster, Schaufenster und Oberlichter werden in glass gesammelt –
  * daraus entsteht die Nachtkarte mit genau denselben Positionen.
  */
-function drawAtlas(c: CanvasRenderingContext2D, glass: Glass[]) {
-  const r = mulberry32(4711);
+function drawAtlas(c: CanvasRenderingContext2D, glass: Glass[], only: number[] | null = null, wall: string | null = null) {
   for (let s = 0; s < FAC.STYLES; s++) {
-    const st = STYLES[s];
+    if (only && !only.includes(s)) continue;
+    // je Stil ein eigener Zufall: einzelne Bänder lassen sich gleich noch einmal zeichnen (Maske)
+    const r = mulberry32(4711 + s * 101);
+    const st0 = STYLES[s];
+    const st = wall && TINTABLE[s] ? { ...st0, wall } : st0;
     const y0 = s * FAC.BH;
     const yC = y0;                       // Gesims oben
     const yU = y0 + FAC.CR;              // Obergeschoss
@@ -234,7 +270,7 @@ function stones(c: CanvasRenderingContext2D, r: Rng, col: string, x0: number, y0
 
 /** Fenster mit Laibung, Sprossen, Fensterbank und (optional) offenen Läden; gibt das Glas zurück */
 function window(c: CanvasRenderingContext2D, st: Style, cx: number, yb: number, h0: number, wm: number, hm: number,
-  opt: { shutters?: boolean; arch?: boolean; sash?: boolean; box?: boolean; grille?: boolean; french?: boolean }, glass: Glass[], kind: Glass['k'] = 'win') {
+  opt: { shutters?: boolean; arch?: boolean; sash?: boolean; box?: boolean; grille?: boolean; french?: boolean; pediment?: boolean }, glass: Glass[], kind: Glass['k'] = 'win') {
   const w = X(wm);
   const h = Y(hm);
   const x = cx - w / 2;
@@ -311,6 +347,68 @@ function window(c: CanvasRenderingContext2D, st: Style, cx: number, yb: number, 
     c.fillRect(x, y + h * 0.5, w, 2);
   }
   if (opt.box) flowers(c, x - 6, y + h + 1, w + 12);
+  if (opt.pediment) {
+    // Verdachung über dem Fenster (Stuck)
+    c.fillStyle = shade(st.trim, 0.95);
+    c.fillRect(x - 10, y - 17, w + 20, 8);
+    c.fillStyle = 'rgba(0,0,0,0.22)';
+    c.fillRect(x - 10, y - 9, w + 20, 3);
+  }
+}
+
+/** Fenster im Obergeschoss (Variante 0) je Stil der Stadthäuser: Höhe über dem Boden, Breite, Höhe (m) und Art */
+function upperWindow(s: number, bay: number): { h: number; w: number; hh: number; shutters: boolean; arch: boolean; pediment: boolean; flowers: boolean } {
+  switch (s) {
+    case STYLE.lachs: return { h: 0.85, w: 0.95, hh: 1.6, shutters: true, arch: false, pediment: true, flowers: false };
+    case STYLE.creme: return { h: 0.8, w: 0.9, hh: 1.75, shutters: false, arch: true, pediment: false, flowers: true };
+    case STYLE.gelb: return { h: 0.85, w: 0.95, hh: 1.6, shutters: true, arch: false, pediment: false, flowers: true };
+    case STYLE.terrakotta: return { h: 0.9, w: 1.0, hh: 1.55, shutters: false, arch: false, pediment: true, flowers: bay === 1 };
+    default: return { h: 0.85, w: 0.95, hh: 1.6, shutters: true, arch: false, pediment: false, flowers: (s + bay) % 2 === 0 };
+  }
+}
+
+/** Körper vor der Wand je 4-m-Stück eines Obergeschosses (Meter im Stück, Höhe über dem Geschossboden) */
+export interface UpperDetail {
+  /** Fensterbank (oder Blumenkasten) unter einem Fenster: Mitte, Oberkante, Breite */
+  sills: { x: number; h: number; w: number; flowers: boolean }[];
+  /** Balkon: von–bis, Boden auf Höhe h; Holz (Chalet) oder Eisen */
+  balconies: { x0: number; x1: number; h: number; wood: boolean }[];
+}
+
+export function upperDetail(style: number, v: number): UpperDetail {
+  const k = STYLES[style].kind;
+  const bays = [1, 3];
+  switch (k) {
+    case 'town': case 'timber':
+      if (v === 0) return { sills: bays.map((x, b) => { const w = upperWindow(style, b); return { x, h: w.h, w: w.w + 0.22, flowers: w.flowers }; }), balconies: [] };
+      return { sills: [], balconies: bays.map((x) => ({ x0: x - 0.72, x1: x + 0.72, h: 0.08, wood: false })) };
+    case 'haus':
+      return { sills: [], balconies: v === 0 ? bays.map((x) => ({ x0: x - 0.72, x1: x + 0.72, h: 0.1, wood: false })) : [{ x0: 0.05, x1: 3.95, h: 0.1, wood: false }] };
+    case 'mairie':
+      return { sills: [], balconies: bays.map((x) => ({ x0: x - 0.72, x1: x + 0.72, h: 0.1, wood: false })) };
+    case 'chalet':
+      return { sills: [], balconies: [{ x0: 0, x1: 4, h: 0.12, wood: true }] };
+    case 'stone':
+      return { sills: bays.map((x) => ({ x, h: 1.0, w: 1.0, flowers: v === 1 && x === 3 })), balconies: [] };
+    case 'brick':
+      return { sills: bays.map((x) => ({ x, h: 0.85, w: 1.15, flowers: false })), balconies: [] };
+    default:
+      return { sills: [], balconies: [] };
+  }
+}
+
+/**
+ * Markise über dem Laden (Erdgeschoss, Variante 1): waagrecht von–bis (m im Stück), Höhe der Oberkante über dem
+ * Boden und das gestreifte Feld im Atlas (v unten/oben) – die Markise als Körper trägt dieselben Streifen
+ */
+export function awningDetail(style: number, v: number): { x0: number; x1: number; top: number; vb: number; vt: number } | null {
+  if (v !== 1) return null;
+  const k = STYLES[style].kind;
+  if (k !== 'town' && k !== 'timber' && k !== 'haus' && k !== 'chalet') return null;
+  const yBottom = style * FAC.BH + FAC.BH;
+  const yTop = yBottom - Y(2.92);
+  const yLow = yTop + Y(0.42);
+  return { x0: 14 / 64, x1: 242 / 64, top: 2.92, vb: 1 - (yLow - 1) / FAC_H, vt: 1 - (yTop + 1) / FAC_H };
 }
 
 function flowers(c: CanvasRenderingContext2D, x: number, y: number, w: number) {
@@ -324,47 +422,14 @@ function flowers(c: CanvasRenderingContext2D, x: number, y: number, w: number) {
   }
 }
 
-function railing(c: CanvasRenderingContext2D, x: number, yb: number, w: number, hm: number, wood: boolean) {
-  const h = Y(hm);
-  const y = yb - h;
-  if (wood) {
-    c.fillStyle = '#5a3a22';
-    c.fillRect(x, y, w, 6);
-    c.fillRect(x, yb - 6, w, 6);
-    for (let bx = x + 2; bx < x + w - 4; bx += 9) {
-      c.fillStyle = '#6e4628';
-      c.fillRect(bx, y + 6, 6, h - 12);
-      c.fillStyle = 'rgba(0,0,0,0.3)';
-      c.fillRect(bx + 2, y + h * 0.45, 2, 5);
-    }
-    flowers(c, x + 2, y - 2, w - 4);
-    return;
-  }
-  // Schmiedeeisen
-  c.fillStyle = 'rgba(28,28,32,0.95)';
-  c.fillRect(x, y, w, 3);
-  c.fillRect(x, yb - 3, w, 3);
-  for (let bx = x + 3; bx < x + w - 2; bx += 6) c.fillRect(bx, y, 1.6, h);
-  c.strokeStyle = 'rgba(28,28,32,0.9)';
-  c.lineWidth = 1.4;
-  for (let bx = x + 6; bx < x + w - 10; bx += 18) {
-    c.beginPath();
-    c.ellipse(bx + 6, y + h / 2, 5, h / 2 - 5, 0, 0, Math.PI * 2);
-    c.stroke();
-  }
-}
-
 function upperBay(c: CanvasRenderingContext2D, r: Rng, st: Style, cx: number, yb: number, v: number, bay: number, glass: Glass[], s: number) {
   switch (st.kind) {
     case 'town': case 'timber': {
-      if (v === 0) window(c, st, cx, yb, 0.85, 0.95, 1.6, { shutters: true, box: (s + bay) % 2 === 0 }, glass);
-      else {
-        window(c, st, cx, yb, 0.05, 0.95, 2.25, { shutters: true, french: true }, glass);
-        // kleiner Austritt mit Eisengeländer
-        c.fillStyle = shade(st.trim, 0.8);
-        c.fillRect(cx - X(0.7), yb - 6, X(1.4), 6);
-        railing(c, cx - X(0.68), yb - 6, X(1.36), 0.95, false);
-      }
+      // (Balkone, Fensterbänke und Blumenkästen sind Körper vor der Wand – siehe upperDetail und house3d.ts)
+      if (v === 0) {
+        const w = upperWindow(s, bay);
+        window(c, st, cx, yb, w.h, w.w, w.hh, { shutters: w.shutters, arch: w.arch, pediment: w.pediment }, glass);
+      } else window(c, st, cx, yb, 0.05, 0.95, 2.25, { shutters: true, french: true, arch: s === 2 }, glass);
       break;
     }
     case 'haus': case 'mairie': {
@@ -372,33 +437,17 @@ function upperBay(c: CanvasRenderingContext2D, r: Rng, st: Style, cx: number, yb
       // Verdachung
       c.fillStyle = shade(st.trim, 0.85);
       c.fillRect(cx - X(0.62), yb - Y(2.55), X(1.24), 7);
-      if (v === 0 || st.kind === 'mairie') {
-        c.fillStyle = shade(st.trim, 0.75);
-        c.fillRect(cx - X(0.7), yb - 7, X(1.4), 7);
-        railing(c, cx - X(0.66), yb - 7, X(1.32), 0.9, false);
-      } else if (bay === 1) {
-        // durchlaufender Balkon über beide Achsen (nach beiden Fenstern gezeichnet)
-        c.fillStyle = shade(st.trim, 0.75);
-        c.fillRect(cx - 192, yb - 7, 256, 7);
-        railing(c, cx - 190, yb - 7, 252, 0.9, false);
-      }
       break;
     }
     case 'chalet': {
       window(c, st, cx, yb, 1.15, 0.9, 1.25, { shutters: true }, glass);
-      if (bay === 0) {
-        // Holzbalkon über die ganze Breite mit Geranien
-        c.fillStyle = '#4a2e18';
-        c.fillRect(cx - 64, yb - 9, 256, 9);
-        railing(c, cx - 64, yb - 9, 256, 1.0, true);
-      }
       break;
     }
     case 'church':
       window(c, st, cx, yb, 0.5, 0.85, 2.2, { arch: true }, glass, 'church');
       break;
     case 'stone':
-      window(c, st, cx, yb, 1.0, 0.8, 1.15, { shutters: true, box: v === 1 && bay === 1 }, glass);
+      window(c, st, cx, yb, 1.0, 0.8, 1.15, { shutters: true }, glass);
       break;
     case 'brick':
       window(c, st, cx, yb, 0.85, 0.95, 1.7, { sash: true }, glass);
@@ -605,17 +654,50 @@ function cornice(c: CanvasRenderingContext2D, r: Rng, st: Style, x0: number, yC:
   void r;
 }
 
-let atlas: { day: HTMLCanvasElement; night: HTMLCanvasElement } | null = null;
+/**
+ * Fassadenatlas als Daten: RGB die Grundfarbe, Alpha die Maske der Wandflächen mit eigener Farbe (TINTABLE). Dort ist
+ * die Wand schwarz gezeichnet; der Shader rechnet Grundfarbe + Maske · Wandfarbe des Hauses.
+ */
+export interface FacadeAtlas { w: number; h: number; data: Uint8Array; night: HTMLCanvasElement }
+let atlas: FacadeAtlas | null = null;
 
-/** Fassadenatlas (Tag) und Nachtkarte mit erleuchteten Fenstern (halbe Auflösung) */
-export function facadeAtlas(): { day: HTMLCanvasElement; night: HTMLCanvasElement } {
+/** Fassadenatlas (Tag, mit Wandmaske) und Nachtkarte mit erleuchteten Fenstern (halbe Auflösung) */
+export function facadeAtlas(): FacadeAtlas {
   if (atlas) return atlas;
+  // zweimal zeichnen – Wand weiß und Wand schwarz: der Unterschied ist genau der Anteil der Wand an jedem Bildpunkt
+  // (auch unter halbdurchsichtigen Flecken, Schatten und Rauschen), das zweite Bild ist die Grundfarbe ohne Wand
   const day = document.createElement('canvas');
   day.width = FAC.W;
   day.height = FAC_H;
-  const c = day.getContext('2d')!;
+  const c = day.getContext('2d', { willReadFrequently: true })!;
   const glass: Glass[] = [];
-  drawAtlas(c, glass);
+  drawAtlas(c, glass, null, '#ffffff');
+  const tint = STYLES.map((_, i) => i).filter((i) => TINTABLE[i]);
+  const dark = document.createElement('canvas');
+  dark.width = FAC.W;
+  dark.height = FAC_H;
+  const d = dark.getContext('2d', { willReadFrequently: true })!;
+  drawAtlas(d, [], tint, '#000000');
+  const data = new Uint8Array(FAC.W * FAC_H * 4);
+  const A = c.getImageData(0, 0, FAC.W, FAC_H)?.data;
+  const B = d.getImageData(0, 0, FAC.W, FAC_H)?.data;
+  if (A && B) {
+    // Zeilen von unten nach oben (Datentextur: Zeile 0 ist v = 0) – die v-Koordinaten bleiben wie bei der Leinwand
+    const RW = FAC.W * 4;
+    for (let y = 0; y < FAC_H; y++) {
+      const tint = TINTABLE[Math.floor(y / FAC.BH)];
+      const src = y * RW;
+      const dst = (FAC_H - 1 - y) * RW;
+      for (let x = 0; x < RW; x += 4) {
+        const i = src + x;
+        const o = dst + x;
+        if (!tint) { data[o] = A[i]; data[o + 1] = A[i + 1]; data[o + 2] = A[i + 2]; data[o + 3] = 0; continue; }
+        const m = ((A[i] - B[i]) + (A[i + 1] - B[i + 1]) + (A[i + 2] - B[i + 2])) / 3;
+        data[o] = B[i]; data[o + 1] = B[i + 1]; data[o + 2] = B[i + 2];
+        data[o + 3] = Math.max(0, Math.min(255, Math.round(m)));
+      }
+    }
+  }
   const night = document.createElement('canvas');
   night.width = FAC.W / 2;
   night.height = FAC_H / 2;
@@ -640,7 +722,7 @@ export function facadeAtlas(): { day: HTMLCanvasElement; night: HTMLCanvasElemen
       n.fillRect(g.x + g.w / 2 - 1.5, g.y, 3, g.h);
     }
   }
-  atlas = { day, night };
+  atlas = { w: FAC.W, h: FAC_H, data, night };
   return atlas;
 }
 

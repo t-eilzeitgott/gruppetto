@@ -19,12 +19,12 @@ import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
 import { buildPeaks, buildPeaksSteps, peakKeepers, peakLight, setPeakOpacity } from './peaks3d';
 import { FAC_B, FAC_H, FAC_W, TB, portalFacade, tunnelMaterial, tunnelName, tunnelRing, tunnelUniforms, type TunnelUniforms } from './tunnel3d';
-import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
+import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, TINTABLE, WALL_PAL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
 import { GB, alphaTex, lin, lin255, propGeometries, type Prop3D, type RGBf } from './models3d';
 import { RiderModel, riderKitKey, type RiderPose } from './rider3d';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
-import { LEVELS, LIM_MAX, Terrain, grassy, type Region, type TileData } from './terrain3d';
+import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
 import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
 import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeTint, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
@@ -36,6 +36,7 @@ import { apIn, apOut, apQ, appearify, appearifyTree, setAp } from './appear';
 import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
 import type { WeatherEnv } from './weather';
 import { gfxOn, onGfxChange } from './gfxOpts';
+import { buildHouse, rowUnits, roofColor, roofKind, wallSet, type At, type Town } from './house3d';
 
 /** Kennung der feinen Landschafts-Shader (gfxOpts „details“) im Programmschlüssel */
 const dk = () => (gfxOn('details') ? '+d' : '');
@@ -118,11 +119,14 @@ const rgbLin = (c: RGB): RGBf => lin255(c[0], c[1], c[2]);
 
 interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg }
 interface CrowdBatch { near: THREE.Mesh[]; mid: THREE.Mesh[]; spr: THREE.Mesh | null; c: THREE.Vector3; r: number; lod: number }
-interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[] }
+interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[]; detail: Detail | null }
+/** Kleinteile der Häuser eines Abschnitts: nur in der Nähe sichtbar */
+interface Detail { mesh: THREE.Mesh; c: THREE.Vector3; r: number }
+/** bis zu diesem Abstand (m, waagrecht bis zum Rand) zeigen Häuser Balkone, Fensterbänke und Blumen */
+const DETAIL_FAR = 150;
 /** angestoßene Shader (bis sie fertig sind) */
 interface Warm { progs: object[]; t: number }
 /** Bauteile der Häuser eines Abschnitts */
-interface Town { facade: GB; tiles: GB; plain: GB; signs: GB; lanterns: number[]; bulbs: number[] }
 interface Runner { z: number; x: number; v: number; go: boolean; p: Person; act: number; yaw: number; flag: boolean }
 /** Reihenfolge des Nachladens (Stufe, größter Ring): beim Start erst der Nahbereich, dann die Ferne */
 const ORDER_START: [number, number][] = [[0, 1], [1, 1], [2, 9], [1, 9], [0, 9]];
@@ -642,8 +646,18 @@ export class Renderer3D {
     this.noiseMap ??= this.dataTex(noiseTex(), 1);
     const L = (opts: THREE.MeshLambertMaterialParameters) => new THREE.MeshLambertMaterial(opts);
     const fa = facadeAtlas();
-    const facade = this.tex(fa.day, false);
+    // Fassaden: Grundfarbe und Wandmaske als Datentextur; waagrecht wiederholt – der ganzzahlige Anteil von u ist
+    // die Wandfarbe des Hauses (WALL_PAL), die Textur selbst sieht nur den Bruchteil
+    const facade = new THREE.DataTexture(fa.data, fa.w, fa.h, THREE.RGBAFormat);
+    facade.colorSpace = THREE.SRGBColorSpace;
+    facade.wrapS = THREE.RepeatWrapping;
+    facade.magFilter = THREE.LinearFilter;
+    facade.minFilter = THREE.LinearMipmapLinearFilter;
+    facade.generateMipmaps = true;
+    facade.anisotropy = Math.min(4, this.gl.capabilities.getMaxAnisotropy());
+    facade.needsUpdate = true;
     const facadeLit = this.tex(fa.night, false);
+    facadeLit.wrapS = THREE.RepeatWrapping;
     const signs = this.tex(signAtlas(), false);
     const detailCv = detailTex();
     const detail = this.tex(detailCv);
@@ -1029,6 +1043,20 @@ export class Renderer3D {
     this.terrMats = LEVELS.map((_, lv) => lower(L({ vertexColors: true, map: lv === 0 ? detail : null }), lv, lv === 1 ? 110 : 380, 'terr', true));
     this.waterMats = LEVELS.map((_, lv) => lower(new THREE.MeshPhongMaterial({ color: 0x2f7fb5, shininess: 70, specular: 0x8fb4d0, transparent: true, opacity: 0.9 }), lv, lv === 1 ? 110 : 380, 'lake', false));
     // Banden und Schilder: vorn bedruckt, hinten schlichte Farbe (Eckpunktfarbe)
+    // Fassaden: Wandfarbe je Haus aus der Palette (Index im ganzzahligen Anteil von u, Maske im Alpha des Atlas)
+    const wallPal = { value: WALL_PAL.map((h) => new THREE.Color(h)) };
+    this.mats.facade.onBeforeCompile = (sh) => {
+      sh.uniforms.uWallPal = wallPal;
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>\nuniform vec3 uWallPal[${WALL_PAL.length}];`)
+        .replace('#include <map_fragment>', `
+          #ifdef USE_MAP
+            vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+            int wi = clamp(int(floor(vMapUv.x)), 0, ${WALL_PAL.length - 1});
+            diffuseColor.rgb *= sampledDiffuseColor.rgb + sampledDiffuseColor.a * uWallPal[wi];
+          #endif`);
+    };
+    this.mats.facade.customProgramCacheKey = () => 'facade-tint';
     this.mats.ads.onBeforeCompile = (sh) => {
       sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>',
         '#ifdef USE_COLOR\nif (!gl_FrontFacing) diffuseColor.rgb = vColor.rgb;\n#endif');
@@ -2686,7 +2714,9 @@ export class Renderer3D {
     tiles.uv = true;
     const signGB = new GB();
     signGB.uv = true;
-    const town: Town = { facade, tiles, plain: roof, signs: signGB, lanterns: [], bulbs: [] };
+    const detailGB = new GB();
+    const town: Town = { facade, tiles, plain: roof, signs: signGB, lanterns: [], bulbs: [], detail: detailGB, occ: [] };
+    let detail: Detail | null = null;
     const bill = new GB();
     bill.uv = true;
     const ads = new GB();
@@ -2764,7 +2794,7 @@ export class Renderer3D {
         const bld = sg < 0 ? s.bL : s.bR;
         if (bld && bld.start === s.i) {
           if (this.soon(2)) { yield; resume(); }
-          this.building(town, a, bld, sg);
+          yield* this.building(town, a, bld, sg, sg < 0 ? lim.L[r] : lim.R[r], resume);
         }
       }
       // Wimpel- und Lichterketten quer über die Gasse
@@ -2846,6 +2876,17 @@ export class Renderer3D {
       () => add(facade, this.mats.facade, 0, true),
       () => add(roof, this.mats.roof, 0, true),
       () => add(tiles, this.mats.tiles, 0, true),
+      () => {
+        if (detailGB.empty) return;
+        const geo = detailGB.build();
+        disp.push(geo);
+        const mesh = new THREE.Mesh(geo, this.mats.roof);
+        mesh.receiveShadow = true;
+        mesh.castShadow = true;
+        group.add(mesh);
+        const bs = geo.boundingSphere!;
+        detail = { mesh, c: bs.center.clone(), r: bs.radius };
+      },
       () => add(signGB, this.mats.sign, 0),
       () => add(ads, this.mats.ads, 0, true),
     ];
@@ -2952,7 +2993,7 @@ export class Renderer3D {
     group.traverse((o) => { o.matrixAutoUpdate = false; o.updateMatrix(); });
     group.updateMatrixWorld(true);
     return {
-      idx: ci, group, glow, crowd,
+      idx: ci, group, glow, crowd, detail,
       dispose: () => {
         for (const d of disp) d.dispose();
         for (const geo of crowdGeos) disposeCrowdGeometry(geo);
@@ -3531,7 +3572,136 @@ export class Renderer3D {
    * Das Haus folgt der Sehne der Straße (in Kurven stehen beide Enden im gleichen Abstand) und steht am
    * Hang auf der höheren Seite; der Sockel reicht tief genug hinunter.
    */
-  private building(T: Town, a: Row, b: Building, sg: number) {
+  /**
+   * Häuserzeile an der Straße: einzelne Häuser (house3d.ts) mit eigener Höhe, Farbe und Dach, dahinter je nach
+   * Ort eine zweite und dritte Reihe auf dem Gelände. Kirche, Rathaus und Palazzi an der Piazza: specialBuilding.
+   */
+  private *building(T: Town, a: Row, b: Building, sg: number, lim: number, resume: () => void): Generator<void, void, void> {
+    if (b.style === STYLE.kirche || b.style === STYLE.rathaus || b.arcade) { this.specialBuilding(T, a, b, sg); return; }
+    const t = this.track!;
+    const z0 = a.seg.i * SEG;
+    const e = t.world(z0 + b.len * SEG, 0, 0, this.w2);
+    let fx = e.x - a.x;
+    let fz = e.z - a.z;
+    const L = Math.hypot(fx, fz) || b.len * SEG;
+    fx /= L;
+    fz /= L;
+    const rx = -fz;
+    const rz = fx;
+    const base = Math.max(a.y, e.y);
+    const ax = a.x;
+    const az = a.z;
+    const at: At = (lat, along, h) => [ax + rx * lat + fx * along, base + h, az + rz * lat + fz * along];
+    const lang = t.lang;
+    const region = t.region;
+    const pal = wallSet(region, lang);
+    const units = rowUnits(L, b.style, b.floors, b.seed, pal);
+    const village = t.sections[a.seg.sec].biome === 'village';
+    const shopUnit = b.sign >= 0 ? Math.max(0, units.findIndex((u) => u.s1 - u.s0 >= 3.99)) : -1;
+    const lanternUnit = hash(b.seed + 5) < 0.8 ? Math.floor(hash(b.seed + 6) * units.length) : -1;
+    for (let i = 0; i < units.length; i++) {
+      // je Haus nachsehen, ob die Zeit des Bildes um ist (eine Zeile mit Hinterhäusern sind viele Teile)
+      if (i > 0 && this.soon(1)) { yield; resume(); }
+      const u = units[i];
+      const seed = b.seed + (i + 1) * 7717;
+      const free = units.length === 1;
+      const depth = b.depth * (0.88 + hash(seed + 5) * 0.24);
+      buildHouse(T, at, {
+        s0: u.s0, s1: u.s1, setback: b.setback + u.dz, depth, sg, style: u.style, floors: u.floors, seed, tint: u.tint,
+        roof: roofKind(u.style, region, lang, free, hash(seed + 3)), roofCol: roofColor(u.style, region, lang, hash(seed + 7)),
+        foot: -3.2, ovA: i === 0, ovB: i === units.length - 1, street: true,
+        shop: i === shopUnit ? { sign: b.sign, badge: b.badge } : null, lantern: i === lanternUnit,
+        annex: hash(seed + 11) < (village ? 0.22 : 0.5),
+      }, lang);
+      const c = at(sg * (b.setback + depth / 2), (u.s0 + u.s1) / 2, 0);
+      T.occ.push(c[0], c[2], 0.45 * Math.hypot(u.s1 - u.s0, depth));
+    }
+    yield* this.backRows(T, a, b, sg, at, L, base, lim, village, resume);
+  }
+
+  /**
+   * Hinterhäuser: hinter der Straßenzeile eine zweite (im Ort oft auch eine dritte) Reihe auf dem Gelände – über
+   * die Dächer und durch die Lücken sieht man so einen Ort statt einer Kulisse. Nicht auf anderen Straßen, nicht
+   * an zu steilen Stellen, nicht ineinander.
+   */
+  private *backRows(T: Town, a: Row, b: Building, sg: number, at: At, L: number, base: number, lim: number, village: boolean, resume: () => void): Generator<void, void, void> {
+    const t = this.track!;
+    const side = sg < 0 ? a.seg.L : a.seg.R;
+    if (side.ground !== 'pavement') return;
+    const ground = (lat: number, along: number): number => {
+      const p = at(lat, along, 0);
+      const dx = Math.abs(lat) - EDGE;
+      if (dx < lim - 0.5) {
+        const gh = this.groundAt(side, a.seg, sg, dx, lim);
+        if (gh !== null) return a.y + gh;
+      }
+      return this.terrain!.heightIn(this.region!, p[0], p[2]);
+    };
+    const h = (k: number) => hash(b.seed * 17 + k * 6151);
+    const rows = village ? (h(1) < 0.6 ? 2 : 1) : h(1) < 0.55 ? 1 : 0;
+    const lang = t.lang;
+    const region = t.region;
+    const pal = wallSet(region, lang);
+    const alpineFront = b.style === STYLE.chalet || b.style === STYLE.bruchstein;
+    const pool = alpineFront ? [STYLE.chalet, STYLE.chalet, STYLE.bruchstein, STYLE.creme] : lang === 'en' ? [STYLE.backstein, STYLE.backstein, STYLE.creme, STYLE.fachwerk] : [STYLE.ocker, STYLE.lachs, STYLE.creme, STYLE.gelb, STYLE.terrakotta, b.style];
+    let lat0 = b.setback + b.depth;
+    for (let row = 0; row < rows; row++) {
+      const s2 = lat0 + 2.6 + h(row * 7 + 2) * 2.8;
+      let deepest = 0;
+      let x = -1.5 + h(row * 7 + 3) * 2.5;
+      let k = 0;
+      while (x < L - 3 && k < 4) {
+        const q = row * 50 + k * 7;
+        k++;
+        const w = 5.5 + h(q + 4) * 4;
+        const d = 6.5 + h(q + 5) * 3.5;
+        const x1 = Math.min(L + 2, x + w);
+        const xs = x;
+        x = x1 + 1.2 + h(q + 6) * 3.5;
+        if (x1 - xs < 4.5 || s2 + d > TOWN_ZONE - 2) continue;
+        if (this.soon(1)) { yield; resume(); }
+        // Untergrund: höchste und tiefste Ecke
+        let yMax = -Infinity;
+        let yMin = Infinity;
+        let blocked = false;
+        for (const [qq, xx] of [[s2, xs], [s2, x1], [s2 + d, xs], [s2 + d, x1], [s2 + d / 2, (xs + x1) / 2]]) {
+          const lat = sg * qq;
+          const y = ground(lat, xx);
+          yMax = Math.max(yMax, y);
+          yMin = Math.min(yMin, y);
+          const p = at(lat, xx, 0);
+          if (this.terrain!.roadDist(this.region!, p[0], p[2]) < EDGE + 3.5) blocked = true;
+        }
+        if (blocked || yMax - yMin > 5.5) continue;
+        const c = at(sg * (s2 + d / 2), (xs + x1) / 2, 0);
+        const rad = 0.45 * Math.hypot(x1 - xs, d);
+        let hit = false;
+        for (let o = 0; o < T.occ.length && !hit; o += 3) {
+          if (Math.hypot(T.occ[o] - c[0], T.occ[o + 1] - c[2]) < T.occ[o + 2] + rad) hit = true;
+        }
+        if (hit) continue;
+        T.occ.push(c[0], c[2], rad);
+        deepest = Math.max(deepest, d);
+        const style = pool[Math.floor(h(q + 7) * pool.length)];
+        const floors = Math.max(1, Math.min(village ? 3 : 2, Math.round((village ? 1.2 : 0.8) + h(q + 8) * 1.9) - row));
+        const seed = Math.floor(h(q + 9) * 1e9);
+        const tint = pal[Math.floor(h(q + 10) * pal.length)];
+        const base2 = yMax + 0.05;
+        const at2: At = (lat, along, y) => at(lat, along, y + base2 - base);
+        buildHouse(T, at2, {
+          s0: xs, s1: x1, setback: s2, depth: d, sg, style, floors, seed, tint,
+          roof: roofKind(style, region, lang, true, h(q + 11)), roofCol: roofColor(style, region, lang, h(q + 12)),
+          foot: Math.max(-12, yMin - base2 - 0.6), ovA: true, ovB: true, street: true, back: true,
+          annex: h(q + 13) < 0.3,
+        }, lang);
+      }
+      if (!deepest) break;
+      lat0 = s2 + deepest;
+    }
+  }
+
+  /** Kirche, Rathaus und Palazzi mit Laubengang (eine Einheit, eigene Teile) */
+  private specialBuilding(T: Town, a: Row, b: Building, sg: number) {
     const t = this.track!;
     const z0 = a.seg.i * SEG;
     const e = t.world(z0 + b.len * SEG, 0, 0, this.w2);
@@ -3561,6 +3731,10 @@ export class Renderer3D {
     const signPiece = frontPieces >= 3 ? 1 : 0;
     const signOk = b.sign >= 0 && L - signPiece * 4 >= 3.99;
 
+    // Wandfarbe (Häuser mit eigener Farbe: aus der Palette der Gegend)
+    const pal = wallSet(t.region, t.lang);
+    const tOff = TINTABLE[st] ? pal[Math.floor(hs(29) * pal.length)] : 0;
+    const wallHex = TINTABLE[st] ? WALL_PAL[tOff] : STYLE_WALL[st];
     // Tönung des Hauses (etwas wärmer oder kühler, heller oder dunkler) und Verlauf über die Höhe
     const wTint = 0.9 + hs(31) * 0.14;
     const warm = (hs(37) - 0.5) * 0.1;
@@ -3581,8 +3755,8 @@ export class Renderer3D {
         const p1 = [A[0] + (B[0] - A[0]) * (s1 / Lw), A[1] + (B[1] - A[1]) * (s1 / Lw)];
         const strip = (h0: number, h1: number, part: FacPart, v: number) => {
           const [vb, vt] = facV(st, part);
-          const u0 = facU(v, 0);
-          const u1 = facU(v, s1 - s0);
+          const u0 = facU(v, 0) + tOff;
+          const u1 = facU(v, s1 - s0) + tOff;
           // Alter und Schmutz: unten Spritzwasser, unter dem Dach Schatten, jedes Stück und Haus etwas anders
           const c0 = ageC(h0, k);
           const c1 = ageC(h1, k);
@@ -3689,7 +3863,7 @@ export class Renderer3D {
     }
     T.plain.quad(at(lm - 0.12, g0, rh + 0.02), at(lm - 0.12, g1, rh + 0.02), at(lm + 0.12, g1, rh + 0.02), at(lm + 0.12, g0, rh + 0.02), shadeF(roofCol, 0.75));
     // Giebeldreiecke (Wandfarbe; Chalet in Holz)
-    const gable = chalet ? lin('#7a4e2c') : shadeF(lin(STYLE_WALL[st]), 0.94);
+    const gable = chalet ? lin('#7a4e2c') : shadeF(lin(wallHex), 0.94);
     T.plain.tri(at(l0, 0, H), at(lm, 0, rh), at(l1, 0, H), gable);
     T.plain.tri(at(l1, L, H), at(lm, L, rh), at(l0, L, H), gable);
     // Unterseite des Dachüberstands an der Traufe (dunkler Schatten statt Durchblick)
@@ -3702,7 +3876,7 @@ export class Renderer3D {
       const cl = lm + sg * half * (0.3 + hs(13) * 0.25);
       const roofH = rh - pitch * Math.abs(cl - lm);
       const cw = 0.32;
-      const col = st === STYLE.backstein ? lin('#8a3e2e') : shadeF(lin(STYLE_WALL[st]), 0.85);
+      const col = st === STYLE.backstein ? lin('#8a3e2e') : shadeF(lin(wallHex), 0.85);
       const top = rh + 0.9;
       const P0 = (dl: number, da: number, h: number) => at(cl + dl, ca + da, h);
       const sides: [number, number, number, number][] = [[-cw, -cw, cw, -cw], [cw, -cw, cw, cw], [cw, cw, -cw, cw], [-cw, cw, -cw, -cw]];
@@ -4401,6 +4575,13 @@ export class Renderer3D {
     if (pm) this.crowdU.uRider.value.copy(pm.group.position);
     const cp = this.camera.position;
     for (const ch of this.chunks.values()) {
+      // Kleinteile der Häuser nur in der Nähe (in der Ferne wenige Bildpunkte, aber viele Dreiecke)
+      const dt0 = ch.detail;
+      if (dt0) {
+        const dd = Math.hypot(cp.x - dt0.c.x, cp.z - dt0.c.z) - dt0.r;
+        const vis = dt0.mesh.visible ? dd < DETAIL_FAR + 10 : dd < DETAIL_FAR;
+        if (vis !== dt0.mesh.visible) dt0.mesh.visible = vis;
+      }
       for (const b of ch.crowd) {
         // Welche Stufe ein Mensch zeigt, entscheidet der Shader je Person (fein bis ~20 m, einfach bis ~50 m,
         // dahinter Bilder – mit weichen, gerasterten Übergängen). Hier nur: Gruppen weglassen, die gerade

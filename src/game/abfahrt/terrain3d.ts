@@ -267,7 +267,9 @@ class Samples {
 
 /** Straßensegmente eines Gebiets, nach Zellen sortiert (schnelle Umkreissuche) */
 /** Zahlen je Straßenstück in SegGrid.buf: x, z, y, rx, rz, Tunnel, Portal, Korridor links/rechts, Grabentiefe (Viadukt) */
-const SEGW = 10;
+const SEGW = 12;
+/** Ortszone: so weit quer zur Straße stehen Häuser (Straßenzeile und Hinterhäuser) – dort keine Bäume aus dem Gelände */
+export const TOWN_ZONE = 40;
 interface SegGrid { buf: Float64Array; n: number; x0: number; z0: number; cs: number; nx: number; nz: number; start: Int32Array; order: Int32Array }
 export interface Region { cand: Int32Array; sg: SegGrid }
 
@@ -780,6 +782,16 @@ export class Terrain {
         list[len] = s.wx; list[len + 1] = s.wz; list[len + 2] = Math.min(s.y, s.y + s.grade * SEG); list[len + 3] = Math.cos(s.th); list[len + 4] = Math.sin(s.th);
         list[len + 5] = tun; list[len + 6] = s.portal; list[len + 7] = lL; list[len + 8] = lR;
         list[len + 9] = s.bridge;
+        // Ortszone links/rechts: Häuser hier oder in der Nähe (Lücken zwischen Häusern gehören dazu)
+        let zl = 0;
+        let zr = 0;
+        for (let d = -7; d <= 7 && (!zl || !zr); d++) {
+          const o = i + d >= t.first ? t.seg(i + d) : null;
+          if (o?.bL) zl = TOWN_ZONE;
+          if (o?.bR) zr = TOWN_ZONE;
+        }
+        list[len + 10] = zl;
+        list[len + 11] = zr;
         len += SEGW;
       }
     }
@@ -1287,7 +1299,7 @@ export class Terrain {
           const gi = Math.round((x - x0) / cell) + 1;
           const gj = Math.round((z - z0) / cell) + 1;
           const k = gj * G + gi;
-          if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < LIM_MAX + 3 || segDist(sgr, x, z) < LIM_MAX + 2) continue;
+          if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < LIM_MAX + 3 || segDist(sgr, x, z) < LIM_MAX + 2 || inTown(sgr, x, z)) continue;
           if (nearMark(x, z, NOISE_SEED)) continue;
           // Wasserfälle: im Bett keine Bäume, auf dem felsigen Saum nur vereinzelt, am Bach Ufergehölz
           let fallP = 0;
@@ -1493,6 +1505,33 @@ export class Terrain {
 /** gewichtetes Mittel aus vier Ecken (Feld A mit n Werten je Ecke, Wert q) */
 function lerpC(A: Float32Array, n: number, q: number, ia: number, ib: number, ic: number, id: number, wa: number, wb: number, wc: number, wd: number): number {
   return A[ia * n + q] * wa + A[ib * n + q] * wb + A[ic * n + q] * wc + A[id * n + q] * wd;
+}
+
+/** liegt der Punkt in einem Ort (auf der Seite der Straße, an der Häuser stehen)? */
+function inTown(sg: SegGrid | null, x: number, z: number): boolean {
+  if (!sg || sg.n === 0) return false;
+  const ci = Math.floor((x - sg.x0) / sg.cs);
+  const cj = Math.floor((z - sg.z0) / sg.cs);
+  let best = Infinity;
+  let bb = -1;
+  for (let jj = cj - 1; jj <= cj + 1; jj++) {
+    if (jj < 0 || jj >= sg.nz) continue;
+    for (let ii = ci - 1; ii <= ci + 1; ii++) {
+      if (ii < 0 || ii >= sg.nx) continue;
+      const c = jj * sg.nx + ii;
+      for (let q = sg.start[c]; q < sg.start[c + 1]; q++) {
+        const b = sg.order[q] * SEGW;
+        const dx = x - sg.buf[b];
+        const dz = z - sg.buf[b + 1];
+        const d = dx * dx + dz * dz;
+        if (d < best) { best = d; bb = b; }
+      }
+    }
+  }
+  if (bb < 0) return false;
+  const lat = (x - sg.buf[bb]) * sg.buf[bb + 3] + (z - sg.buf[bb + 1]) * sg.buf[bb + 4];
+  const zone = lat < 0 ? sg.buf[bb + 10] : sg.buf[bb + 11];
+  return zone > 0 && Math.sqrt(best) < zone;
 }
 
 /** Abstand zum nächsten Segment-Anfangspunkt im Raster (3×3 Nachbarzellen) */
