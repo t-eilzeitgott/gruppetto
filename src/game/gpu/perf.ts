@@ -6,7 +6,8 @@
  * anderem beschäftigt: Seite neu zeichnen, Speicherbereinigung …), CPU-Zeit je Baustein (Fahrt, Kamera, Licht,
  * Bäume, Häuser, Leben, Zuschauer, Gras, Zeichnen), GPU-Zeit (nur, wenn das Gerät Zeitstempel kann),
  * Zeichenaufrufe, Dreiecke, Auflösung, Ort auf der Strecke, Tempo, Kamera, Gegner im Bild und Ereignisse
- * (Kamerawechsel, Stimmung, neue Gegner, Auflösung geändert, Anzeige der Seite aktualisiert).
+ * (Kamerawechsel, Stimmung, neue Gegner, Auflösung geändert, Anzeige der Seite aktualisiert, neue Shader bzw.
+ * Pipelines – die kosten auf dem iPhone oft Hunderte Millisekunden –, Teile sichtbar geworden).
  *
  * Bericht: kompakt zum Kopieren (Zusammenfassung, Verteilung, die schlimmsten Ruckler mit Umfeld, Verlauf je
  * 2 s) – und vollständig als Datei (zusätzlich jedes einzelne Bild).
@@ -18,7 +19,7 @@ export type Section = (typeof SECTIONS)[number];
 const NS = SECTIONS.length;
 
 /** Ereignisse (als Bits je Bild, dazu als Liste mit Text) */
-export const EV = { cam: 1, mood: 2, opp: 4, dpr: 8, ui: 16, wrap: 32, settings: 64, drive: 128 } as const;
+export const EV = { cam: 1, mood: 2, opp: 4, dpr: 8, ui: 16, wrap: 32, settings: 64, drive: 128, shader: 256, vis: 512 } as const;
 const EV_NAMES: [number, string][] = Object.entries(EV).map(([k, v]) => [v, k]);
 
 export interface FrameInfo {

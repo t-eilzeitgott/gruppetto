@@ -64,7 +64,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'tech', label: 'Technik' },
 ];
 /** welche Regler auf welchem Reiter stehen (der Rest: Licht & Farbe) */
-const TECH: (keyof Settings)[] = ['oppMax', 'maxDpr', 'shadowRes', 'shadowRange', 'msaa', 'rainK', 'wetK'];
+const TECH: (keyof Settings)[] = ['oppMax', 'maxDpr', 'minDpr', 'shadowRes', 'shadowRange', 'msaa', 'rainK', 'wetK'];
 const SLIDERS: { k: keyof Settings; label: string; min: number; max: number; step: number }[] = [
   { k: 'exposure', label: 'Belichtung', min: 0.5, max: 1.6, step: 0.02 },
   { k: 'warm', label: 'Wärme', min: -1, max: 1, step: 0.05 },
@@ -77,6 +77,7 @@ const SLIDERS: { k: keyof Settings; label: string; min: number; max: number; ste
   { k: 'vignetteK', label: 'Vignette', min: 0, max: 2, step: 0.05 },
   { k: 'grainK', label: 'Korn', min: 0, max: 3, step: 0.05 },
   { k: 'maxDpr', label: 'Auflösung höchstens', min: 0.7, max: 3, step: 0.05 },
+  { k: 'minDpr', label: 'Auflösung mindestens (Automatik geht nicht darunter)', min: 0.5, max: 2, step: 0.05 },
   { k: 'splitK', label: 'Split-Toning (kühle Schatten, warme Lichter)', min: 0, max: 2, step: 0.05 },
   { k: 'bthrK', label: 'Leuchten-Schwelle', min: 0.3, max: 2, step: 0.05 },
   { k: 'hemiK', label: 'Streulicht des Himmels', min: 0, max: 3, step: 0.05 },
@@ -126,6 +127,10 @@ export function GpuTestPage() {
   const [lastReport, setLastReport] = useState<string | null>(() => lsRead(LS_REPORT));
   const [reportCopied, setReportCopied] = useState(false);
   const [graph, setGraph] = useState(false);
+  // Kostenanalyse: Fortschritt und Ergebnis (Text zum Kopieren)
+  const [cost, setCost] = useState<{ i: number; n: number; label: string } | null>(null);
+  const [costText, setCostText] = useState<string | null>(null);
+  const [costCopied, setCostCopied] = useState(false);
   const graphRef = useRef<HTMLCanvasElement | null>(null);
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [copied, setCopied] = useState(false);
@@ -259,6 +264,17 @@ export function GpuTestPage() {
     setReport(null);
     setMenu(false);
   };
+  const runCost = () => {
+    const sh = showRef.current;
+    if (!sh || cost) return;
+    setMenu(false);
+    setCost({ i: 0, n: 1, label: 'startet' });
+    void sh.costAnalysis((i, n, label) => setCost({ i, n, label })).then((t) => {
+      setCost(null);
+      setCostText(t);
+      setCostCopied(false);
+    }).catch((e: unknown) => { setCost(null); setError(String(e)); });
+  };
   const stopMeasure = () => {
     const r = showRef.current?.stopMeasure() ?? null;
     setMeasuring(false);
@@ -369,6 +385,11 @@ export function GpuTestPage() {
                 <button type="button" className="gpu-chip" onClick={() => startMeasure(false)}>Ab hier bis Stopp</button>
                 {lastReport ? <button type="button" className="gpu-chip" onClick={() => { void copyText(lastReport).then((ok) => { if (ok) { setReportCopied(true); setTimeout(() => setReportCopied(false), 1500); } }); }}>{reportCopied ? 'Kopiert ✓' : 'Letzten Bericht kopieren'}</button> : null}
               </div>
+              <strong>Kostenanalyse</strong>
+              <span className="muted">Fahrt hält an, dann wird je Ebene (Leuchten, Schatten, Gegner, Bäume, Landschaft …) und Auflösung gemessen, was sie kostet. Dauert etwa 30 s, danach geht es weiter.</span>
+              <div className="gpu-menu__row gpu-menu__actions">
+                <button type="button" className="gpu-chip is-on" onClick={runCost}>Kostenanalyse starten</button>
+              </div>
               <label className="gpu-menu__row gpu-menu__check">
                 <input type="checkbox" checked={graph} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGraph(e.target.checked)} />
                 <span>Bildzeit-Kurve (grün ok, gelb knapp, rot Ruckler; blau CPU)</span>
@@ -449,6 +470,22 @@ export function GpuTestPage() {
           <i />
           <span>Messung {Math.floor(recInfo.s / 60)}:{String(Math.floor(recInfo.s % 60)).padStart(2, '0')} · {recInfo.hitches} Ruckler</span>
           <button type="button" onClick={stopMeasure}>Stopp</button>
+        </div>
+      ) : null}
+      {cost ? (
+        <div className="gpu-rec">
+          <i />
+          <span>Kostenanalyse {cost.i + 1}/{cost.n}: {cost.label}</span>
+        </div>
+      ) : null}
+      {costText ? (
+        <div className="gpu-report">
+          <strong>Kostenanalyse fertig</strong>
+          <pre className="gpu-report__pre">{costText.split('\n').slice(3).join('\n')}</pre>
+          <div className="gpu-menu__row gpu-menu__actions">
+            <button type="button" className="gpu-chip is-on" onClick={() => { void copyText(costText).then((ok) => setCostCopied(ok)); }}>{costCopied ? 'Kopiert ✓' : 'Ergebnis kopieren'}</button>
+            <button type="button" className="gpu-chip" onClick={() => setCostText(null)}>Schließen</button>
+          </div>
         </div>
       ) : null}
       {report ? (

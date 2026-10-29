@@ -12,7 +12,7 @@ import { Terrain } from '../abfahrt/terrain3d';
 import { adsTex } from '../abfahrt/tex3d';
 import { bakeFlowerDots, bakeSurfaces, type Surface, type SurfaceId } from './bake';
 import { Atmo } from './atmo';
-import { loadSettings, MOOD_U, MOODS, saveSettings, type Settings } from './mood';
+import { DEFAULT_SETTINGS, loadSettings, MOOD_U, MOODS, saveSettings, type Settings } from './mood';
 import { corridorMaterial, terrainMaterial } from './ground';
 import { adsMaterial, marksMaterial, metalMaterial, paintMaterial, roadMaterial, woodMaterial } from './mats';
 import { Corridor } from './corridor';
@@ -78,7 +78,10 @@ export class Showcase {
   private renderer: THREE.WebGPURenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(60, 1, 0.3, 24000);
-  private pipeline: THREE.RenderPipeline | null = null;
+  /** Bildketten: mit Leuchten (Weichzeichner) und ohne – gewählt nach der Stärke des Leuchtens */
+  private pipeBloom: THREE.RenderPipeline | null = null;
+  private pipeFlat: THREE.RenderPipeline | null = null;
+  private get pipeline(): THREE.RenderPipeline | null { return this.atmo?.bloomOn ? this.pipeBloom : this.pipeFlat; }
   private atmo: Atmo | null = null;
   settings: Settings = loadSettings();
   private track: Track | null = null;
@@ -146,7 +149,15 @@ export class Showcase {
   /** Live-Kurve sichtbar: GPU-Zeit auch ohne Messung abfragen */
   graph = false;
   private gpuPending = false;
+  /** Bilder seit Beginn der letzten GPU-Abfrage (eine Abfrage kann mehrere Bilder umfassen) */
+  private gpuFrames = 0;
+  /** Kostenanalyse: GPU-Zeiten sammeln */
+  private gpuSamples: number[] | null = null;
   private shownMood = '';
+  private shownVis = '';
+  private lampOn = false;
+  private cacheN = -1;
+  private cacheP = -1;
   /** Fahrt von vorn: Bäume sofort ganz neu verteilen */
   private wrapped = false;
 
@@ -296,10 +307,13 @@ export class Showcase {
     const gpu = !!(r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend;
     const scenePass = (this.scenePass = pass(this.scene, this.camera, { samples: gpu ? this.settings.msaa : 0 }));
     const color = scenePass.getTextureNode('output');
-    this.pipeline = new THREE.RenderPipeline(r);
-    // Leuchten, Tonkurve und Farbfilter in einem Durchgang (atmo.ts)
-    this.pipeline.outputColorTransform = false;
-    this.pipeline.outputNode = atmo.outputNode(color);
+    // Leuchten, Tonkurve und Farbfilter in einem Durchgang (atmo.ts); ohne Leuchten ohne die Weichzeichner-Kette
+    for (const withBloom of [true, false]) {
+      const pl = new THREE.RenderPipeline(r);
+      pl.outputColorTransform = false;
+      pl.outputNode = atmo.outputNode(color, withBloom);
+      if (withBloom) this.pipeBloom = pl; else this.pipeFlat = pl;
+    }
 
     // die ganze Landschaft vorab – unterwegs wird nichts mehr gebaut (das ruckelte)
     track.world(this.z, 0, 0, this.w);
@@ -362,7 +376,9 @@ export class Showcase {
     // 1) Nachbearbeitung einrichten (ohne Szene – das legt das Bildformat des Szenendurchgangs fest)
     const vis = top.map((o) => o.visible);
     for (const o of top) o.visible = false;
-    this.draw();
+    // beide Bildketten (mit und ohne Leuchten) – der Wechsel unterwegs übersetzt dann nichts
+    this.draw(this.pipeBloom);
+    this.draw(this.pipeFlat);
     top.forEach((o, i) => { o.visible = vis[i]; });
     // 2) alles sichtbar, nichts wegschneiden
     const saved: [THREE.Object3D, boolean, boolean][] = [];
@@ -383,7 +399,7 @@ export class Showcase {
     if (this.disposed) return;
     // 4) zwei echte Bilder: Schattendurchgang, Rest
     for (let k = 0; k < 2; k++) {
-      this.draw();
+      this.draw(k ? this.pipeFlat : this.pipeBloom);
       progress(0.9 + k * 0.05);
       await new Promise((res) => setTimeout(res, 0));
       if (this.disposed) return;
@@ -537,6 +553,7 @@ export class Showcase {
     R.group.position.set(this.w.x, this.w.y + air, this.w.z);
     R.group.rotation.y = -this.w.th;
     const light = this.lampLevel();
+    if ((light > 0.05) !== this.lampOn) { this.lampOn = light > 0.05; this.perf.event(EV.vis, this.lampOn ? 'Rücklichter an' : 'Rücklichter aus'); }
     R.pose({
       lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, stand: p.stand ?? 0, sprint: 0,
       v: p.v, air, surface: t.segAt(p.z).surface, wobble: p.wobble, light, roll: p.z / 0.34,
@@ -695,7 +712,7 @@ export class Showcase {
 
   /** Auflösung nach der Bildzeit: zu langsam → kleiner, lange schnell genug → größer */
   private adapt(dtMs: number, now: number) {
-    if (!this.ready) return;
+    if (!this.ready || this.analysing) return;
     // Bildschirmtakt: kürzester Abstand der letzten ~2 s, auf 120/90/60 Hz gerundet (ProMotion wechselt selbst)
     this.intervals.push(dtMs);
     if (this.intervals.length > 240) this.intervals.shift();
@@ -706,7 +723,7 @@ export class Showcase {
     const cpuBound = this.avgCpu > this.period * 0.75;
     if (this.avgMs > this.period * 1.22 && !cpuBound) { this.slowFor += dtMs; this.fastFor = 0; } else if (this.avgMs < this.period * 1.06) { this.fastFor += dtMs; this.slowFor = 0; } else { this.slowFor = 0; }
     let want = this.dpr;
-    if (this.slowFor > 700) want = Math.max(0.7, this.dpr - 0.15);
+    if (this.slowFor > 700) want = Math.max(Math.min(this.settings.minDpr, this.maxDpr), this.dpr - 0.15);
     else if (this.fastFor > 3500) want = Math.min(this.maxDpr, this.dpr + 0.1);
     if (want !== this.dpr) {
       this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${(Math.round(want * 100) / 100).toFixed(2)}`);
@@ -757,9 +774,28 @@ export class Showcase {
     if (this.ready) this.avgCpu += (performance.now() - t0 - this.avgCpu) * 0.05;
     // GPU-Zeit (nur mit Zeitstempeln): während der Messung oder bei sichtbarer Kurve, höchstens eine Abfrage offen
     const be = this.renderer.backend as unknown as { trackTimestamp?: boolean };
-    if (this.ready && be.trackTimestamp && (P.rec || this.graph) && !this.gpuPending) {
+    if (this.ready && !this.offscreen) this.gpuFrames++;
+    // nur, wenn seit der letzten Abfrage gezeichnet wurde (sonst liefert three.js den alten Wert)
+    if (this.ready && be.trackTimestamp && this.gpuFrames > 0 && (P.rec || this.graph || this.gpuSamples) && !this.gpuPending) {
       this.gpuPending = true;
-      this.renderer.resolveTimestampsAsync('render').then((ms) => { P.gpu = typeof ms === 'number' ? ms : -1; }).catch(() => undefined).finally(() => { this.gpuPending = false; });
+      const nf = Math.max(1, this.gpuFrames);
+      this.gpuFrames = 0;
+      this.renderer.resolveTimestampsAsync('render').then((ms) => {
+        if (typeof ms !== 'number' || !(ms > 0)) return;
+        P.gpu = ms / nf;
+        this.gpuSamples?.push(ms / nf);
+      }).catch(() => undefined).finally(() => { this.gpuPending = false; });
+    }
+    // neue Shader/Pipelines (Materialaufbau in three.js, Pipeline beim Grafiktreiber) und Sichtbarkeitswechsel
+    if (this.ready) {
+      const ri = this.renderer as unknown as { _nodes?: { nodeBuilderCache?: Map<unknown, unknown> }; _pipelines?: { caches?: Map<unknown, unknown> } };
+      const nb = ri._nodes?.nodeBuilderCache?.size ?? 0;
+      const pc = ri._pipelines?.caches?.size ?? 0;
+      if (this.cacheN >= 0 && (nb !== this.cacheN || pc !== this.cacheP)) P.event(EV.shader, `Materialaufbau ${nb - this.cacheN >= 0 ? '+' : ''}${nb - this.cacheN}, Pipelines ${pc - this.cacheP >= 0 ? '+' : ''}${pc - this.cacheP} (jetzt ${nb}/${pc})`);
+      this.cacheN = nb;
+      this.cacheP = pc;
+      const vs = this.atmo?.visState ?? '';
+      if (vs !== this.shownVis) { if (this.shownVis) P.event(EV.vis, vs); this.shownVis = vs; }
     }
     const info = this.renderer.info.render;
     if (this.ready) {
@@ -768,11 +804,111 @@ export class Showcase {
         cam: ['chase', 'low', 'side', 'drone'].indexOf(this._cam), opps: this.poolOf.size,
       });
     }
+    if (this.frameWaiters.length) { const w = this.frameWaiters; this.frameWaiters = []; for (const f of w) f(); }
     this.opts.onStats?.({
       fps: 1000 / this.avgMs, ms: this.avgMs, period: this.period, dpr: this.dpr, backend: this.backendName,
       tris: info.triangles, calls: info.drawCalls, cpu: this.avgCpu, loading: this.ready ? 1 : this.loadFrac, stage: this.stage,
       note: this.ready && this.period > 14 ? 'Safari begrenzt auf 60 Hz (siehe Hinweis)' : '',
     });
+  }
+
+  private frameWaiters: (() => void)[] = [];
+  private nextFrame(): Promise<void> { return new Promise((res) => this.frameWaiters.push(res)); }
+  /** Kostenanalyse läuft: Auflösung bleibt fest */
+  private analysing = false;
+
+  /**
+   * Kostenanalyse: Fahrt angehalten, Kamera fest; je Variante (Ebene aus, andere Auflösung) ~50 Bilder messen –
+   * GPU-Zeit (Median, wenn das Gerät Zeitstempel kann), CPU fürs Zeichnen, Bildzeit, Aufrufe, Dreiecke. Danach
+   * ist alles wie vorher. Die Unterschiede zur Basis zeigen, was jede Ebene kostet.
+   */
+  async costAnalysis(progress?: (i: number, n: number, label: string) => void): Promise<string> {
+    const S0 = { ...this.settings };
+    const paused0 = this.paused;
+    const dpr0 = this.dpr;
+    this.paused = true;
+    this.analysing = true;
+    const groups: [string, THREE.Object3D | undefined][] = [
+      ['trees', this.trees?.group], ['houses', this.houses?.group], ['field', this.field?.group], ['corridor', this.corridor?.group],
+      ['grass', this.grass?.group], ['life', this.life?.group], ['crowd', this.crowd?.group],
+    ];
+    const vis0 = groups.map(([, g]) => g?.visible ?? false);
+    const setDpr = (d: number) => { this.dpr = d; this.renderer.setPixelRatio(d); };
+    const hide = (...names: string[]) => { for (const [k, g] of groups) if (g && names.includes(k)) g.visible = false; };
+    const base = Math.min(1, this.maxDpr);
+    const maxD = Math.min(2, window.devicePixelRatio || 1);
+    const steps: [string, () => void][] = [
+      ['Basis (Auflösung ×' + base.toFixed(2) + ')', () => undefined],
+      ['ohne Leuchten (Bloom-Kette)', () => this.applySettings({ ...S0, bloom: false }, true)],
+      ['ohne Sonnenschatten', () => this.applySettings({ ...S0, shadows: false }, true)],
+      ['Schatten 1024 statt ' + S0.shadowRes, () => this.applySettings({ ...S0, shadowRes: 1024 }, true)],
+      ['ohne Gegner', () => this.applySettings({ ...S0, oppMax: 0 }, true)],
+      ['ohne Zuschauer', () => hide('crowd')],
+      ['ohne Blumen, Sträucher, Tiere', () => hide('life')],
+      ['ohne Grashalme', () => hide('grass')],
+      ['ohne Bäume', () => hide('trees')],
+      ['ohne Häuser', () => hide('houses')],
+      ['ohne Landschaft (Boden, Berge)', () => hide('field')],
+      ['ohne Straße und Rand', () => hide('corridor')],
+      ['nur Himmel + Nachbearbeitung', () => hide('trees', 'houses', 'field', 'corridor', 'grass', 'life', 'crowd')],
+      ['Auflösung ×0.7', () => setDpr(0.7)],
+      ['Auflösung ×1.5', () => setDpr(Math.min(1.5, maxD))],
+      ...(maxD >= 2 ? [['Auflösung ×2.0', () => setDpr(2)] as [string, () => void]] : []),
+    ];
+    const med = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+    const p90 = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * 0.9)]; };
+    const rows: { name: string; gpu: number; gpu90: number; draw: number; cpu: number; frame: number; calls: number; tris: number; px: string }[] = [];
+    const restore = () => {
+      if (JSON.stringify(this.settings) !== JSON.stringify(S0)) this.applySettings(S0, true);
+      groups.forEach(([, g], i) => { if (g) g.visible = vis0[i]; });
+      setDpr(base);
+    };
+    try {
+      for (let i = 0; i < steps.length; i++) {
+        const [name, set] = steps[i];
+        progress?.(i, steps.length, name);
+        restore();
+        set();
+        this.place(0);
+        // einschwingen (beim Umschalten der Schatten übersetzt three.js einmal neu)
+        for (let k = 0; k < 14; k++) await this.nextFrame();
+        this.gpuSamples = [];
+        const draw: number[] = [], cpu: number[] = [], frame: number[] = [];
+        let calls = 0, tris = 0;
+        for (let k = 0; k < 50; k++) {
+          await this.nextFrame();
+          draw.push(this.perf.sec[8]);
+          const last = (this.perf.ringAt + 179) % 180;
+          frame.push(this.perf.ring[last * 2]);
+          cpu.push(this.perf.ring[last * 2 + 1]);
+          calls = this.renderer.info.render.drawCalls;
+          tris = this.renderer.info.render.triangles;
+        }
+        for (let k = 0; k < 4; k++) await this.nextFrame();
+        const g = this.gpuSamples;
+        this.gpuSamples = null;
+        const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+        rows.push({ name, gpu: med(g), gpu90: p90(g), draw: med(draw), cpu: med(cpu), frame: med(frame), calls, tris, px: `${size.x}×${size.y}` });
+      }
+    } finally {
+      this.gpuSamples = null;
+      restore();
+      setDpr(dpr0);
+      this.place(0);
+      this.paused = paused0;
+      this.analysing = false;
+    }
+    const b = rows[0];
+    const f = (x: number) => (x < 0 ? '–' : x.toFixed(2));
+    const d = (x: number, y: number) => (x < 0 || y < 0 ? '' : ` (${y - x >= 0 ? '−' : '+'}${Math.abs(y - x).toFixed(2)})`);
+    const lines = [
+      `gruppetto WebGPU-Kostenanalyse · ${new Date().toISOString()} · ${this.backendName} · GPU-Zeitstempel ${this.gpuTiming ? 'ja' : 'nein'}`,
+      `Gerät: ${navigator.userAgent}`,
+      `Ort z=${Math.round(this.z)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, MSAA ${S0.msaa}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => (DEFAULT_SETTINGS as unknown as Record<string, unknown>)[k] !== v)))}`,
+      'Variante | GPU ms (Median, Ersparnis zur Basis) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms | Aufrufe | Dreiecke k | Bildpunkte',
+      ...rows.map((r) => `${r.name} | ${f(r.gpu)}${r === b ? '' : d(r.gpu, b.gpu)} | ${f(r.gpu90)} | ${f(r.draw)}${r === b ? '' : d(r.draw, b.draw)} | ${f(r.cpu)} | ${f(r.frame)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.px}`),
+    ];
+    return lines.join('\n');
   }
 
   /** GPU-Zeitstempel verfügbar? (Gerät und Browser) */
@@ -815,8 +951,8 @@ export class Showcase {
     if (r) this.onReport?.(r);
   }
 
-  private draw() {
-    if (!this.pipeline) return;
+  private draw(pl: THREE.RenderPipeline | null = this.pipeline) {
+    if (!pl) return;
     this.renderer.info.reset();
     if (this.offscreen) {
       const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
@@ -825,9 +961,9 @@ export class Showcase {
         this.frameRT = new THREE.RenderTarget(size.x, size.y, { depthBuffer: false });
       }
       this.renderer.setRenderTarget(this.frameRT);
-      this.pipeline.render();
+      pl.render();
       this.renderer.setRenderTarget(null);
-    } else this.pipeline.render();
+    } else pl.render();
   }
 
   /** Prüfbild: ein Bild in eine Textur zeichnen und zurücklesen (Tests ohne Bildschirm) */

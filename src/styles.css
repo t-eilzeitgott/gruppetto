@@ -2376,6 +2376,7 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   padding: 16px; border-radius: 16px; background: rgba(10, 14, 22, 0.92); font-size: 13px; z-index: 4;
 }
 .gpu-report strong { font-size: 16px; }
+.gpu-report__pre { margin: 0; max-height: 46vh; overflow: auto; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
 .gpu-report__grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
 .gpu-report__grid span { opacity: 0.7; }
 .gpu-report__grid b { font-variant-numeric: tabular-nums; text-align: right; }

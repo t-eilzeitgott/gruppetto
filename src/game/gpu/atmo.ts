@@ -9,7 +9,7 @@ import { bakeSkyCube, makeDome, makeRain, makeSun, type SkyCube } from './sky';
 import { dirOf, LIGHT_KEYS, MOOD_IDS, MOOD_U, MOODS, resolve, type Light, type MoodId, type Settings } from './mood';
 import { tsl, h21, type N } from './nodes';
 
-const { cameraPosition, dot, exp, float, fog, max, mix, normalize, positionView, positionWorld, pow, renderOutput, screenUV, screenSize, smoothstep, time, uniform, uv, vec3 } = tsl;
+const { cameraPosition, dot, exp, float, fog, max, mix, normalize, pmremTexture, positionView, positionWorld, pow, renderOutput, screenUV, screenSize, smoothstep, time, uniform, uv, vec3 } = tsl;
 
 const CYCLE: MoodId[] = ['mittag', 'gold', 'nacht', 'morgen', 'regen'];
 /** Wetterwechsel: so lange je Stimmung (s), so lange der Übergang */
@@ -35,6 +35,10 @@ export class Atmo {
     warm: uniform(0), sat: uniform(1), contrast: uniform(1), vignette: uniform(0), grain: uniform(0), split: uniform(0),
     splitS: uniform(new THREE.Vector3(1, 1, 1)), splitH: uniform(new THREE.Vector3(1, 1, 1)), bloom: uniform(0), bthr: uniform(4), grade: uniform(1),
   };
+  /** was gerade sichtbar ist (für die Messfahrt: Regen, Sonnenhof) */
+  get visState(): string { return `regen ${this.rain.mesh.visible ? 'an' : 'aus'}, hof ${this.glow.visible ? 'an' : 'aus'}`; }
+  /** Leuchten sichtbar? (sonst die Bildkette ohne Weichzeichner) */
+  get bloomOn(): boolean { return this.u.bloom.value > 0.004; }
   /** aktuelle (überblendete) Werte */
   cur: Light;
   private target: Light;
@@ -45,6 +49,11 @@ export class Atmo {
   private next: MoodId | null = null;
   private envSwitched = true;
   private hold = 0;
+  /**
+   * Umgebungslicht als fester Knoten, dessen Textur getauscht wird: ein neues scene.environment ließe three.js
+   * alle Materialien neu bauen (knapp 1 s Stillstand auf dem iPhone mitten im Stimmungswechsel)
+   */
+  private envNode: N;
   settings: Settings;
 
   constructor(private renderer: THREE.WebGPURenderer, private scene: THREE.Scene, settings: Settings, size: number) {
@@ -53,7 +62,8 @@ export class Atmo {
     this.shown = settings.mood;
     this.dome = makeDome(this.cubes[this.shown].background, this.cubes[this.shown].background);
     scene.add(this.dome.mesh);
-    scene.environment = this.cubes[this.shown].environment;
+    this.envNode = pmremTexture(this.cubes[this.shown].environment);
+    scene.environmentNode = this.envNode;
     scene.add(this.sun, this.sun.target, this.hemi);
     this.rain = makeRain();
     scene.add(this.rain.mesh);
@@ -67,9 +77,9 @@ export class Atmo {
   }
 
   /** Nachbearbeitung: Leuchten, dann Tonkurve, dann Farbfilter im Anzeigeraum (wie im Spiel) */
-  outputNode(color: N): N {
-    const glow = bloom(color, this.u.bloom, 0.3, this.u.bthr);
-    let col: N = renderOutput(color.add(glow)).rgb;
+  outputNode(color: N, withBloom = true): N {
+    const glow = withBloom ? bloom(color, this.u.bloom, 0.3, this.u.bthr) : null;
+    let col: N = renderOutput(glow ? color.add(glow) : color).rgb;
     const l = dot(col, vec3(0.2126, 0.7152, 0.0722));
     const g = this.u;
     let gr: N = mix(vec3(l, l, l), col, g.sat);
@@ -121,7 +131,8 @@ export class Atmo {
     this.settings = s;
     this.sun.castShadow = s.shadows;
     const sh = this.sun.shadow;
-    if (sh.mapSize.x !== s.shadowRes) { sh.mapSize.set(s.shadowRes, s.shadowRes); sh.map?.dispose(); sh.map = null; sh.needsUpdate = true; }
+    // three.js passt die Schattenkarte selbst an (nicht wegwerfen: sie steckt noch im laufenden Bild)
+    if (sh.mapSize.x !== s.shadowRes) sh.mapSize.set(s.shadowRes, s.shadowRes);
     const sc = sh.camera as THREE.OrthographicCamera;
     if (sc.right !== s.shadowRange) { sc.left = -s.shadowRange; sc.right = s.shadowRange; sc.top = s.shadowRange; sc.bottom = -s.shadowRange; sc.updateProjectionMatrix(); }
     this.u.grade.value = s.grade ? 1 : 0;
@@ -143,7 +154,7 @@ export class Atmo {
       // sofort (Prüfbilder, Start)
       this.shown = id; this.next = null; this.blend = 1; this.hold = 0;
       this.dome.cubeA.value = this.cubes[id].background; this.dome.cubeB.value = this.cubes[id].background; this.dome.mixT.value = 0;
-      this.scene.environment = this.cubes[id].environment; this.envSwitched = true;
+      this.envNode.value = this.cubes[id].environment; this.envSwitched = true;
       this.target = resolve(MOODS[id], this.settings); this.cur = { ...this.target }; this.from = { ...this.cur };
       this.applyCur();
       return;
@@ -175,7 +186,7 @@ export class Atmo {
       for (const key of LIGHT_KEYS) this.cur[key] = this.from[key] + (this.target[key] - this.from[key]) * k;
       if (this.next) {
         this.dome.mixT.value = k;
-        if (!this.envSwitched && k > 0.5) { this.scene.environment = this.cubes[this.next].environment; this.envSwitched = true; }
+        if (!this.envSwitched && k > 0.5) { this.envNode.value = this.cubes[this.next].environment; this.envSwitched = true; }
         if (this.blend >= 1) { this.shown = this.next; this.next = null; this.dome.cubeA.value = this.cubes[this.shown].background; this.dome.mixT.value = 0; }
       }
       this.applyCur();
