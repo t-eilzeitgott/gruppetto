@@ -89,7 +89,7 @@ class Grid {
 }
 
 /** einfache Kisten mit Eckpunktfarbe (Pfosten, Planken, Latten) */
-class Boxes {
+export class Boxes {
   pos: number[] = [];
   nor: number[] = [];
   col: number[] = [];
@@ -273,7 +273,6 @@ export class Corridor {
     return { grass: [c[0] * v, c[1] * v, c[2] * v], rock: [r[0], r[1], r[2]] };
   }
 
-  /** alle Abschnitte zwischen den Segmenten i0 und i1 bauen */
   /**
    * alle Abschnitte zwischen den Segmenten i0 und i1 bauen – je Gruppe von acht Abschnitten (512 m) ein Netz je
    * Material: wenige Zeichenaufrufe (die Kosten je Aufruf zählen bei 120 Bildern/s), trotzdem grob ausgesondert
@@ -281,32 +280,65 @@ export class Corridor {
   build(i0: number, i1: number) {
     const GROUP = CHUNK * 8;
     for (let g0 = i0; g0 < i1; g0 += GROUP) {
-      const B: Builders = { road: new Grid(), marks: new Boxes(), sides: new Grid(), metal: new Boxes(), wood: new Boxes(), paint: new Boxes(), ads: new Boxes(), stone: new Boxes() };
-      B.stone.stone = true;
-      const g1 = Math.min(i1, g0 + GROUP);
-      for (let c0 = g0; c0 < g1; c0 += CHUNK) this.chunk(c0, Math.min(g1, c0 + CHUNK), B);
-      const add = (g: THREE.BufferGeometry | null, m: THREE.Material | null, cast: boolean, order = 0) => {
-        if (!g || !m) return;
-        const mesh = new THREE.Mesh(g, m);
-        mesh.receiveShadow = true;
-        mesh.castShadow = cast;
-        mesh.renderOrder = order;
-        mesh.matrixAutoUpdate = false;
-        mesh.updateMatrix();
-        this.group.add(mesh);
-      };
-      add(B.road.build(), this.mats.road, false);
-      add(B.marks.build(), this.mats.marks, false, 1);
-      add(B.sides.build(), this.mats.sides, false);
-      add(B.metal.build(), this.mats.metal, true);
-      add(B.wood.build(), this.mats.wood, true);
-      add(B.paint.build(), this.mats.paint, true);
-      add(B.ads.build(), this.mats.ads, true);
-      add(B.stone.build(), this.mats.sides, true);
+      const it = this.buildRange(g0, Math.min(i1, g0 + GROUP));
+      let r = it.next();
+      while (!r.done) r = it.next();
+      this.group.add(r.value);
     }
   }
 
-  private chunk(a0: number, a1: number, B: Builders) {
+  /**
+   * Streaming: einen Bereich als eigene Gruppe bauen (ein Netz je Material), in Schritten je Abschnitt (64 m) –
+   * zwischen den Schritten gibt der Bau die Kontrolle ab. Tunnelsegmente bleiben aus (die baut tunnel.ts).
+   */
+  *buildRange(i0: number, i1: number): Generator<void, THREE.Group, void> {
+    const B: Builders = { road: new Grid(), marks: new Boxes(), sides: new Grid(), metal: new Boxes(), wood: new Boxes(), paint: new Boxes(), ads: new Boxes(), stone: new Boxes() };
+    B.stone.stone = true;
+    for (let c0 = i0; c0 < i1; c0 += CHUNK) {
+      yield* this.chunk(c0, Math.min(i1, c0 + CHUNK), B);
+      yield;
+    }
+    const out = new THREE.Group();
+    const add = (g: THREE.BufferGeometry | null, m: THREE.Material | null, cast: boolean, order = 0) => {
+      if (!g || !m) return;
+      const mesh = new THREE.Mesh(g, m);
+      mesh.receiveShadow = true;
+      mesh.castShadow = cast;
+      mesh.renderOrder = order;
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      out.add(mesh);
+    };
+    add(B.road.build(), this.mats.road, false);
+    add(B.marks.build(), this.mats.marks, false, 1);
+    yield;
+    add(B.sides.build(), this.mats.sides, false);
+    yield;
+    add(B.metal.build(), this.mats.metal, true);
+    add(B.wood.build(), this.mats.wood, true);
+    add(B.paint.build(), this.mats.paint, true);
+    add(B.ads.build(), this.mats.ads, true);
+    add(B.stone.build(), this.mats.sides, true);
+    // die Zeilen dieses Bereichs braucht später niemand mehr
+    for (let i = i0; i <= i1; i++) this.rowCache.delete(i);
+    return out;
+  }
+
+  private *chunk(a0: number, a1: number, B: Builders): Generator<void, void, void> {
+    // Tunnelsegmente auslassen: den Abschnitt an ihnen in Stücke teilen (die Röhre baut tunnel.ts)
+    let i = a0;
+    while (i < a1) {
+      while (i < a1 && this.track.seg(i).tunnel) i++;
+      if (i >= a1) break;
+      let j = i;
+      while (j < a1 && !this.track.seg(j).tunnel) j++;
+      if (j > i) yield* this.span(i, j, B);
+      i = j;
+    }
+  }
+
+  /** ein Stück Straße ohne Tunnel – in Schritten (Fahrbahn, Ränder, Begrenzungen, Gras) */
+  private *span(a0: number, a1: number, B: Builders): Generator<void, void, void> {
     const { road, marks, sides, metal, wood, paint, ads, stone } = B;
     const rows: Row[] = [];
     for (let i = a0; i <= a1; i++) rows.push(this.row(i));
@@ -339,6 +371,7 @@ export class Corridor {
       if (Math.abs(s.curve) > 0.015 || s.hairpin) { strip(-0.17, -0.06); strip(0.06, 0.17); }
       else if ((s.i & 3) < 2) strip(-0.06, 0.06);
     }
+    yield;
     // --- Ränder: Bankett (Kies), Querprofil, Schürze
     for (const sg of [-1, 1]) {
       const cols: number[][] = [];
@@ -372,9 +405,12 @@ export class Corridor {
           else sides.quad(A[q], B[q], B[q + 1], A[q + 1]);
         }
       }
+      yield;
     }
+    yield;
     // --- Begrenzungen
     for (let k = 0; k < rows.length - 1; k++) this.barriers(rows[k], rows[k + 1], metal, wood, paint, ads, stone);
+    yield;
     // --- Grasbüschel auf den Wiesenstücken des Profils (nicht auf Fels, Schnee, Kies, Beton)
     if (this.onTufts) this.onTufts(this.tufts(rows));
   }

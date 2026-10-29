@@ -241,73 +241,119 @@ function bird(): THREE.BufferGeometry {
 
 interface Lod { geo: THREE.BufferGeometry; mat: THREE.Material; to: number; shadow: boolean }
 
-/** eine Art: Instanzen in Zellen, je Stufe eine Gruppe; Stufe je Instanz in iS.w (für die Überblendung im Shader) */
+/**
+ * eine Art: Instanzen in Zellen, je Stufe eine Gruppe; Stufe je Instanz in iS.w (für die Überblendung im Shader).
+ * Streaming: Instanzen kommen bereichsweise dazu, Zellen hinter dem Fahrer fallen weg; die Gruppen wachsen mit.
+ */
 class Scatter {
   private src: number[] = [];
   private xz: number[] = [];
   private cells = new Map<string, number[]>();
   private groups: InstGroup[] = [];
+  private cap = 0;
+  private parent: THREE.Group | null = null;
   private at = new THREE.Vector3(1e9, 0, 0);
-  constructor(private lods: Lod[], private cell = 48, private band = 0, private cull = true) {}
-  get count() { return this.xz.length / 2; }
+  /** aus dem Speicher gefallene Instanzen (werden beim nächsten Aufräumen entfernt) */
+  private dead = 0;
+  constructor(private lods: Lod[], private cell = 48, private band = 0, _cull = true) {}
+  get count() { return this.xz.length / 2 - this.dead; }
   add(x: number, y: number, z: number, rot: number, s: V3, col: V3, w = 0) {
-    const k = this.count;
+    const k = this.xz.length / 2;
     this.src.push(x, y, z, rot, s[0], s[1], s[2], 0, col[0], col[1], col[2], w);
     this.xz.push(x, z);
     const key = `${Math.floor(x / this.cell)},${Math.floor(z / this.cell)}`;
     const l = this.cells.get(key);
     if (l) l.push(k); else this.cells.set(key, [k]);
+    this.at.set(1e9, 0, 0);
   }
-  finish(parent: THREE.Group) {
-    const n = this.count;
-    if (!n) return;
-    let cx = 0, cz = 0, cy = 0;
-    for (let k = 0; k < n; k++) { cx += this.src[k * STRIDE] / n; cy += this.src[k * STRIDE + 1] / n; cz += this.src[k * STRIDE + 2] / n; }
-    let r = 0;
-    for (let k = 0; k < n; k++) r = Math.max(r, Math.hypot(this.src[k * STRIDE] - cx, this.src[k * STRIDE + 2] - cz));
-    const sphere = new THREE.Sphere(new THREE.Vector3(cx, cy, cz), r + 40);
+  /** Gruppen anlegen (einmal); Kapazität wächst bei Bedarf in update */
+  finish(parent: THREE.Group, cap = 64) {
+    this.parent = parent;
+    this.grow(Math.max(cap, this.xz.length / 2));
+  }
+  private grow(cap: number) {
+    for (const g of this.groups) disposeGroup(g);
+    this.groups = [];
+    this.cap = cap;
+    const sphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
     for (const l of this.lods) {
-      const g = instGroup(l.geo, l.mat, n, sphere);
+      const g = instGroup(l.geo, l.mat, cap, sphere);
       g.mesh.castShadow = l.shadow;
       g.mesh.receiveShadow = true;
-      g.mesh.frustumCulled = this.cull;
-      parent.add(g.mesh);
+      // die Gruppen enthalten nur Instanzen um die Kamera – Wegschneiden der ganzen Gruppe bringt nichts
+      g.mesh.frustumCulled = false;
+      this.parent?.add(g.mesh);
       this.groups.push(g);
     }
+    this.at.set(1e9, 0, 0);
+  }
+  /** Zellen abbauen (Streaming), Speicher gelegentlich zusammenschieben */
+  prune(keep: (cx: number, cz: number, cell: number) => boolean) {
+    let gone = 0;
+    for (const [key, l] of this.cells) {
+      const [i, j] = key.split(',').map(Number);
+      if (keep((i + 0.5) * this.cell, (j + 0.5) * this.cell, this.cell)) continue;
+      gone += l.length;
+      this.cells.delete(key);
+    }
+    if (!gone) return;
+    this.dead += gone;
+    this.at.set(1e9, 0, 0);
+    if (this.dead < 2000 || this.dead < this.xz.length / 4) return;
+    const src: number[] = [];
+    const xz: number[] = [];
+    for (const l of this.cells.values()) {
+      for (let q = 0; q < l.length; q++) {
+        const k = l[q];
+        l[q] = xz.length / 2;
+        for (let t = 0; t < STRIDE; t++) src.push(this.src[k * STRIDE + t]);
+        xz.push(this.xz[k * 2], this.xz[k * 2 + 1]);
+      }
+    }
+    this.src = src;
+    this.xz = xz;
+    this.dead = 0;
   }
   update(cam: THREE.Vector3, force = false) {
     if (!this.groups.length || (!force && this.at.distanceToSquared(cam) < 16)) return;
     this.at.copy(cam);
     const maxD = this.lods[this.lods.length - 1].to;
-    const cnt = this.lods.map(() => 0);
     const R = Math.ceil(maxD / this.cell) + 1;
     const ccx = Math.floor(cam.x / this.cell), ccz = Math.floor(cam.z / this.cell);
     const M = 5;
-    for (let j = -R; j <= R; j++) {
-      for (let i = -R; i <= R; i++) {
-        const l = this.cells.get(`${ccx + i},${ccz + j}`);
-        if (!l) continue;
-        for (const k of l) {
-          const d = Math.hypot(this.xz[k * 2] - cam.x, this.xz[k * 2 + 1] - cam.z);
-          if (d > maxD + M) continue;
-          let from = 0;
-          for (let q = 0; q < this.lods.length; q++) {
-            const to = this.lods[q].to;
-            const lo = q === 0 ? -1 : from - this.band - M;
-            const hi = q === this.lods.length - 1 ? to + M : to + this.band + M;
-            if (d > lo && d < hi) {
-              const g = this.groups[q];
-              const o = cnt[q] * STRIDE;
-              for (let t = 0; t < STRIDE; t++) g.data[o + t] = this.src[k * STRIDE + t];
-              g.data[o + 7] = q;
-              cnt[q]++;
+    for (let pass = 0; pass < 2; pass++) {
+      const cnt = this.lods.map(() => 0);
+      let over = false;
+      for (let j = -R; j <= R; j++) {
+        for (let i = -R; i <= R; i++) {
+          const l = this.cells.get(`${ccx + i},${ccz + j}`);
+          if (!l) continue;
+          for (const k of l) {
+            const d = Math.hypot(this.xz[k * 2] - cam.x, this.xz[k * 2 + 1] - cam.z);
+            if (d > maxD + M) continue;
+            let from = 0;
+            for (let q = 0; q < this.lods.length; q++) {
+              const to = this.lods[q].to;
+              const lo = q === 0 ? -1 : from - this.band - M;
+              const hi = q === this.lods.length - 1 ? to + M : to + this.band + M;
+              if (d > lo && d < hi) {
+                if (cnt[q] < this.cap) {
+                  const g = this.groups[q];
+                  const o = cnt[q] * STRIDE;
+                  for (let t = 0; t < STRIDE; t++) g.data[o + t] = this.src[k * STRIDE + t];
+                  g.data[o + 7] = q;
+                } else over = true;
+                cnt[q]++;
+              }
+              from = to;
             }
-            from = to;
           }
         }
       }
+      if (over && pass === 0) { this.grow(Math.ceil(Math.max(...cnt) * 1.4)); continue; }
+      this.groups.forEach((g, q) => commit(g, Math.min(cnt[q], this.cap)));
+      break;
     }
-    this.groups.forEach((g, q) => commit(g, cnt[q]));
   }
   warm(on: boolean) {
     for (const g of this.groups) if (on) { g.geo.instanceCount = Math.max(1, g.geo.instanceCount); g.mesh.visible = true; }
@@ -315,6 +361,37 @@ class Scatter {
   }
   dispose() { for (const g of this.groups) disposeGroup(g); }
 }
+
+/** Herdentiere (Kuh, Schaf): grasen, Kopf hebt sich ab und zu, Schwanz schlägt (Teile in aE.x, Fellfarbe aus der Instanz) */
+export function herdMaterial(name: string, headPivot: V3, tailPivot: V3, graze: number, fade: [number, number] = [260, 330]): THREE.MeshLambertNodeMaterial {
+  const m = new THREE.MeshLambertNodeMaterial();
+  const e = attribute('aE', 'vec2');
+  const part = e.x;
+  const ph = attribute('iC', 'vec4').w;
+  // grasen: meist Kopf unten, ab und zu hoch (schaut sich um); Schwanz schlägt ab und zu
+  const look = smoothstep(0.55, 0.85, sin(time.mul(0.23).add(ph.mul(40))).mul(0.5).add(0.5));
+  const chew = sin(time.mul(3.1).add(ph.mul(17))).mul(0.04);
+  const headA = mix(float(graze), float(-0.1), look).add(chew);
+  const turn = sin(time.mul(0.31).add(ph.mul(23))).mul(0.35).mul(look);
+  const tailA = sin(time.mul(2.2).add(ph.mul(9))).mul(smoothstep(0.4, 0.9, sin(time.mul(0.5).add(ph.mul(13))))).mul(0.5);
+  const p = positionGeometry;
+  const rotX = (q: N, a: N): N => vec3(q.x, q.y.mul(cos(a)).sub(q.z.mul(sin(a))), q.y.mul(sin(a)).add(q.z.mul(cos(a))));
+  const rotY = (q: N, a: N): N => vec3(q.x.mul(cos(a)).add(q.z.mul(sin(a))), q.y, q.z.mul(cos(a)).sub(q.x.mul(sin(a))));
+  const rotZ = (q: N, a: N): N => vec3(q.x.mul(cos(a)).sub(q.y.mul(sin(a))), q.x.mul(sin(a)).add(q.y.mul(cos(a))), q.z);
+  const hp = vec3(...headPivot), tp = vec3(...tailPivot);
+  const head = rotY(rotX(p.sub(hp), headA), turn).add(hp);
+  const tail = rotZ(p.sub(tp), tailA).add(tp);
+  const local = select(part.lessThan(0.5), p, select(part.lessThan(1.5), head, tail));
+  const I = instNodes(fade, local);
+  m.positionNode = I.world;
+  m.normalNode = I.normal;
+  m.colorNode = mix(vertexColor().xyz, vertexColor().xyz.mul(I.color), e.y);
+  m.name = name;
+  return m;
+    }
+
+/** Kuh (für Herden und für Kühe auf der Straße) */
+export const cowGeometry = (): THREE.BufferGeometry => cow();
 
 // ——— Materialien ———
 
@@ -348,42 +425,74 @@ export interface LifeCtx {
 
 export class Life {
   readonly group = new THREE.Group();
-  private kinds: Scatter[] = [];
+  private kinds: Record<string, Scatter> = {};
   private mats: THREE.Material[] = [];
   private geos: THREE.BufferGeometry[] = [];
-  counts: Record<string, number> = {};
 
+  constructor(private msaa = true) {
+    const [shrubs, roses] = this.shrubKinds();
+    const [cows, sheep] = this.herdKinds();
+    this.kinds = { flowers: this.flowerKind(), shrubs, roses, ferns: this.fernKind(), cows, sheep, birds: this.birdKind() };
+    for (const k of Object.values(this.kinds)) k.finish(this.group);
+  }
+
+  /** Anzahl je Art (Prüfhilfe) */
+  get counts(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(this.kinds)) out[k] = v.count;
+    return out;
+  }
+
+  /** alles für den Bereich c.z0 … c.z1 am Stück (feste Teststrecke) */
   build(c: LifeCtx) {
+    const it = this.addRange(c);
+    while (!it.next().done) { /* weiter */ }
+  }
+
+  /**
+   * Streaming: Pflanzen und Tiere für den Bereich c.z0 … c.z1 (halboffen) verteilen; gibt die Kontrolle ab,
+   * sobald late() meldet, dass die Zeit dieses Bilds um ist. c.trees.allSpots: die Bäume der Gegend.
+   */
+  /** Prüfhilfe: woran addRange gerade arbeitet */
+  phase = '';
+
+  *addRange(c: LifeCtx, late: () => boolean = () => false): Generator<void, void, void> {
+    this.phase = 'raster';
     // Bäume in einem feinen Raster (viele Abfragen „steht hier ein Baum?“)
     const grid = new Map<string, number[]>();
+    let n = 0;
     for (const t of c.trees.allSpots()) {
       const k = `${Math.floor(t.x / 8)},${Math.floor(t.z / 8)}`;
       const l = grid.get(k);
       if (l) l.push(t.x, t.z); else grid.set(k, [t.x, t.z]);
+      if (++n % 4000 === 0 && late()) yield;
     }
     const near = (x: number, z: number, r: number) => {
-      let n = 0;
+      let cnt = 0;
       const R = Math.ceil(r / 8);
       const cx = Math.floor(x / 8), cz = Math.floor(z / 8);
       for (let j = -R; j <= R; j++) for (let i = -R; i <= R; i++) {
         const l = grid.get(`${cx + i},${cz + j}`);
         if (!l) continue;
-        for (let q = 0; q < l.length; q += 2) if ((l[q] - x) ** 2 + (l[q + 1] - z) ** 2 <= r * r) n++;
+        for (let q = 0; q < l.length; q += 2) if ((l[q] - x) ** 2 + (l[q + 1] - z) ** 2 <= r * r) cnt++;
       }
-      return n;
+      return cnt;
     };
     c = { ...c, trees: { countNear: near, allSpots: () => c.trees.allSpots() } };
-    const flowers = this.flowers(c);
-    const [shrubs, roses] = this.shrubs(c);
-    const ferns = this.ferns(c);
-    const [cows, sheep] = this.animals(c);
-    const birds = this.birds(c);
-    for (const [k, s] of Object.entries({ flowers, shrubs, roses, ferns, cows, sheep, birds })) {
-      s.finish(this.group);
-      this.kinds.push(s);
-      this.counts[k] = s.count;
-    }
+    this.phase = 'blumen';
+    yield* this.placeFlowers(c, late);
+    this.phase = 'straeucher';
+    yield* this.placeShrubs(c, late);
+    this.phase = 'farne';
+    yield* this.placeFerns(c, late);
+    this.phase = 'herden';
+    yield* this.placeHerds(c, late);
+    this.phase = 'voegel';
+    this.placeBirds(c);
   }
+
+  /** Streaming: Zellen hinter dem Fahrer abbauen */
+  prune(keep: (cx: number, cz: number, cell: number) => boolean) { for (const k of Object.values(this.kinds)) k.prune(keep); }
 
   private mat<T extends THREE.Material>(m: T): T { this.mats.push(m); return m; }
   private geo(g: THREE.BufferGeometry) { this.geos.push(g); return g; }
@@ -404,8 +513,9 @@ export class Life {
     return (x: number, z: number) => { const n = c.forest.near(x, z); return n ? n.d : 1e9; };
   }
 
-  // Blumenwiesen nahe der Straße
-  private flowers(c: LifeCtx): Scatter {
+  // ——— Arten (Materialien, einmal) ———
+
+  private flowerKind(): Scatter {
     const geo = this.geo(flowerClump());
     const m = this.mat(new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide }));
     const I = instNodes([42, 62]);
@@ -419,14 +529,92 @@ export class Life {
     const bloom = mix(center, I.color, smoothstep(0.62, 0.8, petal));
     m.colorNode = mix(vertexColor().xyz, bloom, smoothstep(0.25, 0.5, petal));
     m.name = 'flowers';
-    const S = new Scatter([{ geo, mat: m, to: 62, shadow: false }], 32);
+    return new Scatter([{ geo, mat: m, to: 62, shadow: false }], 32);
+  }
+
+  private shrubKinds(): [Scatter, Scatter] {
+    const mk = (rose: boolean): Scatter => {
+      const geos = [this.geo(shrub(1, rose)), this.geo(shrub(0, rose))];
+      const to = [70, 260];
+      const band = 10;
+      const lods: Lod[] = geos.map((geo, q) => {
+        const m = this.mat(new THREE.MeshLambertNodeMaterial());
+        const I = instNodes();
+        m.positionNode = I.world.add(wind(I.at, positionGeometry.y.mul(0.8), 0.04));
+        m.normalNode = I.normal;
+        m.colorNode = vertexColor().xyz.mul(I.color);
+        const d = varying(I.at.xz.sub(cameraPosition.xz).length(), 'vShrubD');
+        const f = lodFade(d, to, band).mul(float(1).sub(smoothstep(230, 260, d)));
+        if (this.msaa) { m.opacityNode = f; m.alphaToCoverage = true; }
+        m.name = rose ? 'roses' : 'shrubs';
+        return { geo, mat: m, to: to[q], shadow: q === 0 };
+      });
+      return new Scatter(lods, 64, band);
+    };
+    return [mk(false), mk(true)];
+  }
+
+  private fernKind(): Scatter {
+    const geo = this.geo(fern());
+    const m = this.mat(new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide }));
+    const I = instNodes([34, 48]);
+    const e = attribute('aE', 'vec2');
+    m.positionNode = I.world.add(wind(I.at, e.y, 0.08));
+    m.normalNode = I.normal;
+    m.colorNode = vertexColor().xyz.mul(I.color);
+    m.name = 'ferns';
+    return new Scatter([{ geo, mat: m, to: 48, shadow: false }], 32);
+  }
+
+  private herdKinds(): [Scatter, Scatter] {
+    const herdMat = (name: string, headPivot: V3, tailPivot: V3, graze: number) => this.mat(herdMaterial(name, headPivot, tailPivot, graze));
+    return [new Scatter([{ geo: this.geo(cow()), mat: herdMat('cows', [0, 1.3, 0.72], [0, 1.32, -1.0], 1.0), to: 330, shadow: true }], 96),
+      new Scatter([{ geo: this.geo(sheepGeo()), mat: herdMat('sheep', [0, 0.7, 0.48], [0, 0.7, -0.5], 0.9), to: 330, shadow: true }], 96)];
+  }
+
+  private birdKind(): Scatter {
+    const geo = this.geo(bird());
+    const m = this.mat(new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide }));
+    const iP = attribute('iP', 'vec4');
+    const iS = attribute('iS', 'vec4');
+    const iC = attribute('iC', 'vec4');
+    const e = attribute('aE', 'vec2');
+    // iP: Kreismitte, Phase; iS: Radius, Winkelgeschwindigkeit, Größe; iC: Farbe, Schlagstil
+    const ang = iP.w.add(time.mul(iS.y));
+    const dirS = select(iS.y.lessThan(0), float(-1), float(1));
+    const bob = sin(time.mul(0.6).add(iP.w.mul(3))).mul(iS.x.mul(0.08));
+    const pos = iP.xyz.add(vec3(cos(ang).mul(iS.x), bob, sin(ang).mul(iS.x)));
+    const fwd = vec2(sin(ang).negate(), cos(ang)).mul(dirS);
+    const yaw = atan(fwd.x, fwd.y);
+    // Flügelschlag mit Gleitphasen (Adler: fast nur gleiten)
+    const glide = smoothstep(-0.3, 0.5, sin(time.mul(0.45).add(iP.w.mul(5))));
+    const flap = sin(time.mul(mix(9, 3, iC.w)).add(iP.w.mul(7))).mul(mix(0.55, 0.12, iC.w)).mul(float(1).sub(glide.mul(0.85)));
+    const p = positionGeometry.mul(iS.z);
+    const lift = vec3(0, e.y.mul(flap).mul(iS.z).mul(0.6).add(e.y.mul(iS.z).mul(0.05)), 0);
+    const bank = dirS.mul(-0.3);
+    const q0 = p.add(lift.mul(e.x));
+    const qb = vec3(q0.x.mul(cos(bank)).sub(q0.y.mul(sin(bank))), q0.x.mul(sin(bank)).add(q0.y.mul(cos(bank))), q0.z);
+    const qr = vec3(qb.x.mul(cos(yaw)).add(qb.z.mul(sin(yaw))), qb.y, qb.z.mul(cos(yaw)).sub(qb.x.mul(sin(yaw))));
+    m.positionNode = pos.add(qr);
+    m.normalNode = transformNormalToView(normalize(vec3(0, 1, 0)));
+    m.colorNode = iC.xyz;
+    m.name = 'birds';
+    return new Scatter([{ geo, mat: m, to: 5000, shadow: false }], 4000, 0, false);
+  }
+
+  // ——— Verteilen (je Bereich) ———
+
+  // Blumenwiesen nahe der Straße
+  private *placeFlowers(c: LifeCtx, late: () => boolean): Generator<void, void, void> {
+    const S = this.kinds.flowers;
     const h = this.ground(c);
     const road = this.roadNear(c);
     // Arten: Margerite, Hahnenfuß, Enzian, Glockenblume, Klee, Lichtnelke
     const SPECIES: V3[] = [[0.78, 0.78, 0.72], [0.8, 0.55, 0.02], [0.03, 0.08, 0.55], [0.25, 0.12, 0.55], [0.62, 0.22, 0.38], [0.75, 0.12, 0.2]];
     const w = { x: 0, y: 0, z: 0, th: 0 };
     let n = 0;
-    for (let z = c.z0; z <= c.z1; z += 6) {
+    for (let z = Math.ceil(c.z0 / 6) * 6; z < c.z1; z += 6) {
+      if (late()) yield;
       for (const sg of [-1, 1]) {
         for (let lat = 5.5; lat < 60; lat += 2.4 + lat * 0.03) {
           const seed = Math.round(z * 7) * 131 + Math.round(lat * 10) + (sg > 0 ? 7 : 0);
@@ -450,34 +638,16 @@ export class Life {
         }
       }
     }
-    return S;
   }
 
   // Sträucher: Latschen und Alpenrosen auf Wiesen, am Waldrand dichter
-  private shrubs(c: LifeCtx): [Scatter, Scatter] {
-    const mk = (rose: boolean): Scatter => {
-      const geos = [this.geo(shrub(1, rose)), this.geo(shrub(0, rose))];
-      const to = [70, 260];
-      const band = 10;
-      const lods: Lod[] = geos.map((geo, q) => {
-        const m = this.mat(new THREE.MeshLambertNodeMaterial());
-        const I = instNodes();
-        m.positionNode = I.world.add(wind(I.at, positionGeometry.y.mul(0.8), 0.04));
-        m.normalNode = I.normal;
-        m.colorNode = vertexColor().xyz.mul(I.color);
-        const d = varying(I.at.xz.sub(cameraPosition.xz).length(), 'vShrubD');
-        const f = lodFade(d, to, band).mul(float(1).sub(smoothstep(230, 260, d)));
-        if (c.msaa) { m.opacityNode = f; m.alphaToCoverage = true; }
-        m.name = rose ? 'roses' : 'shrubs';
-        return { geo, mat: m, to: to[q], shadow: q === 0 };
-      });
-      return new Scatter(lods, 64, band);
-    };
-    const A = mk(false), B = mk(true);
+  private *placeShrubs(c: LifeCtx, late: () => boolean): Generator<void, void, void> {
+    const A = this.kinds.shrubs, B = this.kinds.roses;
     const h = this.ground(c);
     const road = this.roadNear(c);
     const w = { x: 0, y: 0, z: 0, th: 0 };
-    for (let z = c.z0; z <= c.z1; z += 9) {
+    for (let z = Math.ceil(c.z0 / 9) * 9; z < c.z1; z += 9) {
+      if (late()) yield;
       for (const sg of [-1, 1]) {
         for (let lat = 8; lat < 200; lat += 7 + lat * 0.08) {
           const seed = Math.round(z) * 977 + Math.round(lat) * 7 + (sg > 0 ? 3 : 0);
@@ -499,24 +669,16 @@ export class Life {
         }
       }
     }
-    return [A, B];
   }
 
   // Farne im Wald nahe der Straße
-  private ferns(c: LifeCtx): Scatter {
-    const geo = this.geo(fern());
-    const m = this.mat(new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide }));
-    const I = instNodes([34, 48]);
-    const e = attribute('aE', 'vec2');
-    m.positionNode = I.world.add(wind(I.at, e.y, 0.08));
-    m.normalNode = I.normal;
-    m.colorNode = vertexColor().xyz.mul(I.color);
-    m.name = 'ferns';
-    const S = new Scatter([{ geo, mat: m, to: 48, shadow: false }], 32);
+  private *placeFerns(c: LifeCtx, late: () => boolean): Generator<void, void, void> {
+    const S = this.kinds.ferns;
     const h = this.ground(c);
     const road = this.roadNear(c);
     const w = { x: 0, y: 0, z: 0, th: 0 };
-    for (let z = c.z0; z <= c.z1; z += 2.6) {
+    for (let z = Math.ceil(c.z0 / 2.6) * 2.6; z < c.z1; z += 2.6) {
+      if (late()) yield;
       for (const sg of [-1, 1]) {
         for (let lat = 7; lat < 40; lat += 2.4) {
           const seed = Math.round(z * 10) * 389 + Math.round(lat * 10) + (sg > 0 ? 11 : 0);
@@ -533,39 +695,11 @@ export class Life {
         }
       }
     }
-    return S;
   }
 
   // Kühe bei den Höfen und auf den Almwiesen, Schafherden weiter oben
-  private animals(c: LifeCtx): [Scatter, Scatter] {
-    const herdMat = (name: string, headPivot: V3, tailPivot: V3, graze: number) => {
-      const m = this.mat(new THREE.MeshLambertNodeMaterial());
-      const e = attribute('aE', 'vec2');
-      const part = e.x;
-      const ph = attribute('iC', 'vec4').w;
-      // grasen: meist Kopf unten, ab und zu hoch (schaut sich um); Schwanz schlägt ab und zu
-      const look = smoothstep(0.55, 0.85, sin(time.mul(0.23).add(ph.mul(40))).mul(0.5).add(0.5));
-      const chew = sin(time.mul(3.1).add(ph.mul(17))).mul(0.04);
-      const headA = mix(float(graze), float(-0.1), look).add(chew);
-      const turn = sin(time.mul(0.31).add(ph.mul(23))).mul(0.35).mul(look);
-      const tailA = sin(time.mul(2.2).add(ph.mul(9))).mul(smoothstep(0.4, 0.9, sin(time.mul(0.5).add(ph.mul(13))))).mul(0.5);
-      const p = positionGeometry;
-      const rotX = (q: N, a: N): N => vec3(q.x, q.y.mul(cos(a)).sub(q.z.mul(sin(a))), q.y.mul(sin(a)).add(q.z.mul(cos(a))));
-      const rotY = (q: N, a: N): N => vec3(q.x.mul(cos(a)).add(q.z.mul(sin(a))), q.y, q.z.mul(cos(a)).sub(q.x.mul(sin(a))));
-      const rotZ = (q: N, a: N): N => vec3(q.x.mul(cos(a)).sub(q.y.mul(sin(a))), q.x.mul(sin(a)).add(q.y.mul(cos(a))), q.z);
-      const hp = vec3(...headPivot), tp = vec3(...tailPivot);
-      const head = rotY(rotX(p.sub(hp), headA), turn).add(hp);
-      const tail = rotZ(p.sub(tp), tailA).add(tp);
-      const local = select(part.lessThan(0.5), p, select(part.lessThan(1.5), head, tail));
-      const I = instNodes([260, 330], local);
-      m.positionNode = I.world;
-      m.normalNode = I.normal;
-      m.colorNode = mix(vertexColor().xyz, vertexColor().xyz.mul(I.color), e.y);
-      m.name = name;
-      return m;
-    };
-    const cows = new Scatter([{ geo: this.geo(cow()), mat: herdMat('cows', [0, 1.3, 0.72], [0, 1.32, -1.0], 1.0), to: 330, shadow: true }], 96);
-    const sheep = new Scatter([{ geo: this.geo(sheepGeo()), mat: herdMat('sheep', [0, 0.7, 0.48], [0, 0.7, -0.5], 0.9), to: 330, shadow: true }], 96);
+  private *placeHerds(c: LifeCtx, late: () => boolean): Generator<void, void, void> {
+    const cows = this.kinds.cows, sheep = this.kinds.sheep;
     const h = this.ground(c);
     const road = this.roadNear(c);
     const COATS: V3[] = [[0.2, 0.14, 0.1], [0.26, 0.19, 0.13], [0.14, 0.095, 0.065], [0.32, 0.25, 0.17], [0.09, 0.065, 0.05]];
@@ -601,57 +735,32 @@ export class Life {
       }
     };
     // Kühe bei jedem zweiten Hof (auf der Talseite vor dem Haus) und auf freien Almen
-    c.houses.forEach((p, i) => {
-      if (hash(i, 3) > 0.6) return;
+    for (const p of c.houses) {
+      // je Hof fest (aus dem Ort), nicht aus der Reihenfolge
+      const i = Math.round(p.x * 3 + p.z * 7);
+      if (hash(i, 3) > 0.6) continue;
       const a = hash(i, 4) * 6.28;
       herd(p.x + Math.cos(a) * 34, p.z + Math.sin(a) * 34, 4 + Math.floor(hash(i, 5) * 5), 1000 + i, false);
-    });
+      if (late()) yield;
+    }
     const w = { x: 0, y: 0, z: 0, th: 0 };
-    let k = 0;
-    for (let z = c.z0 + 60; z <= c.z1; z += 170) {
-      k++;
+    for (let z = Math.ceil((c.z0 - 60) / 170) * 170 + 60; z < c.z1; z += 170) {
+      const k = Math.round(z / 170);
+      if (late()) yield;
       const sg = hash(k, 6) < 0.5 ? -1 : 1;
       c.track.world(z, sg * (45 + hash(k, 7) * 110), 0, w);
       if (hash(k, 8) < 0.55) herd(w.x, w.z, 5 + Math.floor(hash(k, 9) * 5), 2000 + k, false);
       else herd(w.x, w.z, 8 + Math.floor(hash(k, 10) * 8), 3000 + k, true);
     }
-    return [cows, sheep];
   }
 
-  // Alpendohlen in Schwärmen über den Hängen, ein Steinadler hoch oben
-  private birds(c: LifeCtx): Scatter {
-    const geo = this.geo(bird());
-    const m = this.mat(new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide }));
-    const iP = attribute('iP', 'vec4');
-    const iS = attribute('iS', 'vec4');
-    const iC = attribute('iC', 'vec4');
-    const e = attribute('aE', 'vec2');
-    // iP: Kreismitte, Phase; iS: Radius, Winkelgeschwindigkeit, Größe; iC: Farbe, Schlagstil
-    const ang = iP.w.add(time.mul(iS.y));
-    const dirS = select(iS.y.lessThan(0), float(-1), float(1));
-    const bob = sin(time.mul(0.6).add(iP.w.mul(3))).mul(iS.x.mul(0.08));
-    const pos = iP.xyz.add(vec3(cos(ang).mul(iS.x), bob, sin(ang).mul(iS.x)));
-    const fwd = vec2(sin(ang).negate(), cos(ang)).mul(dirS);
-    const yaw = atan(fwd.x, fwd.y);
-    // Flügelschlag mit Gleitphasen (Adler: fast nur gleiten)
-    const glide = smoothstep(-0.3, 0.5, sin(time.mul(0.45).add(iP.w.mul(5))));
-    const flap = sin(time.mul(mix(9, 3, iC.w)).add(iP.w.mul(7))).mul(mix(0.55, 0.12, iC.w)).mul(float(1).sub(glide.mul(0.85)));
-    const p = positionGeometry.mul(iS.z);
-    const lift = vec3(0, e.y.mul(flap).mul(iS.z).mul(0.6).add(e.y.mul(iS.z).mul(0.05)), 0);
-    const bank = dirS.mul(-0.3);
-    const q0 = p.add(lift.mul(e.x));
-    const qb = vec3(q0.x.mul(cos(bank)).sub(q0.y.mul(sin(bank))), q0.x.mul(sin(bank)).add(q0.y.mul(cos(bank))), q0.z);
-    const qr = vec3(qb.x.mul(cos(yaw)).add(qb.z.mul(sin(yaw))), qb.y, qb.z.mul(cos(yaw)).sub(qb.x.mul(sin(yaw))));
-    m.positionNode = pos.add(qr);
-    m.normalNode = transformNormalToView(normalize(vec3(0, 1, 0)));
-    m.colorNode = iC.xyz;
-    m.name = 'birds';
-    const S = new Scatter([{ geo, mat: m, to: 5000, shadow: false }], 4000, 0, false);
+  // Alpendohlen in Schwärmen über den Hängen, ab und zu ein Steinadler hoch oben
+  private placeBirds(c: LifeCtx) {
+    const S = this.kinds.birds;
     const w = { x: 0, y: 0, z: 0, th: 0 };
     const h = this.ground(c);
-    let k = 0;
-    for (let z = c.z0 + 150; z <= c.z1; z += 420) {
-      k++;
+    for (let z = Math.ceil((c.z0 - 150) / 420) * 420 + 150; z < c.z1; z += 420) {
+      const k = Math.round(z / 420);
       const sg = hash(k, 1) < 0.5 ? -1 : 1;
       c.track.world(z, sg * (60 + hash(k, 2) * 160), 0, w);
       const y = h(w.x, w.z) + 35 + hash(k, 3) * 50;
@@ -664,18 +773,18 @@ export class Life {
           [r, sp, 0.9 + hash(k * 31 + b, 12) * 0.25], [0.012, 0.012, 0.014], 0);
       }
     }
-    // Steinadler
-    c.track.world((c.z0 + c.z1) / 2, 120, 0, w);
-    S.add(w.x, h(w.x, w.z) + 140, w.z, 0, [140, 0.06, 3.2], [0.06, 0.04, 0.025], 1);
-    return S;
+    // Steinadler: etwa alle 3 km einer
+    for (let z = Math.ceil((c.z0 - 1300) / 3000) * 3000 + 1300; z < c.z1; z += 3000) {
+      c.track.world(z, 120, 0, w);
+      S.add(w.x, h(w.x, w.z) + 140, w.z, 0, [140, 0.06, 3.2], [0.06, 0.04, 0.025], 1);
+    }
   }
 
-  update(cam: THREE.Vector3, force = false) { for (const s of this.kinds) s.update(cam, force); }
-  warm(on: boolean) { for (const s of this.kinds) s.warm(on); }
+  update(cam: THREE.Vector3, force = false) { for (const s of Object.values(this.kinds)) s.update(cam, force); }
+  warm(on: boolean) { for (const s of Object.values(this.kinds)) s.warm(on); }
   dispose() {
-    for (const s of this.kinds) s.dispose();
+    for (const s of Object.values(this.kinds)) s.dispose();
     for (const m of this.mats) m.dispose();
     for (const g of this.geos) g.dispose();
   }
 }
-

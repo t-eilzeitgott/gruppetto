@@ -367,28 +367,68 @@ export class Crowd {
 
   /** Zuschauer aus den Requisiten der Strecke (wie im Spiel: render3d.crowdPeople) */
   build(track: Track, ground: Ground, lim: (i: number, sg: number) => number, i0: number, i1: number) {
-    for (let i = i0; i <= i1; i++) {
+    this.addRange(track, ground, lim, i0, i1 + 1);
+  }
+
+  /** Strecke (m) je Mensch – für das Abbauen hinter dem Fahrer */
+  private atZ: number[] = [];
+  private cap = 0;
+
+  /**
+   * Streaming: Zuschauer der Segmente i0 … i1 (halboffen) dazunehmen. Liefert die Pappschilder dieses Bereichs
+   * (Quads im Atlas der Banden) – die bekommen je Bereich ein eigenes Netz.
+   */
+  addRange(track: Track, ground: Ground, lim: (i: number, sg: number) => number, i0: number, i1: number): { pos: number[]; uv: number[] } {
+    const signs0 = this.signs;
+    this.signs = { pos: [], uv: [] };
+    const n0 = this.people.length;
+    for (let i = i0; i < i1; i++) {
       const s = track.seg(i);
       for (const sp of s.sprites ?? []) {
         if (sp.k !== 'crowd') continue;
         const sg = sp.x < 0 ? -1 : 1;
+        const before = this.people.length;
         this.crowdPeople(track, ground, s, sg, lim(i, sg), sp.v ?? 0, Math.abs(sp.x) - EDGE);
+        for (let k = before; k < this.people.length; k++) this.atZ.push(i * SEG);
       }
     }
+    const mine = this.signs;
+    this.signs = { pos: signs0.pos.concat(mine.pos), uv: signs0.uv.concat(mine.uv) };
+    if (this.people.length !== n0) this.repack();
+    return mine;
+  }
+
+  /** Streaming: Zuschauer abbauen (keep: Strecke in m) */
+  prune(keep: (at: number) => boolean) {
+    const n = this.people.length;
+    const people: Person[] = [];
+    const atZ: number[] = [];
+    this.people.forEach((p, k) => { if (keep(this.atZ[k])) { people.push(p); atZ.push(this.atZ[k]); } });
+    if (people.length === n) return;
+    this.people = people;
+    this.atZ = atZ;
+    this.signs = { pos: [], uv: [] };
+    this.repack();
+  }
+
+  /** Daten aller Menschen neu packen; Gruppen wachsen bei Bedarf */
+  private repack() {
     const n = this.people.length;
     this.src = new Float32Array(Math.max(1, n) * PS);
     this.people.forEach((p, k) => packPerson(p, this.src, k));
-    let cx = 0, cy = 0, cz = 0;
-    for (const p of this.people) { cx += p.x / n; cy += p.y / n; cz += p.z / n; }
-    let r = 0;
-    for (const p of this.people) r = Math.max(r, Math.hypot(p.x - cx, p.y - cy, p.z - cz));
-    const sphere = new THREE.Sphere(new THREE.Vector3(cx, cy, cz), r + 4);
+    this.at.set(1e9, 0, 0);
+    if (n <= this.cap && this.groups.length) return;
+    for (const g of this.groups) { g.mesh.removeFromParent(); g.geo.dispose(); }
+    this.groups = [];
+    this.cap = Math.max(64, Math.ceil(n * 1.5));
+    // nur Menschen nahe der Kamera stehen in den Gruppen: kein Wegschneiden als Ganzes
+    const sphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
     for (let lod = 0; lod < 3; lod++) {
       const base = this.bases[lod];
       const geo = new THREE.InstancedBufferGeometry();
       geo.setIndex(base.index);
       for (const k of ['position', 'color', 'normal']) geo.setAttribute(k, base.getAttribute(k));
-      const data = new Float32Array(Math.max(1, n) * PS);
+      const data = new Float32Array(this.cap * PS);
       const buf = new THREE.InstancedInterleavedBuffer(data, PS, 1);
       buf.setUsage(THREE.DynamicDrawUsage);
       for (let k = 0; k < 4; k++) geo.setAttribute(`aI${k}`, new THREE.InterleavedBufferAttribute(buf, 4, k * 4));
@@ -396,6 +436,7 @@ export class Crowd {
       geo.boundingSphere = sphere;
       const mesh = new THREE.Mesh(geo, this.mat);
       mesh.matrixAutoUpdate = false;
+      mesh.frustumCulled = false;
       mesh.castShadow = lod === 0;
       mesh.receiveShadow = true;
       mesh.visible = false;
@@ -512,6 +553,8 @@ export class Crowd {
 
   /** Vorwärmen: beide Stufen einmal zeichnen */
   warm(on: boolean) {
+    // noch keine Zuschauer: Gruppen trotzdem anlegen (Shader jetzt übersetzen, nicht beim ersten Fan)
+    if (on && !this.groups.length) this.repack();
     for (const g of this.groups) {
       if (on) { g.geo.instanceCount = Math.max(1, g.geo.instanceCount); g.mesh.visible = true; }
     }

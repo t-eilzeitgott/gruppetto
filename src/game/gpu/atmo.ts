@@ -5,12 +5,13 @@
  */
 import * as THREE from 'three/webgpu';
 import { bloom } from '../../../vendor/three/addons/BloomNode.js';
-import { bakeSkyCube, makeDome, makeRain, makeSun, type SkyCube } from './sky';
+import { bakeSkyCube, makeDome, makeRain, makeSun, type CloudLight, type SkyCube } from './sky';
 import { dirOf, LIGHT_KEYS, MOOD_IDS, MOOD_U, MOODS, resolve, type Light, type MoodId, type Settings } from './mood';
 import { tsl, h21, type N } from './nodes';
 
-const { cameraPosition, dot, exp, float, fog, max, mix, normalize, pmremTexture, positionView, positionWorld, pow, renderOutput, screenUV, screenSize, smoothstep, time, uniform, uv, vec3 } = tsl;
+const { abs, cameraPosition, cubeTexture, dot, exp, float, fog, max, mix, normalize, pmremTexture, positionView, positionWorld, pow, renderOutput, screenUV, screenSize, smoothstep, time, uniform, uv, vec2, vec3 } = tsl;
 
+const LAMP = new THREE.Color(1, 0.72, 0.42);
 const CYCLE: MoodId[] = ['mittag', 'gold', 'nacht', 'morgen', 'regen'];
 /** Wetterwechsel: so lange je Stimmung (s), so lange der Übergang */
 const HOLD = 16;
@@ -20,13 +21,29 @@ export class Atmo {
   readonly sun = makeSun();
   readonly hemi = new THREE.HemisphereLight(0x8fa8d6, 0x3a3326, 0);
   readonly sunDir = new THREE.Vector3(0, 1, 0);
-  private cubes = {} as Record<MoodId, SkyCube>;
+  /** gebackene Himmel je Stimmung und Variante (dramatisch oder nicht) – erst bei Bedarf gebacken */
+  private cubes = new Map<string, SkyCube>();
+  private size: number;
+  // dezentes Sonnenuntergangs-Licht (Nachbearbeitung): Lage der Sonne im Bild, Stärke
+  private sunScr = uniform(new THREE.Vector2(0.5, 0.3));
+  private sunsetK = uniform(0);
+  private aspect = uniform(1);
+  /** im Tunnel (0 draußen … 1 tief drin): Sonne, Himmelslicht und Umgebung gedämpft */
+  private tunnelK = 0;
+  private tunnelApplied = 0;
+  private vTmp = new THREE.Vector3();
+  private vFwd = new THREE.Vector3();
   private dome: ReturnType<typeof makeDome>;
   private rain: ReturnType<typeof makeRain>;
   private glow: THREE.Mesh;
   private glowCol = uniform(new THREE.Color(1, 0.93, 0.82));
   private glowK = uniform(1);
+  // Dunst aus dem blanken Himmel (ohne gebackene Wolken), gleiche Überblendung wie die Kuppel
+  private fogA: N;
+  private fogB: N;
   private fogK = uniform(0.5);
+  /** hellster Dunst (Luminanz): gegen die tiefe Sonne sonst fast weiß (Prüfwert: ?fogmax=) */
+  private fogMax = uniform(Number(/[?&]fogmax=([0-9.]+)/.exec(location.search)?.[1] ?? 1.4));
   private fogThin = uniform(1);
   private fogSun = uniform(new THREE.Vector3(0, 1, 0));
   private hazeCol = uniform(new THREE.Color(1, 0.86, 0.68));
@@ -56,13 +73,20 @@ export class Atmo {
   private envNode: N;
   settings: Settings;
 
-  constructor(private renderer: THREE.WebGPURenderer, private scene: THREE.Scene, settings: Settings, size: number) {
+  /**
+   * @param eager alle Himmel gleich backen (Testbild: Stimmungswechsel ohne Wartezeit); sonst nur den gezeigten,
+   *   die übrigen kurz vor Gebrauch
+   */
+  constructor(private renderer: THREE.WebGPURenderer, private scene: THREE.Scene, settings: Settings, size: number, eager = true) {
     this.settings = settings;
-    for (const id of MOOD_IDS) this.cubes[id] = bakeSkyCube(renderer, MOODS[id].sky, size);
+    this.size = size;
     this.shown = settings.mood;
-    this.dome = makeDome(this.cubes[this.shown].background, this.cubes[this.shown].background);
+    if (eager || settings.cycle) for (const id of MOOD_IDS) this.cube(id);
+    this.dome = makeDome(this.cube(this.shown).background, this.cube(this.shown).background);
+    this.fogA = cubeTexture(this.cube(this.shown).plain);
+    this.fogB = cubeTexture(this.cube(this.shown).plain);
     scene.add(this.dome.mesh);
-    this.envNode = pmremTexture(this.cubes[this.shown].environment);
+    this.envNode = pmremTexture(this.cube(this.shown).environment);
     scene.environmentNode = this.envNode;
     scene.add(this.sun, this.sun.target, this.hemi);
     this.rain = makeRain();
@@ -74,6 +98,19 @@ export class Atmo {
     this.target = { ...this.cur };
     this.from = { ...this.cur };
     this.applyCur();
+  }
+
+  /** Himmel einer Stimmung in der eingestellten Variante (gebacken beim ersten Gebrauch) */
+  private cube(id: MoodId, drama = this.settings.drama): SkyCube {
+    const key = `${id}|${drama ? 1 : 0}`;
+    let c = this.cubes.get(key);
+    if (!c) {
+      const m = MOODS[id];
+      const L: CloudLight | undefined = drama ? { elev: m.light.elev, azim: m.light.azim, r: m.light.sunR, g: m.light.sunG, b: m.light.sunB } : undefined;
+      c = bakeSkyCube(this.renderer, m.sky, this.size, L);
+      this.cubes.set(key, c);
+    }
+    return c;
   }
 
   /** Nachbearbeitung: Leuchten, dann Tonkurve, dann Farbfilter im Anzeigeraum (wie im Spiel) */
@@ -88,6 +125,15 @@ export class Atmo {
     gr = mix(gr, gr.mul(mix(g.splitS, g.splitH, smoothstep(0.12, 0.78, l))), g.split);
     col = mix(col, gr, g.grade);
     const sv = screenUV;
+    // Sonnenuntergangs-Licht: warmer Schein um die tiefe Sonne, ein feiner waagrechter Lichtstreif durch sie und
+    // ein Hauch Wärme im ganzen Bild – nur Rechnungen mit festen Werten, kein weiterer Durchgang (aus = Stärke 0)
+    const sk = this.sunsetK;
+    const dd = sv.sub(this.sunScr).mul(vec2(this.aspect, 1));
+    const halo = exp(dd.length().mul(-2.4)).mul(0.6).add(exp(dd.length().mul(-9)).mul(0.5));
+    const streak = exp(abs(dd.y).mul(-46)).mul(exp(abs(dd.x).mul(-1.4))).mul(0.4);
+    const wc = vec3(1, 0.6, 0.3);
+    col = col.add(wc.mul(halo.add(streak)).mul(sk.mul(0.22)).mul(float(1).sub(l.mul(0.55))));
+    col = mix(col, col.mul(vec3(1.05, 0.995, 0.93)), sk.mul(0.7));
     const v = smoothstep(1.25, 0.4, sv.sub(0.5).mul(vec3(1, 1.3, 0).xy).length());
     col = col.mul(mix(float(1), v, g.vignette));
     const n = h21(sv.mul(screenSize).add(time.fract().mul(vec3(31.7, 17.3, 0).xy))).sub(0.5);
@@ -114,8 +160,8 @@ export class Atmo {
     const dir = normalize(positionWorld.sub(cameraPosition));
     const d = positionView.length();
     const look = vec3(dir.x, max(dir.y, float(0.03)), dir.z).normalize();
-    const sky0 = mix(this.dome.cubeA.sample(look).rgb, this.dome.cubeB.sample(look).rgb, this.dome.mixT);
-    const skyCol = sky0.div(max(float(1), sky0.dot(vec3(0.3, 0.55, 0.15)).div(1.4)));
+    const sky0 = mix(this.fogA.sample(look).rgb, this.fogB.sample(look).rgb, this.dome.mixT);
+    const skyCol = sky0.div(max(float(1), sky0.dot(vec3(0.3, 0.55, 0.15)).div(this.fogMax)));
     const toSun = pow(max(float(0), dot(dir, this.fogSun)), 12);
     const hz = vec3(this.hazeCol.x, this.hazeCol.y, this.hazeCol.z);
     const col = mix(skyCol.mul(0.9), hz.mul(skyCol.dot(vec3(0.3, 0.5, 0.2))), toSun.mul(0.15));
@@ -128,7 +174,9 @@ export class Atmo {
   /** Einstellungen übernehmen (Stimmung weich wechseln) */
   apply(s: Settings, instant = false) {
     const moodChanged = s.mood !== this.settings.mood || (s.cycle !== this.settings.cycle);
+    const dramaChanged = s.drama !== this.settings.drama;
     this.settings = s;
+    if (dramaChanged) this.swapVariant();
     // Schatten an/aus ohne Neubau der Materialien: die Karte bleibt angeschlossen, aus = Stärke 0 und kein Durchgang
     this.sun.castShadow = true;
     this.sun.shadow.intensity = s.shadows ? 1 : 0;
@@ -144,6 +192,22 @@ export class Atmo {
     if (s.cycle) this.hold = Math.min(this.hold, HOLD);
   }
 
+  /** Kuppel und Dunst: Würfel A (von) und B (nach) setzen */
+  private setSky(a: MoodId, b: MoodId) {
+    const ca = this.cube(a), cb = this.cube(b);
+    this.dome.cubeA.value = ca.background; this.dome.cubeB.value = cb.background;
+    this.fogA.value = ca.plain; this.fogB.value = cb.plain;
+  }
+
+  /** dramatischer Himmel an/aus: die Würfel der gezeigten (und kommenden) Stimmung sofort tauschen */
+  private swapVariant() {
+    this.setSky(this.shown, this.next ?? this.shown);
+    this.envNode.value = this.cube(this.envSwitched && this.next ? this.next : this.shown).environment;
+  }
+
+  /** Tunnel: 0 draußen … 1 tief drin (Licht von außen weg, Lampenlicht warm) */
+  setTunnel(k: number) { this.tunnelK = Math.max(0, Math.min(1, k)); }
+
   /** Zielwerte neu aus Stimmung + Reglern (der Himmel bleibt) */
   private retarget(instant: boolean) {
     const id = this.next ?? this.shown;
@@ -156,16 +220,15 @@ export class Atmo {
     if (dur <= 0.02) {
       // sofort (Prüfbilder, Start)
       this.shown = id; this.next = null; this.blend = 1; this.hold = 0;
-      this.dome.cubeA.value = this.cubes[id].background; this.dome.cubeB.value = this.cubes[id].background; this.dome.mixT.value = 0;
-      this.envNode.value = this.cubes[id].environment; this.envSwitched = true;
+      this.setSky(id, id); this.dome.mixT.value = 0;
+      this.envNode.value = this.cube(id).environment; this.envSwitched = true;
       this.target = resolve(MOODS[id], this.settings); this.cur = { ...this.target }; this.from = { ...this.cur };
       this.applyCur();
       return;
     }
     if (id === this.shown && !this.next) { this.retarget(false); return; }
     // Kuppel: von der gezeigten (bzw. der gerade erreichten Mischung) zur neuen
-    this.dome.cubeA.value = this.cubes[this.next && this.blend > 0.5 ? this.next : this.shown].background;
-    this.dome.cubeB.value = this.cubes[id].background;
+    this.setSky(this.next && this.blend > 0.5 ? this.next : this.shown, id);
     this.dome.mixT.value = 0;
     this.shown = this.next && this.blend > 0.5 ? this.next : this.shown;
     this.next = id;
@@ -177,11 +240,14 @@ export class Atmo {
     this.hold = 0;
   }
 
-  /** je Bild: Wetterwechsel takten, Werte überblenden, Lichter nachführen */
-  update(dt: number, camPos: THREE.Vector3) {
+  /** je Bild: Wetterwechsel takten, Werte überblenden, Lichter nachführen (cam: für das Sonnenuntergangs-Licht) */
+  update(dt: number, camPos: THREE.Vector3, cam?: THREE.PerspectiveCamera) {
     if (this.settings.cycle && this.blend >= 1) {
       this.hold += dt;
-      if (this.hold > HOLD) this.goTo(CYCLE[(CYCLE.indexOf(this.shown) + 1) % CYCLE.length], BLEND);
+      const nextId = CYCLE[(CYCLE.indexOf(this.shown) + 1) % CYCLE.length];
+      // den nächsten Himmel ein paar Sekunden vorher backen (nicht im Moment des Wechsels)
+      if (this.hold > HOLD - 3) this.cube(nextId);
+      if (this.hold > HOLD) this.goTo(nextId, BLEND);
     }
     if (this.blend < 1) {
       this.blend = Math.min(1, this.blend + dt / this.blendDur);
@@ -189,11 +255,12 @@ export class Atmo {
       for (const key of LIGHT_KEYS) this.cur[key] = this.from[key] + (this.target[key] - this.from[key]) * k;
       if (this.next) {
         this.dome.mixT.value = k;
-        if (!this.envSwitched && k > 0.5) { this.envNode.value = this.cubes[this.next].environment; this.envSwitched = true; }
-        if (this.blend >= 1) { this.shown = this.next; this.next = null; this.dome.cubeA.value = this.cubes[this.shown].background; this.dome.mixT.value = 0; }
+        if (!this.envSwitched && k > 0.5) { this.envNode.value = this.cube(this.next).environment; this.envSwitched = true; }
+        if (this.blend >= 1) { this.shown = this.next; this.next = null; this.setSky(this.shown, this.shown); this.dome.mixT.value = 0; }
       }
       this.applyCur();
-    }
+    } else if (Math.abs(this.tunnelK - this.tunnelApplied) > 0.003) this.applyCur();
+    if (cam) this.updateSunset(cam, dt);
     this.dome.mesh.position.copy(camPos);
     this.dome.mesh.updateMatrix();
     this.glow.position.copy(camPos).addScaledVector(this.sunDir, 15000);
@@ -201,17 +268,38 @@ export class Atmo {
     this.glow.scale.setScalar(this.cur.glow > 1.5 ? 700 : 1500);
   }
 
+  /** Sonnenuntergangs-Licht: Sonne ins Bild rechnen, Stärke nach Sonnenhöhe, Blickrichtung, Schalter, Tunnel */
+  private updateSunset(cam: THREE.PerspectiveCamera, dt: number) {
+    const c = this.cur;
+    const lowK = Math.max(0, Math.min(1, 1 - (c.elev - 3) / 22)) * Math.max(0, Math.min(1, (c.elev + 4) / 5));
+    const isSun = c.glow > 0.01 && c.glow < 1.5 ? 1 : 0;
+    cam.getWorldDirection(this.vFwd);
+    const facing = this.vFwd.dot(this.sunDir);
+    const vis = Math.max(0, Math.min(1, (facing + 0.15) / 0.6));
+    const k = (this.settings.sunset ? 1 : 0) * lowK * isSun * (1 - c.rain) * (1 - this.tunnelK) * (0.35 + 0.65 * vis);
+    // weich nachführen (Kamerawechsel), ohne Zeit (Prüfbild, Start) sofort
+    this.sunsetK.value = dt <= 0 ? k : this.sunsetK.value + (k - this.sunsetK.value) * Math.min(1, dt * 5);
+    if (this.sunsetK.value < 0.002 && k === 0) this.sunsetK.value = 0;
+    this.vTmp.copy(cam.position).addScaledVector(this.sunDir, 1000).project(cam);
+    // hinter der Kamera: Richtung beibehalten, weit aus dem Bild schieben
+    if (facing < 0) this.vTmp.multiplyScalar(-4);
+    this.sunScr.value.set(this.vTmp.x * 0.5 + 0.5, 0.5 - this.vTmp.y * 0.5);
+    this.aspect.value = cam.aspect;
+  }
+
   private applyCur() {
     const c = this.cur;
+    const tk = (this.tunnelApplied = this.tunnelK);
     this.sunDir.copy(dirOf(c.elev, c.azim));
     this.fogSun.value.copy(this.sunDir);
-    this.sun.intensity = c.sunI;
+    this.sun.intensity = c.sunI * (1 - tk);
     this.sun.color.setRGB(c.sunR, c.sunG, c.sunB);
-    this.hemi.intensity = c.hemi;
+    // im Tunnel: das Himmelslicht wird zum warmen Lampenlicht
+    this.hemi.intensity = c.hemi * (1 - tk) + 0.55 * tk;
     // Streulicht des Himmels: bei tiefer Sonne in ihrer Farbe (Abendrot), sonst bläulich
     const low = Math.max(0, Math.min(1, 1 - c.elev / 30));
-    this.hemi.color.setRGB(0.56 + (c.sunR - 0.56) * low, 0.66 + (c.sunG - 0.66) * low, 0.84 + (c.sunB - 0.84) * low);
-    this.scene.environmentIntensity = c.env;
+    this.hemi.color.setRGB(0.56 + (c.sunR - 0.56) * low, 0.66 + (c.sunG - 0.66) * low, 0.84 + (c.sunB - 0.84) * low).lerp(LAMP, tk);
+    this.scene.environmentIntensity = c.env * (1 - 0.8 * tk);
     this.renderer.toneMappingExposure = c.exposure;
     this.fogK.value = c.fog;
     this.fogThin.value = c.fogThin;
@@ -232,7 +320,8 @@ export class Atmo {
   }
 
   dispose() {
-    for (const id of MOOD_IDS) this.cubes[id].dispose();
+    for (const c of this.cubes.values()) c.dispose();
+    this.cubes.clear();
     this.sun.dispose();
     this.hemi.dispose();
     (this.dome.mesh.material as THREE.Material).dispose();

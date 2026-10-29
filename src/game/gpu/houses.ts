@@ -33,7 +33,16 @@ const B0: [number, number] = [42, 7];
 const B1: [number, number] = [115, 14];
 const MARGIN = 7;
 
-interface Spot { x: number; y: number; z: number; rot: number; tone: number; shut: number }
+interface Spot { x: number; y: number; z: number; rot: number; tone: number; shut: number; /** Strecke (m), für das Abbauen */ at: number }
+
+/** was die Platzsuche braucht */
+export interface HouseCtx {
+  track: Track;
+  terrain: Terrain;
+  trees: Trees;
+  /** Abstand zur Straße (alle Stellen der Strecke, auch andere Kehren) */
+  roadDist: (x: number, z: number) => number;
+}
 
 export class Houses {
   readonly group = new THREE.Group();
@@ -41,6 +50,7 @@ export class Houses {
   private geos: Record<HMat, THREE.BufferGeometry>[];
   private groups: InstGroup[][] = [[], [], []];
   private spots: Spot[] = [];
+  private cap = 0;
   private at = new THREE.Vector3(1e9, 0, 0);
 
   constructor(S: Record<SurfaceId, Surface>, msaa: boolean) {
@@ -77,8 +87,20 @@ export class Houses {
       for (const p of route) d = Math.min(d, (p.x - x) ** 2 + (p.z - z) ** 2);
       return Math.sqrt(d);
     };
-    const tryAt = (x: number, z: number, seed: number, minGap: number): Spot | null => {
-      if (roadDist(x, z) < 25) return null;
+    const it = this.addRange({ track, terrain, trees, roadDist }, z0, z1 + 1, max);
+    while (!it.next().done) { /* weiter */ }
+  }
+
+  /**
+   * Streaming: Häuser für den Bereich z0 … z1 (halboffen). Auf Almen wie oben; in Dörfern (Gegend „village“)
+   * dicht an der Straße, beidseitig gleich hinter dem Korridor, Giebel zur Straße.
+   */
+  *addRange(c: HouseCtx, z0: number, z1: number, max = Infinity, late: () => boolean = () => false): Generator<void, void, void> {
+    const { track, terrain, trees, roadDist } = c;
+    const w = { x: 0, y: 0, z: 0, th: 0 };
+    let placed = 0;
+    const tryAt = (x: number, z: number, seed: number, minGap: number, minRoad: number, toward: { x: number; z: number } | null, at: number): Spot | null => {
+      if (roadDist(x, z) < minRoad) return null;
       for (const s of this.spots) if ((s.x - x) ** 2 + (s.z - z) ** 2 < minGap * minGap) return null;
       if (trees.countNear(x, z, 14) > 3) return null;
       const h = (px: number, pz: number) => terrain.groundAt(px, pz);
@@ -87,67 +109,97 @@ export class Houses {
       const g = Math.hypot(gx, gz);
       if (g > 0.42) return null;
       let rot: number;
-      if (g > 0.04) rot = Math.atan2(-gx, -gz);
+      if (toward) rot = Math.atan2(toward.x - x, toward.z - z);
+      else if (g > 0.04) rot = Math.atan2(-gx, -gz);
       else {
-        // flach: Giebel zur Straße
-        let best = route[0];
-        let bd = Infinity;
-        for (const p of route) { const d = (p.x - x) ** 2 + (p.z - z) ** 2; if (d < bd) { bd = d; best = p; } }
-        rot = Math.atan2(best.x - x, best.z - z);
+        // flach: Giebel zur Straße (nächster Punkt quer zur Strecke)
+        track.world(at, 0, 0, w);
+        rot = Math.atan2(w.x - x, w.z - z);
       }
-      rot += (hash(seed, 3) - 0.5) * 0.35;
-      const c = Math.cos(rot), s = Math.sin(rot);
+      rot += (hash(seed, 3) - 0.5) * (toward ? 0.12 : 0.35);
+      const cs = Math.cos(rot), sn = Math.sin(rot);
       let hi = -Infinity, lo = Infinity;
       for (const [lx, lz] of FOOT) {
-        const y = h(x + c * lx + s * lz, z - s * lx + c * lz);
+        const y = h(x + cs * lx + sn * lz, z - sn * lx + cs * lz);
         hi = Math.max(hi, y);
         lo = Math.min(lo, y);
       }
       if (hi - lo > 4.4) return null;
-      return { x, y: hi - 0.35, z, rot, tone: hash(seed, 5), shut: Math.floor(hash(seed, 7) * SHUTTERS.length) };
+      return { x, y: hi - 0.35, z, rot, tone: hash(seed, 5), shut: Math.floor(hash(seed, 7) * SHUTTERS.length), at };
     };
     const lats = [27, 34, 44, 58, 75, 96, 122, 150, 185];
-    for (let z = z0; z <= z1 && this.spots.length < max; z += 24) {
+    for (let z = Math.ceil(z0 / 24) * 24; z < z1 && placed < max; z += 24) {
+      if (late()) yield;
+      const s = track.segAt(z);
+      if (s.tunnel) continue;
+      const village = track.sections[s.sec].biome === 'village';
       for (const side of [-1, 1]) {
+        if (late()) yield;
+        if (village) {
+          // Dorf: Häuserzeile gleich hinter dem Korridor (dort beginnt die Landschaft)
+          const lim = terrain.lim(s.i)[side < 0 ? 0 : 1];
+          const seed = Math.round(z) * 53 + (side > 0 ? 5 : 0);
+          if (hash(seed, 1) > 0.8) continue;
+          track.world(z, side * (lim + 8 + hash(seed, 2) * 6), 0, w);
+          const toward = track.world(z, 0, 0, { x: 0, y: 0, z: 0, th: 0 });
+          const sp = tryAt(w.x, w.z, seed, 17, 11, toward, z);
+          if (!sp) continue;
+          this.spots.push(sp);
+          placed++;
+          trees.clear(sp.x, sp.z, 12.5);
+          continue;
+        }
         for (let li = 0; li < lats.length; li++) {
+          if (li % 3 === 2 && late()) yield;
           const seed = Math.round(z) * 31 + li * 7 + (side > 0 ? 3 : 0);
           if (hash(seed, 1) > 0.75) continue;
           track.world(z, side * lats[li], 0, w);
-          const sp = tryAt(w.x, w.z, seed, 70);
+          const sp = tryAt(w.x, w.z, seed, 70, 25, null, z);
           if (!sp) continue;
           this.spots.push(sp);
+          placed++;
           trees.clear(sp.x, sp.z, 12.5);
           // Weiler: ein, zwei Nachbarn hangparallel daneben
           const n = hash(seed, 11) < 0.45 ? 1 + (hash(seed, 13) < 0.4 ? 1 : 0) : 0;
-          for (let q = 0; q < n && this.spots.length < max; q++) {
+          for (let q = 0; q < n && placed < max; q++) {
             const dir = (q % 2 ? -1 : 1) * (24 + hash(seed, 17 + q) * 8);
             const nx = sp.x + Math.cos(sp.rot) * dir + Math.sin(sp.rot) * (hash(seed, 19 + q) - 0.5) * 8;
             const nz = sp.z - Math.sin(sp.rot) * dir + Math.cos(sp.rot) * (hash(seed, 19 + q) - 0.5) * 8;
-            const nb = tryAt(nx, nz, seed + 1000 * (q + 1), 20);
+            const nb = tryAt(nx, nz, seed + 1000 * (q + 1), 20, 25, null, z);
             if (!nb) continue;
             this.spots.push(nb);
+            placed++;
             trees.clear(nb.x, nb.z, 12.5);
           }
           break;
         }
       }
     }
-    this.buildGroups();
+    if (this.spots.length > this.cap) this.buildGroups();
+    this.at.set(1e9, 0, 0);
   }
 
-  private buildGroups() {
+  /** Streaming: Häuser hinter dem Fahrer abbauen (Strecke vor z0 und nach z1 bleibt) */
+  prune(keep: (at: number) => boolean) {
     const n = this.spots.length;
-    if (!n) return;
-    let cx = 0, cy = 0, cz = 0;
-    for (const s of this.spots) { cx += s.x / n; cy += s.y / n; cz += s.z / n; }
-    let r = 0;
-    for (const s of this.spots) r = Math.max(r, Math.hypot(s.x - cx, s.y - cy, s.z - cz));
-    const sphere = new THREE.Sphere(new THREE.Vector3(cx, cy, cz), r + 25);
+    this.spots = this.spots.filter((s) => keep(s.at));
+    if (this.spots.length !== n) this.at.set(1e9, 0, 0);
+  }
+
+  private buildGroups(force = false) {
+    const n = this.spots.length;
+    if (!n && !force) return;
+    for (const l of this.groups) for (const g of l) disposeGroup(g);
+    this.groups = [[], [], []];
+    this.cap = Math.max(16, Math.ceil(n * 1.5));
+    // die Gruppen enthalten alle Häuser der gebauten Strecke: kein Wegschneiden als Ganzes
+    const sphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
     for (let lod = 0; lod < 3; lod++) {
       for (const m of HMATS) {
-        const g = instGroup(this.geos[lod][m], this.mats[m], n, sphere);
+        const g = instGroup(this.geos[lod][m], this.mats[m], this.cap, sphere);
         g.mesh.castShadow = true;
         g.mesh.receiveShadow = true;
+        g.mesh.frustumCulled = false;
         this.group.add(g.mesh);
         this.groups[lod].push(g);
       }
@@ -176,6 +228,8 @@ export class Houses {
 
   /** Vorwärmen: beide Stufen einmal zeichnen lassen */
   warm(on: boolean) {
+    // noch keine Häuser (Start ohne Dorf): Gruppen trotzdem anlegen, damit ihre Shader jetzt übersetzt werden
+    if (on && !this.groups[0]?.length) this.buildGroups(true);
     for (const l of this.groups) for (const g of l) {
       if (on) { g.geo.instanceCount = Math.max(1, g.geo.instanceCount); g.mesh.visible = true; }
     }

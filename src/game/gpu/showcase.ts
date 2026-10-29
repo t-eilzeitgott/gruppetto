@@ -253,7 +253,7 @@ export class Showcase {
     await step(0.06, 'Himmel (fünf Stimmungen)');
     const moodParam = /[?&]mood=([a-z]+)/.exec(location.search)?.[1] as Settings['mood'] | undefined;
     if (moodParam) this.settings = { ...this.settings, mood: moodParam };
-    const atmo = (this.atmo = new Atmo(r, this.scene, this.settings, low ? 96 : 256));
+    const atmo = (this.atmo = new Atmo(r, this.scene, this.settings, Number(new URLSearchParams(location.search).get('sky')) || (low ? 96 : 256)));
     this.maxDpr = Math.min(window.devicePixelRatio || 1, this.settings.maxDpr);
     if (this.disposed) return;
 
@@ -350,7 +350,7 @@ export class Showcase {
     log(`Häuser: ${houses.count} (je ${houses.tris.map((t) => Math.round(t)).join(' / ')} Dreiecke)`);
     // Leben: Blumen, Sträucher, Farne, Kühe, Schafe, Vögel
     await step(0.725, 'Wiesen und Tiere');
-    const life = (this.life = new Life());
+    const life = (this.life = new Life(!!(r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend));
     life.build({ track, terrain, forest, trees, houses: houses.positions, z0: Z0, z1: Z1, msaa: !!(r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend });
     this.scene.add(life.group);
     log(`Leben: ${Object.entries(life.counts).map(([k, v]) => `${k} ${v}`).join(', ')}`);
@@ -776,7 +776,7 @@ export class Showcase {
       P.mark(0);
       this.updateCamera(dt);
       P.mark(1);
-      this.atmo?.update(this.paused ? 0 : dt, this.camera.position);
+      this.atmo?.update(this.paused ? 0 : dt, this.camera.position, this.camera);
       this.updateSun();
       const mood = this.moodName;
       if (mood !== this.shownMood) { if (this.shownMood) P.event(EV.mood, mood); this.shownMood = mood; }
@@ -1008,7 +1008,7 @@ export class Showcase {
   async snapshot(): Promise<string> {
     const r = this.renderer;
     r.info.reset();
-    if (this.track && this.rider) { this.updateCamera(1); this.atmo?.update(0, this.camera.position); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); this.houses?.update(this.camera.position, true); this.life?.update(this.camera.position, true); this.crowd?.update(this.camera.position, this.rider.group.position, true); }
+    if (this.track && this.rider) { this.updateCamera(1); this.atmo?.update(0, this.camera.position, this.camera); this.updateSun(); this.trees?.update(this.camera.position, true); this.grass?.update(this.camera.position); this.houses?.update(this.camera.position, true); this.life?.update(this.camera.position, true); this.crowd?.update(this.camera.position, this.rider.group.position, true); }
     const size = new THREE.Vector2();
     r.getDrawingBufferSize(size);
     const rt = new THREE.RenderTarget(size.x, size.y, { depthBuffer: false });

@@ -90,6 +90,20 @@ export class Grass {
 
   addChunk(tufts: Tuft[]) {
     if (!tufts.length) return;
+    this.addTo(tufts);
+  }
+
+  /** Streaming: Stücke abbauen, deren Mitte nicht mehr gebraucht wird */
+  prune(keep: (cx: number, cz: number) => boolean) {
+    this.chunks = this.chunks.filter((ch) => {
+      if (keep(ch.cx, ch.cz)) return true;
+      disposeGroup(ch.g);
+      this.count -= ch.n;
+      return false;
+    });
+  }
+
+  private addTo(tufts: Tuft[]) {
     const n = tufts.length;
     let cx = 0, cz = 0, cy = 0;
     for (const t of tufts) { cx += t.x; cz += t.z; cy += t.y; }

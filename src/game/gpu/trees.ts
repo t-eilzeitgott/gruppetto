@@ -160,6 +160,27 @@ export class Trees {
     for (const c of this.cells.values()) yield* c.spots;
   }
 
+  /** Baumstellen in einem Rechteck (Streaming: nur die Gegend eines Abschnitts) */
+  *spotsIn(x0: number, z0: number, x1: number, z1: number): Generator<TreeSpot> {
+    for (const c of this.cells.values()) {
+      if (c.cx + CELL / 2 < x0 || c.cx - CELL / 2 > x1 || c.cz + CELL / 2 < z0 || c.cz - CELL / 2 > z1) continue;
+      for (const t of c.spots) if (t.x >= x0 && t.x <= x1 && t.z >= z0 && t.z <= z1) yield t;
+    }
+  }
+
+  /** Zellen abbauen, die nicht mehr gebraucht werden (Streaming: weit hinter dem Fahrer) */
+  prune(keep: (cx: number, cz: number) => boolean) {
+    for (const [k, c] of this.cells) {
+      if (keep(c.cx, c.cz)) continue;
+      for (const g of c.groups) for (const l of g.lods) disposeGroup(l);
+      this.count -= c.spots.length;
+      this.cells.delete(k);
+    }
+  }
+
+  /** neu einzubauende Zellen (Streaming: Arbeit, die update noch erledigt) */
+  get dirtyCells(): number { let n = 0; for (const c of this.cells.values()) if (c.dirty) n++; return n; }
+
   /** einzelne Bäume dazu (jeder in seine Zelle) */
   addSpots(list: TreeSpot[]) {
     for (const t of list) this.addTile([t], t.x, t.z);
@@ -286,8 +307,28 @@ export class Trees {
     return n;
   }
 
+  /** Vorwärmen: je Baumart und Stufe eine Gruppe mit einem Baum (Arten, die erst später vorkommen: Laubbäume im Tal) */
+  private warmGroups: InstGroup[] = [];
+
   /** Vorwärmen: jede Gruppe einmal zeichnen lassen (Daten hochladen); danach neu verteilen */
   warm(on: boolean) {
+    if (on && !this.warmGroups.length) {
+      const sphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
+      for (const a of ARCHS) {
+        for (let lv = 0; lv < 3; lv++) {
+          const g = lv < 2 ? instGroup(this.geo[a][lv], this.mats[lv], 1, sphere) : instGroup(this.quads[a], this.impMats[a], 1, sphere);
+          g.mesh.castShadow = lv === 0;
+          g.mesh.receiveShadow = lv < 2;
+          g.data.set([0, -500, 0, 0, 1, 1, 1, 0, 1, 1, 1, 0], 0);
+          commit(g, 1);
+          this.group.add(g.mesh);
+          this.warmGroups.push(g);
+        }
+      }
+    } else if (!on && this.warmGroups.length) {
+      for (const g of this.warmGroups) disposeGroup(g);
+      this.warmGroups = [];
+    }
     for (const c of this.cells.values()) {
       for (const g of c.groups) {
         for (const l of g.lods) {

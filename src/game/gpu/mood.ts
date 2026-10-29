@@ -121,29 +121,37 @@ export interface Settings {
   oppMax: number;
   /** Auflösung mindestens (die Automatik geht nicht darunter) */
   minDpr: number;
+  /** dramatischer Himmel: gebackene Quellwolken mit Lichtkanten (kostet nur beim Backen) */
+  drama: boolean;
+  /** dezentes Sonnenuntergangs-Licht: warmer Schein um die tiefe Sonne in der Nachbearbeitung (fast kostenlos) */
+  sunset: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   mood: 'mittag', cycle: false, shadows: true, bloom: true, grade: true, vignette: true, grain: true, fog: true, rain: true, crowd: true, life: true, grass: true, cinema: false,
   exposure: 1, warm: 0, sat: 1, contrast: 1, sun: 1, env: 1, fogK: 1, bloomK: 1, vignetteK: 1, grainK: 1, maxDpr: 2,
-  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4, oppMax: 12, minDpr: 0.85,
+  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4, oppMax: 12, minDpr: 0.85, drama: false, sunset: false,
 };
+
+/** Spiel (Abfahrt auf WebGPU): goldene Stunde, dramatischer Himmel, Sonnenuntergangs-Licht */
+export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'gold', drama: true, sunset: true, oppMax: 10 };
+export const RACE_KEY = 'gruppetto.gpu.race';
 
 const KEY = 'gruppetto.gpu.settings';
 
-export function loadSettings(): Settings {
+export function loadSettings(key = KEY, defaults: Settings = DEFAULT_SETTINGS): Settings {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return { ...DEFAULT_SETTINGS };
+    const raw = localStorage.getItem(key);
+    if (!raw) return { ...defaults };
     const s = JSON.parse(raw) as Partial<Settings>;
-    const out = { ...DEFAULT_SETTINGS, ...s };
-    if (!MOOD_IDS.includes(out.mood)) out.mood = 'mittag';
+    const out = { ...defaults, ...s };
+    if (!MOOD_IDS.includes(out.mood)) out.mood = defaults.mood;
     return out;
-  } catch { return { ...DEFAULT_SETTINGS }; }
+  } catch { return { ...defaults }; }
 }
 
-export function saveSettings(s: Settings) {
-  try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* egal */ }
+export function saveSettings(s: Settings, key = KEY) {
+  try { localStorage.setItem(key, JSON.stringify(s)); } catch { /* egal */ }
 }
 
 /** Zielwerte aus Stimmung und Einstellungen */

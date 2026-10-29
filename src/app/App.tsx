@@ -24,7 +24,7 @@ import { RiderPage } from '../pages/Rider';
 import { RidersPage } from '../pages/Riders';
 import { ClimbsPage } from '../pages/Climbs';
 import { Suspense } from 'react';
-import { AkkuPage, BergPage, GamePage, GaragePage, JourneyPage, SprintPage, WorldEditorPage, ZeitfahrenPage, GpuTestPage } from './pages';
+import { AkkuPage, BergPage, GamePage, GaragePage, JourneyPage, SprintPage, WorldEditorPage, ZeitfahrenPage, GpuTestPage, RaceGpuPage } from './pages';
 import { AppSkeleton, RouteSkeleton } from '../ui/skeleton';
 import { DemoBanner } from '../ui/Shell';
 import { PageBoundary } from '../ui/PageBoundary';
@@ -106,7 +106,7 @@ function MemberApp({ me }: { me: ProfileT }) {
   useEffect(() => {
     if (!loading && first !== undefined) introReady('content');
   }, [loading, first]);
-  const fullScreen = first === 'tipp' || first === 'spiel' || (first === 'bonus' && !!second) || (first === 'admin' && (second === 'akku' || second === 'welt' || second === 'gpu'));
+  const fullScreen = first === 'tipp' || first === 'spiel' || (first === 'bonus' && !!second) || (first === 'admin' && (second === 'akku' || second === 'welt' || second === 'gpu' || second === 'abfahrt'));
 
   let page;
   if (error) page = <ErrorBox error={error} />;
@@ -197,6 +197,7 @@ function AdminRouter({ section }: { section?: string }) {
     case 'akku': return <Suspense fallback={<RouteSkeleton parts={['spiel', 'akku']} />}><AkkuPage /></Suspense>;
     case 'welt': return <Suspense fallback={<RouteSkeleton parts={['spiel', 'welt']} />}><WorldEditorPage /></Suspense>;
     case 'gpu': return <Suspense fallback={<RouteSkeleton parts={['spiel', 'gpu']} />}><GpuTestPage /></Suspense>;
+    case 'abfahrt': return <Suspense fallback={<RouteSkeleton parts={['spiel', 'abfahrt']} />}><RaceGpuPage /></Suspense>;
     default: return <NotFound />;
   }
 }

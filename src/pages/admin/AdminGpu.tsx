@@ -14,30 +14,9 @@ import type { Kit } from '../../game/abfahrt/rider';
 import { useBikes } from '../../ui/useBikes';
 import { BUILD_ID } from '../../app/config';
 import type { Report } from '../../game/gpu/perf';
+import { copyText, lsRead, lsWrite, shareFile } from './gpuKit';
 
 const LS_REPORT = 'gruppetto.gpu.lastReport';
-const lsRead = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
-const lsWrite = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* voll oder gesperrt */ } };
-
-/** Text in die Zwischenablage (Fallback: Auswahl-Dialog) */
-async function copyText(text: string): Promise<boolean> {
-  try { await navigator.clipboard.writeText(text); return true; } catch { prompt('Bericht (alles markieren und kopieren)', text.slice(0, 20000)); return false; }
-}
-
-/** Datei teilen (iPhone: Teilen-Blatt) oder herunterladen */
-async function shareFile(text: string, name: string) {
-  const file = new File([text], name, { type: 'application/json' });
-  const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean };
-  if (nav.canShare?.({ files: [file] })) {
-    try { await nav.share({ files: [file], title: name }); return; } catch { /* abgebrochen: herunterladen */ }
-  }
-  const url = URL.createObjectURL(file);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-}
 import { DEFAULT_SETTINGS, loadSettings, MOOD_IDS, MOODS, type Settings } from '../../game/gpu/mood';
 
 /** feste Tagesstrecke: Dolomiten, vier Kehren, kein Tunnel – die schönsten 2,5 km zum Vergleichen */
@@ -45,6 +24,8 @@ const DAY = '2026-10-15';
 
 const TOGGLES: { k: keyof Settings; label: string }[] = [
   { k: 'cycle', label: 'Wetterwechsel (alle 16 s)' },
+  { k: 'drama', label: 'Dramatischer Himmel (gebackene Wolken)' },
+  { k: 'sunset', label: 'Sonnenuntergangs-Licht (dezent, bei tiefer Sonne)' },
   { k: 'shadows', label: 'Sonnenschatten' },
   { k: 'bloom', label: 'Leuchten (Bloom)' },
   { k: 'grade', label: 'Farbfilter (Wärme, Kontrast, Split)' },

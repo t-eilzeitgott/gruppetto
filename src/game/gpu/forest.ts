@@ -29,16 +29,75 @@ const CELL = 32;
 export class ForestEdge {
   private s: Sample[] = [];
   private grid = new Map<string, number[]>();
+  /** Bäume je Punkt und Seite (Streaming: wird bereichsweise gezählt) */
+  private cnt: [number, number][] = [];
+  private zEnd: number;
 
-  constructor(track: Track, private terrain: Terrain, z0: number, z1: number) {
+  constructor(private track: Track, private terrain: Terrain, private z0: number, z1: number) {
+    this.zEnd = z0 - STEP;
+    this.extend(z1);
+  }
+
+  /** Streaming: Streckenpunkte bis z1 dazunehmen */
+  extend(z1: number) {
     const w = { x: 0, y: 0, z: 0, th: 0 };
-    for (let z = z0; z <= z1; z += STEP) {
-      track.world(z, 0, 0, w);
+    for (let z = this.zEnd + STEP; z <= z1; z += STEP) {
+      this.track.world(z, 0, 0, w);
       const k = this.s.length;
       this.s.push({ x: w.x, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), left: 0, right: 0 });
+      this.cnt.push([0, 0]);
       const key = `${Math.floor(w.x / CELL)},${Math.floor(w.z / CELL)}`;
       const l = this.grid.get(key);
       if (l) l.push(k); else this.grid.set(key, [k]);
+      this.zEnd = z;
+    }
+  }
+
+  /** Index des Streckenpunkts bei z (Meter) */
+  private kOf(z: number): number { return Math.max(0, Math.min(this.s.length - 1, Math.round((z - this.z0) / STEP))); }
+
+  /**
+   * Streaming: Waldstärke für die Punkte zwischen za und zb aus den Bäumen der Gegend (spots: nur die nahen);
+   * gezählt wird mit Rand (Glättung über ±40 m)
+   */
+  measureRange(za: number, zb: number, spots: Iterable<TreeSpot>) {
+    const it = this.measureSteps(za, zb, spots, () => false);
+    while (!it.next().done) { /* am Stück */ }
+  }
+
+  /** wie measureRange, gibt aber ab, sobald late() meldet, dass die Zeit des Bilds um ist */
+  *measureSteps(za: number, zb: number, spots: Iterable<TreeSpot>, late: () => boolean): Generator<void, void, void> {
+    const ka = this.kOf(za), kb = this.kOf(zb);
+    const R = 5;
+    for (let k = Math.max(0, ka - R); k <= Math.min(this.s.length - 1, kb + R); k++) this.cnt[k] = [0, 0];
+    let q = 0;
+    for (const t of spots) {
+      if ((++q & 255) === 0 && late()) yield;
+      const n = this.near(t.x, t.z);
+      if (!n || n.k < ka - R || n.k > kb + R) continue;
+      const a = Math.abs(n.lat);
+      if (a < 18 || a > 70) continue;
+      this.cnt[n.k][n.lat > 0 ? 1 : 0]++;
+    }
+    this.smooth(ka, kb);
+  }
+
+  private smooth(ka: number, kb: number) {
+    const R = 5;
+    for (let k = ka; k <= kb; k++) {
+      for (let side = 0; side < 2; side++) {
+        let sum = 0;
+        let n = 0;
+        for (let j = -R; j <= R; j++) {
+          const q = k + j;
+          if (q < 0 || q >= this.s.length) continue;
+          sum += this.cnt[q][side];
+          n++;
+        }
+        const dens = sum / n / ((STEP * 52) / 40);
+        const v = sstep(0.3, 0.7, dens);
+        if (side) this.s[k].right = v; else this.s[k].left = v;
+      }
     }
   }
 
@@ -66,31 +125,16 @@ export class ForestEdge {
 
   /** Waldstärke je Seite aus den Bäumen der Landschaft (20–70 m neben der Straße), entlang der Strecke geglättet */
   measure(spots: Iterable<TreeSpot>) {
-    const cnt = this.s.map(() => [0, 0]);
+    for (let k = 0; k < this.s.length; k++) this.cnt[k] = [0, 0];
     for (const t of spots) {
       const n = this.near(t.x, t.z);
       if (!n) continue;
       const a = Math.abs(n.lat);
       if (a < 18 || a > 70) continue;
-      cnt[n.k][n.lat > 0 ? 1 : 0]++;
+      this.cnt[n.k][n.lat > 0 ? 1 : 0]++;
     }
     // dichtester Wald der Landschaft: 6-m-Raster zu 92 % → ~52 Bäume auf 8 m × 52 m Band … geglättet über ±40 m
-    const R = 5;
-    for (let k = 0; k < this.s.length; k++) {
-      for (let side = 0; side < 2; side++) {
-        let sum = 0;
-        let n = 0;
-        for (let j = -R; j <= R; j++) {
-          const q = k + j;
-          if (q < 0 || q >= this.s.length) continue;
-          sum += cnt[q][side];
-          n++;
-        }
-        const dens = sum / n / ((STEP * 52) / 40);
-        const v = sstep(0.3, 0.7, dens);
-        if (side) this.s[k].right = v; else this.s[k].left = v;
-      }
-    }
+    this.smooth(0, this.s.length - 1);
   }
 
   /** Prüfhilfe: wie viel der Strecke hat links/rechts Wald (Anteil der Punkte mit Stärke > 0,5) */
@@ -109,7 +153,18 @@ export class ForestEdge {
   }
 
   /** junge und alte Bäume im Streifen 8–18 m neben der Straße, wo dahinter Wald steht */
-  fill(existing: Iterable<TreeSpot>): TreeSpot[] {
+  fill(existing: Iterable<TreeSpot>): TreeSpot[] { return this.fillRange(-Infinity, Infinity, existing); }
+
+  /** Streaming: aufforsten nur für die Punkte zwischen za und zb (existing: die Bäume der Gegend) */
+  fillRange(za: number, zb: number, existing: Iterable<TreeSpot>): TreeSpot[] {
+    const it = this.fillSteps(za, zb, existing, () => false);
+    for (;;) { const r = it.next(); if (r.done) return r.value; }
+  }
+
+  /** wie fillRange in Schritten (gibt ab, sobald late() meldet) */
+  *fillSteps(za: number, zb: number, existing: Iterable<TreeSpot>, late: () => boolean): Generator<void, TreeSpot[], void> {
+    const ka = za === -Infinity ? 0 : this.kOf(za);
+    const kb = zb === Infinity ? this.s.length - 1 : this.kOf(zb);
     const occ = new Map<string, { x: number; z: number }[]>();
     const put = (x: number, z: number) => {
       const key = `${Math.floor(x / 8)},${Math.floor(z / 8)}`;
@@ -125,12 +180,14 @@ export class ForestEdge {
       return true;
     };
     const kinds: string[] = [];
-    for (const t of existing) { put(t.x, t.z); if (kinds.length < 400) kinds.push(t.kind); }
+    let q = 0;
+    for (const t of existing) { put(t.x, t.z); if (kinds.length < 400) kinds.push(t.kind); if ((++q & 1023) === 0 && late()) yield; }
     const conifers = kinds.filter((k) => k === 'pine' || k === 'larch' || k === 'pineSnow');
     const pool = conifers.length ? conifers : ['pine'];
     const out: TreeSpot[] = [];
     const rows = [8.6, 12.2, 15.6, 18.8];
-    for (let k = 0; k < this.s.length; k++) {
+    for (let k = ka; k <= kb; k++) {
+      if (late()) yield;
       const p = this.s[k];
       for (let side = -1; side <= 1; side += 2) {
         const f = side > 0 ? p.right : p.left;
@@ -169,12 +226,19 @@ export class ForestEdge {
 
   /** Bodengewichte nachziehen: Wald (Komponente 0 von attr) bis an den Straßenrand, wo der Streifen aufgeforstet ist */
   boost(geo: THREE.BufferGeometry, attr: string) {
+    const it = this.boostSteps(geo, attr, () => false);
+    while (!it.next().done) { /* am Stück */ }
+  }
+
+  /** wie boost in Schritten (gibt ab, sobald late() meldet) */
+  *boostSteps(geo: THREE.BufferGeometry, attr: string, late: () => boolean): Generator<void, void, void> {
     const pos = geo.getAttribute('position') as THREE.BufferAttribute | undefined;
     const a = geo.getAttribute(attr) as THREE.BufferAttribute | undefined;
     if (!pos || !a || a.itemSize < 1) return;
     const arr = a.array as Float32Array;
     let touched = false;
     for (let i = 0; i < pos.count; i++) {
+      if ((i & 511) === 511 && late()) { if (touched) a.needsUpdate = true; yield; }
       const f = this.strength(pos.getX(i), pos.getZ(i));
       if (f <= 0.01) continue;
       const o = i * a.itemSize;

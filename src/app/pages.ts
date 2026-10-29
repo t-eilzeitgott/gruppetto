@@ -21,3 +21,5 @@ export function prefetchGames() {
 export const WorldEditorPage = lazyPage(() => import('../pages/admin/AdminWorld').then((m) => m.WorldEditorPage));
 /** WebGPU-Test (Admin): Passabfahrt mit dem WebGPU-Renderer – wird nicht vorab geladen */
 export const GpuTestPage = lazyPage(() => import('../pages/admin/AdminGpu').then((m) => m.GpuTestPage));
+/** Abfahrt auf WebGPU (Admin): das ganze Spiel mit der neuen Grafik – wird nicht vorab geladen */
+export const RaceGpuPage = lazyPage(() => import('../pages/admin/AdminRace').then((m) => m.RaceGpuPage));
