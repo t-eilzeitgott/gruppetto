@@ -22,17 +22,23 @@ export const pmod = (x: N, m: number | N): N => x.sub(floor(x.div(m)).mul(m));
 export const h21 = (p: N): N => fract(sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453));
 export const h22 = (p: N): N => fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))).mul(43758.5453));
 
+/** Periode: gleich in beiden Richtungen oder je Achse (für gestreckte Muster: Klüfte, Wasserstreifen) */
+export type Per = number | [number, number];
+const perN = (per: Per): N => (typeof per === 'number' ? per : vec2(per[0], per[1]));
+const perMul = (per: Per, k: number): Per => (typeof per === 'number' ? per * k : [per[0] * k, per[1] * k]);
+
 /** Wertrauschen, kachelbar mit Periode per (Zellen) */
-export function vnoise(p: N, per: number): N {
+export function vnoise(p: N, per: Per): N {
   const i = floor(p);
   const f = fract(p);
   const u = f.mul(f).mul(f.mul(-2).add(3));
-  const c = (ox: number, oy: number) => h21(pmod(i.add(vec2(ox, oy)), per));
+  const P = perN(per);
+  const c = (ox: number, oy: number) => h21(pmod(i.add(vec2(ox, oy)), P));
   return mix(mix(c(0, 0), c(1, 0), u.x), mix(c(0, 1), c(1, 1), u.x), u.y);
 }
 
 /** fraktales Rauschen, kachelbar (Periode verdoppelt sich je Oktave) – Ergebnis 0 … 1 */
-export function fbm(p: N, per: number, oct: number, gain = 0.5): N {
+export function fbm(p: N, per: Per, oct: number, gain = 0.5): N {
   let s: N = float(0);
   let a = 1;
   let norm = 0;
@@ -43,13 +49,14 @@ export function fbm(p: N, per: number, oct: number, gain = 0.5): N {
     norm += a;
     a *= gain;
     q = q.mul(2);
-    pp *= 2;
+    pp = perMul(pp, 2);
   }
   return s.div(norm);
 }
 
 /** Zellen (Voronoi), kachelbar: Abstand zum nächsten und zweitnächsten Punkt, Zufallswert der Zelle, Lage zur Zellmitte */
-export function voronoi(p: N, per: number): { f1: N; f2: N; id: N; r: N } {
+export function voronoi(p: N, per: Per): { f1: N; f2: N; id: N; r: N } {
+  const P = perN(per);
   const i = floor(p);
   const f = fract(p);
   const d1 = float(9).toVar();
@@ -59,7 +66,7 @@ export function voronoi(p: N, per: number): { f1: N; f2: N; id: N; r: N } {
   for (let y = -1; y <= 1; y++) {
     for (let x = -1; x <= 1; x++) {
       const g = vec2(x, y);
-      const cell = pmod(i.add(g), per);
+      const cell = pmod(i.add(g), P);
       const r = g.add(h22(cell).mul(0.85).add(0.075)).sub(f);
       const d = dot(r, r);
       If(d.lessThan(d1), () => {
@@ -85,25 +92,28 @@ export function unpackXY(t: N): N {
  * Projektion von drei Seiten (Fels an steilen Wänden): Farbe und Weltnormale.
  * scale: Meter je Kachel. Normalen nach „UDN“: Tangentennormale auf die Fläche der Projektion gekippt.
  */
-export function triplanar(albedo: Texture, nra: Texture, pos: N, nGeo: N, scale: number, sharp = 4) {
+export function triplanar(albedo: Texture, nra: Texture, pos: N, nGeo: N, scale: number, sharp = 4, top?: { albedo: Texture; nra: Texture }, bump = 1) {
   const w0 = abs(nGeo).pow(float(sharp));
   const w = w0.div(w0.x.add(w0.y).add(w0.z));
   const s = 1 / scale;
+  // Seiten: v ist immer die Höhe (Wandmuster wie Schichtbänke und Wasserstreifen stehen richtig)
   const uvX = pos.zy.mul(s);
   const uvY = pos.xz.mul(s);
   const uvZ = pos.xy.mul(s);
+  const tA = top?.albedo ?? albedo;
+  const tN = top?.nra ?? nra;
   const cX = texture(albedo, uvX);
-  const cY = texture(albedo, uvY);
+  const cY = texture(tA, uvY);
   const cZ = texture(albedo, uvZ);
   const nX = texture(nra, uvX);
-  const nY = texture(nra, uvY);
+  const nY = texture(tN, uvY);
   const nZ = texture(nra, uvZ);
   const col = cX.rgb.mul(w.x).add(cY.rgb.mul(w.y)).add(cZ.rgb.mul(w.z));
   const rough = nX.z.mul(w.x).add(nY.z.mul(w.y)).add(nZ.z.mul(w.z));
   const ao = nX.w.mul(w.x).add(nY.w.mul(w.y)).add(nZ.w.mul(w.z));
-  const tX = nX.xy.mul(2).sub(1);
-  const tY = nY.xy.mul(2).sub(1);
-  const tZ = nZ.xy.mul(2).sub(1);
+  const tX = nX.xy.mul(2).sub(1).mul(bump);
+  const tY = nY.xy.mul(2).sub(1).mul(bump);
+  const tZ = nZ.xy.mul(2).sub(1).mul(bump);
   // je Achse die Neigung der Tangentennormale in Weltrichtungen (gleich, ob die Fläche nach + oder − schaut)
   const dX = vec3(0, tX.y, tX.x);
   const dY = vec3(tY.x, 0, tY.y);
@@ -119,6 +129,12 @@ export function planar(albedo: Texture, nra: Texture, uvN: N, nGeo: N, strength 
   const xy = t.xy.mul(2).sub(1).mul(strength);
   const n = normalize(nGeo.add(vec3(xy.x, 0, xy.y)));
   return { col: c.rgb, rough: t.z, ao: t.w, n };
+}
+
+/** nur die Weltnormale einer Draufsicht (spart den Farbzugriff) */
+export function planarN(nra: Texture, uvN: N, nGeo: N, strength = 1) {
+  const xy = texture(nra, uvN).xy.mul(2).sub(1).mul(strength);
+  return normalize(nGeo.add(vec3(xy.x, 0, xy.y)));
 }
 
 /** gebackene Farbe ist als Wurzel gespeichert (mehr Genauigkeit im Dunkeln) */

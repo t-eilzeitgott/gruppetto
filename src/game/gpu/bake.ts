@@ -7,7 +7,7 @@
  * dauert das zusammen deutlich unter einer Zehntelsekunde.
  */
 import * as THREE from 'three/webgpu';
-import { fbm, h21, tsl, voronoi, type N } from './nodes';
+import { fbm, h21, pmod, tsl, voronoi, type N } from './nodes';
 
 const { Fn, abs, atan, clamp, float, floor, fract, max, min, mix, normalize, sin, smoothstep, sqrt, texture, uv, vec2, vec3, vec4 } = tsl;
 
@@ -20,7 +20,7 @@ export interface Surface {
   mean: THREE.Color;
 }
 
-export type SurfaceId = 'asphalt' | 'rock' | 'grass' | 'gravel' | 'snow' | 'plaster' | 'logs' | 'boards' | 'shingles' | 'masonry';
+export type SurfaceId = 'asphalt' | 'rock' | 'cliff' | 'noise' | 'grass' | 'gravel' | 'snow' | 'plaster' | 'logs' | 'boards' | 'shingles' | 'masonry';
 
 interface Recipe {
   size: number;
@@ -66,31 +66,118 @@ const asphalt: Recipe = {
   },
 };
 
-/** Fels: Schichtung, kantige Brocken, Risse, Flechten */
+/**
+ * Fels von oben (Absätze, Kuppen, flache Felsstufen): verwitterte Blöcke mit gerundeten Kanten, Klüfte nur
+ * stellenweise (keine Pflasterfugen), Schutt in den Vertiefungen, Karrenrinnen, Flechten.
+ */
 const rock: Recipe = {
-  size: 1024, bump: 7, aoR: 4, aoK: 3.5, mean: [0.2, 0.19, 0.17],
+  size: 1024, bump: 6, aoR: 5, aoK: 3, mean: [0.224, 0.213, 0.189],
   make: (p) => {
-    const warp = vec2(fbm(p.mul(4), 4, 3), fbm(p.mul(4).add(3.7), 4, 3)).sub(0.5).mul(0.08);
+    const warp = vec2(fbm(p.mul(3), 3, 3), fbm(p.mul(3).add(3.7), 3, 3)).sub(0.5).mul(0.12);
     const q = p.add(warp);
-    const blocks = voronoi(q.mul(vec2(5, 9)), 9);
-    const blocks2 = voronoi(q.mul(17).add(0.4), 17);
-    const strata = sin(q.y.mul(Math.PI * 2 * 7).add(fbm(q.mul(3), 3, 3).mul(6))).mul(0.5).add(0.5);
-    const facet = float(1).sub(blocks.f1.mul(0.9)).add(h21(vec2(blocks.id, 2.1)).mul(0.4));
-    const crack = smoothstep(0.06, 0.0, blocks.f2.sub(blocks.f1));
-    const crack2 = smoothstep(0.04, 0.0, blocks2.f2.sub(blocks2.f1)).mul(0.6);
+    const bl = voronoi(q.mul(4), 4);
+    const bl2 = voronoi(q.mul(11).add(0.4), 11);
+    // Blockoberfläche: gewölbt, je Block anders hoch und geneigt
+    const dome = float(1).sub(bl.f1.mul(bl.f1).mul(1.6)).clamp(0, 1);
+    const tilt = bl.r.x.mul(h21(vec2(bl.id, 4.2)).sub(0.5)).add(bl.r.y.mul(h21(vec2(bl.id, 6.6)).sub(0.5)));
+    const facet = dome.mul(0.5).add(h21(vec2(bl.id, 2.1)).mul(0.35)).add(tilt.mul(0.5));
+    // Klüfte: nur dort, wo das Rauschen sie öffnet – unterbrochen, unterschiedlich breit
+    const open = smoothstep(0.5, 0.66, fbm(q.mul(7).add(1.9), 7, 3));
+    const gap = bl.f2.sub(bl.f1);
+    const crack = smoothstep(0.035, 0.0, gap).mul(open);
+    const crack2 = smoothstep(0.03, 0.0, bl2.f2.sub(bl2.f1)).mul(smoothstep(0.55, 0.7, fbm(q.mul(9).add(7.7), 9, 2))).mul(0.6);
+    // Karren: feine Rillen, vom Wasser ausgewaschen
+    const kar = sin(q.x.mul(Math.PI * 2 * 23).add(fbm(q.mul(5), 5, 3).mul(9))).mul(0.5).add(0.5);
+    const karW = smoothstep(0.55, 0.75, fbm(q.mul(3).add(4.4), 3, 2));
+    // Schutt in den Fugen und Mulden
+    const gr = voronoi(q.mul(46).add(0.13), 46);
+    const pebble = sqrt(max(float(0), float(1).sub(gr.f1.mul(gr.f1).mul(3.4))));
+    const low = smoothstep(0.5, 0.25, facet).max(crack.mul(0.8));
     const fine = fbm(q.mul(48), 48, 4);
-    const h = facet.mul(0.45).add(strata.mul(0.15)).add(fine.mul(0.3)).sub(crack.mul(0.5)).sub(crack2.mul(0.25)).add(0.15);
-    const tone = h21(vec2(blocks.id, 9.3));
-    let col: N = mix(lin(0.17, 0.165, 0.155), lin(0.32, 0.3, 0.27), tone.mul(0.6).add(fine.mul(0.4)));
-    // rostige Bänder (eisenhaltige Lagen) und dunkle Wasserstreifen
-    col = mix(col, lin(0.3, 0.2, 0.12), smoothstep(0.7, 0.95, strata).mul(0.35).mul(fbm(q.mul(6), 6, 2)));
-    col = mix(col, col.mul(0.55), smoothstep(0.55, 0.8, fbm(vec2(q.x.mul(14), q.y.mul(1.5)), 14, 3)).mul(0.5));
-    // Flechten: kleine gelbgrüne und graue Flecken
-    const li = smoothstep(0.62, 0.7, fbm(q.mul(22).add(5.3), 22, 3));
-    col = mix(col, mix(lin(0.32, 0.33, 0.12), lin(0.42, 0.42, 0.38), fine), li.mul(0.75));
-    col = mix(col, col.mul(0.35), crack);
-    const rough = mix(0.8, 0.95, crack).sub(li.mul(0.05));
+    const h = facet.mul(0.5).add(fine.mul(0.22)).sub(crack.mul(0.45)).sub(crack2.mul(0.2)).sub(kar.mul(karW).mul(0.06))
+      .add(pebble.mul(low).mul(0.12)).add(0.1);
+    const tone = h21(vec2(bl.id, 9.3));
+    let col: N = mix(lin(0.17, 0.162, 0.15), lin(0.31, 0.295, 0.27), tone.mul(0.5).add(fine.mul(0.5)));
+    // leicht gelbliche und rötliche Blöcke (Dolomit), frische Bruchflächen heller
+    col = mix(col, col.mul(vec3(1.15, 1.0, 0.8)), smoothstep(0.75, 0.95, tone).mul(0.7));
+    col = mix(col, lin(0.38, 0.34, 0.28), smoothstep(0.93, 0.97, h21(vec2(bl2.id, 3.3))).mul(0.6));
+    // Schutt: grauer, kleinteiliger
+    col = mix(col, mix(lin(0.14, 0.135, 0.125), lin(0.3, 0.29, 0.27), h21(vec2(gr.id, 1.4))), pebble.mul(low).mul(0.7));
+    // Flechten: dunkle Krusten und wenige gelbgrüne Flecken
+    const li = smoothstep(0.6, 0.68, fbm(q.mul(19).add(5.3), 19, 3));
+    col = mix(col, col.mul(0.5), li.mul(0.6));
+    col = mix(col, lin(0.3, 0.3, 0.12), smoothstep(0.7, 0.74, fbm(q.mul(29).add(1.1), 29, 2)).mul(0.5));
+    col = mix(col, col.mul(0.68), crack.add(crack2.mul(0.6)).min(1));
+    const rough = mix(0.82, 0.95, crack).sub(li.mul(0.04));
     return { h, col, rough };
+  },
+};
+
+/**
+ * Felswand (Seiten der Dreifachprojektion, v = Höhe): Schichtbänke des Dolomits unterschiedlicher Dicke,
+ * senkrechte Klüfte, Blöcke je Bank, flache Rinnen, dunkle Wasserstreifen („Tintenstriche“) und Flechten.
+ */
+const cliff: Recipe = {
+  size: 1024, bump: 6.5, aoR: 5, aoK: 3.2, mean: [0.234, 0.218, 0.191],
+  make: (p) => {
+    const warp = vec2(fbm(p.mul(4), 4, 3), fbm(p.mul(4).add(3.7), 4, 3)).sub(0.5).mul(vec2(0.035, 0.012));
+    const q = p.add(warp);
+    // Bänke: 9 je Kachel, leicht wellig; jede tritt etwas vor, dazwischen eine Fuge
+    // leicht einfallend (eine Bank je Kachelbreite) und gewellt – sonst wirken sie wie mit dem Lineal gezogen
+    const lay = q.y.mul(9).add(q.x).add(fbm(q.mul(2).add(0.7), 2, 3).sub(0.5).mul(1.8)).add(fbm(q.mul(6).add(2.1), 6, 2).sub(0.5).mul(0.35));
+    const li = pmod(floor(lay), 9);
+    const lf = fract(lay);
+    const lt = h21(vec2(li, 3.1));
+    const thick = smoothstep(0.55, 0.8, lt);
+    const bed = smoothstep(0.0, mix(0.1, 0.04, thick), lf).mul(smoothstep(1.0, 0.92, lf)).mul(float(0.7).add(lf.mul(0.3)));
+    // Klüfte: senkrechte Linien (leicht wellig), die je Abschnitt von drei Bänken an- oder aussetzen
+    const jx = q.x.mul(8).add(fbm(vec2(q.x.mul(2), q.y.mul(3)), [2, 3], 3).sub(0.5).mul(1.4));
+    const col0 = pmod(floor(jx), 8);
+    const seg = pmod(floor(lay.div(3)), 3);
+    const jOn = smoothstep(0.35, 0.5, h21(vec2(col0, seg.add(4.4))));
+    const jd = abs(fract(jx).sub(0.5)).mul(2);
+    const joint = smoothstep(0.93, 1.0, jd).mul(jOn);
+    // Blöcke je Bank: kurze senkrechte Stoßfugen, gegeneinander versetzt
+    const bx = q.x.mul(17).add(h21(vec2(li, 8.8)).mul(3)).add(fbm(q.mul(6).add(1.1), 6, 2).mul(0.6));
+    const bId = pmod(floor(bx), 17);
+    const sub = smoothstep(0.9, 1.0, abs(fract(bx).sub(0.5)).mul(2)).mul(smoothstep(0.45, 0.6, h21(vec2(bId, li.add(2.2)))));
+    const facet = h21(vec2(col0, seg.add(1.7))).mul(0.5).add(h21(vec2(bId, li)).mul(0.5));
+    const j = { id: h21(vec2(col0, seg)) };
+    // flache Rinnen (Wasser und Steinschlag) laufen senkrecht
+    const cou = smoothstep(0.52, 0.78, fbm(vec2(q.x.mul(3), q.y), [3, 1], 3));
+    // Wasserstreifen: schmal, senkrecht, in Gruppen
+    const st = smoothstep(0.56, 0.78, fbm(vec2(q.x.mul(28), q.y.mul(2)), [28, 2], 3)).mul(smoothstep(0.35, 0.65, fbm(vec2(q.x.mul(4), q.y.mul(1)), [4, 1], 2)));
+    const fine = fbm(q.mul(44), 44, 4);
+    const h = bed.mul(0.32).add(facet.mul(0.22)).add(fine.mul(0.2)).sub(joint.mul(0.4)).sub(sub.mul(0.18)).sub(cou.mul(0.22)).add(0.2);
+    let col: N = mix(lin(0.17, 0.162, 0.15), lin(0.33, 0.315, 0.29), lt.mul(0.22).add(fine.mul(0.45)).add(facet.mul(0.33)));
+    // manche Bänke gelblich-rötlich (Dolomit im Abendlicht), frische Abbrüche heller
+    col = mix(col, col.mul(vec3(1.15, 1.02, 0.85)), smoothstep(0.75, 0.95, lt).mul(0.5));
+    col = mix(col, lin(0.4, 0.34, 0.26), smoothstep(0.9, 0.95, h21(vec2(j.id, 7.1))).mul(smoothstep(0.3, 0.7, lf)).mul(0.6));
+    col = mix(col, col.mul(vec3(0.32, 0.33, 0.36)), st.mul(0.8));
+    col = mix(col, col.mul(0.72), cou.mul(0.7));
+    // Flechten: schwarze Krusten an den Simsen, ein paar gelbgrüne Flecken
+    const lich = smoothstep(0.6, 0.7, fbm(q.mul(18).add(5.3), 18, 3));
+    col = mix(col, col.mul(0.55), lich.mul(0.55));
+    col = mix(col, lin(0.3, 0.3, 0.13), smoothstep(0.72, 0.76, fbm(q.mul(31).add(9.1), 31, 2)).mul(0.45));
+    col = mix(col, col.mul(0.6), smoothstep(0.92, 1.0, lf).mul(0.6));
+    col = mix(col, col.mul(0.5), joint.add(sub.mul(0.5)).min(1));
+    const rough = mix(0.84, 0.95, joint).sub(st.mul(0.08));
+    return { h, col, rough };
+  },
+};
+
+/**
+ * Masken (keine sichtbare Oberfläche): drei unabhängige, kräftige Rauschfelder (mittel, klein, groß) für Flecken
+ * im Boden – Erde, Felsköpfe, Schneereste. Als Quadrat abgelegt, damit die Textur roh gelesen genau den Wert gibt.
+ */
+const noise: Recipe = {
+  size: 256, bump: 1, aoR: 1, aoK: 0, mean: [0.25, 0.25, 0.25],
+  make: (p) => {
+    const k = (x: N) => clamp(x.sub(0.5).mul(2.6).add(0.5), 0, 1);
+    const a = k(fbm(p.mul(4), 4, 5));
+    const b = k(fbm(p.mul(9).add(3.3), 9, 4));
+    const c = k(fbm(p.mul(2).add(7.1), 2, 5));
+    return { h: float(0.5), col: vec3(a.mul(a), b.mul(b), c.mul(c)), rough: float(1) };
   },
 };
 
@@ -265,7 +352,7 @@ const masonry: Recipe = {
   },
 };
 
-const RECIPES: Record<SurfaceId, Recipe> = { asphalt, rock, grass, gravel, snow, plaster, logs, boards, shingles, masonry };
+const RECIPES: Record<SurfaceId, Recipe> = { asphalt, rock, cliff, noise, grass, gravel, snow, plaster, logs, boards, shingles, masonry };
 
 function target(size: number, type: THREE.TextureDataType, mips: boolean): THREE.RenderTarget {
   const rt = new THREE.RenderTarget(size, size, {
@@ -338,16 +425,26 @@ export function bakeSurfaces(renderer: THREE.WebGPURenderer, scale = 1): Record<
     mN.dispose();
     rtH.dispose();
     out[id] = { albedo: rtA.texture, nra: rtN.texture, mean: new THREE.Color(...R.mean) };
+    if (/[?&]bakemean\b/.test(location.search)) void measure(renderer, rtA, size, id);
   }
   renderer.setRenderTarget(prev);
   return out;
 }
 
+/** Prüfmodus (?bakemean): mittlere lineare Farbe einer gebackenen Textur ins Protokoll (für Recipe.mean) */
+async function measure(renderer: THREE.WebGPURenderer, rt: THREE.RenderTarget, size: number, id: string) {
+  const px = (await renderer.readRenderTargetPixelsAsync(rt, 0, 0, size, size)) as Uint8Array;
+  const m = [0, 0, 0];
+  for (let i = 0; i < px.length; i += 4) for (let c = 0; c < 3; c++) { const v = px[i + c] / 255; m[c] += v * v; }
+  const n = px.length / 4;
+  console.info(`[bake] mean ${id}: ${m.map((v) => (v / n).toFixed(3)).join(', ')}`);
+}
+
 
 /**
  * Blüten im Gras (Kachel 3 m): Punkte in fünf Farben (Margerite mit gelber Mitte, Hahnenfuß, Glockenblume,
- * Enzian, Klee). Deckung im Alphakanal als Rang 0,1 … 1 – der Boden zeigt je nach Blumenfülle nur die Punkte
- * mit kleinem Rang (Flecken mit vielen und mit wenigen Blüten).
+ * Enzian, Klee). Im Alphakanal der Rang 0 … 0,9 (außerhalb 1) – der Boden zeigt je nach Blumenfülle nur die
+ * Punkte mit kleinem Rang (Flecken mit vielen und mit wenigen Blüten).
  */
 export function bakeFlowerDots(renderer: THREE.WebGPURenderer, size = 512): THREE.Texture {
   const rt = target(size, THREE.UnsignedByteType, true);
@@ -366,8 +463,10 @@ export function bakeFlowerDots(renderer: THREE.WebGPURenderer, size = 512): THRE
     col = mix(col, lin(0.72, 0.28, 0.44), smoothstep(0.84, 0.85, sp));
     // Margerite: gelbe Mitte
     col = mix(col, lin(0.8, 0.55, 0.04), smoothstep(0.35, 0.34, sp).mul(smoothstep(r0.mul(0.4), r0.mul(0.3), c.f1)));
+    // Rang im Alpha, außerhalb der Punkte 1 (nie gezeigt): an den Rändern mischt die Filterung zum Hintergrund hin,
+    // also zu einem höheren Rang – der Punkt wird dort knapp kleiner statt als Ring sichtbar
     const rank = h21(vec2(id, 7.3));
-    const a = rank.mul(0.9).add(0.1).mul(smoothstep(0.45, 0.55, dot));
+    const a = mix(float(1), rank.mul(0.9), smoothstep(0.45, 0.55, dot));
     return vec4(sqrt(clamp(col, 0, 1)), a);
   })();
   const quad = new THREE.QuadMesh(m);
