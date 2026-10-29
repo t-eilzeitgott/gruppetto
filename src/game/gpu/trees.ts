@@ -49,8 +49,8 @@ interface Cell {
   cx: number; cz: number; cy: number;
   spots: TreeSpot[];
   dirty: boolean;
-  /** 0 je Baum verteilt, 1 alle als Bild, 2 weg; null: neu bestimmen */
-  far: 0 | 1 | 2 | 3 | null;
+  /** 0 je Baum verteilt, 1 alle als Bild (in der Ferne ausgedünnt), 2 weg; null: neu bestimmen */
+  far: 0 | 1 | 2 | null;
   at: THREE.Vector3;
   groups: Group[];
 }
@@ -71,7 +71,12 @@ export class Trees {
    */
   readonly farU = uniform(FAR[1]);
   private far = FAR[1];
-  thinFrom = 650;
+  thinFrom = 170;
+  /**
+   * bis hier auf jeden zweiten ausgedünnt, dahinter bis jeden dritten – je Baum nach Abstand gewürfelt (keine
+   * Kanten an Zellgrenzen); das Kronendach im Boden trägt dort die Masse des Walds, die Spitzen ragen heraus
+   */
+  thinFrom2 = 520;
   setFar(m: number) { this.far = m; this.farU.value = m; for (const c of this.cells.values()) c.far = null; }
   count = 0;
 
@@ -259,8 +264,15 @@ export class Trees {
   }
 
   /** Bäume einer Zelle nach Abstand auf die Stufen verteilen; im Überblendband in beide (all: alle als Bild) */
-  private partition(c: Cell, cam: THREE.Vector3, farOnly: boolean, thin = false) {
-    c.far = farOnly ? (thin ? 3 : 1) : 0;
+  /** Anteil der Bilder-Bäume, die in Abstand d stehen bleiben (1 … 1/3) */
+  private density(d: number): number {
+    if (d <= this.thinFrom) return 1;
+    if (d <= this.thinFrom2) return 1 - 0.5 * ((d - this.thinFrom) / (this.thinFrom2 - this.thinFrom));
+    return Math.max(0.33, 0.5 - (d - this.thinFrom2) / 1500);
+  }
+
+  private partition(c: Cell, cam: THREE.Vector3, farOnly: boolean) {
+    c.far = farOnly ? 1 : 0;
     c.at.copy(cam);
     const n0 = B0[0] + B0[1] + MARGIN;
     const m0 = B0[0] - B0[1] - MARGIN;
@@ -269,21 +281,23 @@ export class Trees {
     for (const g of c.groups) {
       const cnt = [0, 0, 0];
       const put = (lv: number, k: number) => { g.lods[lv].data.set(g.src.subarray(k * STRIDE, k * STRIDE + STRIDE), cnt[lv] * STRIDE); cnt[lv]++; };
+      // als Bild; in der Ferne ausgedünnt (fest je Baum gewürfelt), die übrigen etwas größer
+      const putFar = (k: number, d: number) => {
+        const dens = this.density(d);
+        if (dens >= 1) { put(2, k); return; }
+        if (rnd(Math.round(g.xz[k * 2] * 13 + g.xz[k * 2 + 1] * 7) + 77) > dens) return;
+        put(2, k);
+        const grow = 1 + (1 - dens) * 0.6;
+        const o = (cnt[2] - 1) * STRIDE;
+        const D = g.lods[2].data;
+        D[o + 4] *= grow; D[o + 5] *= grow; D[o + 6] *= grow;
+      };
       for (let k = 0; k < g.n; k++) {
-        if (farOnly) {
-          if (!thin) { put(2, k); continue; }
-          // ausgedünnt: jeder zweite Baum, dafür etwas größer
-          if ((k & 1) === 1) continue;
-          put(2, k);
-          const o = (cnt[2] - 1) * STRIDE;
-          const D = g.lods[2].data;
-          D[o + 4] *= 1.22; D[o + 5] *= 1.22; D[o + 6] *= 1.22;
-          continue;
-        }
         const d = Math.hypot(g.xz[k * 2] - cam.x, g.xz[k * 2 + 1] - cam.z);
+        if (farOnly) { putFar(k, d); continue; }
         if (d < n0) put(0, k);
         if (d > m0 && d < n1) put(1, k);
-        if (d > m1) put(2, k);
+        if (d > m1) putFar(k, d);
       }
       g.lods.forEach((l, lv) => commit(l, cnt[lv]));
     }
@@ -305,8 +319,15 @@ export class Trees {
         continue;
       }
       if (d > B1[0] + B1[1] + MARGIN) {
-        const thin = d > this.thinFrom;
-        if (c.far !== (thin ? 3 : 1)) this.partition(c, cam, true, thin);
+        // fern: neu verteilen, wenn die Zelle eben erst fern wurde – sonst erst nach 60 m Kamerafahrt (die Dichte
+        // hängt am Abstand; je Bild höchstens eine Zelle, außer sie war ganz weg)
+        const fresh = c.far !== 1;
+        const fresh2 = d + CELL > this.thinFrom && c.at.distanceToSquared(cam) > 3600;
+        if (fresh || fresh2) {
+          if (!fresh && budget <= 0) continue;
+          if (!fresh) budget--;
+          this.partition(c, cam, true);
+        }
         continue;
       }
       // nah: neu verteilen, wenn die Kamera 6 m weiter ist (je Bild höchstens eine Zelle)

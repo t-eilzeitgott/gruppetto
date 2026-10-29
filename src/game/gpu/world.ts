@@ -1,6 +1,6 @@
 /**
- * Endlose Welt für die WebGPU-Abfahrt: dieselben Bausteine wie der Test (Landschaft, Straße, Bäume, Gras,
- * Waldrand, Häuser, Pflanzen und Tiere, Zuschauer, Tunnel), aber gestreamt – in Abschnitten von 256 m voraus
+ * Endlose Welt für die WebGPU-Abfahrt: dieselben Bausteine wie der Test (Landschaft, Straße, Bäume, Waldrand,
+ * Häuser, Pflanzen und Tiere, Zuschauer, Tunnel), aber gestreamt – in Abschnitten von 256 m voraus
  * gebaut und hinter dem Fahrer wieder abgebaut.
  *
  * Jeder Abschnitt ist ein Generator in kleinen Schritten: zwischen den Schritten prüft der Bau die Zeitgrenze
@@ -17,7 +17,6 @@ import { Corridor, type CorridorMats } from './corridor';
 import { Crowd } from './crowd';
 import { Field, type RouteSample } from './field';
 import { ForestEdge } from './forest';
-import { Grass } from './grass';
 import { Houses } from './houses';
 import { Life } from './life';
 import { Trees } from './trees';
@@ -65,7 +64,6 @@ export class World {
   readonly group = new THREE.Group();
   readonly field: Field;
   readonly trees: Trees;
-  readonly grass = new Grass();
   readonly corridor: Corridor;
   readonly crowd: Crowd | null;
   readonly houses: Houses;
@@ -95,7 +93,6 @@ export class World {
     this.trees = new Trees(p.renderer, p.msaa, p.low);
     this.field = new Field(p.terrain, [], p.terrainMats, { onTrees: (_k, list, cx, cz) => this.trees.addTile(list, cx, cz) });
     this.corridor = new Corridor(p.track, p.terrain, p.corridorMats);
-    this.corridor.onTufts = (t) => this.grass.addChunk(t);
     this.crowd = p.crowd ? new Crowd() : null;
     this.houses = new Houses(p.surfaces, p.msaa);
     this.life = new Life(p.msaa);
@@ -107,7 +104,7 @@ export class World {
       m.name = 'signs';
       this.signMat = m;
     }
-    this.group.add(this.field.group, this.trees.group, this.grass.group, this.houses.group, this.life.group);
+    this.group.add(this.field.group, this.trees.group, this.houses.group, this.life.group);
     if (this.crowd) this.group.add(this.crowd.group);
   }
 
@@ -376,9 +373,6 @@ export class World {
     this.pruneLbl = 'baeume';
     this.trees.prune((cx, cz) => near(cx, cz, 420));
     yield;
-    this.pruneLbl = 'gras';
-    this.grass.prune((cx, cz) => near(cx, cz, 160));
-    yield;
     this.pruneLbl = 'leben';
     this.life.prune((cx, cz, cell) => near(cx, cz, 420 + cell * 0.71));
     yield;
@@ -393,7 +387,6 @@ export class World {
     this.houses.update(cam, force);
     this.life.update(cam, force);
     this.crowd?.update(cam, rider, force);
-    this.grass.update(cam);
   }
 
   /**
@@ -407,29 +400,23 @@ export class World {
     const run = <T>(it: Generator<void, T, void>): T => { for (;;) { const r = it.next(); if (r.done) return r.value; } };
     const SCAN = 6000;
     if (SCAN * SEG + 400 > this.winEnd) { this.winEnd = SCAN * SEG + 1500; this.terrain.window(0, this.winEnd); }
-    const tufts = this.corridor.onTufts;
-    this.corridor.onTufts = null;
-    try {
-      const seen = new Set<string>();
-      let tunnelAt = -1;
-      for (let i = 40; i < SCAN && (seen.size < 6 || tunnelAt < 0); i += 6) {
-        const s = t.seg(i);
-        const b = t.sections[s.sec]?.biome ?? 'alpine';
-        if (s.tunnel) { if (tunnelAt < 0) tunnelAt = i; continue; }
-        // je Landschaft ein Stück, dazu eines mit Zuschauern und eines mit Brücke
-        const key = s.bridge > 0 ? 'bridge' : s.crowd ? `${b}+crowd` : b;
-        if (seen.has(key) && seen.has(b)) continue;
-        seen.add(key); seen.add(b);
-        group.add(run(this.corridor.buildRange(i, i + 24)));
-      }
-      if (tunnelAt >= 0) {
-        let a = tunnelAt;
-        while (a > 0 && t.seg(a - 1).tunnel) a--;
-        const tun = run(this.tunnels.buildRange(Math.max(0, a - 2), a + 30));
-        if (tun) group.add(tun);
-      }
-    } finally {
-      this.corridor.onTufts = tufts;
+    const seen = new Set<string>();
+    let tunnelAt = -1;
+    for (let i = 40; i < SCAN && (seen.size < 6 || tunnelAt < 0); i += 6) {
+      const s = t.seg(i);
+      const b = t.sections[s.sec]?.biome ?? 'alpine';
+      if (s.tunnel) { if (tunnelAt < 0) tunnelAt = i; continue; }
+      // je Landschaft ein Stück, dazu eines mit Zuschauern und eines mit Brücke
+      const key = s.bridge > 0 ? 'bridge' : s.crowd ? `${b}+crowd` : b;
+      if (seen.has(key) && seen.has(b)) continue;
+      seen.add(key); seen.add(b);
+      group.add(run(this.corridor.buildRange(i, i + 24)));
+    }
+    if (tunnelAt >= 0) {
+      let a = tunnelAt;
+      while (a > 0 && t.seg(a - 1).tunnel) a--;
+      const tun = run(this.tunnels.buildRange(Math.max(0, a - 2), a + 30));
+      if (tun) group.add(tun);
     }
     group.add(this.arches.warm());
     if (this.signMat) {
@@ -454,7 +441,6 @@ export class World {
   /** Vorwärmen: alles einmal zeichnen lassen */
   warm(on: boolean) {
     this.trees.warm(on);
-    if (on) this.grass.warm();
     this.houses.warm(on);
     this.life.warm(on);
     this.crowd?.warm(on);
@@ -464,7 +450,6 @@ export class World {
     for (const pc of this.pieces.values()) pc.group.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) m.geometry.dispose(); });
     this.field.dispose();
     this.trees.dispose();
-    this.grass.dispose();
     this.houses.dispose();
     this.life.dispose();
     this.crowd?.dispose();

@@ -345,6 +345,9 @@ export class Field {
         mesh.matrixAutoUpdate = false;
         mesh.updateMatrix();
         mesh.userData.lv = b.lv;
+        // vor Bäumen, Pflanzen und Häusern zeichnen: was hinter Hängen und unter dem Kronendach steckt, verwirft die
+        // Grafik dann schon am Tiefentest, bevor der teure Baum-Shader läuft
+        mesh.renderOrder = -1;
         this.group.add(mesh);
         b.mesh = mesh;
       }
@@ -371,7 +374,7 @@ export class Field {
 }
 
 /** Attribute, die die Bodenmaterialien lesen (der Rest der Kachel bleibt beim Zusammenlegen weg) */
-const KEEP = ['position', 'normal', 'color', 'aMat', 'aRock', 'aNz'];
+const KEEP = ['position', 'normal', 'color', 'aMat', 'aRock', 'aNz', 'aCan'];
 
 /** Kachelgeometrien hintereinanderhängen (gleiche Attribute, mit Index) */
 function mergeGeos(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {

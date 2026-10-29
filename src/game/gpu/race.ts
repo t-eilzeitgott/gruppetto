@@ -258,10 +258,11 @@ export class Race {
     await step(0.1, 'Strecke');
     const track = (this.track = new Track(this.opts.dayKey, this.opts.names, this.opts.tt ? 'tt' : 'descent', this.opts.tt?.town ?? null));
     const terrain = (this.terrain = new Terrain(track));
+    terrain.woods = true;
     const adsM = adsMaterial(adsTex(this.opts.names));
     const world = (this.world = new World({
       renderer: r, track, terrain, msaa: gpu && this.settings.msaa > 0, low,
-      terrainMats: [terrainMaterial(S, 0, dots), terrainMaterial(S, 1), terrainMaterial(S, 2)],
+      terrainMats: [terrainMaterial(S, 0, dots, true), terrainMaterial(S, 1, undefined, true), terrainMaterial(S, 2, undefined, true)],
       corridorMats: {
         road: roadMaterial(S), marks: marksMaterial(S), sides: corridorMaterial(S, dots), metal: metalMaterial(), wood: woodMaterial(),
         paint: paintMaterial(), ads: adsM,
@@ -1085,11 +1086,11 @@ export class Race {
     this.paused = true;
     this.analysing = true;
     this.analysisAbort = false;
-    const known = new Set<THREE.Object3D>([world.field.group, world.trees.group, world.grass.group, world.houses.group, world.life.group, ...(world.crowd ? [world.crowd.group] : [])]);
+    const known = new Set<THREE.Object3D>([world.field.group, world.trees.group, world.houses.group, world.life.group, ...(world.crowd ? [world.crowd.group] : [])]);
     const pieces = world.group.children.filter((o) => !known.has(o));
     const groups: [string, THREE.Object3D[]][] = [
       ['trees', [world.trees.group]], ['houses', [world.houses.group]], ['field', [world.field.group]], ['road', pieces],
-      ['grass', [world.grass.group]], ['life', [world.life.group]], ['crowd', world.crowd ? [world.crowd.group] : []],
+      ['life', [world.life.group]], ['crowd', world.crowd ? [world.crowd.group] : []],
       ['objects', this.objects ? [this.objects.group] : []], ['riders', [this.rider!.group, ...this.pool.map((r) => r.group)]],
     ];
     const vis0 = new Map<THREE.Object3D, boolean>();
@@ -1106,7 +1107,6 @@ export class Race {
       ['ohne Fahrer und Gegner', () => hide('riders')],
       ['ohne Zuschauer', () => hide('crowd')],
       ['ohne Blumen, Sträucher, Tiere', () => hide('life')],
-      ['ohne Grashalme', () => hide('grass')],
       ['ohne Bäume', () => hide('trees')],
       ['ohne Häuser', () => hide('houses')],
       ['ohne Landschaft (Boden, Berge)', () => hide('field')],
@@ -1229,7 +1229,6 @@ export class Race {
       P.mark(5);
       world.crowd?.update(cp, this.rider.group.position);
       P.mark(6);
-      world.grass.update(cp);
       P.mark(7);
       this.objects?.update(e.track, e.p.z, this.time);
       this.particles?.update(e.track, e.parts);
@@ -1371,10 +1370,10 @@ export class Race {
   /** Prüfhilfe: Gruppen der Welt für die Kostenmessung */
   get debugGroups(): Record<string, THREE.Object3D[]> {
     const w = this.world!;
-    const known = new Set<THREE.Object3D>([w.field.group, w.trees.group, w.grass.group, w.houses.group, w.life.group, ...(w.crowd ? [w.crowd.group] : [])]);
+    const known = new Set<THREE.Object3D>([w.field.group, w.trees.group, w.houses.group, w.life.group, ...(w.crowd ? [w.crowd.group] : [])]);
     return {
       trees: [w.trees.group], houses: [w.houses.group], field: [w.field.group], road: w.group.children.filter((o) => !known.has(o)),
-      grass: [w.grass.group], life: [w.life.group], crowd: w.crowd ? [w.crowd.group] : [], objects: this.objects ? [this.objects.group] : [],
+      life: [w.life.group], crowd: w.crowd ? [w.crowd.group] : [], objects: this.objects ? [this.objects.group] : [],
       riders: [this.rider!.group, ...this.pool.map((r) => r.group)],
     };
   }
@@ -1427,7 +1426,6 @@ export class Race {
     if (w) {
       if (w.crowd) w.crowd.group.visible = s.crowd;
       w.life.group.visible = s.life;
-      w.grass.group.visible = s.grass;
       if (s.treeFar !== prev.treeFar) w.trees.setFar(s.treeFar);
     }
   }

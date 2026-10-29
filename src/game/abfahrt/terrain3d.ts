@@ -56,6 +56,15 @@ function fbm(x: number, y: number, oct = 4): number {
   }
   return s / norm;
 }
+/**
+ * Waldmaske des Bergwalds (wie beim Setzen der Bäume): Waldanteil f plus großflächiges Rauschen – zerklüftete
+ * Waldränder statt Höhenlinien
+ */
+function woodsMask(x: number, z: number, f: number): number {
+  const big = 0.5 + (fbm(x / 150 + 9.1, z / 150 - 3.3, 2) - 0.5) * 1.9;
+  const nzx = 0.5 + (fbm(x / 170 - 4.7, z / 170 + 8.2, 2) - 0.5) * 1.7;
+  return sstep(0.42, 0.62, f + (big - 0.5) * 0.25 + (nzx - 0.5) * 0.6);
+}
 /** Grate: 1 − |n|, geschärft; feinere Oktaven folgen den groben */
 function ridged(x: number, y: number): number {
   let sum = 0;
@@ -300,6 +309,13 @@ export class Terrain {
 
   /** Landschaftsbild der Gegend (Bäume, Wiesen- und Feldfarben im Tal) */
   private look: RegionLook;
+
+  /**
+   * Bergwald (WebGPU-Welt): mehr Wald, der als geschlossener Bestand steht – dicht, mit klarem Waldrand, Beständen
+   * gleicher Art und gleichen Alters – statt verstreuter Einzelbäume; auf der Wiese nur Baumgruppen. Das
+   * Kronendach (aCan) folgt genau dieser Waldmaske. Vor dem ersten Kachelbau setzen.
+   */
+  woods = false;
 
   constructor(track: Track) {
     this.track = track;
@@ -1022,12 +1038,16 @@ export class Terrain {
     for (let j = 1; j < G - 1; j++) {
       for (let i = 1; i < G - 1; i++) {
         const k = j * G + i;
-        if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < 45) continue;
+        if (SK[k] || NR[k] || W[k] > 0.2 || DR[k] < (this.woods ? 28 : 45)) continue;
         const x = x0 + (i - 1) * cell;
         const z = z0 + (j - 1) * cell;
         if (flc.length && inFall(flc, x, z, cell * 0.6)) continue;
         const f = this.forestAt(x, z, H[k] - FL[k], (H[k + 1] - H[k - 1]) / (2 * cell), (H[k + G] - H[k - G]) / (2 * cell), cols[BI[k]]);
-        if (f > 0) CAN[k] = f * CANOPY * (0.8 + 0.4 * vnoise(x / 37, z / 37)) * sstep(45, 90, DR[k]);
+        if (this.woods) {
+          // genau dort, wo Bäume stehen (gleiche Maske wie unten): geschlossenes Dach, am Rand steil (Waldmantel)
+          const fo = woodsMask(x, z, f);
+          if (fo > 0.3) CAN[k] = sstep(0.3, 0.42, fo) * CANOPY * (0.75 + 0.5 * vnoise(x / 41, z / 41)) * sstep(28, 60, DR[k]);
+        } else if (f > 0) CAN[k] = f * CANOPY * (0.8 + 0.4 * vnoise(x / 37, z / 37)) * sstep(45, 90, DR[k]);
       }
       if (this.late()) yield;
     }
@@ -1096,7 +1116,9 @@ export class Terrain {
           // am Einschnitt der Straße negativ: der Shader macht steile Flächen sonst von sich aus zu Fels
           const rocky = Math.max(steep * (1 - 0.9 * CT[k]), sstep(C.rockLine - 20, C.rockLine + 60, above + (n1 - 0.5) * 40) * 0.85) - 0.5 * CT[k];
           const snow = sstep(C.snowLine - 25, C.snowLine + 15, above + (n2 - 0.5) * 50 + (n1 - 0.5) * 60) * sstep(0.5, 0.74, ny);
-          mat[v * 4] = forest; mat[v * 4 + 1] = rocky; mat[v * 4 + 2] = snow;
+          // Bergwald: Bodenfarbe genau nach der Maske der Bäume (sonst Waldboden ohne Bäume bzw. Bäume auf der Wiese)
+          mat[v * 4] = this.woods ? sstep(0.26, 0.4, sstep(0.42, 0.62, forest + (mat[v * 4 + 3] - 0.5) * 0.25 + (nzA[v * 2] - 0.5) * 0.6)) : forest;
+          mat[v * 4 + 1] = rocky; mat[v * 4 + 2] = snow;
           const rd = RD[k];
           if (rd > 0) {
             c = mix(c, ASPHALT, rd, c);
@@ -1334,12 +1356,28 @@ export class Terrain {
           const big = 0.5 + (fbm(x / 150 + 9.1, z / 150 - 3.3, 2) - 0.5) * 1.9;
           const nzx = 0.5 + (fbm(x / 170 - 4.7, z / 170 + 8.2, 2) - 0.5) * 1.7;
           const fo = sstep(0.42, 0.62, forest + (big - 0.5) * 0.25 + (nzx - 0.5) * 0.6);
+          const dy = this.coarseDy(x, z, y, cg, cV, cA);
+          if (this.woods) {
+            // Bestand: innen geschlossen, ein schmaler Waldmantel aus jüngeren Bäumen, auf der Wiese nur Baumgruppen
+            const grove = sstep(0.8, 0.9, vnoise(x / 34 + 3.1, z / 34 - 7.7)) * sstep(C.treeLine, C.treeLine - 30, above);
+            const p = Math.max(fallP, fo > 0.42 ? 0.97 : fo > 0.3 ? 0.6 : grove * 0.9);
+            if (h2(tx * 3000 + i * 7, tz * 3000 + j * 13) > p) continue;
+            // Art und Alter je Bestand (Flecken von ~60 m), nicht je Baum gewürfelt
+            const stand = Math.min(1, Math.max(0, 0.5 + (vnoise(x / 58 + 11.3, z / 58 + 4.1) - 0.5) * 2.2));
+            const age = Math.min(1, Math.max(0, 0.5 + (vnoise(x / 72 - 5.2, z / 72 + 9.7) - 0.5) * 2));
+            const rk = stand * 0.75 + h2(i * 31 + tx, j * 17 + tz) * 0.25;
+            const kind = pickTree(b, above, rk, fo > 0.3 || grove > 0, this.look);
+            const mantle = fo > 0.42 ? 1 : 0.68;
+            const s = (0.72 + age * 0.45 + h2(i + tx * 77, j + tz * 91) * 0.25) * mantle;
+            const tint = 0.84 + (0.6 * vnoise(x / 47 + 2.2, z / 47 - 1.4) + 0.4 * r2) * 0.3;
+            trees.push({ kind, x, y: y - 0.35, z, s, rot: r1 * Math.PI * 2, tint, dy });
+            continue;
+          }
           // innen dicht, am Rand ausdünnend (weicher Saum), auf der Wiese vereinzelt
           const p = Math.max(fallP, fo > 0.5 ? 0.92 : fo > 0.1 ? 0.25 + fo * 0.6 : C.meadowTrees);
           if (h2(tx * 3000 + i * 7, tz * 3000 + j * 13) > p) continue;
           const kind = pickTree(b, above, h2(i * 31 + tx, j * 17 + tz), fo > 0.3, this.look);
           // Höhe der gröberen Stufe an derselben Stelle (der Baum folgt dem Gelände beim Übergang)
-          const dy = this.coarseDy(x, z, y, cg, cV, cA);
           trees.push({ kind, x, y: y - 0.35, z, s: 0.75 + h2(i + tx * 77, j + tz * 91) * 0.65, rot: r1 * Math.PI * 2, tint: 0.82 + r2 * 0.32, dy });
         }
         if (this.late()) yield;
@@ -1496,7 +1534,11 @@ export class Terrain {
   private colorsFor(lv: number): ColorSet[] {
     const hit = this.colorCache.get(lv);
     if (hit) return hit;
-    const out = BIOMES.map((b) => colorSet(b, this.look));
+    const out = BIOMES.map((b) => {
+      const c = colorSet(b, this.look);
+      // Bergwald: die Waldmaske greift weiter (mehr Wald), keine einzelnen Wiesenbäume
+      return this.woods ? { ...c, forestThr: c.forestThr - 0.065, meadowTrees: 0 } : c;
+    });
     this.colorCache.set(lv, out);
     return out;
   }

@@ -8,7 +8,13 @@ import type { Surface, SurfaceId } from './bake';
 import { decodeAlbedo, planar, planarN, triplanar, tsl, type N } from './nodes';
 import { cheapMaterial } from './light';
 
-const { attribute, cameraPosition, float, fwidth, max, mix, normalize, normalWorldGeometry, positionWorld, select, smoothstep, texture, transformNormalToView, varying, vec3, vertexColor } = tsl;
+const { attribute, cameraPosition, float, fract, fwidth, max, min, mix, normalize, normalWorldGeometry, positionGeometry, positionWorld, select, smoothstep, texture, transformNormalToView, varying, vec3, vertexColor } = tsl;
+
+/**
+ * Kronendach: Wald hebt sich in der Ferne als geschlossene Masse über den Boden (aCan, je Ecke aus der Waldmaske) –
+ * nah flach (dort stehen die echten Bäume), ab gut 80 m wächst es weich heraus. Die Baumspitzen ragen darüber.
+ */
+const CAN_FADE: [number, number] = [75, 175];
 
 type Surfaces = Record<SurfaceId, Surface>;
 
@@ -33,6 +39,8 @@ interface Mix {
   far?: boolean;
   /** Straßenrand (Kies und Beton) */
   road?: boolean;
+  /** Kronendach: wie weit angehoben (0 … 1, je Ecke) – dort ist sicher Wald */
+  can?: N;
 }
 
 const meanOf = (s: Surface): N => vec3(s.mean.r, s.mean.g, s.mean.b);
@@ -47,9 +55,9 @@ const foBase = (m: Mix): N => smoothstep(0.1, 0.5, m.fo);
  */
 function perVertex(S: Surfaces, detail: boolean, spacing: number) {
   const pos = positionWorld;
-  const lvl = (t: THREE.Texture, scale: number) => {
+  const lvl = (t: THREE.Texture, scale: number, sp = spacing) => {
     const w = (t.image as { width?: number } | undefined)?.width ?? 1024;
-    return Math.max(0, Math.log2((w * spacing) / scale));
+    return Math.max(0, Math.log2((w * sp) / scale));
   };
   const smp = (s: Surface, scale: number): N => texture(s.albedo, pos.xz.div(scale)).level(lvl(s.albedo, scale));
   const nzv = (scale: number): N => texture(S.noise.albedo, pos.xz.div(scale)).level(lvl(S.noise.albedo, scale)).rgb;
@@ -67,6 +75,11 @@ function perVertex(S: Surfaces, detail: boolean, spacing: number) {
     zone: varying(nzv(detail ? 140 : 520), 'vZone') as N,
     /** Schneeflecken */
     patchy: varying(smoothstep(0.35, 0.75, nzv(330).z.mul(0.7).add(nzv(70).y.mul(0.3))), 'vPatch') as N,
+    /**
+     * Wiesenarten (Flecken von 30–130 m): satte Fettwiese, magere Weide, hellere und dunklere Flecken – auf allen
+     * Stufen aus derselben Mip-Stufe (sonst ändert sich die Wiese an der Grenze zur gröberen Landschaft)
+     */
+    mz: varying(texture(S.noise.albedo, pos.xz.div(260)).level(lvl(S.noise.albedo, 260, Math.max(16, spacing))).rgb, 'vMz') as N,
     /** Blütendichte */
     many: varying(smoothstep(0.3, 0.7, decodeAlbedo(smp(S.grass, 53).rgb).x.div(gm.x).mul(0.5)), 'vMany') as N,
   };
@@ -93,6 +106,27 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   const steepG = float(1).sub(smoothstep(0.72, 0.95, nG.y));
   const tint = mix(base, base.mul(vec3(1.25, 1.05, 0.62)), dryW.mul(0.55).add(steepG.mul(0.3)).min(0.8)).mul(macro.x.mul(0.6).add(0.75).clamp(0.7, 1.25));
   let grassCol: N = tint.mul(m.detail ? mix(gC.mul(0.35).add(0.65), gDet.mul(0.7).add(gC.mul(0.3)), flat) : mix(float(1), gC.mul(0.6).add(0.4), flat));
+  // Vielfalt statt Grashalmen: Wiesenarten über ein paar Dutzend Meter (je Ecke, kostet nichts je Bildpunkt)
+  const mz: N = V.mz;
+  const lush = smoothstep(0.3, 0.62, mz.x);
+  const lean = smoothstep(0.32, 0.66, mz.y).mul(float(1).sub(lush));
+  grassCol = grassCol.mul(mix(vec3(1, 1, 1), vec3(0.8, 0.97, 0.72), lush.mul(0.8))).mul(mix(vec3(1, 1, 1), vec3(1.17, 1.09, 0.78), lean.mul(0.85))).mul(mz.z.mul(0.32).add(0.9));
+  if (m.detail) {
+    // Viehgangeln: an steilen Weiden schmale Trittpfade entlang der Höhenlinien (nur wo das Muster nicht flimmert)
+    const sl = float(1).sub(nG.y);
+    const slopeM = smoothstep(0.07, 0.15, sl).mul(float(1).sub(smoothstep(0.32, 0.45, sl)));
+    const cw = pos.y.div(1.5).add(gC.x.mul(1.4)).add(mz.y.mul(2.5));
+    const fr = fract(cw);
+    const dl = min(fr, float(1).sub(fr));
+    const fade = float(1).sub(smoothstep(0.1, 0.3, fwidth(cw)));
+    const tracks = float(1).sub(smoothstep(0.035, 0.11, dl)).mul(fade).mul(slopeM).mul(smoothstep(0.2, 0.45, mz.z));
+    grassCol = mix(grassCol, grassCol.mul(vec3(0.64, 0.58, 0.48)), tracks.mul(0.8));
+  }
+  if (m.road) {
+    // Straßenrand: dichteres, büscheliges Gras (dunkle und helle Büschel) statt einzelner Halme
+    const tuft = texture(S.noise.albedo, pos.xz.div(2.3)).y;
+    grassCol = grassCol.mul(tuft.mul(0.6).add(0.8));
+  }
   const camD = pos.sub(cameraPosition).length();
   if (m.dots) {
     const fd = texture(m.dots, pos.xz.div(3));
@@ -118,12 +152,24 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   }
   // Wald: nah Waldboden, fern Kronendach (Buckel aus der groben Wiese)
   const crown = gC.dot(vec3(0.3, 0.5, 0.2));
-  const canopyCol = mix(vec3(0.03, 0.052, 0.024), vec3(0.095, 0.13, 0.052), crown.mul(0.6).clamp(0, 1)).mul(gC.y.mul(0.35).add(0.82));
+  let canopyCol: N = mix(vec3(0.03, 0.052, 0.024), vec3(0.095, 0.13, 0.052), crown.mul(0.6).clamp(0, 1)).mul(gC.y.mul(0.35).add(0.82));
+  if (!m.road && !m.far) {
+    // Kronen statt Fläche: helle Kronen, dunkle Lücken (ein Zugriff, nur im Wald) – das Dach liest sich als Wald
+    const ct = texture(S.noise.albedo, pos.xz.div(13));
+    const lumps = smoothstep(0.04, 0.42, ct.x.mul(0.65).add(ct.y.mul(0.35)));
+    const inWood = (m.can ? max(m.fo, m.can) : m.fo).greaterThan(0.05);
+    // etwas dunkler als die Fläche allein: die Bilder-Bäume davor sind innen verschattet
+    canopyCol = select(inWood, canopyCol.mul(lumps.mul(0.85).add(0.36)), canopyCol);
+  }
   const floorCol = mix(m.tint.mul(0.55), mix(vec3(0.07, 0.06, 0.035), vec3(0.09, 0.075, 0.045), gDet.x.mul(0.5).clamp(0, 1)), 0.6).mul(gDet.mul(0.5).add(0.5));
-  const forestCol = m.canopy ? canopyCol : mix(floorCol, canopyCol, smoothstep(110, 260, camD));
+  const forestCol = m.canopy ? canopyCol : mix(floorCol, canopyCol, smoothstep(CAN_FADE[0] - 10, CAN_FADE[1] - 20, camD));
   const fo = smoothstep(0.25, 0.75, m.fo.add(V.wob.mul(0.45)));
   const clumps = smoothstep(0.62, 0.8, crown.mul(0.5)).mul(smoothstep(0.02, 0.3, m.fo)).mul(0.8);
-  const foW = max(fo, clumps);
+  // wo das Dach angehoben ist, immer Waldfarbe (sonst Wiese auf dem Dach)
+  const foW = m.can ? max(max(fo, clumps), m.can) : max(fo, clumps);
+  // Waldsaum: vor dem Waldrand ist die Wiese dunkler (Schatten, höheres Gras) – der Wald steht fest im Boden
+  const edge = smoothstep(0.0, 0.25, m.fo).mul(float(1).sub(foW));
+  col = col.mul(float(1).sub(edge.mul(0.28)));
   col = mix(col, forestCol, foW);
   // Kies und Beton (Bankett, Rinne, Mauerkrone)
   if (m.detail && gv && m.road) {
@@ -200,13 +246,17 @@ function apply(o: ReturnType<typeof shade>, name: string): THREE.MeshLambertNode
 
 /**
  * Landschaft (Kacheln aus terrain3d): Farbe = Wiese der Gegend, aMat = (Wald, Fels, Schnee, Rauschen),
- * aRock = Felsfarbe, aNz = großflächiges Rauschen. lv 0 mit echten Bäumen, darüber Kronendach.
+ * aRock = Felsfarbe, aNz = großflächiges Rauschen. lv 0 mit echten Bäumen, darüber Kronendach. woods: Bergwald
+ * (Terrain.woods – die Waldmaske im Attribut ist schon die der Bäume).
  */
-export function terrainMaterial(S: Surfaces, lv: number, dots?: THREE.Texture): THREE.MeshLambertNodeMaterial {
+export function terrainMaterial(S: Surfaces, lv: number, dots?: THREE.Texture, woods = false): THREE.MeshLambertNodeMaterial {
   const aMat = attribute('aMat', 'vec4');
   const aNz = attribute('aNz', 'vec2');
-  // Waldrand und Baumgrenze ausgefranst (sonst eine gerade Höhenlinie quer über den Berg)
-  const fo = smoothstep(0.38, 0.66, aMat.x.add(aMat.w.sub(0.5).mul(0.4)).add(aNz.x.sub(0.5).mul(0.8)));
+  // Waldrand und Baumgrenze ausgefranst (sonst eine gerade Höhenlinie quer über den Berg); im Bergwald ist die
+  // Maske schon ausgefranst und deckt sich mit den Bäumen
+  const fo = woods
+    ? smoothstep(0.3, 0.7, aMat.x.add(aNz.y.sub(0.5).mul(0.2)))
+    : smoothstep(0.38, 0.66, aMat.x.add(aMat.w.sub(0.5).mul(0.4)).add(aNz.x.sub(0.5).mul(0.8)));
   const rk = smoothstep(0.32, 0.62, aMat.y.add(aNz.y.sub(0.5).mul(0.3)));
   const sn = smoothstep(0.42, 0.6, aMat.z.add(aNz.y.sub(0.5).mul(0.45)));
   // Geröllhalden: im Saum der Felsgebiete, wo der Hang flacher wird (Schutt bleibt ab ~40° liegen), fingerförmig
@@ -214,10 +264,14 @@ export function terrainMaterial(S: Surfaces, lv: number, dots?: THREE.Texture): 
   const sc = smoothstep(0.1, 0.3, aMat.y.add(aNz.x.sub(0.5).mul(0.35)).add(aMat.w.sub(0.5).mul(0.25)))
     .mul(float(1).sub(rk)).mul(smoothstep(0.6, 0.78, ny)).mul(float(1).sub(fo)).mul(0.9);
   const spacing = [4, 16, 64][lv] ?? 16;
+  // Kronendach anheben (nah flach) – nur im Bergwald, dort deckt sich das Dach mit den Bäumen
+  const lift = woods ? attribute('aCan', 'float').mul(smoothstep(CAN_FADE[0], CAN_FADE[1], positionGeometry.xz.sub(cameraPosition.xz).length())) : null;
+  const can = lift ? varying(smoothstep(0.5, 2.5, lift), 'vCan') : undefined;
   const mat = apply(shade(S, {
     tint: vertexColor(), rockTint: attribute('aRock', 'vec3'),
-    fo, rk, sn, sc, gr: float(0), cc: float(0), canopy: lv > 0, detail: lv === 0, far: lv >= 2, dots: lv === 0 ? dots : undefined,
+    fo, rk, sn, sc, gr: float(0), cc: float(0), canopy: lv > 0, detail: lv === 0, far: lv >= 2, dots: lv === 0 ? dots : undefined, can,
   }, spacing), `terrain${lv}`);
+  if (lift && !/[?&]nocan\b/.test(location.search)) mat.positionNode = positionGeometry.add(vec3(0, lift, 0));
   // Prüfmodus: Stufen einfärben (?lvcolor)
   if (/[?&]lvcolor\b/.test(location.search)) mat.colorNode = vec3(lv === 0 ? 0.6 : 0.05, lv === 1 ? 0.6 : 0.05, lv === 2 ? 0.6 : 0.05);
   if (/[?&]dbgmat\b/.test(location.search)) { mat.colorNode = vec3(fo, rk, sn).mul(0.5).add(0.02); mat.normalNode = transformNormalToView(normalize(normalWorldGeometry)); }
