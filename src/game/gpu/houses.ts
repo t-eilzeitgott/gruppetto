@@ -46,7 +46,7 @@ export interface HouseCtx {
 
 export class Houses {
   readonly group = new THREE.Group();
-  private mats: Record<HMat, THREE.MeshStandardNodeMaterial>;
+  private mats: Record<HMat, THREE.Material>;
   private geos: Record<HMat, THREE.BufferGeometry>[];
   private groups: InstGroup[][] = [[], [], []];
   private spots: Spot[] = [];
@@ -212,7 +212,11 @@ export class Houses {
     this.at.copy(cam);
     const cnt = [0, 0, 0];
     const put = (lod: number, s: Spot) => {
-      const i = cnt[lod]++;
+      // während addRange noch baut (es gibt zwischendurch ab), kann es mehr Häuser als Platz geben – die neuen,
+      // fernen kommen dann erst mit den größeren Gruppen am Ende dazu
+      const i = cnt[lod];
+      if (i >= this.cap) return;
+      cnt[lod] = i + 1;
       const sh = SHUTTERS[s.shut];
       for (const g of this.groups[lod]) g.data.set([s.x, s.y, s.z, s.rot, 1, 1, 1, s.tone, sh[0], sh[1], sh[2], lod], i * STRIDE);
     };

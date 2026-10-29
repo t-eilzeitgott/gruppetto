@@ -23,8 +23,9 @@ import { Life } from './life';
 import { Trees } from './trees';
 import { Tunnels } from './tunnel';
 import { tsl } from './nodes';
+import { cheapMaterial } from './light';
 
-const { frontFacing, select, texture, uv, vec3 } = tsl;
+const { frontFacing, normalWorldGeometry, select, texture, uv, vec3 } = tsl;
 
 /** Abschnitt: 128 Segmente = 256 m */
 export const PIECE = 128;
@@ -74,7 +75,7 @@ export class World {
   private job: { k: number; it: Generator<void, void, void> } | null = null;
   private until = Infinity;
   private winEnd = 0;
-  private signMat: THREE.MeshStandardNodeMaterial | null = null;
+  private signMat: THREE.Material | null = null;
   private w = { x: 0, y: 0, z: 0, th: 0 };
   /** Prüfhilfe: Bauzeit je Bild (ms, geglättet), gebaute Abschnitte */
   stats = { built: 0, dropped: 0, ms: 0, maxMs: 0, front: 0 };
@@ -97,9 +98,7 @@ export class World {
     this.forest = new ForestEdge(p.track, p.terrain, 0, 0);
     this.tunnels = new Tunnels(p.track, p.corridorMats.sides);
     if (p.adsMap) {
-      const m = new THREE.MeshStandardNodeMaterial({ side: THREE.DoubleSide });
-      m.colorNode = select(frontFacing, texture(p.adsMap, uv()).rgb, vec3(0.3, 0.2, 0.11));
-      m.roughness = 0.85;
+      const m = cheapMaterial({ col: select(frontFacing, texture(p.adsMap, uv()).rgb, vec3(0.3, 0.2, 0.11)), nWorld: normalWorldGeometry, params: { side: THREE.DoubleSide } });
       m.name = 'signs';
       this.signMat = m;
     }

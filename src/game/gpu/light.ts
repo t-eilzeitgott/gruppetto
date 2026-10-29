@@ -1,0 +1,59 @@
+/**
+ * Günstiges Licht für alles Große und Unbewegte (Boden, Straße, Häuser, Zuschauer, Gras): Lambert (nur Sonne und
+ * Himmelslicht aus den Lichtern der Szene) plus ein „Ambient Cube“ – sechs Farben des vorgefilterten Himmels
+ * (oben, unten, vier Seiten), einmal je Stimmung auf der Grafikkarte gemessen (atmo.ts). Das ersetzt je Bildpunkt
+ * zwei Zugriffe in den vorgefilterten Himmel samt der Physik dahinter (PBR) – im Bild kaum ein Unterschied, auf
+ * dem iPhone ein Bruchteil der Rechenzeit (die Shader werden etwa ein Drittel so lang).
+ */
+import * as THREE from 'three/webgpu';
+import { tsl, type N } from './nodes';
+
+const { float, normalize, select, transformNormalToView, uniform, vec3 } = tsl;
+
+/** Umgebungslicht je Richtung (schon mit der Stärke der Stimmung und dem Tunnel verrechnet) */
+export const AMB = {
+  px: uniform(new THREE.Color(0.05, 0.06, 0.08)),
+  nx: uniform(new THREE.Color(0.05, 0.06, 0.08)),
+  py: uniform(new THREE.Color(0.07, 0.08, 0.1)),
+  ny: uniform(new THREE.Color(0.03, 0.03, 0.03)),
+  pz: uniform(new THREE.Color(0.05, 0.06, 0.08)),
+  nz: uniform(new THREE.Color(0.05, 0.06, 0.08)),
+};
+
+/** Sonne (bzw. Mond) für Glanzlichter der günstigen Materialien: Richtung zur Sonne, Farbe × Stärke */
+export const SUN = {
+  dir: uniform(new THREE.Vector3(0, 1, 0)),
+  col: uniform(new THREE.Color(1, 1, 1)),
+};
+
+/** Umgebungslicht für die Weltnormale n (Gewichte n², je Achse die passende Seite) */
+export function ambientAt(n: N): N {
+  const n2 = n.mul(n);
+  const cx = select(n.x.greaterThan(0), AMB.px, AMB.nx);
+  const cy = select(n.y.greaterThan(0), AMB.py, AMB.ny);
+  const cz = select(n.z.greaterThan(0), AMB.pz, AMB.nz);
+  return cx.mul(n2.x).add(cy.mul(n2.y)).add(cz.mul(n2.z));
+}
+
+/**
+ * Lambert-Material mit Umgebungslicht: col (lineare Grundfarbe), nWorld (Weltnormale, mit Relief), ao
+ * (Verschattung in Vertiefungen), extra: zusätzliches Leuchten (z. B. Fenster bei Nacht).
+ */
+export function cheapMaterial(o: { col: N; nWorld: N; ao?: N; extra?: N; params?: THREE.MeshLambertNodeMaterialParameters }): THREE.MeshLambertNodeMaterial {
+  const m = new THREE.MeshLambertNodeMaterial(o.params);
+  const n = normalize(o.nWorld);
+  m.colorNode = o.col;
+  m.normalNode = transformNormalToView(n);
+  let amb: N = o.col.mul(ambientAt(n));
+  if (o.ao) amb = amb.mul(o.ao);
+  m.emissiveNode = o.extra ? amb.add(o.extra) : amb;
+  return m;
+}
+
+/** Richtungen der sechs Messpunkte (Reihenfolge wie AMB) */
+export const AMB_DIRS: [number, number, number][] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+export const AMB_KEYS = ['px', 'nx', 'py', 'ny', 'pz', 'nz'] as const;
+
+/** float(1) für die Typen (falls ein Aufrufer keine Verschattung hat) */
+export const ONE: N = float(1);
+export const UP: N = vec3(0, 1, 0);

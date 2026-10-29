@@ -15,8 +15,9 @@ import { mulberry32 } from '../abfahrt/rng';
 import { Act, CROWD_FLAGS, CROWD_NV, CROWD_PAL, KINDS, crowdGeometry, packPerson, randomPerson, STRIDE as PS, type Person, type Zone } from '../abfahrt/crowd3d';
 import { adCell, SIGN_COUNT } from '../abfahrt/tex3d';
 import { tsl, type N } from './nodes';
+import { ambientAt } from './light';
 
-const { attribute, float, floor, fract, int, ivec2, mix, positionGeometry, select, textureLoad, time, uniform, varying, vec3, wgslFn } = tsl;
+const { attribute, floor, fract, int, ivec2, positionGeometry, select, textureLoad, time, uniform, varying, vec3, wgslFn } = tsl;
 
 const hash = (n: number) => {
   let x = Math.imul(n ^ 0x6a09e667, 0x9e3779b1);
@@ -230,8 +231,9 @@ function paletteTexture(): THREE.DataTexture {
   return t;
 }
 
-function crowdMaterial(rider: N): THREE.MeshStandardNodeMaterial {
-  const m = new THREE.MeshStandardNodeMaterial({ flatShading: true });
+function crowdMaterial(rider: N): THREE.MeshLambertNodeMaterial {
+  // günstiges Licht (light.ts): Lambert (eckig schattiert wie bisher) plus gemessenes Umgebungslicht
+  const m = new THREE.MeshLambertNodeMaterial({ flatShading: true });
   const c = attribute('color', 'vec3');
   const i0 = attribute('aI0', 'vec4');
   const i1 = attribute('aI1', 'vec4');
@@ -265,10 +267,10 @@ function crowdMaterial(rider: N): THREE.MeshStandardNodeMaterial {
   col = select(S(11), P(flagI.mul(3).add(stripe), 1), col);
   col = select(S(12), P(i3.z), col);
   col = select(S(13), select(fract(i1.w.mul(23)).greaterThan(0.5), vec3(0.86, 0.22, 0.03), vec3(0.72, 0.42, 0.06)), col);
-  m.colorNode = varying(col, 'vCrowdCol');
-  // Stoff matt, Haut etwas weicher; Fahnen und Becher glänzen leicht
-  m.roughnessNode = varying(select(S(13), float(0.3), mix(float(0.78), float(0.6), select(S(0), float(1), float(0)))), 'vCrowdR');
-  m.metalnessNode = float(0);
+  const vc = varying(col, 'vCrowdCol');
+  m.colorNode = vc;
+  // Umgebungslicht: Menschen stehen aufrecht – Mittel aus oben und den Seiten (ohne Flächennormale)
+  m.emissiveNode = vc.mul(ambientAt(vec3(0.45, 0.75, 0.45)));
   m.name = 'crowd';
   return m;
 }
@@ -352,7 +354,7 @@ export class Crowd {
   private people: Person[] = [];
   private src = new Float32Array(0);
   private groups: Group[] = [];
-  private mat: THREE.MeshStandardNodeMaterial;
+  private mat: THREE.Material;
   private bases: THREE.BufferGeometry[];
   private at = new THREE.Vector3(1e9, 0, 0);
   /** Pappschilder (Quads im Atlas der Banden) */

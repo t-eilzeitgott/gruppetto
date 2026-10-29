@@ -136,8 +136,13 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 /** Spiel (Abfahrt auf WebGPU): goldene Stunde, dramatischer Himmel, Sonnenuntergangs-Licht */
-export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'gold', drama: true, sunset: true, oppMax: 10, treeFar: 1100, minDpr: 1 };
-export const RACE_KEY = 'gruppetto.gpu.race';
+/**
+ * Spiel (Abfahrt auf WebGPU): goldene Stunde, dramatischer Himmel, Sonnenuntergangs-Licht; Bild in doppelter
+ * Auflösung, die Szene darin höchstens bis ×1,4 kleiner gerechnet; Leuchten aus (eigene Bildkette)
+ */
+export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'gold', drama: true, sunset: true, bloom: false, oppMax: 10, treeFar: 1100, maxDpr: 2, minDpr: 1.4 };
+/** v2: neue Grafik (günstiges Licht, Auflösung der Szene) – alte Einstellungen gelten nicht mehr */
+export const RACE_KEY = 'gruppetto.gpu.race2';
 
 const KEY = 'gruppetto.gpu.settings';
 

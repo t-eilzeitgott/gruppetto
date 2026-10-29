@@ -4,6 +4,7 @@
  * Instanzdaten in der Geometrie (inst.ts): ein Shaderprogramm für alle Stücke.
  */
 import * as THREE from 'three/webgpu';
+import { cheapMaterial } from './light';
 import { tsl } from './nodes';
 import { commit, disposeGroup, instGroup, instNodes, STRIDE, type InstGroup } from './inst';
 
@@ -64,13 +65,13 @@ const SHOW = 34;
 export class Grass {
   readonly group = new THREE.Group();
   private geo = clump();
-  private mat: THREE.MeshStandardNodeMaterial;
+  private mat: THREE.Material;
   private chunks: { g: InstGroup; cx: number; cz: number; n: number }[] = [];
   count = 0;
 
   constructor() {
-    const m = new THREE.MeshStandardNodeMaterial({ side: THREE.DoubleSide });
     const I = instNodes();
+    const m = cheapMaterial({ col: vertexColor().mul(I.color), nWorld: I.nWorld, params: { side: THREE.DoubleSide } });
     const h = positionGeometry.y;
     const w = I.world;
     // nur in der Nähe: zwischen 24 und 36 m sinken die Halme in den Boden
@@ -80,10 +81,6 @@ export class Grass {
     const gust = sin(time.mul(0.7).add(w.x.mul(0.05))).mul(0.5).add(0.5);
     const sway = vec2(sin(time.mul(2.3).add(ph)), cos(time.mul(1.9).add(ph.mul(1.3)))).mul(h.mul(h).mul(mix(0.25, 0.9, gust)));
     m.positionNode = w.add(vec3(sway.x, h.mul(fade.sub(1)), sway.y));
-    m.normalNode = I.normal;
-    m.colorNode = vertexColor().mul(I.color);
-    m.roughnessNode = float(0.55);
-    m.metalnessNode = float(0);
     m.name = 'grass';
     this.mat = m;
   }

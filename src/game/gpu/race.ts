@@ -187,9 +187,11 @@ export class Race {
     window.addEventListener('unhandledrejection', this.onWinError);
     const t0 = performance.now();
     const log = (m: string) => console.info(`[race] ${m} (${Math.round(performance.now() - t0)} ms)`);
+    // Bild in voller Auflösung (Bildschirm, höchstens maxDpr), die Szene darin wird nach Bedarf kleiner gerechnet
+    // und beim Hochskalieren nachgeschärft (setDpr) – die Oberfläche (HUD) ist ohnehin HTML und bleibt scharf
     this.maxDpr = Math.min(window.devicePixelRatio || 1, this.settings.maxDpr);
-    this.dpr = Math.min(this.maxDpr, 1.5);
-    r.setPixelRatio(this.dpr);
+    this.dpr = this.maxDpr;
+    r.setPixelRatio(this.maxDpr);
     r.toneMapping = THREE.AgXToneMapping;
     r.toneMappingExposure = 0.62;
     r.shadowMap.enabled = true;
@@ -256,6 +258,12 @@ export class Race {
     this.eng = this.makeEngine(0);
 
     const scenePass = (this.scenePass = pass(this.scene, this.camera, { samples: gpu ? this.settings.msaa : 0 }));
+    // Kantenglättung auf den Kacheln der Grafikkarte: die vierfachen Proben nach dem Auflösen verwerfen statt in den
+    // Speicher zu schreiben (sonst ~60 MB je Bild bei doppelter Auflösung), Tiefe wird nicht gebraucht
+    const srt = scenePass.renderTarget as THREE.RenderTarget & { storeMultisampledColorBuffer?: boolean; storeMultisampledDepthBuffer?: boolean; resolveDepthBuffer?: boolean };
+    srt.storeMultisampledColorBuffer = false;
+    srt.storeMultisampledDepthBuffer = false;
+    srt.resolveDepthBuffer = false;
     const color = scenePass.getTextureNode('output');
     for (const withBloom of [true, false]) {
       const pl = new THREE.RenderPipeline(r);
@@ -285,6 +293,7 @@ export class Race {
     log('vorgewärmt');
     this.loadFrac = 1;
     this.ready = true;
+    this.setDpr(this.dpr);
     this.lastBuilt = world.builtTo;
     this.opts.onReady?.();
   }
@@ -643,6 +652,23 @@ export class Race {
 
   // ------------------------------------------------------------------ Bild
 
+  /**
+   * Auflösung der Szene (in Bildpunkten je CSS-Pixel): das Bild bleibt in voller Auflösung, die Szene wird mit
+   * dem Faktor dpr / maxDpr gerechnet und hochskaliert; dabei leicht nachgeschärft
+   */
+  private setDpr(d: number) {
+    this.dpr = Math.max(0.3, Math.min(this.maxDpr, d));
+    const sc = this.dpr / this.maxDpr;
+    this.scenePass?.setResolutionScale(sc);
+    const a = this.atmo;
+    if (a) {
+      a.sharp.value = sc < 0.97 ? Math.min(0.55, (1 - sc) * 1.4) : 0;
+      const w = this.host.clientWidth || window.innerWidth;
+      const h = this.host.clientHeight || window.innerHeight;
+      a.texel.value.set(1 / Math.max(1, w * this.dpr), 1 / Math.max(1, h * this.dpr));
+    }
+  }
+
   /** Auflösung nach der Bildzeit */
   private adapt(dtMs: number, now: number) {
     if (!this.ready || this.analysing) return;
@@ -659,8 +685,7 @@ export class Race {
       if (this.avgGpu > p.gpu * 0.9) {
         this.dprFloor = p.from;
         this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${p.from.toFixed(2)} (kleiner brachte GPU nichts: ${p.gpu.toFixed(1)}→${this.avgGpu.toFixed(1)} ms)`);
-        this.dpr = p.from;
-        this.renderer.setPixelRatio(this.dpr);
+        this.setDpr(p.from);
         this.lastDprChange = now;
         this.slowFor = this.fastFor = 0;
         return;
@@ -674,8 +699,7 @@ export class Race {
     if (want !== this.dpr) {
       if (want < this.dpr && this.gpuTiming && this.avgGpu > 0) this.probe = { from: this.dpr, gpu: this.avgGpu, at: now };
       this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${(Math.round(want * 100) / 100).toFixed(2)}`);
-      this.dpr = Math.round(want * 100) / 100;
-      this.renderer.setPixelRatio(this.dpr);
+      this.setDpr(Math.round(want * 100) / 100);
       this.lastDprChange = now;
       this.slowFor = this.fastFor = 0;
     }
@@ -726,10 +750,10 @@ export class Race {
     ];
     const vis0 = new Map<THREE.Object3D, boolean>();
     for (const [, l] of groups) for (const o of l) vis0.set(o, o.visible);
-    const setDpr = (d: number) => { this.dpr = d; this.renderer.setPixelRatio(d); };
+    const setDpr = (d: number) => this.setDpr(d);
     const hide = (...names: string[]) => { for (const [k, l] of groups) if (names.includes(k)) for (const o of l) o.visible = false; };
-    const base = Math.min(1, this.maxDpr);
-    const maxD = Math.min(2, window.devicePixelRatio || 1);
+    const base = this.dpr;
+    const maxD = this.maxDpr;
     const steps: [string, () => void][] = [
       ['Basis (Auflösung ×' + base.toFixed(2) + ')', () => undefined],
       ['ohne Leuchten (Bloom-Kette)', () => this.applySettings({ ...S0, bloom: false }, true)],
@@ -745,9 +769,9 @@ export class Race {
       ['ohne Straße, Rand, Tunnel', () => hide('road')],
       ['ohne Dinge auf der Straße', () => hide('objects')],
       ['nur Himmel + Nachbearbeitung', () => hide(...groups.map(([k]) => k))],
-      ['Auflösung ×0.7', () => setDpr(0.7)],
-      ['Auflösung ×1.5', () => setDpr(Math.min(1.5, maxD))],
-      ...(maxD >= 2 ? [['Auflösung ×2.0', () => setDpr(2)] as [string, () => void]] : []),
+      ['Szene ×1.0', () => setDpr(Math.min(1, maxD))],
+      ['Szene ×1.4', () => setDpr(Math.min(1.4, maxD))],
+      ...(maxD >= 2 ? [['Szene ×2.0', () => setDpr(2)] as [string, () => void]] : []),
     ];
     const med = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
     const p90 = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * 0.9)]; };
@@ -781,7 +805,9 @@ export class Race {
         const g = this.gpuSamples;
         this.gpuSamples = null;
         const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-        rows.push({ name, gpu: med(g), gpu90: p90(g), draw: med(draw), cpu: med(cpu), frame: med(frame), calls, tris, px: `${size.x}×${size.y}` });
+        // Szene (kleiner gerechnet) in der Bildgröße
+        const sc = this.dpr / this.maxDpr;
+        rows.push({ name, gpu: med(g), gpu90: p90(g), draw: med(draw), cpu: med(cpu), frame: med(frame), calls, tris, px: `${Math.round(size.x * sc)}×${Math.round(size.y * sc)} in ${size.x}×${size.y}` });
       }
     } finally {
       this.gpuSamples = null;
@@ -799,7 +825,7 @@ export class Race {
       `gruppetto Abfahrt-WebGPU Kostenanalyse · ${new Date().toISOString()} · ${this.backendName} · GPU-Zeitstempel ${this.gpuTiming ? 'ja' : 'nein'}`,
       `Gerät: ${navigator.userAgent}`,
       `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, MSAA ${S0.msaa}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => (RACE_DEFAULTS as unknown as Record<string, unknown>)[k] !== v)))}`,
-      'Variante | GPU ms (Median, Ersparnis zur Basis) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms | Aufrufe | Dreiecke k | Bildpunkte',
+      'Variante | GPU ms (Median, Ersparnis zur Basis) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms | Aufrufe | Dreiecke k | Szene in Bild (Bildpunkte)',
       ...rows.map((r) => `${r.name} | ${f(r.gpu)}${r === b ? '' : d(r.gpu, b.gpu)} | ${f(r.gpu90)} | ${f(r.draw)}${r === b ? '' : d(r.draw, b.draw)} | ${f(r.cpu)} | ${f(r.frame)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.px}`),
     ];
     return lines.join('\n');
@@ -1003,6 +1029,8 @@ export class Race {
     return {
       ua: navigator.userAgent, bildschirm: `${screen.width}×${screen.height}`, pixeldichte: window.devicePixelRatio, fenster: `${window.innerWidth}×${window.innerHeight}`,
       technik: this.backendName, grafik: pick, gpu_zeitstempel: this.gpuTiming,
+      // „aufloesung“ in den Verläufen: Szene (kleiner gerechnet, hochskaliert); das Bild selbst in bild_dpr
+      bild_dpr: this.maxDpr, msaa: this.settings.msaa,
     };
   }
 
@@ -1025,8 +1053,9 @@ export class Race {
     saveSettings(s, RACE_KEY);
     this.dprFloor = 0;
     this.atmo?.apply(s, instant);
-    this.maxDpr = Math.min(window.devicePixelRatio || 1, s.maxDpr);
-    if (this.dpr > this.maxDpr) { this.dpr = this.maxDpr; this.renderer.setPixelRatio(this.dpr); }
+    const md = Math.min(window.devicePixelRatio || 1, s.maxDpr);
+    if (md !== this.maxDpr) { this.maxDpr = md; this.renderer.setPixelRatio(md); }
+    this.setDpr(Math.max(Math.min(this.dpr, md), Math.min(s.minDpr, md)));
     const w = this.world;
     if (w) {
       if (w.crowd) w.crowd.group.visible = s.crowd;
@@ -1044,6 +1073,7 @@ export class Race {
     this.camera.updateProjectionMatrix();
     this.overlay.resize(w, h);
     this.eng?.setViewport(w);
+    this.setDpr(this.dpr);
   }
 
   dispose() {

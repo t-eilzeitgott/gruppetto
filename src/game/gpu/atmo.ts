@@ -8,8 +8,9 @@ import { bloom } from '../../../vendor/three/addons/BloomNode.js';
 import { bakeSkyCube, makeDome, makeRain, makeSun, type CloudLight, type SkyCube } from './sky';
 import { dirOf, LIGHT_KEYS, MOOD_IDS, MOOD_U, MOODS, resolve, type Light, type MoodId, type Settings } from './mood';
 import { tsl, h21, type N } from './nodes';
+import { AMB, AMB_DIRS, AMB_KEYS, SUN } from './light';
 
-const { abs, cameraPosition, cubeTexture, dot, exp, float, fog, max, mix, normalize, pmremTexture, positionView, positionWorld, pow, renderOutput, screenUV, screenSize, smoothstep, time, uniform, uv, vec2, vec3 } = tsl;
+const { abs, cameraPosition, cubeTexture, dot, exp, float, floor, fog, max, mix, normalize, pmremTexture, positionView, positionWorld, pow, renderOutput, screenUV, screenSize, select, smoothstep, time, uniform, uv, varying, vec2, vec3, vec4 } = tsl;
 
 const LAMP = new THREE.Color(1, 0.72, 0.42);
 const CYCLE: MoodId[] = ['mittag', 'gold', 'nacht', 'morgen', 'regen'];
@@ -49,6 +50,16 @@ export class Atmo {
   private fogThin = uniform(1);
   private fogSun = uniform(new THREE.Vector3(0, 1, 0));
   private hazeCol = uniform(new THREE.Color(1, 0.86, 0.68));
+  /**
+   * Umgebungslicht der günstigen Materialien (light.ts): je Stimmung einmal den vorgefilterten Himmel in sechs
+   * Richtungen messen (winziges Bild auf der Grafikkarte, dann zurücklesen) – je Bild nur noch Zahlen überblenden
+   */
+  private ambOf = new Map<MoodId, Float32Array>();
+  private ambBusy = new Set<MoodId>();
+  private probe: { rt: THREE.RenderTarget; quad: THREE.QuadMesh; env: N } | null = null;
+  /** Nachschärfen nach dem Hochskalieren (Szene in kleinerer Auflösung): Stärke, Bildpunktgröße der Szene */
+  readonly sharp = uniform(0);
+  readonly texel = uniform(new THREE.Vector2(1 / 1000, 1 / 1000));
   // Farbfilter
   private u = {
     warm: uniform(0), sat: uniform(1), contrast: uniform(1), vignette: uniform(0), grain: uniform(0), split: uniform(0),
@@ -96,6 +107,7 @@ export class Atmo {
     this.glow = this.makeGlow();
     scene.add(this.glow);
     this.setupFog();
+    this.measureAmbient(this.shown);
     this.cur = resolve(MOODS[this.shown], settings);
     this.target = { ...this.cur };
     this.from = { ...this.cur };
@@ -115,10 +127,73 @@ export class Atmo {
     return c;
   }
 
+  /** Umgebungslicht einer Stimmung messen – im nächsten Bild (direkt nach dem Backen kam das Zurücklesen nie an) */
+  private ambQueue = new Set<MoodId>();
+  private measureAmbient(id: MoodId) {
+    if (this.ambOf.has(id) || this.ambBusy.has(id) || this.ambQueue.has(id)) return;
+    this.ambQueue.add(id);
+    // außerhalb des Bildaufrufs (dort wurde das Zurücklesen in Chrome nie fertig)
+    window.setTimeout(() => { this.ambQueue.delete(id); if (!this.disposed) this.runAmbient(id); }, 30);
+  }
+  private disposed = false;
+
+  private runAmbient(id: MoodId) {
+    if (this.ambOf.has(id) || this.ambBusy.has(id)) return;
+    const r = this.renderer;
+    const envTex = this.cube(id).environment;
+    if (!this.probe) {
+      const rt = new THREE.RenderTarget(6, 1, { type: THREE.FloatType, depthBuffer: false });
+      const ix = floor(uv().x.mul(6));
+      const d = AMB_DIRS.map(([x, y, z]) => vec3(x, y, z));
+      const dir = select(ix.lessThan(0.5), d[0], select(ix.lessThan(1.5), d[1], select(ix.lessThan(2.5), d[2], select(ix.lessThan(3.5), d[3], select(ix.lessThan(4.5), d[4], d[5])))));
+      const env = pmremTexture(envTex, dir, float(1));
+      const m = new THREE.MeshBasicNodeMaterial();
+      m.fragmentNode = vec4(env.rgb, 1);
+      this.probe = { rt, quad: new THREE.QuadMesh(m), env };
+    }
+    const P = this.probe;
+    P.env.value = envTex;
+    const prev = r.getRenderTarget();
+    r.setRenderTarget(P.rt);
+    P.quad.render(r);
+    r.setRenderTarget(prev);
+    this.ambBusy.add(id);
+    // falls das Zurücklesen hängt: nach 8 s neu versuchen (hinter dem Backen eines Himmels kann es dauern)
+    const retry = window.setTimeout(() => { if (this.ambBusy.delete(id)) this.measureAmbient(id); }, 8000);
+    void r.readRenderTargetPixelsAsync(P.rt, 0, 0, 6, 1).then((px) => {
+      window.clearTimeout(retry);
+      if (!this.ambBusy.has(id)) return;
+      const a = px as unknown as ArrayLike<number>;
+      const f = new Float32Array(18);
+      for (let i = 0; i < 6; i++) for (let c = 0; c < 3; c++) f[i * 3 + c] = Math.max(0, Number(a[i * 4 + c]) || 0);
+      this.ambOf.set(id, f);
+      this.ambBusy.delete(id);
+      this.updateAmbient();
+    }).catch((e: unknown) => { this.ambBusy.delete(id); console.warn("[atmo] Umgebungslicht nicht gemessen", e); });
+  }
+
+  /** Umgebungslicht (AMB) aus den gemessenen Stimmungen, überblendet, mit Stärke der Stimmung und Tunnel */
+  private updateAmbient() {
+    const a = this.ambOf.get(this.shown) ?? this.ambOf.get(this.next ?? this.shown);
+    const b = this.next ? this.ambOf.get(this.next) ?? a : a;
+    if (!a || !b) return;
+    const k = this.next ? this.dome.mixT.value : 0;
+    const env = this.cur.env * (1 - 0.8 * this.tunnelApplied);
+    AMB_KEYS.forEach((key, i) => {
+      const c = AMB[key].value as THREE.Color;
+      c.setRGB((a[i * 3] + (b[i * 3] - a[i * 3]) * k) * env, (a[i * 3 + 1] + (b[i * 3 + 1] - a[i * 3 + 1]) * k) * env, (a[i * 3 + 2] + (b[i * 3 + 2] - a[i * 3 + 2]) * k) * env);
+    });
+  }
+
   /** Nachbearbeitung: Leuchten, dann Tonkurve, dann Farbfilter im Anzeigeraum (wie im Spiel) */
   outputNode(color: N, withBloom = true): N {
     const glow = withBloom ? bloom(color, this.u.bloom, 0.3, this.u.bthr) : null;
-    let col: N = renderOutput(glow ? color.add(glow) : color).rgb;
+    // Szene kleiner gerechnet als angezeigt: beim Hochskalieren leicht nachschärfen (vier Nachbarn)
+    const t = this.texel;
+    const nb = color.sample(screenUV.add(vec2(t.x, 0))).add(color.sample(screenUV.sub(vec2(t.x, 0))))
+      .add(color.sample(screenUV.add(vec2(0, t.y)))).add(color.sample(screenUV.sub(vec2(0, t.y))));
+    const sharp = color.add(color.sub(nb.mul(0.25)).mul(this.sharp)).max(0);
+    let col: N = renderOutput(glow ? sharp.add(glow) : sharp).rgb;
     const l = dot(col, vec3(0.2126, 0.7152, 0.0722));
     const g = this.u;
     let gr: N = mix(vec3(l, l, l), col, g.sat);
@@ -190,7 +265,8 @@ export class Atmo {
     const h = positionWorld.y.sub(cameraPosition.y);
     const thin = exp(h.max(-600).mul(float(-0.0012).mul(this.fogThin))).clamp(0.35, 2.2);
     const f = float(1).sub(exp(d.mul(-0.000085).mul(this.fogK).mul(thin))).mul(0.92);
-    this.scene.fogNode = fog(col, f);
+    // je Ecke gerechnet (Dunst ändert sich über eine Fläche kaum): spart je Bildpunkt zwei Würfelzugriffe
+    this.scene.fogNode = fog(varying(col, 'vFogCol'), varying(f, 'vFogF'));
   }
 
   /** Einstellungen übernehmen (Stimmung weich wechseln) */
@@ -247,6 +323,7 @@ export class Atmo {
       this.shown = id; this.next = null; this.blend = 1; this.hold = 0;
       this.setSky(id, id); this.dome.mixT.value = 0;
       this.envNode.value = this.cube(id).environment; this.envSwitched = true;
+      this.measureAmbient(id);
       this.target = resolve(MOODS[id], this.settings); this.cur = { ...this.target }; this.from = { ...this.cur };
       this.applyCur();
       return;
@@ -263,6 +340,7 @@ export class Atmo {
     this.blendDur = dur;
     this.envSwitched = false;
     this.hold = 0;
+    this.measureAmbient(id);
   }
 
   /** je Bild: Wetterwechsel takten, Werte überblenden, Lichter nachführen (cam: für das Sonnenuntergangs-Licht) */
@@ -271,7 +349,7 @@ export class Atmo {
       this.hold += dt;
       const nextId = CYCLE[(CYCLE.indexOf(this.shown) + 1) % CYCLE.length];
       // den nächsten Himmel ein paar Sekunden vorher backen (nicht im Moment des Wechsels)
-      if (this.hold > HOLD - 3) this.cube(nextId);
+      if (this.hold > HOLD - 3) { this.cube(nextId); this.measureAmbient(nextId); }
       if (this.hold > HOLD) this.goTo(nextId, BLEND);
     }
     if (this.blend < 1) {
@@ -325,6 +403,9 @@ export class Atmo {
     const low = Math.max(0, Math.min(1, 1 - c.elev / 30));
     this.hemi.color.setRGB(0.56 + (c.sunR - 0.56) * low, 0.66 + (c.sunG - 0.66) * low, 0.84 + (c.sunB - 0.84) * low).lerp(LAMP, tk);
     this.scene.environmentIntensity = c.env * (1 - 0.8 * tk);
+    this.updateAmbient();
+    SUN.dir.value.copy(this.sunDir);
+    (SUN.col.value as THREE.Color).setRGB(c.sunR, c.sunG, c.sunB).multiplyScalar(c.sunI * (1 - tk));
     this.renderer.toneMappingExposure = c.exposure;
     this.fogK.value = c.fog;
     this.fogThin.value = c.fogThin;
@@ -345,6 +426,7 @@ export class Atmo {
   }
 
   dispose() {
+    this.disposed = true;
     for (const c of this.cubes.values()) c.dispose();
     this.cubes.clear();
     this.sun.dispose();

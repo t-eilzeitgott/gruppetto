@@ -13,10 +13,11 @@
 import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
 import { decodeAlbedo, tsl, type N } from './nodes';
+import { cheapMaterial } from './light';
 import { instNodes } from './inst';
 import { MOOD_U } from './mood';
 
-const { attribute, float, mix, normalize, positionGeometry, select, smoothstep, texture, transformNormalToView, uv, varying, vec3, vertexColor } = tsl;
+const { attribute, float, mix, normalize, positionGeometry, select, smoothstep, texture, uv, varying, vec3, vertexColor } = tsl;
 
 type V3 = [number, number, number];
 export type HMat = 'plaster' | 'wood' | 'roof' | 'stone' | 'detail';
@@ -819,25 +820,24 @@ export function buildHouse(lod: 0 | 1 | 2): Record<HMat, THREE.BufferGeometry> {
 }
 
 /** Materialien der Häuser (Instanzen: iP Ort/Drehung, iS.w Putzfarbe 0 … 1, iC Farbe der Läden) */
-export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnType<typeof instNodes>) => N) | null): Record<HMat, THREE.MeshStandardNodeMaterial> {
+export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnType<typeof instNodes>) => N) | null): Record<HMat, THREE.MeshLambertNodeMaterial> {
+  // günstiges Licht (light.ts): Lambert mit gemessenem Umgebungslicht – Häuser sind matt (Putz, Holz, Schindeln)
   const make = (name: string, shade: (I: ReturnType<typeof instNodes>) => { col: N; rough: N; ao?: N; xy?: N; metal?: N; k?: number }, emissive?: (I: ReturnType<typeof instNodes>) => N) => {
     const I = instNodes();
-    const m = new THREE.MeshStandardNodeMaterial();
-    m.positionNode = I.world;
-    if (emissive) m.emissiveNode = emissive(I);
-    // weiche Überblendung zwischen den Stufen (Deckung über die Kantenglättung)
-    if (fade) { m.opacityNode = fade(I); m.alphaToCoverage = true; }
     const o = shade(I);
-    m.colorNode = o.col;
-    m.roughnessNode = o.rough;
-    m.metalnessNode = o.metal ?? float(0);
-    if (o.ao) m.aoNode = o.ao;
+    let nW: N = I.nWorld;
     if (o.xy) {
       const T = varying(I.rot(attribute('aTU', 'vec3')), 'vHT');
       const B = varying(I.rot(attribute('aTV', 'vec3')), 'vHB');
       const k = o.k ?? 1;
-      m.normalNode = transformNormalToView(normalize(normalize(I.nWorld).add(T.mul(o.xy.x.mul(k))).add(B.mul(o.xy.y.mul(k)))));
-    } else m.normalNode = I.normal;
+      nW = normalize(normalize(I.nWorld).add(T.mul(o.xy.x.mul(k))).add(B.mul(o.xy.y.mul(k))));
+    }
+    // Metall (Rinnen, Beschläge): etwas dunkler statt spiegelnd
+    const col = o.metal ? o.col.mul(float(1).sub(o.metal.mul(0.4))) : o.col;
+    const m = cheapMaterial({ col, nWorld: nW, ao: o.ao, extra: emissive ? emissive(I) : undefined });
+    m.positionNode = I.world;
+    // weiche Überblendung zwischen den Stufen (Deckung über die Kantenglättung)
+    if (fade) { m.opacityNode = fade(I); m.alphaToCoverage = true; }
     m.name = name;
     return m;
   };
