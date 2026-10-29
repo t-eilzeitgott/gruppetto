@@ -979,6 +979,9 @@ export class RiderModel {
     this.body.rotation.x = 0;
     this.body.position.y = 0;
     if (this.wreckSnap) {
+      // Rad und Fahrer zurück an ihren Platz (die Fahrhaltung setzt Rahmen und Lampe nicht neu – ohne das läge das
+      // Rad nach einem Neustart weiter neben der Straße und der Fahrer stünde ohne Rad da)
+      for (const s of this.wreckSnap) { s.b.position.copy(s.p); s.b.quaternion.copy(s.q); }
       this.wreckSnap = null;
       this.body.rotation.set(0, 0, 0);
     }

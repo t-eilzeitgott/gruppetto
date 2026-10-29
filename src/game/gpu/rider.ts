@@ -89,6 +89,31 @@ export function teamKit(i: number): Kit {
   return { ...t, skin: SKINS[(i * 3 + 1) % SKINS.length], number: String(11 + ((i * 37) % 180)) };
 }
 
+/** Material des Schlagschattens (Knotenmaterial – das alte Material des Spiels zeichnet die neue Grafik nicht) */
+let BLOB_MAT: THREE.MeshBasicNodeMaterial | null = null;
+function blobMaterial(): THREE.MeshBasicNodeMaterial {
+  if (BLOB_MAT) return BLOB_MAT;
+  // undurchsichtig, die Weichheit kommt aus einem feinen Raster (je Bildpunkt eine Schwelle): auf dem Handy mit
+  // 2–3 Bildpunkten je Punkt liest sich das als halbdunkler, weicher Fleck. Als durchsichtiges Material erschien der
+  // Fleck in der Bildkette der neuen Grafik nicht
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: false, depthWrite: false });
+  m.polygonOffset = true;
+  m.polygonOffsetFactor = -2;
+  m.polygonOffsetUnits = -2;
+  // weiche Ellipse (Fläche 1,1 × 2,2 m): Mitte dunkel, zum Rand weich auslaufend
+  const d = tsl.uv().sub(0.5).mul(2).length();
+  const a = tsl.float(1).sub(tsl.smoothstep(0.1, 1, d)).mul(0.72);
+  const sc = tsl.screenCoordinate;
+  const ign = tsl.fract(tsl.float(52.9829189).mul(tsl.fract(sc.x.mul(0.06711056).add(sc.y.mul(0.00583715)))));
+  m.colorNode = tsl.vec3(0.0, 0.0, 0.0);
+  m.opacityNode = tsl.select(a.greaterThan(ign), tsl.float(1), tsl.float(0));
+  m.alphaTest = 0.5;
+  m.fog = false;
+  m.name = 'blob';
+  BLOB_MAT = m;
+  return m;
+}
+
 export class Rider {
   readonly model: RiderModel;
   private anim: RiderAnim;
@@ -101,14 +126,21 @@ export class Rider {
     if (Math.abs(k - this.ghostK) < 0.01) return;
     this.ghostK = k;
     this.model.group.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.userData.ghost = k; });
+    // Geister ohne Schlagschatten
+    this.model.shadow.visible = k < 0.05;
   }
 
   /** q = 1: volle Detailstufe (eigener Fahrer: Schriftzüge, Kette, Zähne …), 0: Gegner wie im Spiel */
   constructor(kit: Kit, q: 0 | 1, seed: number, player: boolean) {
     this.anim = new RiderAnim(seed, player);
     this.model = new RiderModel(kit, new THREE.Texture(), q);
-    // echte Sonnenschatten statt des Schattenflecks
-    this.model.shadow.visible = false;
+    // weicher Schlagschatten unter Rad und Fahrer (zusätzlich zu den Sonnenschatten: hält den Fahrer auch bei tiefer
+    // oder verdeckter Sonne sichtbar auf der Straße)
+    this.model.shadow.material = blobMaterial();
+    // etwas über dem Asphalt (die Fahrbahn der neuen Grafik liegt mit Wölbung und Relief höher als die Mittellinie)
+    this.model.shadow.position.y = 0.12;
+    this.model.shadow.castShadow = false;
+    this.model.shadow.receiveShadow = false;
     convert(this.model.group);
     this.model.lamp.visible = false;
     // kleine Teile werfen keine Schatten (spart Zeichenaufrufe im Schattendurchgang)
