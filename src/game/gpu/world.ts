@@ -31,7 +31,7 @@ const { frontFacing, normalWorldGeometry, select, texture, uv, vec3 } = tsl;
 export const PIECE = 128;
 const PIECE_M = PIECE * SEG;
 /** so weit voraus wird gebaut (m) */
-export const AHEAD = 1100;
+export const AHEAD = 1350;
 /** so weit hinter dem Fahrer bleibt die Welt stehen (m; in Kehren sieht man zurück) */
 const BEHIND = 520;
 /** Startbereich, der immer stehen bleibt (m) */

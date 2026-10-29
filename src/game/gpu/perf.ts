@@ -141,10 +141,11 @@ export class Perf {
   get recSeconds(): number { return this.rec ? (performance.now() - this.rec.t0) / 1000 : 0; }
 
   /** Messung beenden: Bericht (kompakt) und Datei (vollständig) */
-  stopRec(): Report | null {
+  stopRec(extra?: Record<string, unknown>): Report | null {
     const r = this.rec;
     this.rec = null;
     if (!r || r.n < 30) return null;
+    if (extra) Object.assign(r.meta, extra);
     return makeReport(r);
   }
 }

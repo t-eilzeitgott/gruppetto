@@ -23,7 +23,9 @@ import { corridorMaterial, terrainMaterial } from './ground';
 import { adsMaterial, marksMaterial, metalMaterial, paintMaterial, roadMaterial, woodMaterial } from './mats';
 import { Rider, teamKit } from './rider';
 import { EV, Perf, type Report } from './perf';
-import { World, AHEAD } from './world';
+import { World } from './world';
+/** beim Laden so weit voraus bauen (den Rest bis AHEAD holt das Nachladen im Countdown) */
+const LOAD_AHEAD = 1100;
 import { Objects, Particles } from './objects';
 import { Overlay } from './overlay';
 import { tsl } from './nodes';
@@ -279,8 +281,8 @@ export class Race {
     let lastLog = 0;
     for (;;) {
       if (this.disposed) return;
-      const done = world.buildUpTo(z0, z0 + AHEAD, performance.now() + 40);
-      this.loadFrac = 0.12 + 0.6 * world.progressTo(z0 + AHEAD);
+      const done = world.buildUpTo(z0, z0 + LOAD_AHEAD, performance.now() + 40);
+      this.loadFrac = 0.12 + 0.6 * world.progressTo(z0 + LOAD_AHEAD);
       if (performance.now() - lastLog > 2000) { lastLog = performance.now(); log(`Welt bis ${Math.round(world.builtTo)} m, Bäume ${world.trees.count}`); }
       if (done) break;
       await new Promise((res) => setTimeout(res, 0));
@@ -900,7 +902,10 @@ export class Race {
       const front = world.builtFrom(e.p.z);
       const lead = front - e.p.z;
       const idle = this.paused || e.phase === 'ready' || e.phase === 'over';
-      const ms = this.budget || (idle ? 6 : lead < 450 ? 4 : lead < 750 ? 2.2 : 1.4);
+      // gleichmäßig wenig statt stoßweise viel: auf dem iPhone laufen CPU und Grafik nacheinander, jede Millisekunde
+      // hier fehlt dem Bild. Die Welt wird dafür früher (1,35 km voraus) angefangen; im Mittel braucht ein
+      // Abschnitt ~0,15 ms je Bild – erst wenn sie knapp wird, mehr
+      const ms = this.budget || (idle ? 6 : lead < 450 ? 4 : lead < 700 ? 2.2 : lead < 950 ? 1 : 0.5);
       world.step(e.p.z, performance.now() + ms);
       if (front !== this.lastBuilt) { if (front > this.lastBuilt) P.event(EV.piece, `Welt bis ${Math.round(front)} m`); this.lastBuilt = front; }
       P.mark(9);
@@ -1054,13 +1059,19 @@ export class Race {
   }
 
   startMeasure(extra: Record<string, unknown> = {}) {
+    if (this.world) this.world.stepMax = {};
     this.perf.startRec({
       ...extra, ...this.deviceInfo(), spiel: 'Abfahrt WebGPU', kamera_start: this._cam, stimmung: this.moodName,
       gegner_max: this.settings.oppMax, start_z: Math.round(this.eng?.p.z ?? 0), phase: this.eng?.phase, testfahrt: this.cruise, autopilot: this.autopilot,
     });
   }
   get measuring(): boolean { return !!this.perf.rec; }
-  stopMeasure(): Report | null { return this.perf.stopRec(); }
+  stopMeasure(): Report | null {
+    // längste Einzelschritte beim Nachladen der Welt (je Teil) – Kandidaten für Ruckler
+    const sm = this.world?.stepMax ?? {};
+    const top = Object.fromEntries(Object.entries(sm).sort((a, b) => b[1] - a[1]).slice(0, 12));
+    return this.perf.stopRec({ welt_schritte_max_ms: top });
+  }
 
   // ------------------------------------------------------------------ Einstellungen
 

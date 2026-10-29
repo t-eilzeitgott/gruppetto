@@ -28,6 +28,8 @@ const RADIUS = [230, 1600, 6500];
  * Daten (Absenken, Waldboden, Abbau); ändert sich eine, wird ihr Block neu zusammengelegt.
  */
 const BLOCK = 2;
+/** Zahlenschlüssel einer Kachel */
+const nk = (tx: number, tz: number) => (tx + 32768) * 65536 + (tz + 32768);
 interface Block { key: string; lv: number; tiles: Set<Tile>; mesh: THREE.Mesh | null }
 /** so tief sinkt eine gröbere Stufe unter einer feineren ab */
 const DROP = [0, 70, 300];
@@ -41,7 +43,8 @@ export class Field {
   readonly group = new THREE.Group();
   private sets: Set<string>[] = [new Set(), new Set(), new Set()];
   /** fertige Kacheln je Stufe */
-  private doneSets: Set<string>[] = [new Set(), new Set(), new Set()];
+  /** fertige Kacheln je Stufe (Zahlenschlüssel: das Absenken fragt das je Ecke viermal ab) */
+  private doneSets: Set<number>[] = [new Set(), new Set(), new Set()];
   private tiles: Tile[] = [];
   private gen: { tile: Tile; it: Generator<void, import('../abfahrt/terrain3d').TileData, void> } | null = null;
   done = 0;
@@ -153,7 +156,7 @@ export class Field {
     });
     for (const t of gone) {
       this.sets[t.lv].delete(t.key);
-      if (t.state === 'done') { this.doneSets[t.lv].delete(t.key); this.done--; }
+      if (t.state === 'done') { this.doneSets[t.lv].delete(nk(t.tx, t.tz)); this.done--; }
       this.total--;
       if (t.mesh) { this.byGeo.delete(t.mesh.geometry); t.mesh.geometry.dispose(); t.mesh = null; }
       const b = this.blockOf(t);
@@ -186,8 +189,8 @@ export class Field {
   private inside(lv: number, x: number, z: number, m: number): boolean {
     const S = LEVELS[lv].size;
     const s = this.doneSets[lv];
-    return s.has(`${Math.floor((x - m) / S)},${Math.floor((z - m) / S)}`) && s.has(`${Math.floor((x + m) / S)},${Math.floor((z - m) / S)}`)
-      && s.has(`${Math.floor((x - m) / S)},${Math.floor((z + m) / S)}`) && s.has(`${Math.floor((x + m) / S)},${Math.floor((z + m) / S)}`);
+    const x0 = Math.floor((x - m) / S), x1 = Math.floor((x + m) / S), z0 = Math.floor((z - m) / S), z1 = Math.floor((z + m) / S);
+    return s.has(nk(x0, z0)) && s.has(nk(x1, z0)) && s.has(nk(x0, z1)) && s.has(nk(x1, z1));
   }
 
   get progress(): number { return this.total ? this.done / this.total : 1; }
@@ -263,7 +266,7 @@ export class Field {
   private finish(t: Tile, d: import('../abfahrt/terrain3d').TileData) {
     t.state = 'done';
     this.done++;
-    this.doneSets[t.lv].add(t.key);
+    this.doneSets[t.lv].add(nk(t.tx, t.tz));
     const geo = d.geo as unknown as THREE.BufferGeometry;
     d.water?.dispose();
     const mesh = new THREE.Mesh(geo, this.mats[t.lv]);

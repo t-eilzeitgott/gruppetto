@@ -397,7 +397,7 @@ export class Crowd {
     }
     const mine = this.signs;
     this.signs = { pos: signs0.pos.concat(mine.pos), uv: signs0.uv.concat(mine.uv) };
-    if (this.people.length !== n0) this.repack();
+    if (this.people.length !== n0) this.repack(n0);
     return mine;
   }
 
@@ -415,10 +415,14 @@ export class Crowd {
   }
 
   /** Daten aller Menschen neu packen; Gruppen wachsen bei Bedarf */
-  private repack() {
+  private repack(from = 0) {
     const n = this.people.length;
+    const old = this.src;
     this.src = new Float32Array(Math.max(1, n) * PS);
-    this.people.forEach((p, k) => packPerson(p, this.src, k));
+    // nur die neuen packen (beim Nachladen kommen Menschen hinten dazu; die alten Daten bleiben gleich)
+    if (from > 0 && old.length >= from * PS) this.src.set(old.subarray(0, from * PS));
+    else from = 0;
+    for (let k = from; k < n; k++) packPerson(this.people[k], this.src, k);
     this.at.set(1e9, 0, 0);
     if (n <= this.cap && this.groups.length) return;
     for (const g of this.groups) { g.mesh.removeFromParent(); g.geo.dispose(); }
