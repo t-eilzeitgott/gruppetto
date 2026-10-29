@@ -197,7 +197,9 @@ export class Houses {
     for (let lod = 0; lod < 3; lod++) {
       for (const m of HMATS) {
         const g = instGroup(this.geos[lod][m], this.mats[m], this.cap, sphere);
-        g.mesh.castShadow = true;
+        // Schatten nur von der nahen Stufe: die Gruppen werden nicht weggeschnitten, sonst zeichnete der
+        // Schattendurchgang jedes Haus der gebauten Strecke (der Schattenausschnitt reicht ~55 m, Stufe 0 bis 56 m)
+        g.mesh.castShadow = lod === 0;
         g.mesh.receiveShadow = true;
         g.mesh.frustumCulled = false;
         this.group.add(g.mesh);

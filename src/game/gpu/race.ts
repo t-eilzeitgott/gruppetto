@@ -137,7 +137,6 @@ export class Race {
   /** GPU-Zeit geglättet; Auflösung, unter der es nicht schneller wird (gelernt), laufender Versuch */
   private avgGpu = 0;
   private dprFloor = 0;
-  private probe: { from: number; gpu: number; at: number } | null = null;
   readonly perf = new Perf();
   /** Messfahrt fertig */
   onReport: ((r: Report) => void) | null = null;
@@ -677,27 +676,14 @@ export class Race {
     const mn = Math.min(...this.intervals);
     this.period = mn < 9.6 ? 1000 / 120 : mn < 12.5 ? 1000 / 90 : 1000 / 60;
     if (this.intervals.length < 60 || now - this.lastDprChange < 1200 || this.paused) return;
-    // letzter Schritt nach unten hat die Grafikkarte kaum entlastet? Dann zurück zur schärferen Auflösung und
-    // nicht wieder darunter: die Kosten hängen dann nicht an den Bildpunkten (unscharf und trotzdem langsam)
-    if (this.probe && now - this.probe.at > 1600) {
-      const p = this.probe;
-      this.probe = null;
-      if (this.avgGpu > p.gpu * 0.9) {
-        this.dprFloor = p.from;
-        this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${p.from.toFixed(2)} (kleiner brachte GPU nichts: ${p.gpu.toFixed(1)}→${this.avgGpu.toFixed(1)} ms)`);
-        this.setDpr(p.from);
-        this.lastDprChange = now;
-        this.slowFor = this.fastFor = 0;
-        return;
-      }
-    }
+    // kein Zurückspringen nach GPU-Zeitstempeln: Apples Grafik taktet bei weniger Last herunter, die gemessene
+    // GPU-Zeit sinkt dann kaum, obwohl das Bild schneller fertig sein könnte – entschieden wird nach der Bildzeit
     const cpuBound = this.avgCpu > this.period * 0.75;
     if (this.avgMs > this.period * 1.22 && !cpuBound) { this.slowFor += dtMs; this.fastFor = 0; } else if (this.avgMs < this.period * 1.06) { this.fastFor += dtMs; this.slowFor = 0; } else { this.slowFor = 0; }
     let want = this.dpr;
     if (this.slowFor > 700) want = Math.max(Math.min(Math.max(this.settings.minDpr, this.dprFloor), this.maxDpr), this.dpr - 0.15);
     else if (this.fastFor > 3500) want = Math.min(this.maxDpr, this.dpr + 0.1);
     if (want !== this.dpr) {
-      if (want < this.dpr && this.gpuTiming && this.avgGpu > 0) this.probe = { from: this.dpr, gpu: this.avgGpu, at: now };
       this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${(Math.round(want * 100) / 100).toFixed(2)}`);
       this.setDpr(Math.round(want * 100) / 100);
       this.lastDprChange = now;
@@ -775,39 +761,52 @@ export class Race {
     ];
     const med = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
     const p90 = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * 0.9)]; };
-    const rows: { name: string; gpu: number; gpu90: number; draw: number; cpu: number; frame: number; calls: number; tris: number; px: string }[] = [];
+    const rows: { name: string; gpu: number; gpu90: number; base: number; draw: number; cpu: number; frame: number; calls: number; tris: number; px: string }[] = [];
     const restore = () => {
       if (this.atmo) this.atmo.sun.shadow.autoUpdate = S0.shadows;
       if (JSON.stringify(this.settings) !== JSON.stringify(S0)) this.applySettings(S0, true);
       for (const [o, v] of vis0) o.visible = v;
       setDpr(base);
     };
+    // ein Block: einschwingen, dann 10 Bilder messen (GPU-Zeitstempel kommen verzögert – die ersten verfallen)
+    const block = async (gpu: number[], m?: { draw: number[]; cpu: number[]; frame: number[] }) => {
+      for (let k = 0; k < 6; k++) await this.nextFrame();
+      this.gpuSamples = [];
+      for (let k = 0; k < 10; k++) {
+        await this.nextFrame();
+        if (m) {
+          m.draw.push(this.perf.sec[8]);
+          const last = (this.perf.ringAt + 179) % 180;
+          m.frame.push(this.perf.ring[last * 2]);
+          m.cpu.push(this.perf.ring[last * 2 + 1]);
+        }
+      }
+      for (let k = 0; k < 3; k++) await this.nextFrame();
+      gpu.push(...(this.gpuSamples ?? []));
+      this.gpuSamples = null;
+    };
     try {
       for (let i = 0; i < steps.length && !this.analysisAbort; i++) {
         const [name, set] = steps[i];
         progress?.(i, steps.length, name);
-        restore();
-        set();
-        for (let k = 0; k < 14; k++) await this.nextFrame();
-        this.gpuSamples = [];
-        const draw: number[] = [], cpu: number[] = [], frame: number[] = [];
+        // paarweise im Wechsel mit der Basis: Apples Grafik ändert ihren Takt mit der Last, so laufen beide
+        // Messungen unter denselben Bedingungen
+        const gB: number[] = [], gV: number[] = [];
+        const m = { draw: [] as number[], cpu: [] as number[], frame: [] as number[] };
         let calls = 0, tris = 0;
-        for (let k = 0; k < 50; k++) {
-          await this.nextFrame();
-          draw.push(this.perf.sec[8]);
-          const last = (this.perf.ringAt + 179) % 180;
-          frame.push(this.perf.ring[last * 2]);
-          cpu.push(this.perf.ring[last * 2 + 1]);
+        for (let round = 0; round < 3 && !this.analysisAbort; round++) {
+          restore();
+          await block(gB);
+          restore();
+          set();
+          await block(gV, m);
           calls = this.renderer.info.render.drawCalls;
           tris = this.renderer.info.render.triangles;
         }
-        for (let k = 0; k < 4; k++) await this.nextFrame();
-        const g = this.gpuSamples;
-        this.gpuSamples = null;
         const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
         // Szene (kleiner gerechnet) in der Bildgröße
         const sc = this.dpr / this.maxDpr;
-        rows.push({ name, gpu: med(g), gpu90: p90(g), draw: med(draw), cpu: med(cpu), frame: med(frame), calls, tris, px: `${Math.round(size.x * sc)}×${Math.round(size.y * sc)} in ${size.x}×${size.y}` });
+        rows.push({ name, gpu: med(gV), gpu90: p90(gV), base: med(gB), draw: med(m.draw), cpu: med(m.cpu), frame: med(m.frame), calls, tris, px: `${Math.round(size.x * sc)}×${Math.round(size.y * sc)} in ${size.x}×${size.y}` });
       }
     } finally {
       this.gpuSamples = null;
@@ -825,8 +824,8 @@ export class Race {
       `gruppetto Abfahrt-WebGPU Kostenanalyse · ${new Date().toISOString()} · ${this.backendName} · GPU-Zeitstempel ${this.gpuTiming ? 'ja' : 'nein'}`,
       `Gerät: ${navigator.userAgent}`,
       `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, MSAA ${S0.msaa}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => (RACE_DEFAULTS as unknown as Record<string, unknown>)[k] !== v)))}`,
-      'Variante | GPU ms (Median, Ersparnis zur Basis) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms | Aufrufe | Dreiecke k | Szene in Bild (Bildpunkte)',
-      ...rows.map((r) => `${r.name} | ${f(r.gpu)}${r === b ? '' : d(r.gpu, b.gpu)} | ${f(r.gpu90)} | ${f(r.draw)}${r === b ? '' : d(r.draw, b.draw)} | ${f(r.cpu)} | ${f(r.frame)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.px}`),
+      'Variante | GPU ms (Median, Ersparnis zur Basis im Wechsel gemessen) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms | Aufrufe | Dreiecke k | Szene in Bild (Bildpunkte)',
+      ...rows.map((r) => `${r.name} | ${f(r.gpu)}${r === b ? '' : d(r.gpu, r.base)} | ${f(r.gpu90)} | ${f(r.draw)}${r === b ? '' : d(r.draw, b.draw)} | ${f(r.cpu)} | ${f(r.frame)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.px}`),
     ];
     return lines.join('\n');
   }

@@ -341,7 +341,8 @@ function farPerson(): THREE.BufferGeometry {
 }
 
 /** Stufen: fein bis hier (m), einfach bis da, Kasten-Menschen bis dort */
-const LOD_D = [16, 30, 170];
+// enger als früher (16/30/170): am Start stehen über hundert Menschen, die feine Stufe hat 1300 Dreiecke und wirft Schatten
+const LOD_D = [11, 24, 150];
 
 interface Group { geo: THREE.InstancedBufferGeometry; buf: THREE.InstancedInterleavedBuffer; data: Float32Array; mesh: THREE.Mesh }
 
