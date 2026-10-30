@@ -117,14 +117,15 @@ export function unpackXY(t: N): N {
  * Projektion von drei Seiten (Fels an steilen Wänden): Farbe und Weltnormale.
  * scale: Meter je Kachel. Normalen nach „UDN“: Tangentennormale auf die Fläche der Projektion gekippt.
  */
-export function triplanar(albedo: Texture, nra: Texture, pos: N, nGeo: N, scale: number, sharp = 4, top?: { albedo: Texture; nra: Texture }, bump = 1) {
+export function triplanar(albedo: Texture, nra: Texture, pos: N, nGeo: N, scale: number, sharp = 4, top?: { albedo: Texture; nra: Texture }, bump = 1, warp?: N) {
   const w0 = abs(nGeo).pow(float(sharp));
   const w = w0.div(w0.x.add(w0.y).add(w0.z));
   const s = 1 / scale;
-  // Seiten: v ist immer die Höhe (Wandmuster wie Schichtbänke und Wasserstreifen stehen richtig)
-  const uvX = pos.zy.mul(s);
-  const uvY = pos.xz.mul(s);
-  const uvZ = pos.xy.mul(s);
+  // Seiten: v ist immer die Höhe (Wandmuster wie Schichtbänke und Wasserstreifen stehen richtig); warp: Verschiebung
+  // in Kacheln (bricht das Kachelmuster)
+  const uvX = warp ? pos.zy.mul(s).add(warp) : pos.zy.mul(s);
+  const uvY = warp ? pos.xz.mul(s).add(warp) : pos.xz.mul(s);
+  const uvZ = warp ? pos.xy.mul(s).add(warp.yx) : pos.xy.mul(s);
   const tA = top?.albedo ?? albedo;
   const tN = top?.nra ?? nra;
   const cX = texture(albedo, uvX);
@@ -160,6 +161,40 @@ export function planar(albedo: Texture, nra: Texture, uvN: N, nGeo: N, strength 
 export function planarN(nra: Texture, uvN: N, nGeo: N, strength = 1) {
   const xy = texture(nra, uvN).xy.mul(2).sub(1).mul(strength);
   return normalize(nGeo.add(vec3(xy.x, 0, xy.y)));
+}
+
+/**
+ * Kachelmuster brechen, ohne die Textur zweimal zu lesen: die Koordinaten (in Kacheln) mit großflächigem, glattem
+ * Rauschen verbiegen – jede Wiederholung liegt anders verschoben, Flecken und Risse stehen nie wieder gleich. Das
+ * Rauschen hat eine Periode von 1/k Kacheln (nicht ganzzahlig, k = 0,137 → 7,3), gelesen aus einer kleinen Mip-Stufe
+ * (glatt, ein billiger Zugriff). amt: größte Verschiebung in Kacheln.
+ */
+export function unTile(noise: Texture, uv: N, amt = 0.35, k = 0.137): N {
+  const n = texture(noise, uv.mul(k).add(vec2(0.31, 0.77))).level(4.5);
+  return uv.add(vec2(n.x, n.z).sub(0.5).mul(amt * 2));
+}
+
+/** Verschiebung (in Kacheln) für Wände und Hänge: aus Draufsicht und Höhe, damit auch übereinander nichts gleich ist */
+export function unTile3(noise: Texture, pos: N, scale: number, amt = 0.35): N {
+  const a = texture(noise, pos.xz.div(scale * 7.3)).level(4.5);
+  const b = texture(noise, vec2(pos.x.add(pos.z).mul(0.7), pos.y).div(scale * 5.1).add(vec2(0.53, 0.19))).level(4.5);
+  return vec2(a.x.add(b.z), a.z.add(b.x)).sub(1).mul(amt);
+}
+
+/**
+ * Feines, nie wiederkehrendes Korn (helligkeit ≈ 1 ± amt/2): Wertrauschen in Weltlage mit Zellgröße cell; wo eine
+ * Zelle kleiner als ~2 Bildpunkte wird, blendet es aus (kein Flimmern)
+ */
+export function grain(p: N, cell: number, amt: number): N {
+  const q = p.div(cell);
+  const i = floor(q);
+  const f = fract(q);
+  const u = f.mul(f).mul(f.mul(-2).add(3));
+  const c = (ox: number, oy: number) => h21(i.add(vec2(ox, oy)));
+  const v = mix(mix(c(0, 0), c(1, 0), u.x), mix(c(0, 1), c(1, 1), u.x), u.y);
+  const fw = tsl.fwidth(q.x).add(tsl.fwidth(q.y));
+  const fade = float(1).sub(tsl.smoothstep(0.35, 0.9, fw));
+  return float(1).add(v.sub(0.5).mul(amt * 2).mul(fade));
 }
 
 /** gebackene Farbe ist als Wurzel gespeichert (mehr Genauigkeit im Dunkeln) */

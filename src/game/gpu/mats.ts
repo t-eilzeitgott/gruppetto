@@ -4,7 +4,7 @@
  */
 import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
-import { decodeAlbedo, h21, tsl, vn1, type N } from './nodes';
+import { decodeAlbedo, grain, h21, tsl, unTile, vn1, type N } from './nodes';
 import { MOOD_U } from './mood';
 import { ambientAt, cheapMaterial, SUN } from './light';
 import { groundMap, lampLit, terrainSun } from './sunmap';
@@ -75,12 +75,15 @@ function roadWear(um: N, vm: N) {
 /** Asphalt: u quer (0 … 1 über die Fahrbahn), v längs; aT = (rechts.x, rechts.z, vorn.x, vorn.z) */
 export function roadMaterial(S: Surfaces): THREE.MeshBasicNodeMaterial {
   const p = uv();
-  const a = texture(S.asphalt.albedo, p);
-  const t = texture(S.asphalt.nra, p);
+  // Körnung ohne erkennbare Wiederholung (alle 5,6 m dieselben Steine): Koordinaten verbogen
+  const pw = unTile(S.noise.albedo, p, 0.3);
+  const a = texture(S.asphalt.albedo, pw);
+  const t = texture(S.asphalt.nra, pw);
   const W = roadWear(p.x.mul(RW), p.y.mul(RW));
   // nass (Regen): dunkler und spiegelnd (Himmel in Spiegelrichtung, zum flachen Winkel stärker)
   const wet = MOOD_U.wet as unknown as N;
-  let col: N = decodeAlbedo(a.rgb);
+  // fleckig: Bindemittel mal satter, mal heller (über einen Meter und feiner)
+  let col: N = decodeAlbedo(a.rgb).mul(grain(p.mul(RW), 1.1, 0.09)).mul(grain(p.mul(RW).add(31.7), 0.23, 0.07));
   // Alterung: heller und grauer (Bindemittel ausgewaschen) oder satt dunkel
   col = mix(col.mul(0.82), col.mul(1.22).add(vec3(0.012, 0.012, 0.011)), W.age);
   // Flicken: frisch = dunkel, kaum Körner; alt = heller, ausgebleicht

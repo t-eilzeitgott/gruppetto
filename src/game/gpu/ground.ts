@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
-import { decodeAlbedo, planar, planarN, triplanar, tsl, vn1, vnoise, type N } from './nodes';
+import { decodeAlbedo, grain, planar, planarN, triplanar, tsl, unTile, unTile3, vn1, vnoise, type N } from './nodes';
 import { cheapMaterial } from './light';
 import { groundMap, lampLit, terrainSun } from './sunmap';
 
@@ -163,7 +163,7 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   const V = perVertex(S, m.detail, spacing);
   const gm = meanOf(S.grass);
   // Wiese fein (3,2 m): nur nah
-  const gF = m.detail ? planar(S.grass.albedo, S.grass.nra, pos.xz.div(3.2), nG, 0.9) : null;
+  const gF = m.detail ? planar(S.grass.albedo, S.grass.nra, unTile(S.noise.albedo, pos.xz.div(3.2), 0.4), nG, 0.9) : null;
   const gC: N = V.gC;
   const gDet: N = gF ? decodeAlbedo(gF.col).div(gm) : gC;
   const macro: N = V.macro;
@@ -174,6 +174,8 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   const steepG = float(1).sub(smoothstep(0.72, 0.95, nG.y));
   const tint = mix(base, base.mul(vec3(1.25, 1.05, 0.62)), dryW.mul(0.55).add(steepG.mul(0.3)).min(0.8)).mul(macro.x.mul(0.6).add(0.75).clamp(0.7, 1.25));
   let grassCol: N = tint.mul(m.detail ? mix(gC.mul(0.35).add(0.65), gDet.mul(0.7).add(gC.mul(0.3)), flat) : mix(float(1), gC.mul(0.6).add(0.4), flat));
+  // nah: unregelmäßige Helligkeit über einen halben Meter und feines Korn (wiederholt sich nie, blendet fern aus)
+  if (m.detail) grassCol = grassCol.mul(grain(pos.xz, 0.55, 0.11)).mul(grain(pos.xz.add(17.3), 0.13, 0.12));
   // Vielfalt statt Grashalmen: Wiesenarten über ein paar Dutzend Meter (je Ecke, kostet nichts je Bildpunkt)
   const mz: N = V.mz;
   const lush = smoothstep(0.3, 0.62, mz.x);
@@ -211,7 +213,7 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   let n: N = gF ? normalize(mix(nG, gF.n, flat)) : normalize(mix(nG, planarN(S.grass.nra, pos.xz.div(m.canopy ? 47 : 23), nG, 3.2), 0.7));
   const rk2: N = V.rk2;
   // ein Kieszugriff für Erde, Geröll und Bankett
-  const gv = m.detail || m.sc ? planar(S.gravel.albedo, S.gravel.nra, pos.xz.div(m.detail ? 1.6 : 9), nG, m.detail ? 0.8 : 1.4) : null;
+  const gv = m.detail || m.sc ? planar(S.gravel.albedo, S.gravel.nra, unTile(S.noise.albedo, pos.xz.div(m.detail ? 1.6 : 9), 0.4), nG, m.detail ? 0.8 : 1.4) : null;
   if (m.detail && gv) {
     const dirt = smoothstep(0.8, 0.9, rk2.y.add(steepG.mul(0.12))).mul(0.8);
     const soil = mix(vec3(0.075, 0.058, 0.04), decodeAlbedo(gv.col).mul(0.55), smoothstep(0.85, 1.2, decodeAlbedo(gv.col).x.div(meanOf(S.gravel).x)));
@@ -278,7 +280,7 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
     rockAo = float(1);
   } else {
     const top = { albedo: S.rock.albedo, nra: S.rock.nra };
-    const r = triplanar(S.cliff.albedo, S.cliff.nra, pos, nR, m.detail ? 9 : 27, 10, top, m.detail ? 1.5 : 2);
+    const r = triplanar(S.cliff.albedo, S.cliff.nra, pos, nR, m.detail ? 9 : 27, 10, top, m.detail ? 1.5 : 2, unTile3(S.noise.albedo, pos, m.detail ? 9 : 27, 0.45));
     // mittlere Stufe: die Wandtextur (27 m) nur halb so kräftig – sonst ein Vorhang aus gleichen Streifen über den
     // ganzen Berg; die großen Formen kommen aus dem Relief
     const rRaw = m.detail ? decodeAlbedo(r.col).div(meanOf(S.cliff)) : mix(vec3(1, 1, 1), decodeAlbedo(r.col).div(meanOf(S.cliff)), 0.5);
@@ -292,6 +294,8 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
     rockAo = M.element(2).x;
   }
   rockCol = rockCol.mul(zone.z.mul(0.45).add(0.8)).mul(mix(vec3(1, 1, 1), vec3(1.12, 1.0, 0.84), smoothstep(0.55, 0.85, zone.x)));
+  // nah: Korn im Fels (Wände: aus Höhe und Lage längs der Wand)
+  if (m.detail) rockCol = rockCol.mul(grain(vec2(pos.x.add(pos.z.mul(0.71)), pos.y.add(pos.z.mul(0.37))), 0.37, 0.16));
   const ledgeG = smoothstep(0.82, 0.95, normalize(rockN).y).mul(float(1).sub(smoothstep(0.05, 0.4, m.sn))).mul(smoothstep(0.3, 0.6, zone.y.add(0.15)));
   const rkV = rkW.mul(float(1).sub(ledgeG.mul(0.85)));
   col = mix(col, rockCol, rkV);

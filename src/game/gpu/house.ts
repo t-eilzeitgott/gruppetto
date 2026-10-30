@@ -12,7 +12,7 @@
  */
 import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
-import { decodeAlbedo, tsl, useDither, type N } from './nodes';
+import { decodeAlbedo, tsl, unTile, useDither, type N } from './nodes';
 import { cheapMaterial } from './light';
 import { instNodes } from './inst';
 import { MOOD_U } from './mood';
@@ -859,32 +859,34 @@ export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnT
     m.name = name;
     return m;
   };
-  const tex = (id: SurfaceId, size: number) => {
-    const p = uv().div(size);
+  const tex = (id: SurfaceId, size: number, amt = 0.25) => {
+    // je Haus anders verschoben und verbogen (kein Haus wie das andere, keine Kachel wie die nächste)
+    const I0 = instNodes();
+    const p = unTile(S.noise.albedo, uv().div(size).add(I0.at.xz.mul(0.173)), amt);
     const a = texture(S[id].albedo, p);
     const t = texture(S[id].nra, p);
     return { col: decodeAlbedo(a.rgb), rough: t.z, ao: t.w, xy: t.xy.mul(2).sub(1) };
   };
   return {
     plaster: make('house-plaster', (I) => {
-      const t = tex('plaster', 2);
+      const t = tex('plaster', 2, 0.3);
       // Putzfarbe je Haus (weiß bis warmes Cremeweiß), Spritzwasser und Schmutz unten
       const tint = mix(vec3(1, 1, 1), vec3(1.02, 0.95, 0.82), I.extra);
       const dirt = mix(float(0.66), float(1), smoothstep(0.7, 1.7, positionGeometry.y));
       return { col: t.col.mul(vertexColor()).mul(tint).mul(dirt), rough: t.rough, ao: t.ao, xy: t.xy };
     }),
     wood: make('house-wood', () => {
-      const a = tex('logs', 2);
-      const c = tex('boards', 2);
+      const a = tex('logs', 2, 0.05);
+      const c = tex('boards', 2, 0.05);
       const k = attribute('aE', 'vec4').w;
       return { col: mix(c.col, a.col, k).mul(vertexColor()), rough: mix(c.rough, a.rough, k), ao: mix(c.ao, a.ao, k), xy: mix(c.xy, a.xy, k) };
     }),
     roof: make('house-roof', () => {
-      const t = tex('shingles', 2);
+      const t = tex('shingles', 2, 0.12);
       return { col: t.col.mul(vertexColor()), rough: t.rough, ao: t.ao, xy: t.xy, k: 1.3 };
     }),
     stone: make('house-stone', () => {
-      const t = tex('masonry', 2.5);
+      const t = tex('masonry', 2.5, 0.25);
       return { col: t.col.mul(vertexColor()), rough: t.rough, ao: t.ao, xy: t.xy, k: 1.2 };
     }),
     detail: make('house-detail', (I) => {
