@@ -27,6 +27,7 @@ import { loadSettings, MOOD_U, MOODS, RACE_DEFAULTS, RACE_KEY, saveSettings, typ
 import { corridorMaterial, terrainMaterial } from './ground';
 import { adsMaterial, marksMaterial, metalMaterial, paintMaterial, roadMaterial, woodMaterial } from './mats';
 import { Rider, teamKit } from './rider';
+import { Peloton } from './peloton';
 import { EV, Perf, type Report } from './perf';
 import { World } from './world';
 import { SunBake } from './sunbake';
@@ -93,6 +94,8 @@ export type RaceCam = 'chase' | 'low' | 'side' | 'drone';
 
 /** Vorrat an Gegner-Modellen (beim Laden gebaut und vorgewärmt) */
 const POOL = 16;
+/** Fahrerfeld der Abfahrt (Massenabfahrt): so viele Gegner; ?field=N zum Ausprobieren */
+const FIELD = Number(/[?&]field=(\d+)/.exec(typeof location !== 'undefined' ? location.search : '')?.[1] ?? 110);
 /** Kamera hinter dem Fahrer wie im Spiel */
 const CAM_BACK = 6.2;
 const CAM_UP = 2.75;
@@ -123,6 +126,8 @@ export class Race {
   readonly overlay = new Overlay();
   private rider: Rider | null = null;
   private pool: Rider[] = [];
+  /** Fahrerfeld in der Ferne (Instanzen; nur Abfahrt) */
+  private peloton: Peloton | null = null;
   private poolOf = new Map<number, number>();
   private poolFree: number[] = [];
   /** laufende Fahrt (auch vor dem Start: Fahrer stehen am Start) */
@@ -272,6 +277,8 @@ export class Race {
 
     await step(0.1, 'Strecke');
     const track = (this.track = new Track(this.opts.dayKey, this.opts.names, this.opts.tt ? 'tt' : 'descent', this.opts.tt?.town ?? null));
+    // Abfahrt mit Fahrerfeld: Straße mal breiter, mal enger (dieselbe Regel wie in der Fahrphysik)
+    track.widthVar = !this.opts.tt;
     const terrain = (this.terrain = new Terrain(track));
     terrain.woods = true;
     terrain.rugged = true;
@@ -314,6 +321,10 @@ export class Race {
       this.pool.push(R);
       this.poolFree.push(POOL - 1 - i);
       this.scene.add(R.group);
+    }
+    if (!this.opts.tt) {
+      this.peloton = new Peloton(Math.max(64, FIELD + 60));
+      this.scene.add(this.peloton.mesh);
     }
 
     const scenePass = (this.scenePass = pass(this.scene, this.camera, { samples: gpu ? this.settings.msaa : 0 }));
@@ -376,6 +387,7 @@ export class Race {
     const saved: [THREE.Object3D, boolean, boolean][] = [];
     this.scene.traverse((o) => { saved.push([o, o.visible, o.frustumCulled]); o.visible = true; o.frustumCulled = false; });
     world.warm(true);
+    this.peloton?.warm(true);
     this.objects?.warm(true);
     this.particles?.warm(true);
     for (const R of this.pool) { R.far(0); R.lamp(true); }
@@ -425,8 +437,9 @@ export class Race {
     const e = new Abfahrt({
       dayKey: this.opts.dayKey, names: this.opts.names, friends: [], kit: this.opts.kit, best: 0,
       missions: [], missionsDone: new Set(), tutorial: false, cruise: cruise || undefined,
-      // keine Hindernisse, dafür Massenstürze (zu schnell aufs Hinterrad)
+      // keine Hindernisse, dafür Massenstürze (zu schnell aufs Hinterrad); ein ganzes Fahrerfeld
       pileups: true,
+      field: FIELD,
       onEvent: (ev) => this.opts.onEvent?.(ev),
       onOver: (res) => this.opts.onOver?.(res),
     });
@@ -533,7 +546,8 @@ export class Race {
       if (dz < 0.4 || dz > 16) continue;
       if (Math.abs(o.x - tx) < 1.05 && p.v > o.v - 0.6) tx = o.x + (o.x > tx ? -1.3 : 1.3);
     }
-    e.tx = clamp(tx, -ROAD_HALF + 0.45, ROAD_HALF - 0.45);
+    const hw = ROAD_HALF + e.track.extraAt(e.p.z);
+    e.tx = clamp(tx, -hw + 0.45, hw - 0.45);
     e.key('up', Math.abs(curveAt(p.z + 10)) < 0.006 && p.v > 11);
   }
 
@@ -617,6 +631,18 @@ export class Race {
         }, dt, this.time);
       }
       R.lamp(light > 0.05);
+    }
+    // alle übrigen (das Feld voraus und hinter dir) als Instanzen
+    const pel = this.peloton;
+    if (pel) {
+      pel.begin();
+      for (const o of e.opps) {
+        if (this.poolOf.has(o.id) || o.z < p.z - 160 || o.z > p.z + 950) continue;
+        t.world(o.z, o.x, 0, this.w);
+        const down = !!o.wreck;
+        pel.add(this.w.x, this.w.y, this.w.z, this.w.th, down ? (o.x > 0 ? 1.45 : -1.45) : o.lean, o.pedal, o.kit, down);
+      }
+      pel.commit();
     }
   }
 
@@ -722,7 +748,7 @@ export class Race {
         break;
       }
       case 'side': {
-        t.world(p.z + 9, this.sideSign * (EDGE + 2.5), 0, w);
+        t.world(p.z + 9, this.sideSign * (EDGE + t.extraAt(p.z + 9) + 2.5), 0, w);
         out.pos.set(w.x, Math.max(w.y, t.heightAt(p.z + 9)) + 1.45, w.z);
         out.look.set(rx, ry + 1.0 + air, rz);
         out.fov = portrait ? 46 : 32;
@@ -1008,7 +1034,7 @@ export class Race {
       const at = (e instanceof Abfahrt ? e.pileAt : null) ?? { z: e.p.z, x: e.p.x };
       const side = at.x > 0 ? -1 : 1;
       const cz = Math.max(0, at.z - 9);
-      t.world(cz, side * (EDGE + 1.8), 0, this.tvV);
+      t.world(cz, side * (EDGE + t.extraAt(cz) + 1.8), 0, this.tvV);
       const y = Math.max(t.heightAt(cz) + 2.3, this.groundY(this.tvV.x, this.tvV.z) + 1.6);
       this.crashCam = new THREE.Vector3(this.tvV.x, y, this.tvV.z);
     }
@@ -1627,6 +1653,7 @@ export class Race {
     this.particles?.dispose();
     this.rider?.dispose();
     for (const R of this.pool) R.dispose();
+    this.peloton?.dispose();
     this.atmo?.dispose();
     this.maps?.dispose();
     this.frameRT?.dispose();

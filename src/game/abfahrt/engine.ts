@@ -154,6 +154,11 @@ export interface GameOptions {
    * reißt sich und den Vordermann um, und wer dahinter zu spät reagiert, fällt drüber
    */
   pileups?: boolean;
+  /**
+   * WebGPU-Abfahrt: Fahrerfeld – so viele Fahrer stehen am Start mit dir (du startest hinten) und so viele sind
+   * unterwegs ungefähr um dich herum (neue Gruppen kommen weit voraus dazu, Abgehängte fallen weg)
+   */
+  field?: number;
   onEvent?: (e: GameEvent) => void;
   onOver?: (r: RunResult) => void;
 }
@@ -202,6 +207,7 @@ export class Abfahrt {
   private rng: Rng;
   private oppId = 0;
   private nextSpawn = 160;
+  private overtakePop = -9;
   private curve = { active: false, sign: 0, hairpin: false, minV: 99, clean: true, maxK: 0 };
   private lastBarrier = 0;
   private lastBarrierZ = 0;
@@ -238,6 +244,8 @@ export class Abfahrt {
   reset() {
     this.track = new Track(this.opts.dayKey, this.opts.names);
     if (this.opts.cruise || this.opts.pileups) this.track.dropHazards();
+    // WebGPU-Abfahrt (Massenstürze): Straße mal breiter, mal enger
+    this.track.widthVar = !!this.opts.pileups;
     this.rng = mulberry32(this.track.seed ^ 0x5eed);
     this.wreck = null;
     this.pileCount = 0;
@@ -297,7 +305,8 @@ export class Abfahrt {
     if (!this.steer.active) return;
     // seitlich lenken: eine Bildschirmbreite ≈ von Rand zu Rand
     const k = 7.5 / this.viewW;
-    const nx = clamp(this.steer.tx0 + (x - this.steer.sx) * k, -EDGE - 1.2, EDGE + 1.2);
+    const ew = EDGE + this.track.extraAt(this.p.z);
+    const nx = clamp(this.steer.tx0 + (x - this.steer.sx) * k, -ew - 1.2, ew + 1.2);
     this.steered += Math.abs(nx - this.tx);
     this.tx = nx;
     // hoch schieben = ducken, runter ziehen = bremsen (mit etwas Spiel, damit Lenken nicht auslöst)
@@ -336,8 +345,11 @@ export class Abfahrt {
     const dt = Math.min(0.05, dtReal) * this.timeScale * (this.phase === 'playing' && this.opts.cruise ? this.dbg.speed : 1);
     this.time += dt;
     this.phaseT += dtReal;
-    if (this.keys.left) { this.tx = clamp(this.tx - 6 * dt, -EDGE - 1.2, EDGE + 1.2); this.steered += 6 * dt; }
-    if (this.keys.right) { this.tx = clamp(this.tx + 6 * dt, -EDGE - 1.2, EDGE + 1.2); this.steered += 6 * dt; }
+    {
+      const ew = EDGE + this.track.extraAt(this.p.z);
+      if (this.keys.left) { this.tx = clamp(this.tx - 6 * dt, -ew - 1.2, ew + 1.2); this.steered += 6 * dt; }
+      if (this.keys.right) { this.tx = clamp(this.tx + 6 * dt, -ew - 1.2, ew + 1.2); this.steered += 6 * dt; }
+    }
 
     if (this.phase === 'countdown') {
       const n = 3 - Math.floor(this.phaseT / 0.75);
@@ -420,7 +432,8 @@ export class Abfahrt {
     const seg = this.track.segAt(p.z);
     const D = difficulty(p.z);
     const k = seg.curve;
-    const ax = Math.abs(p.x);
+    // Straßenbreite hier (breitere und engere Stellen): seitlich gemessen ab der Normalbreite
+    const ax = Math.abs(p.x) - this.track.extraAt(p.z);
     const side = this.sideAt(seg, p.x);
 
     // --- Grip
@@ -595,7 +608,9 @@ export class Abfahrt {
   private edges(seg: Seg, dt: number) {
     const p = this.p;
     const sign = p.x < 0 ? -1 : 1;
-    const ax = Math.abs(p.x);
+    // gemessen ab der Normalbreite (die Straße ist hier um ex breiter oder schmaler)
+    const ex = this.track.extraAt(p.z);
+    const ax = Math.abs(p.x) - ex;
     const side = this.sideAt(seg, p.x);
     let limit = Infinity;
     let kind: 'rail' | 'stone' | 'wall' | 'tunnel' | 'kerb' | 'crowd' | 'fence' | null = null;
@@ -619,9 +634,9 @@ export class Abfahrt {
     if (ax > limit && kind) {
       const hard = Math.abs(p.vx) > 7.5 && p.v > 18 && kind !== 'kerb';
       if (hard) { this.crash(kind === 'wall' || kind === 'tunnel' ? 'Gegen die Felswand' : 'Über die Leitplanke'); return; }
-      p.x = sign * limit;
+      p.x = sign * (limit + ex);
       p.vx = -p.vx * 0.3 - sign * 1.1;
-      this.tx = clamp(this.tx, -limit + 0.4, limit - 0.4);
+      this.tx = clamp(this.tx, -limit - ex + 0.4, limit + ex - 0.4);
       const loss = kind === 'wall' || kind === 'tunnel' ? 0.82 : kind === 'stone' ? 0.84 : kind === 'kerb' ? 0.9 : 0.87;
       p.v *= loss;
       p.wobble = Math.max(p.wobble, 0.55);
@@ -715,7 +730,10 @@ export class Abfahrt {
         o.passed = true;
         this.stats.overtakes += 1;
         const close = Math.abs(dx) < 1.05;
-        this.award('overtake', close ? 80 : 45, close ? 'Knapp vorbei!' : 'Überholt', close ? 'accent' : 'white');
+        // im Fahrerfeld überholt man oft: Hinweis nur ab und zu (Punkte immer)
+        const quiet = !!this.opts.field && !close && this.time - this.overtakePop < 1.2;
+        if (!quiet) this.overtakePop = this.time;
+        this.award('overtake', close ? 80 : 45, close ? 'Knapp vorbei!' : 'Überholt', close ? 'accent' : 'white', undefined, false, quiet);
         if (close) this.stats.near += 1;
         this.overtakeTimes.push(this.time);
         this.overtakeTimes = this.overtakeTimes.filter((t) => this.time - t < 4);
@@ -816,6 +834,7 @@ export class Abfahrt {
   // ------------------------------------------------------------ Gegner
 
   private spawnStartGroup() {
+    if (this.opts.field) { this.spawnField(this.opts.field); return; }
     const r = this.rng;
     for (let i = 0; i < 3; i++) {
       const kit = this.kit(r);
@@ -831,7 +850,60 @@ export class Abfahrt {
     return { ...k, skin: pick(r, SKINS), number: String(Math.floor(between(r, 11, 199))) };
   }
 
+  /** Massenstart: das ganze Feld vor dir in Reihen über die (am Start breite) Straße */
+  private spawnField(n: number) {
+    const r = this.rng;
+    let k = 0;
+    for (let row = 0; k < n; row++) {
+      const z = 10 + row * 2.25;
+      const half = ROAD_HALF + this.track.extraAt(z) - 0.55;
+      const cnt = Math.min(Math.max(3, Math.floor((half * 2) / 1.15)), n - k);
+      for (let c = 0; c < cnt; c++, k++) {
+        const x = -half + ((c + 0.5) * (half * 2)) / cnt + (r() - 0.5) * 0.25;
+        this.opps.push({
+          id: this.oppId++, z: z + r() * 0.7, x, vx: 0, v: 0, tx: x, f: between(r, 0.72, 1.0), kit: this.kit(r), pedal: r() * 6,
+          lean: 0, tuck: 0, brake: 0, passed: false, group: -2, bump: 0, attacker: false,
+        });
+      }
+    }
+    this.nextSpawn = 400;
+  }
+
+  /** Fahrerfeld unterwegs: weit voraus neue Gruppen (Gruppetto, Ausreißer), ab und zu Schnelle von hinten */
+  private spawnMass(n: number) {
+    const p = this.p;
+    if (p.z < this.nextSpawn) return;
+    const r = this.rng;
+    this.nextSpawn = p.z + between(r, 60, 120);
+    this.opps = this.opps.filter((o) => o.z > p.z - 160 && o.z < p.z + 1100);
+    const ahead = this.opps.filter((o) => o.z > p.z).length;
+    if (ahead < n * 0.75) {
+      const z0 = p.z + between(r, 650, 850);
+      const m = Math.round(between(r, 4, Math.min(22, n * 0.25)));
+      const group = this.oppId;
+      const f = between(r, 0.66, 0.92);
+      for (let i = 0; i < m; i++) {
+        const z = z0 - i * between(r, 1.6, 3.2);
+        const half = ROAD_HALF + this.track.extraAt(z) - 0.5;
+        const x = clamp((r() - 0.5) * 2 * half, -half, half);
+        this.opps.push({
+          id: this.oppId++, z, x, vx: 0, v: p.v * 0.8, tx: x, f: f * between(r, 0.96, 1.04), kit: this.kit(r), pedal: r() * 6,
+          lean: 0, tuck: 1, brake: 0, passed: false, group, bump: 0, attacker: false,
+        });
+      }
+    }
+    // Schnelle von hinten (selten): an dir vorbei
+    if (chance(r, 0.18) && this.opps.filter((o) => o.attacker).length < 3) {
+      const lane = chance(r, 0.5) ? -1 : 1;
+      this.opps.push({
+        id: this.oppId++, z: p.z - 45, x: lane * 1.4, vx: 0, v: p.v + 2, tx: lane * 1.4, f: between(r, 1.06, 1.12), kit: this.kit(r),
+        pedal: 0, lean: 0, tuck: 0.6, brake: 0, passed: true, group: this.oppId, bump: 0, attacker: true,
+      });
+    }
+  }
+
   private spawn(D: number) {
+    if (this.opts.field) { this.spawnMass(this.opts.field); return; }
     const p = this.p;
     if (p.z < this.nextSpawn) return;
     const r = this.rng;
@@ -865,9 +937,28 @@ export class Abfahrt {
     this.opps = this.opps.filter((o) => o.z > p.z - 60 && o.z < p.z + 520);
   }
 
-  private stepOpps(dt: number) {
+  private subN = 0;
+  private stepOpps(dt0: number) {
     const live = this.phase === 'playing' || this.phase === 'crash';
-    for (const o of this.opps) {
+    // nach Lage sortiert (fast schon sortiert: Einfügen kostet kaum etwas) – Nachbarn sind dann die nächsten im Feld
+    const os = this.opps;
+    for (let i = 1; i < os.length; i++) {
+      const a = os[i];
+      let j = i - 1;
+      while (j >= 0 && os[j].z > a.z) { os[j + 1] = os[j]; j--; }
+      os[j + 1] = a;
+    }
+    this.subN++;
+    const pz = this.p.z;
+    for (let oi = 0; oi < os.length; oi++) {
+      const o = os[oi];
+      // weit weg (Feld voraus, Abgehängte): nur jeden dritten Schritt rechnen (dann dreifach), dazwischen rollen
+      let dt = dt0;
+      if (live && !o.wreck && Math.abs(o.z - pz) > 240) {
+        if ((this.subN + o.id) % 3 !== 0) { o.z += o.v * dt0; pedalStep(o, o.cad ?? 0, dt0); continue; }
+        dt = dt0 * 3;
+        o.z -= o.v * dt0 * 2;
+      }
       const seg = this.track.segAt(o.z);
       if (o.wreck) {
         const w = o.wreck;
@@ -882,6 +973,8 @@ export class Abfahrt {
         o.pedal += dt * 0.3;
         continue;
       }
+      // halbe Fahrbahnbreite hier (Straße mal breiter, mal enger)
+      const half = ROAD_HALF + this.track.extraAt(o.z);
       // Wunschtempo: Gefälle, Kurven voraus
       const aG = -G * seg.grade;
       const vEq = Math.sqrt(Math.max(0.6, aG - RR) / (CD * 1.12)) * o.f;
@@ -894,14 +987,16 @@ export class Abfahrt {
       let target = Math.min(vEq, vC, VMAX - 2);
       // Vordermann: langsamer und in der Spur → überholen, wo Platz ist; geht das (noch) nicht, dahinter bleiben
       let pass: number | null = null;
-      for (const q of this.opps) {
-        if (q === o || q.wreck) continue;
+      for (let qi = oi + 1; qi < os.length; qi++) {
+        const q = os[qi];
         const dz = q.z - o.z;
+        if (dz > 10) break;
+        if (q.wreck) continue;
         const dx = q.x - o.x;
-        if (dz <= 0 || dz > 10 || Math.abs(dx) > 0.85) continue;
+        if (dz <= 0 || Math.abs(dx) > 0.85) continue;
         if (o.v > q.v + 0.2 || dz < 3) {
           const left = q.x - 0.95, right = q.x + 0.95;
-          const okL = left > -ROAD_HALF + 0.45, okR = right < ROAD_HALF - 0.45;
+          const okL = left > -half + 0.45, okR = right < half - 0.45;
           // die Seite, auf der er schon halb ist, sonst die freie
           const want = okL && okR ? (dx > 0 ? left : right) : okL ? left : okR ? right : null;
           if (want !== null && (pass === null || Math.abs(want - o.x) < Math.abs(pass - o.x))) pass = want;
@@ -920,14 +1015,14 @@ export class Abfahrt {
           if (near < 45) {
             target = 0;
             o.brake = 1;
-            dodge = wx > 0 ? -ROAD_HALF + 0.6 : ROAD_HALF - 0.6;
+            dodge = wx > 0 ? -half + 0.6 : half - 0.6;
           }
         }
       }
       const hardBrake = dodge !== null;
       const acc = clamp((target - o.v) * 0.9, hardBrake ? -7.5 : -6.5, o.v < 13 ? 2.6 : 1.6);
       // Bremshaltung weich (vorher ein Schalter: der Oberkörper sprang hoch und wieder runter)
-      o.brake += ((acc < -1.5 ? 1 : 0) - o.brake) * Math.min(1, dt * 6);
+      o.brake += ((acc < -1.5 ? 1 : 0) - o.brake) * Math.min(1, dt0 * 6);
       o.v = Math.max(0, o.v + acc * dt);
       o.z += o.v * dt;
 
@@ -943,16 +1038,16 @@ export class Abfahrt {
       if (Math.abs(p.z - o.z) < 2.4 && Math.abs(p.x - o.x) < 0.95) tx = o.x + (o.x > p.x ? 0.6 : -0.6);
       if (pass !== null) tx = pass;
       if (dodge !== null) tx = dodge;
-      tx = clamp(tx, -ROAD_HALF + 0.45, ROAD_HALF - 0.45);
+      tx = clamp(tx, -half + 0.45, half - 0.45);
       o.vx += ((tx - o.x) * 3.2 - o.vx * 2.6) * dt;
-      o.x = clamp(o.x + o.vx * dt, -ROAD_HALF + 0.3, ROAD_HALF - 0.3);
+      o.x = clamp(o.x + o.vx * dt, -half + 0.3, half - 0.3);
       const lean = Math.atan2(seg.curve * o.v * o.v, G) + o.vx * 0.06 + Math.sin(this.time * 14 + o.id) * o.bump * 0.15;
       o.lean += (clamp(lean, -0.7, 0.7) - o.lean) * Math.min(1, dt * 8);
       o.bump = Math.max(0, o.bump - dt);
       // treten: langsam, als Angreifer oder beim Beschleunigen – stufenlos statt An/Aus, dazu der Schwung der Kurbel
       const drive = Math.max(smooth(16.5, 12.5, o.v), o.attacker ? 1 : 0, smooth(0.3, 1.2, acc)) * (1 - o.brake);
-      o.tuck += ((1 - 0.8 * drive) - o.tuck) * Math.min(1, dt * 2);
-      pedalStep(o, drive * cadenceFor(o.v), dt);
+      o.tuck += ((1 - 0.8 * drive) - o.tuck) * Math.min(1, dt0 * 2);
+      pedalStep(o, drive * cadenceFor(o.v), dt0);
     }
     if (live) this.separateOpps();
     if (this.pileAt) this.wreckHits();
@@ -962,7 +1057,7 @@ export class Abfahrt {
       for (let i = i0; i < i0 + 45; i++) {
         const s = this.track.seg(i);
         if (s.objs) for (const ob of s.objs) if (ob.k === 'cow' && ob.vx) {
-          ob.x += ob.vx * dt;
+          ob.x += ob.vx * dt0;
           if (Math.abs(ob.x) > EDGE + 2.5) ob.vx = 0;
         }
       }
@@ -980,6 +1075,8 @@ export class Abfahrt {
       if (a.wreck) continue;
       for (let j = i + 1; j < os.length; j++) {
         const b = os[j];
+        // sortiert (stepOpps): weiter vorn kommt keiner mehr in Reichweite
+        if (b.z - a.z >= 1.85) break;
         if (b.wreck) continue;
         const dz = b.z - a.z, dx = b.x - a.x;
         const az = Math.abs(dz), ax = Math.abs(dx);
@@ -989,8 +1086,9 @@ export class Abfahrt {
         if (az < 1.1 || ax > 0.35) {
           const sd = dx === 0 ? (a.id < b.id ? 1 : -1) : Math.sign(dx);
           const push = (0.62 - ax) / 2;
-          a.x = clamp(a.x - sd * push, -ROAD_HALF + 0.3, ROAD_HALF - 0.3);
-          b.x = clamp(b.x + sd * push, -ROAD_HALF + 0.3, ROAD_HALF - 0.3);
+          const half = ROAD_HALF + this.track.extraAt(a.z);
+          a.x = clamp(a.x - sd * push, -half + 0.3, half - 0.3);
+          b.x = clamp(b.x + sd * push, -half + 0.3, half - 0.3);
           a.vx -= sd * 0.3; b.vx += sd * 0.3;
           if (az < 1.1 && Math.abs(b.x - a.x) < 0.5) { back.z = front.z - 1.1; back.v = Math.min(back.v, front.v); }
         } else {
@@ -1091,8 +1189,9 @@ export class Abfahrt {
     if (this.phase !== 'playing') return;
     // Testfahrt: kein Sturz – zurück auf die Straße
     if (this.opts.cruise) {
-      this.p.x = clamp(this.p.x, -EDGE + 0.6, EDGE - 0.6);
-      this.tx = clamp(this.tx, -EDGE + 0.6, EDGE - 0.6);
+      const ew = EDGE + this.track.extraAt(this.p.z);
+      this.p.x = clamp(this.p.x, -ew + 0.6, ew - 0.6);
+      this.tx = clamp(this.tx, -ew + 0.6, ew - 0.6);
       this.p.vx = 0;
       return;
     }

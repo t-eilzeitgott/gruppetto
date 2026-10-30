@@ -116,7 +116,7 @@ export class Arches {
     const s = this.slot(b);
     const w = { x: 0, y: 0, z: 0, th: 0 };
     this.track.world(i * SEG, 0, 0, w);
-    const span = EDGE * 2 + 0.6;
+    const span = (EDGE + this.track.extra(i)) * 2 + 0.6;
     const pos: number[] = [], nor: number[] = [], uvs: number[] = [], idx: number[] = [];
     const cs = Math.cos(w.th), sn = Math.sin(w.th);
     // Weltlage: lokal x quer zur Straße, z längs; Drehung −th um y wie im Spiel

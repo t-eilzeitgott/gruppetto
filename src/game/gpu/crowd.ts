@@ -466,9 +466,11 @@ export class Crowd {
     const ola = zone === 'tifosi' && s.crowd && !group && hash(Math.floor(s.i / 30) * 31 + 7) < 0.3;
     const w = { x: 0, y: 0, z: 0, th: 0 };
     const out = this.people;
+    // breitere Straße: die Zuschauer stehen entsprechend weiter draußen
+    const ex = t.extra(s.i);
     const placeAt = (p: Person, u: number, dx: number) => {
       const gh = ground(s, sg, dx);
-      t.world(s.i * SEG + u, sg * (EDGE + dx), gh, w);
+      t.world(s.i * SEG + u, sg * (EDGE + ex + dx), gh, w);
       p.x = w.x; p.y = w.y; p.z = w.z;
       const rx = -sg * Math.cos(w.th);
       const rz = -sg * Math.sin(w.th);
@@ -486,7 +488,7 @@ export class Crowd {
       const end = group ? 1.8 + r() * 3.4 : 3.7;
       while (u < end) {
         let dx = rows[ri] + (r() - 0.5) * (ri ? 0.2 : 0.06);
-        if (EDGE + dx > lim - 0.45) break;
+        if (EDGE + ex + dx > lim - 0.45) break;
         const kid = ri === 0 && r() < 0.1;
         if (kid) dx -= 0.06;
         const p = randomPerson(r, zone, { row: ri, kid });

@@ -184,7 +184,7 @@ export class Villages {
     const { track: t, terrain, roadDist } = this.c;
     const w = this.w;
     const R = (k: number) => hash(v.seed, k);
-    const latOf = (z: number, side: number) => Math.max(terrain.lim(t.segAt(z).i)[side < 0 ? 0 : 1], EDGE + 1.5);
+    const latOf = (z: number, side: number) => Math.max(terrain.lim(t.segAt(z).i)[side < 0 ? 0 : 1], EDGE + t.extraAt(z) + 1.5);
     const facing = (x: number, z: number, at: number) => { t.world(at, 0, 0, w); return Math.atan2(w.x - x, w.z - z); };
     const taken: number[] = [];
     const free = (x: number, z: number, r: number) => {
@@ -302,7 +302,7 @@ export class Villages {
       if (s.tunnel || s.crowd) continue;
       const h = this.c.ground(s, side, 0.75);
       if (h === null) continue;
-      t.world(at, side * (EDGE + 0.75), 0, w);
+      t.world(at, side * (EDGE + t.extra(s.i) + 0.75), 0, w);
       const lx = w.x, ly = w.y + h, lz = w.z;
       v.props.push({ k: 'lamp', at, x: lx, y: ly, z: lz, rot: facing(lx, lz, at), seed: v.seed + q });
     }
@@ -356,7 +356,7 @@ export class Villages {
       for (const p of v.props) if (p.at >= z0 && p.at < z1) this.prop(G, p, lights);
       if (v.signAt >= z0 && v.signAt < z1) {
         out ??= new THREE.Group();
-        this.c.plate(out, Math.floor(v.signAt / SEG), EDGE + 1.7, 0.1, v.name.toUpperCase(), '', 2.1);
+        this.c.plate(out, Math.floor(v.signAt / SEG), EDGE + this.c.track.extraAt(v.signAt) + 1.7, 0.1, v.name.toUpperCase(), '', 2.1);
       }
       if (late()) yield;
     }

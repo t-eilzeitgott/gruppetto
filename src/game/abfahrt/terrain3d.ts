@@ -321,7 +321,7 @@ class Samples {
 
 /** Straßensegmente eines Gebiets, nach Zellen sortiert (schnelle Umkreissuche) */
 /** Zahlen je Straßenstück in SegGrid.buf: x, z, y, rx, rz, Tunnel, Portal, Korridor links/rechts, Grabentiefe (Viadukt) */
-const SEGW = 12;
+const SEGW = 13;
 /** Ortszone: so weit quer zur Straße stehen Häuser (Straßenzeile und Hinterhäuser) – dort keine Bäume aus dem Gelände */
 export const TOWN_ZONE = 40;
 interface SegGrid { buf: Float64Array; n: number; x0: number; z0: number; cs: number; nx: number; nz: number; start: Int32Array; order: Int32Array }
@@ -427,7 +427,9 @@ export class Terrain {
     i = Math.max(t.first, i);
     const hit = this.rawLimCache.get(i);
     if (hit) return hit;
-    const cap = this.limCaps.get(i) ?? LIM_MAX;
+    // breitere Straße: der Korridor reicht entsprechend weiter
+    const ex = t.extra(i);
+    const cap = (this.limCaps.get(i) ?? LIM_MAX) + ex;
     let l = cap;
     let rr = cap;
     let kmax = 0;
@@ -438,7 +440,7 @@ export class Terrain {
       kmax = Math.max(kmax, Math.abs(c));
     }
     if (kmax > 0.003) {
-      const inner = Math.max(EDGE + 2, 0.7 / kmax);
+      const inner = Math.max(EDGE + 2 + ex, 0.7 / kmax);
       if (ksum > 0) rr = Math.min(rr, inner); else l = Math.min(l, inner);
     }
     const s = t.seg(i);
@@ -452,7 +454,7 @@ export class Terrain {
       const d2 = dx * dx + dz * dz;
       if (d2 > 60 * 60) continue;
       const d = Math.sqrt(d2);
-      const cap = Math.max(EDGE + 2, d * 0.5 - 2);
+      const cap = Math.max(EDGE + 2 + ex, d * 0.5 - 2);
       if (dx * rx + dz * rz > 0) rr = Math.min(rr, cap); else l = Math.min(l, cap);
     }
     const out: [number, number] = [l, rr];
@@ -747,8 +749,8 @@ export class Terrain {
     }
     if (!sg || sg.n === 0) return o;
     const CR = clampR(cell);
-    if (dr > CR + 30) return o;
-    const R = CR + 22;
+    if (dr > CR + 32) return o;
+    const R = CR + 24;
     const segs = sg.buf;
     let minUnder = Infinity;
     let maxOver = -Infinity;
@@ -756,6 +758,7 @@ export class Terrain {
     let nLat = 0;
     let nLimL = LIM_MAX;
     let nLimR = LIM_MAX;
+    let nEx = 0;
     let inside = false;
     let raise = -Infinity;
     let carve = Infinity;
@@ -788,7 +791,8 @@ export class Terrain {
             if (Math.abs(inward) < cell * 0.75 + 1) o.skip = true;
             else if (inward > 0) { inside = true; raise = Math.max(raise, segs[b + 2] + 9.5); }
           }
-          if (d2 < CR * CR) {
+          const CRe = CR + segs[b + 12];
+          if (d2 < CRe * CRe) {
             const tun = segs[b + 5];
             if (tun === 1) maxOver = Math.max(maxOver, segs[b + 2] + 8.5);
             else if (tun === 0) minUnder = Math.min(minUnder, segs[b + 2] - 1.1);
@@ -805,6 +809,7 @@ export class Terrain {
             nLat = dx * segs[b + 3] + dz * segs[b + 4];
             nLimL = segs[b + 7];
             nLimR = segs[b + 8];
+            nEx = segs[b + 12];
           }
         }
       }
@@ -821,8 +826,8 @@ export class Terrain {
       const lim = nLat < 0 ? nLimL : nLimR;
       const a = Math.abs(nLat);
       // die Straße selbst als Asphaltband in der Landschaft (ohne Straßenstück sah man sonst einen Graben als Loch)
-      o.road = sstep(EDGE + 1.6, EDGE - 0.2, a);
-      o.cut = sstep(CR + 40, EDGE + 1, a);
+      o.road = sstep(EDGE + 1.6 + nEx, EDGE - 0.2 + nEx, a);
+      o.cut = sstep(CR + 40 + nEx, EDGE + 1 + nEx, a);
       const k = sstep(lim + 2.5, lim - 1, a);
       if (k > 0) { o.h -= 1.4 * k; o.near = true; }
     }
@@ -903,6 +908,8 @@ export class Terrain {
         }
         list[len + 10] = zl;
         list[len + 11] = zr;
+        // breitere oder engere Straße (WebGPU-Abfahrt): zusätzliche halbe Breite
+        list[len + 12] = t.extra(i);
         len += SEGW;
       }
     }

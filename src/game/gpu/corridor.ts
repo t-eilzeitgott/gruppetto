@@ -26,7 +26,8 @@ const hash = (n: number) => {
 };
 const wallSetback = (w: number, snow: boolean) => (snow ? 0.55 : 0.4) + w * 0.3;
 
-interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg }
+/** e: zusätzliche halbe Straßenbreite an dieser Zeile (breitere und engere Stellen) */
+interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg; e: number }
 
 /** Oberfläche eines Profilpunkts */
 type Surf = 'grass' | 'forest' | 'rock' | 'snow' | 'gravel' | 'concrete' | 'stone';
@@ -155,7 +156,7 @@ export class Corridor {
     if (!r) {
       const s = this.track.seg(i);
       const w = this.track.world(i * SEG, 0, 0, this.w);
-      r = { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), th: w.th, seg: s };
+      r = { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), th: w.th, seg: s, e: this.track.extra(i) };
       this.rowCache.set(i, r);
     }
     return r;
@@ -166,7 +167,7 @@ export class Corridor {
   /** Höhe des Straßenrands (über der Fahrbahn) in Abstand dx von der Bankettkante – dort stehen die Zuschauer */
   edgeHeight(s: Seg, sg: number, dx: number): number {
     const side = sg < 0 ? s.L : s.R;
-    const pr = this.profile(side, s, sg, this.terrain.lim(s.i)[sg < 0 ? 0 : 1]);
+    const pr = this.profile(side, s, sg, this.terrain.lim(s.i)[sg < 0 ? 0 : 1] - this.track.extra(s.i));
     const o = pr.o;
     for (let k = 0; k < o.length - 1; k++) {
       if (dx <= o[k + 1]) return pr.h[k] + (pr.h[k + 1] - pr.h[k]) * Math.max(0, Math.min(1, (dx - o[k]) / Math.max(1e-6, o[k + 1] - o[k])));
@@ -177,7 +178,7 @@ export class Corridor {
   /** wie edgeHeight, aber null jenseits des Profils (dort steht das Gelände) – für Häuser und Gehsteig-Dinge */
   groundAt(s: Seg, sg: number, dx: number): number | null {
     const side = sg < 0 ? s.L : s.R;
-    const pr = this.profile(side, s, sg, this.terrain.lim(s.i)[sg < 0 ? 0 : 1]);
+    const pr = this.profile(side, s, sg, this.terrain.lim(s.i)[sg < 0 ? 0 : 1] - this.track.extra(s.i));
     if (dx > pr.o[pr.o.length - 1] + 0.5) return null;
     return this.edgeHeight(s, sg, dx);
   }
@@ -363,7 +364,9 @@ export class Corridor {
       const fx = Math.sin(r.th), fz = -Math.cos(r.th);
       const t = [r.rx, r.rz, fx, fz];
       const v = (r.seg.i * SEG) / RW;
-      rIdx.push([-ROAD_HALF, 0, ROAD_HALF].map((x) => road.vert(this.P(r, x, 0), undefined, undefined, undefined, [(x + ROAD_HALF) / RW, v], t)));
+      // breitere oder engere Stelle: u bleibt in Metern ab dem linken Rand der Normalbreite
+      const hw = ROAD_HALF + r.e;
+      rIdx.push([-hw, 0, hw].map((x) => road.vert(this.P(r, x, 0), undefined, undefined, undefined, [(x + ROAD_HALF) / RW, v], t)));
     }
     for (let k = 0; k < rows.length - 1; k++) {
       for (let c = 0; c < 2; c++) road.quad(rIdx[k][c], rIdx[k][c + 1], rIdx[k + 1][c + 1], rIdx[k + 1][c]);
@@ -375,13 +378,15 @@ export class Corridor {
       const a = rows[k];
       const b = rows[k + 1];
       const s = a.seg;
-      const strip = (x0: number, x1: number) => {
+      // Randlinien folgen der Breite (je Zeile), die Mitte bleibt
+      const strip = (x0: number, x1: number, edge = 0) => {
         const u = (x: number) => (x + ROAD_HALF) / RW;
-        marks.quad(this.P(a, x0, H), this.P(a, x1, H), this.P(b, x1, H), this.P(b, x0, H), white,
-          [[u(x0), (s.i * SEG) / RW], [u(x1), (s.i * SEG) / RW], [u(x1), ((s.i + 1) * SEG) / RW], [u(x0), ((s.i + 1) * SEG) / RW]]);
+        const ea = edge * a.e, eb = edge * b.e;
+        marks.quad(this.P(a, x0 + ea, H), this.P(a, x1 + ea, H), this.P(b, x1 + eb, H), this.P(b, x0 + eb, H), white,
+          [[u(x0 + ea), (s.i * SEG) / RW], [u(x1 + ea), (s.i * SEG) / RW], [u(x1 + eb), ((s.i + 1) * SEG) / RW], [u(x0 + eb), ((s.i + 1) * SEG) / RW]]);
       };
-      strip(-ROAD_HALF + 0.08, -ROAD_HALF + 0.2);
-      strip(ROAD_HALF - 0.2, ROAD_HALF - 0.08);
+      strip(-ROAD_HALF + 0.08, -ROAD_HALF + 0.2, -1);
+      strip(ROAD_HALF - 0.2, ROAD_HALF - 0.08, 1);
       if (Math.abs(s.curve) > 0.015 || s.hairpin) { strip(-0.17, -0.06); strip(0.06, 0.17); }
       else if ((s.i & 3) < 2) strip(-0.06, 0.06);
     }
@@ -393,7 +398,7 @@ export class Corridor {
       for (const r of rows) {
         const s = r.seg;
         const side = sg < 0 ? s.L : s.R;
-        const lim = this.terrain.lim(s.i)[sg < 0 ? 0 : 1];
+        const lim = this.terrain.lim(s.i)[sg < 0 ? 0 : 1] - r.e;
         const pr = this.profile(side, s, sg, lim);
         const ids: number[] = [];
         const tn = this.tints(s, side, 0, sg);
@@ -402,7 +407,7 @@ export class Corridor {
           const ww = W[surf];
           const tint = this.tints(s, side, k, sg).grass;
           const cc = surf === 'stone' ? [ww[4], 0.36, 0.34, 0.31] : [ww[4], c[1], c[2], c[3]];
-          ids.push(sides.vert(this.P(r, sg * x, h), tint, [ww[0], ww[1], ww[2], ww[3]], cc));
+          ids.push(sides.vert(this.P(r, sg * (x + r.e), h), tint, [ww[0], ww[1], ww[2], ww[3]], cc));
         };
         add(ROAD_HALF, 0, 'gravel', 0);
         add(EDGE, -0.04, 'gravel', 0);
@@ -446,7 +451,7 @@ export class Corridor {
       if (s.crowd || s.tunnel || s.bridge > 0) continue;
       for (const sg of [-1, 1]) {
         const side = sg < 0 ? s.L : s.R;
-        const lim = this.terrain.lim(s.i)[sg < 0 ? 0 : 1];
+        const lim = this.terrain.lim(s.i)[sg < 0 ? 0 : 1] - a.e;
         const pr = this.profile(side, s, sg, lim);
         const tint = this.tints(s, side, 2, sg).grass;
         const maxO = Math.min(pr.o[pr.o.length - 1], 5);
@@ -464,7 +469,7 @@ export class Corridor {
           const h = pr.h[j] + (pr.h[j + 1] - pr.h[j]) * t - 0.05;
           const u = r();
           const row: Row = { ...a, x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, z: a.z + (b.z - a.z) * u, rx: a.rx + (b.rx - a.rx) * u, rz: a.rz + (b.rz - a.rz) * u };
-          const p = this.P(row, sg * (EDGE + o), h);
+          const p = this.P(row, sg * (EDGE + a.e + (b.e - a.e) * u + o), h);
           const v = 0.8 + r() * 0.4;
           out.push({ x: p[0], y: p[1], z: p[2], rot: r() * Math.PI * 2, s: 0.75 + r() * 0.6, r: tint[0] * v, g: tint[1] * v, b: tint[2] * v * 0.9 });
         }
@@ -476,7 +481,7 @@ export class Corridor {
   /** Kiste quer zur Straße an Stelle (row, x), Höhe h0 … h1, Breite bx (quer), bz (längs) */
   private box(B: Boxes, r: Row, x: number, h0: number, h1: number, bx: number, bz: number, col: number[]) {
     const fx = Math.sin(r.th), fz = -Math.cos(r.th);
-    const c = this.P(r, x, 0);
+    const c = this.P(r, x + Math.sign(x) * r.e, 0);
     const p = (dx: number, dz: number, h: number) => [c[0] + r.rx * dx + fx * dz, r.y + h, c[2] + r.rz * dx + fz * dz];
     const X = bx / 2, Z = bz / 2;
     const q = (a: number[], b: number[], cc: number[], d: number[]) => B.quad(a, b, cc, d, col);
@@ -490,9 +495,12 @@ export class Corridor {
 
   private barriers(a: Row, b: Row, metal: Boxes, wood: Boxes, paint: Boxes, ads: Boxes, stone: Boxes) {
     const s = a.seg;
+    // alles am Rand rückt mit der Breite (je Zeile) nach außen
+    const Pa = (x: number, h: number) => this.P(a, x + Math.sign(x) * a.e, h);
+    const Pb = (x: number, h: number) => this.P(b, x + Math.sign(x) * b.e, h);
     const wall = (B: Boxes, x: number, h0: number, h1: number, col: number[], sg: number, uv?: number[][]) => {
       // zur Straße zeigende Seite, dazu die Rückseite
-      const A0 = this.P(a, x, h0), B0 = this.P(b, x, h0), A1 = this.P(a, x, h1), B1 = this.P(b, x, h1);
+      const A0 = Pa(x, h0), B0 = Pb(x, h0), A1 = Pa(x, h1), B1 = Pb(x, h1);
       if (sg > 0) { B.quad(B0, A0, A1, B1, col, uv); B.quad(A0, B0, B1, A1, col, uv); } else { B.quad(A0, B0, B1, A1, col, uv); B.quad(B0, A0, A1, B1, col, uv); }
     };
     for (const sg of [-1, 1]) {
@@ -503,7 +511,7 @@ export class Corridor {
           const cell = Math.floor(hash(s.i * 2 + (sg > 0 ? 1 : 0)) * AD_COUNT);
           const [u0, v0, u1, v1] = adCell(cell, false);
           const x = sg * (EDGE - 0.07);
-          const A0 = this.P(a, x, 0.17), B0 = this.P(b, x, 0.17), A1 = this.P(a, x, 0.93), B1 = this.P(b, x, 0.93);
+          const A0 = Pa(x, 0.17), B0 = Pb(x, 0.17), A1 = Pa(x, 0.93), B1 = Pb(x, 0.93);
           if (sg > 0) ads.quad(B0, A0, A1, B1, [1, 1, 1], [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
           else ads.quad(A0, B0, B1, A1, [1, 1, 1], [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
         }
@@ -533,7 +541,7 @@ export class Corridor {
         const ht = s.bridge > 0 ? 0.95 : 0.62;
         wall(stone, sg * (EDGE - 0.08), -0.1, ht, st, sg);
         wall(stone, sg * (EDGE + 0.32), -0.1, ht, st, -sg);
-        const A = this.P(a, sg * (EDGE - 0.08), ht), B = this.P(b, sg * (EDGE - 0.08), ht), C = this.P(b, sg * (EDGE + 0.32), ht), D = this.P(a, sg * (EDGE + 0.32), ht);
+        const A = Pa(sg * (EDGE - 0.08), ht), B = Pb(sg * (EDGE - 0.08), ht), C = Pb(sg * (EDGE + 0.32), ht), D = Pa(sg * (EDGE + 0.32), ht);
         if (sg > 0) stone.quad(A, D, C, B, [0.45 * v, 0.43 * v, 0.4 * v]); else stone.quad(D, A, B, C, [0.45 * v, 0.43 * v, 0.4 * v]);
       } else if (side.barrier === 'fence') {
         const brown = [0.16, 0.1, 0.055];

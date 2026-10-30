@@ -404,6 +404,79 @@ export class Track {
 
   segAt(z: number): Seg { return this.seg(Math.max(0, Math.floor(z / SEG))); }
 
+  // ---------------------------------------------------------------- Straßenbreite (WebGPU-Abfahrt)
+
+  /**
+   * Straße mal breiter, mal enger (nur WebGPU-Abfahrt, für das Fahrerfeld): zusätzliche halbe Breite in m (−0,5 …
+   * +1,6; 0 = Normalbreite). Weiche Wellen über einige hundert Meter, am Start breit (Massenstart), in Kehren eher
+   * breit; in Tunneln, auf Brücken und in Ortsdurchfahrten genau 0 (mit weichem Übergang davor und danach).
+   */
+  widthVar = false;
+  private exRawC = new Map<number, number>();
+  private exC = new Map<number, number>();
+  private exZero = new Map<number, boolean>();
+
+  private exForced(i: number): boolean {
+    let v = this.exZero.get(i);
+    if (v === undefined) {
+      const s = this.seg(i);
+      v = s.tunnel || s.bridge > 0 || !!s.bL || !!s.bR;
+      this.exZero.set(i, v);
+    }
+    return v;
+  }
+
+  private exRaw(i: number): number {
+    let v = this.exRawC.get(i);
+    if (v !== undefined) return v;
+    const z = i * SEG;
+    const vn = (x: number, k: number) => {
+      const a = Math.floor(x), f = x - a;
+      const h = (q: number) => { let t = Math.imul((q + k * 7919) ^ this.seed, 0x9e3779b1); t ^= t >>> 15; t = Math.imul(t, 0x85ebca77); t ^= t >>> 13; return (t >>> 0) / 4294967296; };
+      const u = f * f * (3 - 2 * f);
+      return h(a) * (1 - u) + h(a + 1) * u;
+    };
+    const n = vn(z / 430, 1) * 0.65 + vn(z / 160, 2) * 0.35;
+    v = Math.max(-0.5, Math.min(1.6, (n - 0.45) * 4.2));
+    const s = this.seg(i);
+    if (s.hairpin > 0) v = Math.max(v, 0.8);
+    // Massenstart: breite Straße auf den ersten Metern
+    if (z < 260) v = Math.max(v, 1.6 * Math.min(1, (300 - z) / 120));
+    this.exRawC.set(i, v);
+    if (this.exRawC.size > 30000) this.exRawC.clear();
+    return v;
+  }
+
+  extra(i: number): number {
+    if (!this.widthVar) return 0;
+    i = Math.max(this.first, i);
+    let v = this.exC.get(i);
+    if (v !== undefined) return v;
+    if (this.exForced(i)) v = 0;
+    else {
+      let sum = 0, n = 0;
+      for (let d = -24; d <= 24; d += 3) { sum += this.exRaw(Math.max(this.first, i + d)); n++; }
+      v = sum / n;
+      // Übergang zu Tunneln, Brücken, Orten (dort Normalbreite)
+      let near = 32;
+      for (let d = 1; d < 32 && near === 32; d++) if (this.exForced(i + d) || (i - d >= this.first && this.exForced(i - d))) near = d;
+      const t = Math.min(1, near / 32);
+      v *= t * t * (3 - 2 * t);
+    }
+    this.exC.set(i, v);
+    if (this.exC.size > 30000) { this.exC.clear(); this.exZero.clear(); }
+    return v;
+  }
+
+  /** zusätzliche halbe Breite an der Stelle z (zwischen den Segmenten weich) */
+  extraAt(z: number): number {
+    if (!this.widthVar) return 0;
+    const f = Math.max(0, z / SEG);
+    const i = Math.floor(f);
+    const a = this.extra(i), b = this.extra(i + 1);
+    return a + (b - a) * (f - i);
+  }
+
   heightAt(z: number): number {
     const i = Math.max(0, Math.floor(z / SEG));
     const s = this.seg(i);
