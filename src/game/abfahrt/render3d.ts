@@ -81,6 +81,132 @@ const CH = 40;            // Segmente je Abschnitt (80 m)
 let AHEAD = VR0.ahead;        // so weit voraus wird gebaut (m, aus der Sichtweite)
 const BEHIND = 30;
 /** Wasserfälle liegen auf der feinen Stufe; weiter weg folgen sie der mittleren (aDy.x), dann der gröbsten (aDy.y) */
+/**
+ * Rauschbausteine wie in der WebGPU-Welt (gpu/nodes.ts): Hash ohne sin (die Grafik im iPhone rechnet sin für große
+ * Eingaben nur grob), Wertrauschen in einer Richtung mit Ableitung, 2D-Wertrauschen, feines Korn (blendet aus, wo
+ * eine Zelle unter ~2 Bildpunkte fällt)
+ */
+const NOISE_GLSL = `
+float h21(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+vec2 vn1(float x, float seed) { float i = floor(x); float f = fract(x); float a = h21(vec2(i, seed)); float b = h21(vec2(i + 1.0, seed)); float s = f * f * (3.0 - 2.0 * f); return vec2(mix(a, b, s), (b - a) * 6.0 * f * (1.0 - f)); }
+float vn2(vec2 p) { vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f); return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), u.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), u.x), u.y); }
+float grainF(vec2 p, float cell, float amt) { vec2 q = p / cell; float fw = fwidth(q.x) + fwidth(q.y); return 1.0 + (vn2(q) - 0.5) * amt * 2.0 * (1.0 - smoothstep(0.35, 0.9, fw)); }
+`;
+
+/**
+ * Relief der Felswände (wie gpu/ground.ts rockRelief) – nur Rechnen, nur wo Fels ist: Rinnen und Rippen die Wand
+ * hinab (in der Höhe mäandernd; Runsen 110 m, Rinnen 33 m, Furchen 9,5 m), dunkle Wasserstreifen, Schichtbänke
+ * leicht schräg durch den ganzen Berg, Flecken. Ergebnis: Helligkeit k und die Steigung (Welt) für die Normale.
+ * lod: 0 nah, 1 mittel (ohne feine Bänke), 2 fern (ohne Furchen und Streifen).
+ */
+const RELIEF_GLSL = `
+vec2 rrGully(float u, float y, float seed, int lod, out float st) {
+  float uu = u + (vn1(y / 53.0, seed + 7.0).x - 0.5) * 26.0;
+  vec2 a = vn1(uu / 110.0, seed);
+  vec2 b = vn1(uu / 33.0, seed + 3.0);
+  if (lod >= 2) { st = 0.0; return vec2(a.x * 0.45 + b.x * 0.33 + 0.11, a.y * (16.0 / 110.0) + b.y * (5.0 / 33.0)); }
+  vec2 c = vn1(uu / 9.5, seed + 9.0);
+  st = vn1(uu / 2.6, seed + 5.0).x;
+  return vec2(a.x * 0.45 + b.x * 0.33 + c.x * 0.22, a.y * (16.0 / 110.0) + b.y * (5.0 / 33.0) + c.y * (1.4 / 9.5));
+}
+float rockRelief(vec3 pos, vec3 nG, float strata, int lod, out vec3 grad) {
+  float ax = abs(nG.x), az = abs(nG.z);
+  float wx0 = ax * ax * ax * ax, wz0 = az * az * az * az;
+  float ws = wx0 + wz0 + 1e-4;
+  float wx = wx0 / ws, wz = wz0 / ws;
+  float steep = clamp(1.0 - nG.y * nG.y, 0.0, 1.0);
+  float stX, stZ;
+  vec2 X = rrGully(pos.z, pos.y, 11.0, lod, stX);
+  vec2 Z = rrGully(pos.x, pos.y, 23.0, lod, stZ);
+  float g = X.x * wx + Z.x * wz;
+  float ys = pos.y + pos.x * 0.09 - pos.z * 0.055;
+  vec2 s1 = vn1(ys / 5.5, 31.0);
+  float sb = s1.x * 0.7 + 0.15;
+  float ds = s1.y * (0.7 / 5.5);
+  if (lod == 0) { vec2 s2 = vn1(ys / 1.7, 37.0); sb = s1.x * 0.7 + s2.x * 0.3; ds += s2.y * (0.3 / 1.7); }
+  ds *= strata;
+  float wet = lod >= 2 ? 0.0 : smoothstep(0.66, 0.92, stX * wx + stZ * wz) * smoothstep(0.45, 0.75, vn1(pos.y / 27.0, 41.0).x) * steep;
+  float blot = vn2(vec2(pos.z / 83.0, pos.y / 61.0)) * wx + vn2(vec2(pos.x / 83.0 + 17.3, pos.y / 61.0)) * wz;
+  grad = vec3(Z.y * wz, 0.0, X.y * wx) * steep + vec3(0.0, ds * steep * 0.9, 0.0);
+  return (g * 0.8 + 0.58) * ((sb - 0.5) * strata * 0.5 + 1.0) * (1.0 - wet * 0.45) * (blot * 0.36 + 0.82);
+}
+`;
+
+/**
+ * Ausbesserungen und Risse im Asphalt (wie gpu/mats.ts roadWear): je Abschnitt zufällig gesägte Flicken (eine
+ * Spur, die Radspur, die ganze Breite; frisch dunkel oder alt und ausgebleicht) mit vergossener Fuge, Querrisse in
+ * unregelmäßigen Abständen, stellenweise eine Längsfuge in der Mitte, großflächig wechselnde Alterung.
+ * um, vm: quer (ab dem linken Rand der Normalbreite) und längs in Metern. Ergebnis: Farbfaktor.
+ */
+const WEAR_GLSL = `
+float wStripe(float d, float w) { float fw = max(fwidth(d), 1e-4); float h = fw * 0.5; return (clamp(d + w, -h, h) - clamp(d - w, -h, h)) / fw; }
+float wSpan(float x, float a, float b) { float fw = max(fwidth(x), 1e-4); return smoothstep(a - fw, a + fw, x) * (1.0 - smoothstep(b - fw, b + fw, x)); }
+float wH(float c, float seed, float k) { return h21(vec2(c, seed + k * 1.37)); }
+// Flicken: (innen, Fuge, frisch?)
+vec3 wPatch(float u, float vm, float len, float seed, float chance) {
+  float c = floor(vm / len);
+  float on = step(1.0 - chance, wH(c, seed, 0.0));
+  float h1 = wH(c, seed, 1.0);
+  float l = mix(2.2, len * 0.75, h1 * h1);
+  float v0 = c * len + wH(c, seed, 2.0) * (len - l);
+  float k = wH(c, seed, 3.0);
+  float ua = k < 0.3 ? 0.5 : k < 0.55 ? 0.0 : k < 0.8 ? 0.12 + wH(c, seed, 4.0) * 0.5 : 0.0;
+  float ub = k < 0.3 ? 1.0 : k < 0.55 ? 0.5 : k < 0.8 ? ua + 0.2 + wH(c, seed, 5.0) * 0.12 : 1.0;
+  float inU = wSpan(u, ua, ub);
+  float inV = wSpan(vm, v0, v0 + l);
+  float edge = min(max((wStripe(vm - v0, 0.035) + wStripe(vm - v0 - l, 0.035)) * inU, (wStripe((u - ua) * 5.6, 0.035) + wStripe((u - ub) * 5.6, 0.035)) * inV), 1.0) * on;
+  return vec3(inU * inV * on, edge, wH(c, seed, 6.0));
+}
+vec3 roadWear(vec3 col, float um, float vm) {
+  float u = um / 5.6;
+  vec3 A = wPatch(u, vm, 13.0, 3.1, 0.45);
+  vec3 B = wPatch(u, vm, 37.0, 8.3, 0.5);
+  float cc = floor(vm / 11.0);
+  float vc = cc * 11.0 + h21(vec2(cc, 21.7)) * 11.0;
+  float c1 = h21(vec2(cc, 23.81)), c2 = h21(vec2(cc, 25.92)), c3 = h21(vec2(cc, 28.03)), c4 = h21(vec2(cc, 30.14));
+  float wav = (vn1(um * 1.3, 17.0).x - 0.5) * 0.18 + (um - 2.8) * (c1 - 0.5) * 0.12;
+  float reach = smoothstep(c2 * 0.6, c2 * 0.6 + 0.1, c3 < 0.5 ? u : 1.0 - u);
+  float crack = wStripe(vm - vc - wav, 0.018) * step(0.35, c4) * reach;
+  float joint = wStripe(um - 2.8 + (vn1(vm / 3.1, 29.0).x - 0.5) * 0.05, 0.02) * smoothstep(0.55, 0.65, vn1(vm / 23.0, 31.0).x);
+  // Alterung: ältere Abschnitte heller und grauer, neuere dunkler (50–300 m)
+  float age = vn1(vm / 97.0, 43.0).x * 0.6 + vn1(vm / 271.0, 47.0).x * 0.4;
+  col *= mix(0.86, 1.16, age);
+  // Flicken: frisch dunkel, alt heller und ausgebleicht; Fugen schwarz (Bitumen)
+  col = mix(col, B.z < 0.55 ? col * 0.42 : col * 1.3, B.x * 0.9);
+  col = mix(col, col * 0.28, B.y * 0.85);
+  col = mix(col, A.z < 0.55 ? col * 0.42 : col * 1.3, A.x);
+  col = mix(col, col * 0.28, A.y * 0.85);
+  return mix(col, col * 0.24, max(crack, joint) * 0.9);
+}
+`;
+
+/**
+ * Wiese wie in der WebGPU-Welt (uRelief muss vorher erklärt sein): Wiesenarten über ein paar Dutzend Meter (satte
+ * Fettwiese, magere Weide, hellere und dunklere Flecken), Gras ohne Kachelmuster (Koordinaten weich verbogen),
+ * Viehgangeln (schmale Trittpfade entlang der Höhenlinien an steilen Weiden; nur wo das Muster nicht flimmert)
+ */
+const MEADOW_GLSL = `
+vec3 meadowZones(vec2 xz) { return vec3(texture2D(uRelief, xz / 260.0 + vec2(0.13, 0.71)).rg, texture2D(uRelief, xz / 170.0 + vec2(0.57, 0.29)).r); }
+vec3 meadowTint(vec3 mz) {
+  float lush = smoothstep(0.3, 0.62, mz.x);
+  float lean = smoothstep(0.32, 0.66, mz.y) * (1.0 - lush);
+  return mix(vec3(1.0), vec3(0.8, 0.97, 0.72), lush * 0.8) * mix(vec3(1.0), vec3(1.17, 1.09, 0.78), lean * 0.85) * (mz.z * 0.32 + 0.9);
+}
+vec4 grassTex(sampler2D g, sampler2D nz, vec2 uv) {
+  vec2 w = uv + (textureLod(nz, uv * 0.137 + vec2(0.31, 0.77), 4.5).rg - 0.5) * 0.8;
+  return textureGrad(g, w, dFdx(uv), dFdy(uv));
+}
+float cattleTracks(vec3 pos, float ny, float coarse, vec3 mz) {
+  float sl = 1.0 - ny;
+  float slopeM = smoothstep(0.07, 0.15, sl) * (1.0 - smoothstep(0.32, 0.45, sl));
+  float cw = pos.y / 1.5 + coarse * 1.4 + mz.y * 2.5;
+  float fr = fract(cw);
+  float dl = min(fr, 1.0 - fr);
+  float fade = 1.0 - smoothstep(0.1, 0.3, fwidth(cw));
+  return (1.0 - smoothstep(0.035, 0.11, dl)) * fade * slopeM * smoothstep(0.2, 0.45, mz.z);
+}
+`;
+
 const FALL_MORPH = `float fallMorph(vec3 p, vec2 d) {
   return d.x * smoothstep(uMorph0.z, uMorph0.w, max(abs(p.x - uMorph0.x), abs(p.z - uMorph0.y)))
     + d.y * smoothstep(uMorph.z, uMorph.w, max(abs(p.x - uMorph.x), abs(p.z - uMorph.y)));
@@ -719,17 +845,20 @@ export class Renderer3D {
     // Straßenbeläge und Bankett: großflächige Flecken (Flickstellen, Abrieb, Staub) brechen das Kachelmuster auf,
     // in der Ferne geht die Textur in ihre Mittelfarbe über – kein Flimmern, keine Linien beim Fahren
     const roadU = { uNoise: { value: this.noiseMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time };
-    const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number) => {
+    // wear: Flicken, Risse und Fugen (Asphalt; die Fahrbahn trägt dafür ihre Straßenmeter in aRoad)
+    const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number, wear = false) => {
       m.onBeforeCompile = (sh) => {
         Object.assign(sh.uniforms, roadU);
         sh.vertexShader = sh.vertexShader
-          .replace('#include <common>', '#include <common>\nvarying vec3 vWP;')
-          .replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+          .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wear ? '\nattribute vec3 aRoad;\nvarying vec2 vRoad;' : ''}`)
+          .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wear ? '\nvRoad = aRoad.xy;' : ''}`);
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', '#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform float uTime;\nvarying vec3 vWP;')
+          .replace('#include <common>', `#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform float uTime;\nvarying vec3 vWP;${wear ? `\nvarying vec2 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}`)
           .replace('#include <map_fragment>', `
             #ifdef USE_MAP
-              vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+              ${wear ? `// Körnung ohne erkennbare Wiederholung (sonst alle 5 m dieselben Steine): Koordinaten weich verbogen
+              vec2 mUv = vMapUv + (textureLod(uNoise, vMapUv * 0.137 + vec2(0.31, 0.77), 4.5).rb - 0.5) * 0.6;
+              vec4 sampledDiffuseColor = textureGrad(map, mUv, dFdx(vMapUv), dFdy(vMapUv));` : 'vec4 sampledDiffuseColor = texture2D(map, vMapUv);'}
               // Mittelfarbe der Textur (kleinste Mipmap-Stufe)
               vec3 avgC = textureLod(map, vMapUv, 12.0).rgb;
               float rd = distance(vWP, cameraPosition);
@@ -737,14 +866,15 @@ export class Renderer3D {
               ${gfxOn('details') ? `vec3 mn = texture2D(uNoise, vWP.xz / 26.0).rgb;
               sampledDiffuseColor.rgb *= 1.0 + ${patch.toFixed(2)} * ((mn.r * 0.6 + mn.g * 0.4) - 0.5);
               sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);` : ''}
+              ${wear ? 'sampledDiffuseColor.rgb = roadWear(sampledDiffuseColor.rgb, vRoad.x, vRoad.y);' : ''}
               diffuseColor *= sampledDiffuseColor;
               ${gfxOn('details') ? CLOUD('vWP.xz') : ''}
             #endif`);
       };
-      m.customProgramCacheKey = () => `road-${key}${dk()}`;
+      m.customProgramCacheKey = () => `road-${key}${wear ? 'w' : ''}${dk()}`;
     };
-    roadify(this.mats.asphalt, 'a', 0.34);
-    roadify(this.mats.fresh, 'f', 0.18);
+    roadify(this.mats.asphalt, 'a', 0.34, true);
+    roadify(this.mats.fresh, 'f', 0.18, true);
     roadify(this.mats.cobble, 'c', 0.36);
     roadify(this.mats.gravel, 'g', 0.4);
     roadify(this.mats.verge, 'v', 0.45);
@@ -764,7 +894,7 @@ export class Renderer3D {
       // (uRelief und uTime erklärt auf der feinsten Landschaftsstufe schon der Landschafts-Shader – nicht doppelt,
       // sonst übersetzt der Shader nicht und die Stufe bleibt unsichtbar)
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uRock;\n#ifndef SPLAT_U\nuniform sampler2D uRelief;\nuniform float uTime;\nuniform vec4 uCanD;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\n#endif\nvarying vec3 vRockP;')
+        .replace('#include <common>', `#include <common>\nuniform sampler2D uRock;\n#ifndef SPLAT_U\nuniform sampler2D uRelief;\nuniform float uTime;\nuniform vec4 uCanD;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\n${NOISE_GLSL}\n${RELIEF_GLSL}\n${MEADOW_GLSL}\n#endif\nvarying vec3 vRockP;`)
         .replace('#include <map_fragment>', `
           #ifdef USE_MAP
             vec4 sampledDiffuseColor = texture2D(map, vMapUv);
@@ -783,9 +913,14 @@ export class Renderer3D {
             float gw = smoothstep(0.012, 0.05, vColor.g - max(vColor.r, vColor.b));
             vec3 nzg = texture2D(uRelief, vRockP.xz / 33.0).rgb;
             vec3 gm = mix(vec3(0.92, 0.98, 1.04), vec3(1.06, 1.02, 0.92), smoothstep(0.3, 0.72, nzg.r)) * (0.92 + 0.16 * nzg.g);
-            vec4 g1 = texture2D(uGrass, vRockP.xz / 4.2);
+            // wie die Landschaft dahinter: Wiesenarten, Gras ohne Kachelmuster, Korn, Trittpfade
+            vec3 mz = meadowZones(vRockP.xz);
+            gm *= meadowTint(mz);
+            vec4 g1 = grassTex(uGrass, uRelief, vRockP.xz / 4.2);
             vec3 g2 = texture2D(uGrass, mat2(0.8, -0.6, 0.6, 0.8) * vRockP.xz / 21.0 + 0.37).rgb;
             gm *= g1.rgb / uGrassMean * mix(vec3(1.0), g2 / uGrassMean, 0.65);
+            ${gfxOn('details') ? `gm *= grainF(vRockP.xz, 0.55, 0.11) * grainF(vRockP.xz + 17.3, 0.13, 0.12);
+            gm = mix(gm, gm * vec3(0.64, 0.58, 0.48), cattleTracks(vRockP, normalize((vec4(vNormal, 0.0) * viewMatrix).xyz).y, nzg.r, mz) * 0.8);` : ''}
             sampledDiffuseColor.rgb *= mix(vec3(1.0), gm, gw);
             // Blüten: Farbe statt Tönung (geteilt durch die Eckpunktfarbe, die danach noch multipliziert wird)
             sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, g1.rgb * 0.5 / max(vColor.rgb, vec3(0.02)), g1.a * 0.75 * gw);
@@ -812,6 +947,11 @@ export class Renderer3D {
               vec4 r2 = textureGrad(uRock, ruv * 4.1 + 0.37, rux * 4.1, ruy * 4.1);
               float fine = 1.0 - smoothstep(40.0 * uCanD.w, 120.0 * uCanD.w, camDR);
               vec3 rockC = r1.rgb * mix(vec3(1.0), 0.55 + 0.55 * r2.rgb, fine);
+              #ifndef SPLAT_U
+                // Felsrelief der Wände am Straßenrand (die Landschaft hat ihres im eigenen Teil)
+                vec3 rgS;
+                rockC *= rockRelief(vRockP, fn, 0.65, 0, rgS) * 1.04;
+              #endif
               sampledDiffuseColor = mix(sampledDiffuseColor, vec4(rockC, 1.0), steep);
             }
           }` : ''}
@@ -832,7 +972,7 @@ export class Renderer3D {
       uRelief: { value: this.reliefTex(noiseTex(), 1) }, uCanopy: { value: this.dataTex(canCv, 2) },
       uForA: { value: new THREE.Color().setRGB(...lin255(32, 58, 38)) }, uForB: { value: new THREE.Color().setRGB(...lin255(58, 86, 52)) },
       uSnow: { value: new THREE.Color().setRGB(...lin255(240, 245, 250)) },
-      uTime: this.time, uSunDir: this.peakU.uSunDir, uCanD: this.canU,
+      uTime: this.time, uSunDir: this.peakU.uSunDir, uCanD: this.canU, uWoods: this.woodsU,
     };
     // Wolkenschatten: großflächige, langsam ziehende Flecken (gleiches Rauschen, gleiche Zeit in allen Materialien)
     const CLOUD = (pos: string) => `{ float cloud = smoothstep(0.5, 0.82, texture2D(uRelief, (${pos} + uTime * vec2(6.0, 2.5)) / 700.0).r); diffuseColor.rgb *= 1.0 - 0.3 * cloud; }`;
@@ -875,7 +1015,7 @@ export class Renderer3D {
           #endif
           vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${MD}${gfxOn('details') ? '#define TDETAIL\n' : ''}#define TLV ${lv}\n#define SPLAT_U\nuniform vec4 uCanD;\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif`)
+        .replace('#include <common>', `#include <common>\n${MD}${gfxOn('details') ? '#define TDETAIL\n' : ''}#define TLV ${lv}\n#define SPLAT_U\nuniform vec4 uCanD;\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nuniform float uWoods;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif\n${NOISE_GLSL}\n${RELIEF_GLSL}\n${MEADOW_GLSL}`)
         .replace('#include <color_fragment>', `
           // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
           // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen.
@@ -901,13 +1041,17 @@ export class Renderer3D {
             // Wiesen: Flecken heller/dunkler, mal saftiger, mal trockener (gelblicher)
             vec3 tCol = vColor.rgb * (0.92 + 0.16 * big);
             tCol = mix(tCol, tCol * vec3(1.08, 1.02, 0.9), smoothstep(0.55, 0.85, big) * 0.5);
+            // Wiesenarten (Flecken von 30–130 m): auf allen Stufen gleich gelesen – an der Stufengrenze ändert sich nichts
+            vec3 mz = meadowZones(vTW.xz);
+            tCol *= meadowTint(mz);
             // Wiese aus der Nähe: Büschel, Flecken, Erde, Blüten (zwei Maßstäbe, gedreht gegeneinander – kein
             // sichtbares Kachelmuster); in der Ferne mitteln die Mipmaps die Textur zu 1
             #if TLV < 2
             {
               // mittelgroße Flecken (33 m): mal satter und kühler, mal trockener und gelber
               tCol *= mix(vec3(0.92, 0.98, 1.04), vec3(1.06, 1.02, 0.92), smoothstep(0.3, 0.72, nz2.r)) * (0.92 + 0.16 * nz2.g);
-              vec4 g1 = texture2D(uGrass, vTW.xz / 4.2);
+              // (Gras ohne Kachelmuster: Koordinaten weich verbogen)
+              vec4 g1 = grassTex(uGrass, uRelief, vTW.xz / 4.2);
               vec3 g2 = texture2D(uGrass, mat2(0.8, -0.6, 0.6, 0.8) * vTW.xz / 21.0 + 0.37).rgb;
               vec3 gt = g1.rgb / uGrassMean * mix(vec3(1.0), g2 / uGrassMean, 0.65);
               float fl = g1.a;
@@ -918,6 +1062,11 @@ export class Renderer3D {
               tCol *= gt;
               // Blüten behalten ihre Farbe (etwas gedämpft im Licht der Wiese)
               tCol = mix(tCol, g1.rgb * 0.5, fl * 0.75);
+              #if TLV == 0 && defined(TDETAIL)
+                // nah: unregelmäßige Helligkeit über einen halben Meter und feines Korn; Viehgangeln an steilen Weiden
+                tCol *= grainF(vTW.xz, 0.55, 0.11) * grainF(vTW.xz + 17.3, 0.13, 0.12);
+                tCol = mix(tCol, tCol * vec3(0.64, 0.58, 0.48), cattleTracks(vTW, fnT.y, nz2.r, mz) * 0.8);
+              #endif
             }
             #endif
             // Fels: Gewicht, Rauschen und die Steilheit dieser Fläche
@@ -955,6 +1104,16 @@ export class Renderer3D {
             vec3 rc = vRk * (0.8 + 0.42 * nz2.r) * mix(1.0, 0.84 + 0.26 * mix(gul, gul2, 0.4), far);
             // großflächig hellere und dunklere Partien (Gesteinswechsel, Flechten) – vor allem in der Ferne
             rc *= 0.86 + 0.3 * nzF;
+            // Felsrelief (wie in der WebGPU-Welt): Rinnen, Rippen, Bänke und Wasserstreifen – Helligkeit und Normale
+            {
+              float rkR = rk * (1.0 - smoothstep(0.8, 0.97, fnT.y));
+              if (rkR > 0.003) {
+                vec3 rg;
+                float kR = rockRelief(vTW, fnT, smoothstep(0.25, 0.7, nz2.g) * 0.7 + 0.3, TLV, rg);
+                rc *= mix(1.0, kR * 1.04, smoothstep(0.003, 0.2, rkR));
+                tGrad += rg * rkR;
+              }
+            }
             // auf Absätzen (weniger steil) Gras und Geröll
             rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, big) * 0.6);
             // Felsflecken an bloß steilen Hängen (keine Wand): dunkler und mit Bewuchs durchsetzt – ein heller grauer
@@ -966,6 +1125,8 @@ export class Renderer3D {
             // Wald: Rand aus Rauschen; aus der Nähe Waldboden (dort stehen Bäume), weiter weg das Kronendach
             // Waldrand weich (kein harter Saum zwischen Wiese und Wald)
             float fo = smoothstep(0.42, 0.62, vMat.x + (big - 0.5) * 0.25 + (vNz.x - 0.5) * 0.6 + (nz2.g - 0.5) * 0.28) * (1.0 - rk);
+            // Bergwald: die Maske ist schon die der Bäume (ausgefranst) – Waldboden genau dort, wo sie stehen
+            fo = mix(fo, smoothstep(0.3, 0.7, vMat.x + (vNz.y - 0.5) * 0.2) * (1.0 - rk), uWoods);
             // Kronen: auf der feinen und mittleren Stufe aus der Textur (Mipmaps glätten sie in der Ferne von
             // selbst), auf der gröbsten ihr Mittelwert (gleiche Helligkeit an der Grenze)
             float crown = ${canMean.toFixed(4)};
@@ -1009,6 +1170,8 @@ export class Renderer3D {
               float sc = smoothstep(0.22, 0.4, vMat.y + (big - 0.5) * 0.4 + (nz2.g - 0.5) * 0.2) * (1.0 - rk) * (1.0 - fo);
               tCol = mix(tCol, scree, sc * 0.65);
             }
+            // Waldsaum: vor dem Waldrand ist die Wiese dunkler (Schatten, höheres Gras) – der Wald steht fest im Boden
+            tCol *= 1.0 - smoothstep(0.0, 0.25, vMat.x) * (1.0 - fo) * 0.28;
             tCol = mix(tCol, fc, fo);
             tCol = mix(tCol, rc, rk);
             // Schnee: bleibt in den Rinnen länger liegen
@@ -1369,6 +1532,10 @@ export class Renderer3D {
     this.routeEnd = 0;
     this.pre = null;
     this.terrain = new Terrain(track);
+    // Abfahrt wie in der WebGPU-Welt: zerklüftete Berge (Grate, Rinnen, Felsbänder) und Bergwald (geschlossene
+    // Bestände mit klarem Waldrand statt verstreuter Einzelbäume)
+    if (track.kind === 'descent') { this.terrain.rugged = true; this.terrain.woods = true; }
+    this.woodsU.value = this.terrain.woods ? 1 : 0;
     this.camReg = null;
     this.newSigns(track.names);
     this.clearChunks();
@@ -3072,6 +3239,7 @@ export class Renderer3D {
     this.cTrees = [];
     const cTrees = this.cTrees;
     const white = lin('#f2f2ec');
+    const wBase = Math.floor((i0 * SEG) / 4096) * 4096;
     const sec = (s: Seg) => t.sections[s.sec];
     // nach einer Pause: zwischendurch kann ein anderer Abschnitt gebaut worden sein – gemeinsamen Bauzustand zurück
     const resume = () => { this.region = region; this.adsGB = ads; this.cTrees = cTrees; };
@@ -3092,7 +3260,10 @@ export class Renderer3D {
         // breitere oder engere Stelle: die Textur bleibt in Metern (nicht gestreckt)
         const ha = ROAD_HALF + a.e;
         const hb = ROAD_HALF + b.e;
-        surf[s.surface].quad(P0(a, -ha, 0), P0(a, ha, 0), P0(b, hb, 0), P0(b, -hb, 0), [1, 1, 1],
+        // Straßenmeter je Ecke (für Flicken und Risse im Shader, als aRoad statt der ungenutzten Farbe): quer ab dem
+        // linken Rand der Normalbreite, längs ab einem Vielfachen von 4096 m (kleine Zahlen)
+        const za0 = za - wBase, zb0 = zb - wBase;
+        surf[s.surface].quadC(P0(a, -ha, 0), P0(a, ha, 0), P0(b, hb, 0), P0(b, -hb, 0), [-a.e, za0, 1], [2 * ROAD_HALF + a.e, za0, 1], [2 * ROAD_HALF + b.e, zb0, 1], [-b.e, zb0, 1],
           [[-ha / tl, va], [ha / tl, va], [hb / tl, vb], [-hb / tl, vb]]);
         for (const sg of [-1, 1]) {
           const x0 = sg * ROAD_HALF;
@@ -3190,11 +3361,22 @@ export class Renderer3D {
       group.add(mesh);
     };
     // Zusammenbau in Häppchen: nach jedem Teil nachsehen, ob die Zeit des Bildes um ist
+    // Fahrbahn: die Eckfarbe trägt die Straßenmeter (aRoad)
+    const addRoad = (gb: GB, m: THREE.Material) => {
+      if (gb.empty) return;
+      const geo = gb.build();
+      geo.setAttribute('aRoad', geo.getAttribute('color'));
+      geo.deleteAttribute('color');
+      disp.push(geo);
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    };
     const parts: (() => void)[] = [
-      () => add(surf.asphalt, this.mats.asphalt),
-      () => add(surf.fresh, this.mats.fresh),
-      () => add(surf.cobble, this.mats.cobble),
-      () => add(surf.gravel, this.mats.gravel),
+      () => addRoad(surf.asphalt, this.mats.asphalt),
+      () => addRoad(surf.fresh, this.mats.fresh),
+      () => addRoad(surf.cobble, this.mats.cobble),
+      () => addRoad(surf.gravel, this.mats.gravel),
       () => add(verge, this.mats.verge),
       () => add(marks, this.mats.marks, 1),
       // Gelände neben der Straße weich schattiert (keine harten Kanten zwischen den Bändern)
@@ -5289,6 +5471,9 @@ export class Renderer3D {
     if (!list) { list = []; this.riderPool.set(m.kitKey, list); }
     list.push(m);
   }
+
+  /** Bergwald in der Landschaft (Shader: Waldboden genau nach der Maske der Bäume) */
+  private woodsU = { value: 0 };
 
   /** Stellvertreter, der die Shader durchsichtiger Fahrer am Leben hält (siehe updateRiders) */
   private fadeWarm: RiderModel | null = null;
