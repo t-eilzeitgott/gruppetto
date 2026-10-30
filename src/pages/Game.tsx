@@ -46,6 +46,8 @@ const COACH: Record<Step, { t: string; s: string }> = {
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
 const missionKey = (day: string) => `gruppetto.abfahrt.missions.${day}`;
+/** Fahrerfeld: so viele Fahrer höchstens voraus (?field=… zum Ausprobieren) */
+const FIELD = (() => { try { return Number(/[?&]field=(\d+)/.exec(window.location.search)?.[1] ?? 60); } catch { return 60; } })();
 
 type Ui = 'ready' | 'countdown' | 'playing' | 'paused' | 'over';
 type Board = 'day' | 'season';
@@ -147,6 +149,9 @@ export function GamePage() {
       tutorial: !(playing && cruiseRef.current) && (Number(lsGet(LS_TUTORIAL)) || 0) < 4,
       cruise: playing && cruiseRef.current ? cruiseRef.current : undefined,
       ghosts: playing ? gh.ghosts : [],
+      // keine Hindernisse, dafür Massenstürze (zu schnell aufs Hinterrad); ein ganzes Fahrerfeld
+      pileups: true,
+      field: FIELD,
       onEvent: (e) => onEvent(e),
       onOver: (r) => onOver(r),
     });

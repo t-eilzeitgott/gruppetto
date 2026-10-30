@@ -43,7 +43,7 @@ const ELEV = 0.12;
 export const SPRITE_NEAR = 44;
 export const SPRITE_FAR = 54;
 /** höchstens so viele Bildfahrer */
-const MAX = 64;
+const MAX = 96;
 const STRIDE = 32;
 
 const ROLE_KITS: Record<'F' | 'A' | 'B', Kit> = {

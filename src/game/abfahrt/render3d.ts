@@ -22,6 +22,9 @@ import { FAC_B, FAC_H, FAC_W, TB, portalFacade, tunnelMaterial, tunnelName, tunn
 import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, TINTABLE, WALL_PAL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
 import { GB, alphaTex, lin, lin255, propGeometries, type Prop3D, type RGBf } from './models3d';
 import { RiderModel, riderKitKey, type RiderPose } from './rider3d';
+import { JOINTS, Ragdoll, type Ground } from './ragdoll';
+import { wreckPose, type Wreck } from './wreck';
+import { SKINS, TEAM_KITS, type Kit } from './rider';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
@@ -86,6 +89,16 @@ const CAM_BACK = 6.2;
 const CAM_UP = 2.75;
 const SPRINT_BACK = 7.4;
 const SPRINT_UP = 3.7;
+/** Fahrerfeld: als Bild bis so weit voraus (m), davor weich ausgeblendet */
+const FIELD_FAR = 650;
+/**
+ * Aussehen der Gegner in der Abfahrt: 16 feste Trikots (Teams, Hautton, Startnummer). Jedes Aussehen baut eigene
+ * Netze (~0,6 MB) und eine Trikottextur und behält sie – mit einem neuen je Fahrer kämen im Fahrerfeld Hunderte
+ * zusammen, und jedes neue kostete beim Auftauchen einen spürbaren Ruckler. Die 16 entstehen auf der Startkarte.
+ */
+const LOOKS: Kit[] = Array.from({ length: 16 }, (_, i) => ({ ...TEAM_KITS[i % TEAM_KITS.length], skin: SKINS[(i * 3 + 1) % SKINS.length], number: String(11 + ((i * 37) % 180)) }));
+const LOOK_KEYS = new Set(LOOKS.map(riderKitKey));
+const smoothstep = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 /** Fan-Bögen: Masten knapp hinter der Absperrung, Spruchband hoch genug für die hohe Finalkamera */
 const FAN_SPAN = 2 * (EDGE + 0.12);
 const FAN_POLE = 6.1;
@@ -117,7 +130,12 @@ const hash = (n: number) => {
 const shadeF = (c: RGBf, f: number): RGBf => [c[0] * f, c[1] * f, c[2] * f];
 const rgbLin = (c: RGB): RGBf => lin255(c[0], c[1], c[2]);
 
-interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg }
+/** Straßenquerschnitt an einem Segmentanfang; e: zusätzliche halbe Fahrbahnbreite (Straße mal breiter, mal enger) */
+interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg; e: number }
+/** ab hier (|x|, m) gehört ein Punkt zum Fahrbahnrand und rückt mit der Breite nach außen; die Mitte bleibt */
+const EDGE_IN = ROAD_HALF - 0.5;
+/** Querlage x an einer Stelle mit zusätzlicher halber Breite e */
+const widen = (x: number, e: number) => (x >= EDGE_IN ? x + e : x <= -EDGE_IN ? x - e : x);
 /** Zuschauergruppe: 3D-Netze (fein, einfach) für 10 m Straße, die Bilder (spr) decken 20 m (zwei Gruppen teilen sich eins) */
 interface CrowdBatch { near: THREE.Mesh[]; mid: THREE.Mesh[]; spr: THREE.Mesh | null; c: THREE.Vector3; r: number; sc: THREE.Vector3; sr: number; lod: number }
 interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[]; detail: Detail | null }
@@ -2625,7 +2643,7 @@ export class Renderer3D {
 
   private row(z: number, seg: Seg): Row {
     const w = this.track!.world(z, 0, 0, this.w);
-    return { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), th: w.th, seg };
+    return { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), th: w.th, seg, e: this.track!.extra(seg.i) };
   }
 
   /**
@@ -2679,9 +2697,13 @@ export class Renderer3D {
     const i0 = ci * CH;
     const rows: Row[] = [];
     for (let r = 0; r <= CH; r++) rows.push(this.row((i0 + r) * SEG, t.seg(i0 + r)));
-    const P = (r: Row, x: number, h: number): number[] => [r.x + r.rx * x, r.y + h, r.z + r.rz * x];
+    // P: alles ab dem Fahrbahnrand (Randlinie, Bankett, Gelände, Begrenzungen) rückt mit der Breite nach außen;
+    // P0: unverschoben (Mitte der Fahrbahn: Schriften, Schachtdeckel)
+    const P0 = (r: Row, x: number, h: number): number[] => [r.x + r.rx * x, r.y + h, r.z + r.rz * x];
+    const P = (r: Row, x: number, h: number): number[] => { const xx = widen(x, r.e); return [r.x + r.rx * xx, r.y + h, r.z + r.rz * xx]; };
+    // Korridor (Gelände) ab dem verschobenen Bankett gemessen: um die Mehrbreite kürzer
     const lim = { L: [] as number[], R: [] as number[] };
-    for (let r = 0; r <= CH; r++) { const [l, rr] = this.terrain!.lim(i0 + r); lim.L.push(l); lim.R.push(rr); }
+    for (let r = 0; r <= CH; r++) { const [l, rr] = this.terrain!.lim(i0 + r); lim.L.push(l - rows[r].e); lim.R.push(rr - rows[r].e); }
     if (this.late()) yield;
     // Rechenbereich der Landschaft für diesen Abschnitt (Requisiten außerhalb des Korridors, Portale)
     let bx0 = Infinity, bz0 = Infinity, bx1 = -Infinity, bz1 = -Infinity;
@@ -2751,8 +2773,11 @@ export class Renderer3D {
         const vo = Math.floor((i0 * SEG) / tl);
         const va = za / tl - vo;
         const vb = zb / tl - vo;
-        surf[s.surface].quad(P(a, -ROAD_HALF, 0), P(a, ROAD_HALF, 0), P(b, ROAD_HALF, 0), P(b, -ROAD_HALF, 0), [1, 1, 1],
-          [[-ROAD_HALF / tl, va], [ROAD_HALF / tl, va], [ROAD_HALF / tl, vb], [-ROAD_HALF / tl, vb]]);
+        // breitere oder engere Stelle: die Textur bleibt in Metern (nicht gestreckt)
+        const ha = ROAD_HALF + a.e;
+        const hb = ROAD_HALF + b.e;
+        surf[s.surface].quad(P0(a, -ha, 0), P0(a, ha, 0), P0(b, hb, 0), P0(b, -hb, 0), [1, 1, 1],
+          [[-ha / tl, va], [ha / tl, va], [hb / tl, vb], [-hb / tl, vb]]);
         for (const sg of [-1, 1]) {
           const x0 = sg * ROAD_HALF;
           const x1 = sg * EDGE;
@@ -2791,7 +2816,7 @@ export class Renderer3D {
       if (s.decals) {
         for (const d of s.decals) {
           if ((d.k === 'text' || d.k === 'arrow') && !this.labelTex.has(`${d.k}:${d.text}`) && this.soon(2)) { yield; resume(); }
-          this.decal(group, disp, marks, rows, r, d, P);
+          this.decal(group, disp, marks, rows, r, d, P0);
         }
       }
       // --- Häuser (je Haus viele Teile: auch erst mit frischem Budget)
@@ -4089,12 +4114,15 @@ export class Renderer3D {
   private prop(group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], inst: Map<Prop3D, { m: THREE.Matrix4[]; c: THREE.Color[] }>,
     bill: GB, anim: number[], glows: number[], a: Row, sp: Sprite, s: Seg, lim: number) {
     const sg = sp.x < 0 ? -1 : 1;
+    // ax: Abstand wie bei Normalbreite (Profil, Korridor); am Rand rückt alles mit der Breite nach außen
     const ax = Math.abs(sp.x);
+    const sx = widen(sp.x, a.e);
+    const ex = Math.abs(sx) - ax;
     let h = sp.h;
-    const px = a.x + a.rx * sp.x;
-    const pz = a.z + a.rz * sp.x;
+    const px = a.x + a.rx * sx;
+    const pz = a.z + a.rz * sx;
     // nicht auf eine andere Straße stellen (Serpentinen liegen oft nur 40 m auseinander)
-    if (ax > EDGE + 1 && this.terrain!.roadDist(this.region!, px, pz) < Math.min(ax - 0.7, EDGE + 2.8)) return;
+    if (ax > EDGE + 1 && this.terrain!.roadDist(this.region!, px, pz) < Math.min(ax + ex - 0.7, EDGE + ex + 2.8)) return;
     if (ax > EDGE && !s.tunnel) {
       const side = sg < 0 ? s.L : s.R;
       if (side.ground === 'water' && ax > EDGE + 4) {
@@ -4189,7 +4217,10 @@ export class Renderer3D {
         const b = rows[r + k + 1];
         const v0 = k / d.len;
         const v1 = (k + 1) / d.len;
-        gb.quad(P(a, d.x - d.w, H), P(a, d.x + d.w, H), P(b, d.x + d.w, H), P(b, d.x - d.w, H), [1, 1, 1], [[0, v0], [1, v0], [1, v1], [0, v1]]);
+        // engere Stelle: die Schrift bleibt auf der Fahrbahn
+        const wa = d.w * Math.min(1, (ROAD_HALF + a.e) / ROAD_HALF);
+        const wb = d.w * Math.min(1, (ROAD_HALF + b.e) / ROAD_HALF);
+        gb.quad(P(a, d.x - wa, H), P(a, d.x + wa, H), P(b, d.x + wb, H), P(b, d.x - wb, H), [1, 1, 1], [[0, v0], [1, v0], [1, v1], [0, v1]]);
       }
       const key = `${d.k}:${d.text}`;
       let tex = this.labelTex.get(key);
@@ -4212,14 +4243,18 @@ export class Renderer3D {
       const b = rows[r + k + 1];
       // Flickstellen: als Rechteck wirken sie wie Platten – (noch) nicht gezeichnet
       if (d.k === 'patch') continue;
-      if (d.k === 'zebra') for (let q = -2; q <= 2; q++) marks.quad(P(a, q * 1.05 - 0.25, H), P(a, q * 1.05 + 0.25, H), P(b, q * 1.05 + 0.25, H), P(b, q * 1.05 - 0.25, H), lin('#f2f2ec'));
+      if (d.k === 'zebra') {
+        const ka = Math.min(1, (ROAD_HALF + a.e) / ROAD_HALF), kb = Math.min(1, (ROAD_HALF + b.e) / ROAD_HALF);
+        for (let q = -2; q <= 2; q++) marks.quad(P(a, q * 1.05 * ka - 0.25, H), P(a, q * 1.05 * ka + 0.25, H), P(b, q * 1.05 * kb + 0.25, H), P(b, q * 1.05 * kb - 0.25, H), lin('#f2f2ec'));
+      }
       else if (d.k === 'grid') for (let q = 0; q < 4; q++) {
         const t0 = q / 4;
         const mid = (u: number[], v: number[], t: number) => [u[0] + (v[0] - u[0]) * t, u[1] + (v[1] - u[1]) * t, u[2] + (v[2] - u[2]) * t];
-        const A0 = P(a, -ROAD_HALF, H);
-        const A1 = P(a, ROAD_HALF, H);
-        const B0 = P(b, -ROAD_HALF, H);
-        const B1 = P(b, ROAD_HALF, H);
+        // über die ganze (auch breitere) Fahrbahn
+        const A0 = P(a, -ROAD_HALF - a.e, H);
+        const A1 = P(a, ROAD_HALF + a.e, H);
+        const B0 = P(b, -ROAD_HALF - b.e, H);
+        const B1 = P(b, ROAD_HALF + b.e, H);
         marks.quad(mid(A0, B0, t0), mid(A1, B1, t0), mid(A1, B1, t0 + 0.12), mid(A0, B0, t0 + 0.12), lin('#bfc3c8'));
       } else if (d.k === 'manhole' && k === 0) {
         const c = P(a, d.x, H);
@@ -4249,7 +4284,7 @@ export class Renderer3D {
     const TH = 11.5;            // Turmhöhe
     const AH = 6.2;             // Scheitel des Torbogens
     const WH = 8.6;             // Wehrgang über dem Bogen
-    const x0 = EDGE + 0.5;      // Innenkante der Türme
+    const x0 = EDGE + a.e + 0.5; // Innenkante der Türme (breitere Straße: weiter außen)
     /** Quader mit vier Wänden und Deckel */
     const box = (la0: number, la1: number, al0: number, al1: number, h0: number, h1: number, col: RGBf) => {
       T.plain.quad(P(la0, al0, h0), P(la1, al0, h0), P(la1, al0, h1), P(la0, al0, h1), col);                 // vorn
@@ -4358,7 +4393,8 @@ export class Renderer3D {
       tex = this.tex(bannerTex(main.toUpperCase(), banner.sub ?? '', color, light ? '#1a1a1a' : '#ffffff'), false);
       this.labelTex.set(key, tex);
     }
-    const span = EDGE * 2 + 0.6;
+    // Masten neben dem Bankett (breitere Straße: weiter auseinander)
+    const span = (EDGE + a.e) * 2 + 0.6;
     const g = new THREE.Group();
     const poleMat = new THREE.MeshLambertMaterial({ color: 0x9aa0a8 });
     const pole = new THREE.CylinderGeometry(0.08, 0.1, 5.8, 8);
@@ -4459,13 +4495,16 @@ export class Renderer3D {
     if (!this.fanMat) return;
     const parts = this.fanParts(cell);
     const m = new THREE.Matrix4().makeRotationY(-a.th).setPosition(a.x, a.y, a.z);
+    // breitere Straße: Masten weiter auseinander, das Band entsprechend breiter
+    const span = FAN_SPAN + 2 * a.e;
+    const wide = new THREE.Matrix4().makeScale(span / FAN_SPAN, 1, 1).premultiply(m);
     const uvOf = (g: THREE.BufferGeometry) => {
       const src = g.index ? g.toNonIndexed() : g;
       const pos = src.getAttribute('position');
       const uv = src.getAttribute('uv');
       const v = new THREE.Vector3();
       for (let i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        v.fromBufferAttribute(pos, i).applyMatrix4(wide);
         fans.vert(v.x, v.y, v.z, [1, 1, 1], uv.getX(i), uv.getY(i));
       }
     };
@@ -4475,9 +4514,9 @@ export class Renderer3D {
     const flag = lin('#ff5fa2');
     const pm = new THREE.Matrix4();
     for (const sg of [-1, 1]) {
-      pm.makeTranslation((sg * FAN_SPAN) / 2, 0, 0).premultiply(m);
+      pm.makeTranslation((sg * span) / 2, 0, 0).premultiply(m);
       plain.add(parts.pole, pm, pole);
-      pm.makeTranslation((sg * FAN_SPAN) / 2, FAN_POLE - 0.05, 0).premultiply(m);
+      pm.makeTranslation((sg * span) / 2, FAN_POLE - 0.05, 0).premultiply(m);
       // Wimpel beidseitig (das Material der einfarbigen Teile ist beidseitig – nur die Normale muss stimmen)
       plain.add(parts.pennant, pm, flag);
     }
@@ -4513,7 +4552,8 @@ export class Renderer3D {
     };
     const place = (p: Person, u: number, dx: number) => {
       const gh = ground(dx);
-      t.world(s.i * SEG + u, sg * (EDGE + dx), gh, w);
+      // breitere Straße: die Reihen rücken mit dem Bankett nach außen
+      t.world(s.i * SEG + u, sg * (EDGE + t.extraAt(s.i * SEG + u) + dx), gh, w);
       p.x = w.x; p.y = w.y; p.z = w.z;
       // Blick zur Straße, etwas dorthin, wo die Fahrer herkommen
       const rx = -sg * Math.cos(w.th);
@@ -4670,7 +4710,8 @@ export class Renderer3D {
         ru.v = passed ? Math.max(target, ru.v + acc * dt) : Math.min(target, ru.v + acc * dt);
         ru.z += ru.v * dt;
       }
-      t.world(ru.z, ru.x, -0.04, w);
+      // am Fahrbahnrand (breitere Straße: weiter außen)
+      t.world(ru.z, ru.x + Math.sign(ru.x) * t.extraAt(ru.z), -0.04, w);
       const p = ru.p;
       p.x = w.x; p.y = w.y; p.z = w.z;
       const fwd = Math.atan2(Math.sin(w.th), -Math.cos(w.th));
@@ -4734,7 +4775,10 @@ export class Renderer3D {
     pm.group.rotation.y = -w.th;
     pm.shadow.position.y = 0.03 - air;
     (pm.shadow.material as THREE.MeshBasicMaterial).opacity = 0.3 / (1 + air * 2);
-    if (g.phase === 'crash' || g.phase === 'over') pm.crash(g.phaseT, g.crashSpin);
+    // Massensturz: Rad nach wreck.ts, Körper als Ragdoll (der Schatten bliebe sonst liegen, wo der Körper nicht ist)
+    pm.shadow.visible = !g.wreck;
+    if (g.wreck) this.ragdoll(-1, pm, g.wreck, null, g);
+    else if (g.phase === 'crash' || g.phase === 'over') pm.crash(g.phaseT, g.crashSpin);
     else {
       pm.resetCrash();
       pm.pose(this.playerAnim.step({
@@ -4758,34 +4802,35 @@ export class Renderer3D {
     this.rs.begin();
     for (const o of list) {
       seen.add(o.id);
+      const kit = this.kitOf(o, sprint);
       let m = this.riders.get(o.id);
-      if (m && m.kitKey !== riderKitKey(o.kit)) { this.scene.remove(m.group); m.dispose(); m = undefined; }
+      if (m && m.kitKey !== riderKitKey(kit)) { this.giveRider(m); m = undefined; }
       if (!m) {
-        m = new RiderModel(o.kit, this.shadowTex);
-        if (sprint || o.ghost !== undefined) m.prepareFade();
-        appearifyTree(m.group);
-        // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen
-        this.warmUp(m.group);
+        m = this.takeRider(kit, sprint || o.ghost !== undefined);
         this.riders.set(o.id, m);
-        this.scene.add(m.group);
       }
       m.group.visible = true;
       // in der Ferne ein 2D-Bild statt des 3D-Fahrers – dazwischen gerastert überblendet (je Bildpunkt genau einer)
       track.world(o.z, o.x, 0, this.w);
       const dc = Math.hypot(this.w.x - cp.x, this.w.y - cp.y, this.w.z - cp.z);
       let sa = 0;
-      // Geister bleiben immer das 3D-Modell (halbdurchsichtig) – kein Bild in der Ferne
-      if (rsOn && !o.ghost && spriteable(o.kit)) {
+      // Geister bleiben immer das 3D-Modell (halbdurchsichtig) – kein Bild in der Ferne; Gestürzte auch (das Bild
+      // kennt kein Liegen)
+      if (rsOn && !o.ghost && !o.wreck && spriteable(o.kit)) {
         const t = Math.max(0, Math.min(1, (dc - this.spriteNear) / (this.spriteFar - this.spriteNear)));
         sa = apQ(t * t * (3 - 2 * t));
       }
-      const rp = this.placeOpp(m, o, track, sa < 1);
+      const rp = this.placeOpp(m, o, track, sa < 1 && !o.wreck);
+      // Massensturz: Rad nach wreck.ts, Körper als Ragdoll; ohne Schlagschatten (der Körper liegt woanders)
+      if (o.wreck) this.ragdoll(o.id, m, o.wreck, rp, g);
+      else m.resetCrash();
+      m.shadow.visible = !o.wreck;
       m.setSprite(sa >= 1);
       m.setBodyAp(sa > 0 && sa < 1 ? apOut(sa) : undefined);
       if (sa > 0) {
         // das Bild bekommt dieselbe (gefederte) Haltung wie der 3D-Fahrer – in der Überblendung passen beide zusammen
         const tk = Math.max(0, Math.min(1, rp.tuck - rp.brake * 0.6));
-        this.rs.add(this.w.x, this.w.y, this.w.z, m.group.rotation.y, rp.lean, rp.pedal, tk, rp.stand ?? 0, sa, o.kit);
+        this.rs.add(this.w.x, this.w.y, this.w.z, m.group.rotation.y, rp.lean, rp.pedal, tk, rp.stand ?? 0, sa * this.appear(o.id, g), kit);
       }
       // weit weg (Kamera): kleine Teile weglassen – erst, wenn sie sich im Shader schon aufgelöst haben
       const fh = RiderModel.FAR_HIDE;
@@ -4814,6 +4859,27 @@ export class Renderer3D {
         m.fade(block ? Math.min(0.28, target) : target, o.ghost !== undefined && o.ghost <= 0.01 ? 1 : this.lastDt);
         m.group.visible = target > 0.005;
         (m.shadow.material as THREE.MeshBasicMaterial).opacity = 0.55 * Math.min(1, target + 0.2);
+      } else {
+        // Fahrerfeld: wer zwischen Kamera und dir fährt und dich verdeckt, wird durchsichtig (wie in den Finals)
+        const dz = o.z - p.z;
+        const block = !o.wreck && g.phase !== 'crash' && g.phase !== 'over' && dz < 0.8 && dz > -CAM_BACK - 1 && Math.abs(o.x - p.x) < 1.05 + Math.max(0, -dz) * 0.06;
+        if (block) m.prepareFade();
+        m.fade(block ? 0.28 : 1, this.lastDt);
+      }
+    }
+    // Fahrerfeld: alle übrigen (voraus und knapp hinter dir) nur als Bild – alle zusammen ein Zeichenaufruf; neu
+    // Aufgetauchte blenden ein, am Ende der Sichtweite blenden sie aus. Gestürzte liegen (seitlich gekippt)
+    if (rsOn && !sprint) {
+      for (const o of g.opps) {
+        if (seen.has(o.id) || !spriteable(o.kit)) continue;
+        const dz = o.z - p.z;
+        if (dz < -8 || dz > FIELD_FAR) continue;
+        const a = this.appear(o.id, g) * (1 - smoothstep(FIELD_FAR - 130, FIELD_FAR, dz));
+        if (a < 0.02) continue;
+        track.world(o.z, o.x, 0, this.w);
+        const down = !!o.wreck;
+        const tk = down ? 0 : Math.max(0, Math.min(1, o.tuck - o.brake * 0.6));
+        this.rs.add(this.w.x, this.w.y, this.w.z, -this.w.th, down ? (o.x > 0 ? 1.45 : -1.45) : o.lean, o.pedal, tk, down ? 0 : o.stand ?? 0, a, this.kitOf(o, false));
       }
     }
     this.rs.end();
@@ -4822,24 +4888,151 @@ export class Renderer3D {
     if (sprint || this.idleBuild) {
       for (const o of field) {
         if (this.riders.has(o.id)) continue;
-        const m = new RiderModel(o.kit, this.shadowTex);
-        if (sprint || o.ghost !== undefined) m.prepareFade();
-        appearifyTree(m.group);
-        // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen
-        this.warmUp(m.group);
+        const m = this.takeRider(this.kitOf(o, sprint), sprint || o.ghost !== undefined);
         m.group.visible = false;
         this.riders.set(o.id, m);
-        this.scene.add(m.group);
+      }
+      if (!sprint) {
+        // Fahrerfeld: wer dich verdeckt, wird durchsichtig – diese Shader gleich jetzt übersetzen (nicht erst mitten
+        // im Rennen); der Stellvertreter bleibt (sonst gäbe three.js die Programme wieder frei)
+        if (!this.fadeWarm) {
+          const fm = new RiderModel(LOOKS[0], this.shadowTex);
+          fm.prepareFade();
+          appearifyTree(fm.group);
+          this.scene.add(fm.group);
+          this.warmUp(fm.group);
+          fm.group.visible = false;
+          this.fadeWarm = fm;
+        }
+        // alle Aussehen des Feldes vorab bauen (eins je Bild): unterwegs entsteht dann keins mehr neu
+        const look = LOOKS.find((k) => !this.lookBuilt.has(riderKitKey(k)));
+        if (look) {
+          const key = riderKitKey(look);
+          this.lookBuilt.add(key);
+          if (![...this.riders.values()].some((m) => m.kitKey === key) && !this.riderPool.get(key)?.length) this.giveRider(this.takeRider(look, false));
+        }
       }
     }
     const alive = new Set(field.map((o) => o.id));
     for (const [id, m] of this.riders) {
       if (seen.has(id)) continue;
       // außer Sicht: nur ausblenden – kommt der Fahrer zurück, ist er sofort wieder da (kein Neuaufbau, kein Ruckler);
-      // wer nicht mehr im Rennen ist, fliegt raus
+      // wer nicht mehr im Rennen ist, gibt sein Modell ab (Fahrerfeld: in den Vorrat für den nächsten)
       if (alive.has(id)) m.group.visible = false;
-      else { this.scene.remove(m.group); m.dispose(); this.riders.delete(id); this.anims.delete(id); }
+      else { this.giveRider(m); this.riders.delete(id); this.anims.delete(id); }
     }
+    for (const id of this.anims.keys()) if (!alive.has(id)) this.anims.delete(id);
+    for (const id of this.seenAt.keys()) if (!alive.has(id)) this.seenAt.delete(id);
+    // Ragdolls: nur solange der Sturz besteht (neuer Lauf, Fahrer weg)
+    for (const [k, D] of this.dolls) {
+      const w = k < 0 ? g.wreck : field.find((o) => o.id === k)?.wreck;
+      if (w !== D.w) this.dolls.delete(k);
+    }
+  }
+
+  /**
+   * Trikot, wie es gezeichnet wird: in der Abfahrt eine von wenigen Startnummern je Team und Hautton – jedes neue
+   * Aussehen baut eigene Netze und eine Trikottextur (und behält sie); im Fahrerfeld kämen sonst Hunderte zusammen
+   */
+  private kitOf(o: Opp, sprint: boolean): Kit {
+    if (sprint || o.ghost !== undefined || o.kit.bike) return o.kit;
+    return LOOKS[o.id % LOOKS.length];
+  }
+
+  /** Vorrat fertiger Fahrermodelle der Abfahrt je Aussehen (ausgeblendet in der Szene) */
+  private riderPool = new Map<string, RiderModel[]>();
+  /** Aussehen, die schon (vorab) gebaut wurden */
+  private lookBuilt = new Set<string>();
+
+  /** Fahrermodell aus dem Vorrat oder neu; fade: für Durchsichtigkeit vorbereitet (Finals, Geister) */
+  private takeRider(kit: Kit, fade: boolean): RiderModel {
+    const m = this.riderPool.get(riderKitKey(kit))?.pop();
+    if (m) {
+      m.resetCrash();
+      m.setSprite(false);
+      m.setBodyAp(undefined);
+      m.fade(1, 1);
+      m.shadow.visible = true;
+      if (fade) m.prepareFade();
+      return m;
+    }
+    const n = new RiderModel(kit, this.shadowTex);
+    if (fade) n.prepareFade();
+    appearifyTree(n.group);
+    // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen
+    this.warmUp(n.group);
+    this.scene.add(n.group);
+    return n;
+  }
+
+  /** Modell abgeben: Aussehen des Fahrerfelds in den Vorrat, alle anderen weg */
+  private giveRider(m: RiderModel) {
+    if (!LOOK_KEYS.has(m.kitKey)) { this.scene.remove(m.group); m.dispose(); return; }
+    m.group.visible = false;
+    let list = this.riderPool.get(m.kitKey);
+    if (!list) { list = []; this.riderPool.set(m.kitKey, list); }
+    list.push(m);
+  }
+
+  /** Stellvertreter, der die Shader durchsichtiger Fahrer am Leben hält (siehe updateRiders) */
+  private fadeWarm: RiderModel | null = null;
+
+  /** wann ein Fahrer zuerst zu sehen war (Spielzeit der Darstellung); vor dem Start: schon immer */
+  private seenAt = new Map<number, number>();
+  /** Einblendung eines neu aufgetauchten Fahrers (0 … 1 in 0,8 s) */
+  private appear(id: number, g: RaceView): number {
+    let t0 = this.seenAt.get(id);
+    if (t0 === undefined) {
+      t0 = g.phase === 'ready' || g.phase === 'countdown' ? -1e9 : this.time.value;
+      this.seenAt.set(id, t0);
+    }
+    return Math.min(1, (this.time.value - t0) / 0.8);
+  }
+
+  // ------------------------------------------------------------------ Stürze (Massensturz)
+
+  /** Körper der Gestürzten (Schlüssel: Gegner-Nummer, −1 = du) mit ihrem Boden und dem Sturz, zu dem sie gehören */
+  private dolls = new Map<number, { d: Ragdoll; g: Ground; w: Wreck }>();
+  private dollBuf = new Float32Array(JOINTS * 3);
+  private gw = { x: 0, y: 0, z: 0, th: 0 };
+
+  /**
+   * Sturz darstellen: das Rad nach wreck.ts (kippt, schlittert), der Körper als Ragdoll – aus der Fahrhaltung
+   * gestartet, danach frei mit Schwerkraft, Aufprall und Reibung, im Takt der Zeitlupe des Spiels. ride: Fahrhaltung
+   * für den Start (ein eben erst gebautes Modell hat noch keine); null = die Haltung des letzten Bildes
+   */
+  private ragdoll(key: number, m: RiderModel, w: Wreck, ride: RiderPose | null, g: RaceView) {
+    const t = g.track;
+    let D = this.dolls.get(key);
+    if (D && D.w !== w) D = undefined;
+    if (!D) {
+      m.resetCrash();
+      if (ride) m.pose(ride);
+      m.ragdollJoints(this.dollBuf);
+      // an den Ort des Aufpralls (kommt der Sturz erst jetzt ins Bild, ist der Fahrer schon ein Stück gerutscht)
+      const gp = m.group.position;
+      t.world(w.z0, w.x0, 0, this.gw);
+      const ox = this.gw.x - gp.x, oy = this.gw.y - gp.y, oz = this.gw.z - gp.z;
+      for (let i = 0; i < JOINTS; i++) { this.dollBuf[i * 3] += ox; this.dollBuf[i * 3 + 1] += oy; this.dollBuf[i * 3 + 2] += oz; }
+      const th = this.gw.th;
+      const fx = Math.sin(th), fz = -Math.cos(th);
+      const grade = t.segAt(w.z0).grade;
+      const v = w.v0;
+      const d = new Ragdoll(this.dollBuf, [fx * v, grade * v, fz * v], [fx, fz], Math.max(0.25, Math.min(1, (v - 3) / 14)), w.side, w.seed);
+      // Boden: Straßenhöhe entlang der Fahrtrichtung vom Sturzort aus (die paar Meter Rutschen)
+      t.world(w.z0, 0, 0, this.gw);
+      const cx = this.gw.x, cz = this.gw.z, z0 = w.z0;
+      const ground: Ground = (x, z) => t.heightAt(Math.max(0, z0 + (x - cx) * fx + (z - cz) * fz));
+      D = { d, g: ground, w };
+      this.dolls.set(key, D);
+      // so weit vorrechnen, wie der Sturz schon läuft
+      for (let left = Math.min(w.t, 4); left > 1e-3; left -= 1 / 30) d.step(Math.min(1 / 30, left), ground, []);
+    }
+    m.crashPose(wreckPose(w));
+    const others: Ragdoll[] = [];
+    for (const x of this.dolls.values()) if (x !== D) others.push(x.d);
+    D.d.step(this.lastDt * (g.timeScale ?? 1), D.g, others);
+    m.ragdollPose(D.d.p);
   }
 
   /** Gegner an seinen Ort setzen; liefert die (gefederte) Pose des Bildes – angewendet nur, wenn der 3D-Fahrer zu sehen ist */

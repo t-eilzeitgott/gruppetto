@@ -107,6 +107,12 @@ export interface RaceView {
   friends: Friend[];
   shake: number;
   crashSpin: number;
+  /** Massensturz: eigener Sturz (wreck.ts), sonst null */
+  wreck?: Wreck | null;
+  /** Ort des ersten Aufpralls im Massensturz (Kamera) */
+  pileAt?: { z: number; x: number } | null;
+  /** Zeitlupe beim Sturz: Spielzeit je echter Sekunde */
+  timeScale?: number;
 }
 
 export interface HudState {
