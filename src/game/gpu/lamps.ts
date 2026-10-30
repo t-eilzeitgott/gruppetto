@@ -9,7 +9,7 @@ import { tsl } from './nodes';
 import { MOOD_U } from './mood';
 import { commit, instGroup } from './inst';
 
-const { attribute, cameraPosition, cross, exp, float, max, normalize, positionGeometry, uv, vec3 } = tsl;
+const { attribute, cameraPosition, cross, exp, float, max, min, normalize, positionGeometry, uv, vec3 } = tsl;
 
 let MAT: THREE.MeshBasicNodeMaterial | null = null;
 let QUAD: THREE.BufferGeometry | null = null;
@@ -26,8 +26,9 @@ function material(): THREE.MeshBasicNodeMaterial {
   const f = toCam.div(max(d, float(1e-3)));
   const right = normalize(cross(vec3(0, 1, 0), f));
   const up = cross(f, right);
-  // fern etwas größer (bleibt als Lichtpunkt sichtbar), nah klein
-  const size = iS.x.mul(float(1).add(d.mul(0.012)));
+  // fern etwas größer (bleibt als Lichtpunkt sichtbar), nah klein – aber nicht über 2,4-fach: viele große Höfe
+  // übereinander (Blick die Dorfstraße entlang) kosteten die Grafik viel
+  const size = iS.x.mul(float(1).add(min(d, float(120)).mul(0.012)));
   const p = positionGeometry;
   m.positionNode = c.add(right.mul(p.x.mul(size))).add(up.mul(p.y.mul(size))).add(f.mul(0.3));
   const r = uv().sub(0.5).mul(2).length();

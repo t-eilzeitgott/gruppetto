@@ -95,8 +95,12 @@ export type RaceCam = 'chase' | 'low' | 'side' | 'drone';
 /** Vorrat an Gegner-Modellen (beim Laden gebaut und vorgewärmt) */
 const POOL = 16;
 /** Fahrerfeld: volles Modell → einfaches Modell weich zwischen diesen Abständen (m) */
-const PEL_FADE: [number, number] = [26, 36];
-const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
+/**
+ * Gegner: volles Modell ab PEL_FADE[0] m (Kamera), zurück zum einfachen erst über PEL_FADE[1] – jeder wechselt einmal
+ * und blendet dabei PEL_T Sekunden über (früher: ständig halb/halb, solange einer in 26–36 m mitfuhr)
+ */
+const PEL_FADE: [number, number] = [28, 38];
+const PEL_T = 0.4;
 /** Fahrerfeld der Abfahrt: so viele Gegner höchstens voraus (in Gruppen); ?field=N zum Ausprobieren */
 const FIELD = Number(/[?&]field=(\d+)/.exec(typeof location !== 'undefined' ? location.search : '')?.[1] ?? 60);
 /** Kamera hinter dem Fahrer wie im Spiel */
@@ -182,7 +186,7 @@ export class Race {
   private avgGpu = 0;
   private dprFloor = 0;
   private floorUntil = 0;
-  private probe: { from: number; ms: number; at: number } | null = null;
+  private probe: { from: number; ms: number; gpu: number; at: number } | null = null;
   readonly perf = new Perf();
   /** Messfahrt fertig */
   onReport: ((r: Report) => void) | null = null;
@@ -247,7 +251,8 @@ export class Race {
     // Bild in voller Auflösung (Bildschirm, höchstens maxDpr), die Szene darin wird nach Bedarf kleiner gerechnet
     // und beim Hochskalieren nachgeschärft (setDpr) – die Oberfläche (HUD) ist ohnehin HTML und bleibt scharf
     this.maxDpr = Math.min(window.devicePixelRatio || 1, this.settings.maxDpr);
-    this.dpr = this.maxDpr;
+    // Szene anfangs höchstens doppelt (die Regelung geht von dort nach oben oder unten)
+    this.dpr = Math.min(this.maxDpr, Math.max(this.settings.minDpr, 2));
     r.setPixelRatio(this.maxDpr);
     r.toneMapping = THREE.AgXToneMapping;
     r.toneMappingExposure = 0.62;
@@ -592,6 +597,20 @@ export class Race {
     this.placeOpps(dt, light);
   }
 
+  /** Darstellung je Gegner mit vollem Modell: nah (Modell) seit t; Anteil des einfachen Modells (0 … 1) */
+  private pelLod = new Map<number, { near: boolean; t: number }>();
+  /** d: Abstand zur Kamera (neu entscheiden) oder −1 (nur den Anteil lesen) */
+  private pelShare(id: number, d: number): number {
+    const now = performance.now() / 1000;
+    let s = this.pelLod.get(id);
+    if (!s) { s = { near: d >= 0 && d < (PEL_FADE[0] + PEL_FADE[1]) / 2, t: -1e9 }; this.pelLod.set(id, s); }
+    if (d >= 0) {
+      if (!s.near && d < PEL_FADE[0]) { s.near = true; s.t = now; } else if (s.near && d > PEL_FADE[1]) { s.near = false; s.t = now; }
+    }
+    const u = Math.max(0, Math.min(1, (now - s.t) / PEL_T));
+    return s.near ? 1 - u : u;
+  }
+
   /** Gegner: die nächsten (höchstens so viele wie eingestellt) bekommen ein Modell aus dem Vorrat */
   private placeOpps(dt: number, light: number) {
     const e = this.eng!;
@@ -609,6 +628,7 @@ export class Race {
       this.pool[i].group.visible = false;
       this.poolOf.delete(id);
       this.poolFree.push(i);
+      this.pelLod.delete(id);
     }
     const cp = this.camera.position;
     for (const o of list) {
@@ -628,8 +648,8 @@ export class Race {
       const d = cp.distanceTo(R.group.position);
       R.far(d);
       const ghost = 'ghost' in o ? (o as { ghost: number }).ghost : 0;
-      // mit Fahrerfeld: weich ins einfache Modell überblenden (Raster: beide teilen sich die Bildpunkte)
-      const fade = this.peloton ? smooth01((d - PEL_FADE[0]) / (PEL_FADE[1] - PEL_FADE[0])) : 0;
+      // mit Fahrerfeld: einmal ins volle Modell und zurück (mit Spielraum), dabei kurz überblenden (Raster)
+      const fade = this.peloton ? this.pelShare(o.id, d) : 0;
       R.ghost(ghost > 0 ? 1 - ghost : fade);
       R.shadows(d < 45 && ghost <= 0);
       R.blob(!o.wreck);
@@ -650,11 +670,12 @@ export class Race {
       for (const o of e.opps) {
         if (o.z < p.z - 160 || o.z > p.z + 950) continue;
         t.world(o.z, o.x, 0, this.w);
-        // mit vollem Modell: nur im Überblendband dazu (das Raster teilt die Bildpunkte)
+        // mit vollem Modell: nur sein Anteil (beim Wechsel), sonst gar nicht
         const pooled = this.poolOf.has(o.id);
-        if (pooled && Math.hypot(this.w.x - cp.x, this.w.z - cp.z) < PEL_FADE[0] - 1) continue;
+        const share = pooled ? this.pelShare(o.id, -1) : 1;
+        if (pooled && share < 0.01) continue;
         const down = !!o.wreck;
-        pel.add(this.w.x, this.w.y, this.w.z, this.w.th, down ? (o.x > 0 ? 1.45 : -1.45) : o.lean, o.pedal, o.kit, down, pooled);
+        pel.add(this.w.x, this.w.y, this.w.z, this.w.th, down ? (o.x > 0 ? 1.45 : -1.45) : o.lean, o.pedal, o.kit, down, pooled, share);
       }
       pel.commit();
     }
@@ -1235,42 +1256,54 @@ export class Race {
     }
   }
 
-  /** Auflösung nach der Bildzeit */
+  /**
+   * Auflösung der Szene nach der Bildrate. Ziel ist der Takt des Bildschirms (120 Hz: 8,3 ms je Bild). Reicht die
+   * Zeit nicht und ist die Grafik der Engpass (GPU-Zeit nahe am Takt), wird die Szene kleiner gerechnet – je
+   * Schritt ~20 % weniger Bildpunkte (deutlich zu langsam: ~30 %), bis minDpr; mit viel Luft langsam wieder größer.
+   * Ein Schritt nach unten, der weder GPU-Zeit noch Bildzeit verbessert hat, wird zurückgenommen (dann liegt der
+   * Engpass woanders). Früher entschied nur die Bildzeit über 0,15er-Schritte: auf 120 Hz verschwand deren Gewinn
+   * im Raster der Bildwechsel, jeder Schritt wurde zurückgenommen und die Szene blieb bei voller Auflösung.
+   */
   private adapt(dtMs: number, now: number) {
     if (!this.ready || this.analysing) return;
     this.intervals.push(dtMs);
     if (this.intervals.length > 240) this.intervals.shift();
     const mn = Math.min(...this.intervals);
     this.period = mn < 9.6 ? 1000 / 120 : mn < 12.5 ? 1000 / 90 : 1000 / 60;
-    if (this.intervals.length < 60 || now - this.lastDprChange < 1200 || this.paused) return;
-    // letzter Schritt nach unten hat die Bildzeit nicht verbessert? Dann zurück zur schärferen Szene und eine Weile
-    // nicht wieder darunter (auf dem iPhone hängt die Bildzeit inzwischen kaum noch an den Bildpunkten: CPU und
-    // Grafik laufen dort nacheinander, feste Kosten überwiegen). Nicht nach GPU-Zeitstempeln: Apples Grafik taktet
-    // bei weniger Last herunter, die gemessene GPU-Zeit sinkt dann kaum.
-    if (this.probe && now - this.probe.at <= 2000) return;
+    if (this.intervals.length < 60 || this.paused) return;
+    const P = this.period;
+    const gpu = this.avgGpu > 0 ? this.avgGpu : -1;
     if (this.probe) {
+      if (now - this.probe.at < 1500) return;
       const p = this.probe;
       this.probe = null;
-      if (this.avgMs > p.ms * 0.95) {
+      const better = this.avgMs < p.ms * 0.96 || (gpu > 0 && p.gpu > 0 && gpu < p.gpu * 0.93);
+      if (!better) {
         this.dprFloor = p.from;
-        this.floorUntil = now + 30000;
-        this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${p.from.toFixed(2)} (kleiner brachte nichts: Bildzeit ${p.ms.toFixed(1)}→${this.avgMs.toFixed(1)} ms)`);
+        this.floorUntil = now + 20000;
+        this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${p.from.toFixed(2)} (kleiner brachte nichts: Bild ${p.ms.toFixed(1)}→${this.avgMs.toFixed(1)} ms, GPU ${p.gpu.toFixed(1)}→${gpu.toFixed(1)} ms)`);
         this.setDpr(p.from);
         this.lastDprChange = now;
         this.slowFor = this.fastFor = 0;
         return;
       }
     }
+    if (now - this.lastDprChange < 900) return;
     if (this.dprFloor && now > this.floorUntil) this.dprFloor = 0;
-    const cpuBound = this.avgCpu > this.period * 0.75;
-    if (this.avgMs > this.period * 1.22 && !cpuBound) { this.slowFor += dtMs; this.fastFor = 0; } else if (this.avgMs < this.period * 1.06) { this.fastFor += dtMs; this.slowFor = 0; } else { this.slowFor = 0; }
+    const cpuBound = this.avgCpu > P * 0.8;
+    const gpuBound = gpu < 0 || gpu > P * 0.8;
+    if (this.avgMs > P * 1.12 && gpuBound && !cpuBound) { this.slowFor += dtMs; this.fastFor = 0; }
+    else if (this.avgMs < P * 1.04 && (gpu < 0 || gpu < P * 0.62)) { this.fastFor += dtMs; this.slowFor = 0; }
+    else { this.slowFor = 0; this.fastFor = 0; }
+    const lo = Math.min(Math.max(this.settings.minDpr, this.dprFloor), this.maxDpr);
     let want = this.dpr;
-    if (this.slowFor > 700) want = Math.max(Math.min(Math.max(this.settings.minDpr, this.dprFloor), this.maxDpr), this.dpr - 0.15);
-    else if (this.fastFor > 3500) want = Math.min(this.maxDpr, this.dpr + 0.1);
-    if (want !== this.dpr) {
-      if (want < this.dpr) this.probe = { from: this.dpr, ms: this.avgMs, at: now };
-      this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${(Math.round(want * 100) / 100).toFixed(2)}`);
-      this.setDpr(Math.round(want * 100) / 100);
+    if (this.slowFor > 500) want = Math.max(lo, this.dpr * (this.avgMs > P * 1.8 ? 0.84 : 0.9));
+    else if (this.fastFor > 3000) want = Math.min(this.maxDpr, this.dpr * 1.05);
+    want = Math.round(want * 100) / 100;
+    if (Math.abs(want - this.dpr) >= 0.01) {
+      if (want < this.dpr) this.probe = { from: this.dpr, ms: this.avgMs, gpu, at: now };
+      this.perf.event(EV.dpr, `${this.dpr.toFixed(2)}→${want.toFixed(2)}`);
+      this.setDpr(want);
       this.lastDprChange = now;
       this.slowFor = this.fastFor = 0;
     }
@@ -1323,6 +1356,18 @@ export class Race {
     for (const [, l] of groups) for (const o of l) vis0.set(o, o.visible);
     const setDpr = (d: number) => this.setDpr(d);
     const hide = (...names: string[]) => { for (const [k, l] of groups) if (names.includes(k)) for (const o of l) o.visible = false; };
+    // feiner: einzelne Materialien aus (Bäume nah/fern, Zuschauer als Modell/Bild, Lampenhöfe, Kleinteile der Häuser)
+    const mats = new Map<string, THREE.Material[]>();
+    this.scene.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (!m || Array.isArray(m) || !m.name) return;
+      const l = mats.get(m.name) ?? [];
+      if (!l.includes(m)) l.push(m);
+      mats.set(m.name, l);
+    });
+    const matVis0 = new Map<THREE.Material, boolean>();
+    for (const l of mats.values()) for (const m of l) matVis0.set(m, m.visible);
+    const hideMat = (...names: string[]) => { for (const n of names) for (const m of mats.get(n) ?? []) m.visible = false; };
     const base = this.dpr;
     const maxD = this.maxDpr;
     const steps: [string, () => void][] = [
@@ -1331,6 +1376,12 @@ export class Race {
       ['ohne Sonnenuntergangs-Licht', () => this.applySettings({ ...S0, sunset: false }, true)],
       ['ohne Fahrer und Gegner', () => hide('riders')],
       ['ohne Zuschauer', () => hide('crowd')],
+      ['ohne Zuschauer-Modelle (nah)', () => hideMat('crowd')],
+      ['ohne Zuschauer-Bilder', () => hideMat('crowd-2d')],
+      ['ohne Bäume nah (Modelle)', () => hideMat('trees-near')],
+      ['ohne Bäume fern (Bilder)', () => hideMat('trees-far')],
+      ['ohne Lampenhöfe', () => hideMat('lamps')],
+      ['ohne Kleinteile der Häuser', () => hideMat('house-detail')],
       ['ohne Blumen, Sträucher, Tiere', () => hide('life')],
       ['ohne Bäume', () => hide('trees')],
       ['ohne Häuser', () => hide('houses')],
@@ -1348,6 +1399,7 @@ export class Race {
     const restore = () => {
       if (JSON.stringify(this.settings) !== JSON.stringify(S0)) this.applySettings(S0, true);
       for (const [o, v] of vis0) o.visible = v;
+      for (const [m, v] of matVis0) m.visible = v;
       setDpr(base);
     };
     // ein Block: einschwingen, dann 10 Bilder messen (GPU-Zeitstempel kommen verzögert – die ersten verfallen)
@@ -1448,11 +1500,11 @@ export class Race {
       const cd = this.camera.getWorldDirection(this.camDir);
       world.trees.update(cp);
       P.mark(3);
-      world.houses.update(cp, false, cd);
+      world.houses.update(cp, false, cd, this.camera);
       P.mark(4);
       world.life.update(cp);
       P.mark(5);
-      world.crowd?.update(cp, this.rider.group.position, false, cd);
+      world.crowd?.update(cp, this.rider.group.position, false, cd, this.camera);
       P.mark(6);
       P.mark(7);
       this.objects?.update(e.track, e.p.z, this.time);

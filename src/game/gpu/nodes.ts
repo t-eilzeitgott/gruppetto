@@ -6,7 +6,7 @@
  * Knoten – darum der lockere Typ N.
  */
 import * as TSL from 'three/tsl';
-import type { Texture } from 'three/webgpu';
+import type { PerspectiveCamera, Texture } from 'three/webgpu';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type N = any;
@@ -228,4 +228,23 @@ export function useDither(m: { opacityNode: unknown; alphaTestNode: unknown; alp
   m.opacityNode = ditherVis(lo, hi);
   m.alphaTestNode = float(0.5);
   m.alphaToCoverage = false;
+}
+
+/**
+ * Liegt eine Kugel (Mitte, Radius in m) im Sichtkegel der Kamera? k > 1 weitet den Kegel (Rand fürs Drehen, bis
+ * die Verteilung das nächste Mal neu läuft). Für die Instanzen, die auf der CPU verteilt werden.
+ */
+export function viewTest(camera: PerspectiveCamera, k: number): (x: number, y: number, z: number, r: number) => boolean {
+  camera.updateMatrixWorld();
+  const m = camera.matrixWorldInverse.elements;
+  const tv = Math.tan((camera.fov * Math.PI) / 360) * k;
+  const th = tv * camera.aspect;
+  const cv = Math.sqrt(1 + tv * tv), ch = Math.sqrt(1 + th * th);
+  return (x, y, z, r) => {
+    const vz = -(m[2] * x + m[6] * y + m[10] * z + m[14]);
+    if (vz < -r) return false;
+    const vx = m[0] * x + m[4] * y + m[8] * z + m[12];
+    const vy = m[1] * x + m[5] * y + m[9] * z + m[13];
+    return Math.abs(vx) <= vz * th + r * ch && Math.abs(vy) <= vz * tv + r * cv;
+  };
 }

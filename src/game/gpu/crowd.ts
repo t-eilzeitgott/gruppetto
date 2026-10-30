@@ -1,13 +1,17 @@
 /**
- * Zuschauer im WebGPU-Test: dieselben Menschen wie im Spiel (crowd3d: Körper, Kleidung, Zubehör, Fahnen, Becher,
- * Teufelskostüm) an denselben Stellen (Zuschauerzonen hinter den Banden, Trauben in den Kehren, kleine Grüppchen am
- * Rand), mit denselben Bewegungen: klatschen, winken, jubeln und hüpfen, filmen, Fahne schwenken, anfeuern,
- * tanzen, La-Ola – und alle schauen dem Fahrer nach. Die Bewegung rechnet der Vertex-Shader (WGSL, übertragen aus
- * dem GLSL des Spiels); Kleidung aus einer Farbtabelle (Textur). Pappschilder wie im Spiel (Atlas der Banden).
+ * Zuschauer im WebGPU-Test: dieselben Menschen wie im Spiel (crowd3d: Körper, Kleidung, Zubehör, Fahnen,
+ * Teufelskostüm) an denselben Stellen (Zuschauerzonen hinter den Banden, Trauben in den Kehren, Reihen am Rand und
+ * an den Hängen), mit denselben Bewegungen: klatschen, winken, jubeln und hüpfen, filmen, Fahne schwenken,
+ * anfeuern, tanzen, La-Ola – und alle schauen dem Fahrer nach.
  *
- * Alle Teile (Körper und alles Zubehör) liegen in einer Geometrie je Stufe; was jemand nicht trägt, faltet der
- * Shader weg. Stufen je Mensch nach Abstand (fein bis 16 m, einfach bis 45 m, Kasten-Menschen bis 320 m) – drei
- * Zeichenaufrufe für alle.
+ * Zwei Darstellungen, und jeder Mensch wechselt höchstens einmal, solange man ihn sieht:
+ * - Bild (2D): aus den 3D-Menschen beim Laden gebacken – je Vorlage drei Blickwinkel (vorn, schräg, Seite;
+ *   gespiegelt für die andere Seite) und zwei Bewegungsbilder. Das Bild zeigt den Menschen so, wie die Kamera ihn
+ *   gerade sieht (er dreht sich wie das Modell zum Fahrer), Mip-Stufen machen ihn in der Ferne weich kleiner.
+ * - 3D-Modell: nur nah – hinein, wenn der Fahrer oder die Kamera näher als R_IN kommt, zurück erst weiter als
+ *   R_OUT (dann ist er längst hinter der Kamera). Der Wechsel blendet in FADE Sekunden über (Raster), danach steht
+ *   genau eine Darstellung da – kein Hin und Her je nach Kameraabstand.
+ * Jeder Mensch draußen ist eine Vorlage (Kleidung und Haltung), im Bild wie im Modell dieselbe.
  */
 import * as THREE from 'three/webgpu';
 import { EDGE, SEG, type Seg, type Track } from '../abfahrt/track';
@@ -18,7 +22,7 @@ import { bayer4, tsl, useDither, type N } from './nodes';
 import { lit } from './light';
 import { groundMap, lampLit, terrainSun } from './sunmap';
 
-const { attribute, cameraPosition, cross, dFdx, dFdy, dot, float, floor, fract, int, ivec2, max, normalize, positionGeometry, positionWorld, select, sign, smoothstep, texture, textureLoad, time, uniform, varying, vec3, wgslFn } = tsl;
+const { abs, atan, attribute, cameraPosition, clamp, cos, cross, dFdx, dFdy, dot, float, floor, fract, int, interleavedGradientNoise, ivec2, max, min, mod, normalize, positionGeometry, positionWorld, screenCoordinate, select, sign, sin, smoothstep, texture, textureLoad, time, uniform, uniformArray, varying, vec2, vec3, vec4, wgslFn } = tsl;
 
 const hash = (n: number) => {
   let x = Math.imul(n ^ 0x6a09e667, 0x9e3779b1);
@@ -262,9 +266,11 @@ function crowdColor(c: N, i1: N, i2: N, i3: N, pal: THREE.DataTexture): N {
   return col;
 }
 
-/** Stufenwechsel (Mitte, halbe Breite, m): fein → einfach, einfach → Bild. Raster-Überblendung, kein Springen */
-const BAND_A: [number, number] = [6, 1.5];
-const BAND_B: [number, number] = [13, 2.5];
+/** 3D-Modell ab hier (m, zum Fahrer oder zur Kamera, je nachdem was näher ist), zurück zum Bild erst über R_OUT */
+export const R_IN = 10;
+const R_OUT = 22;
+/** Überblenden beim Wechsel (s) */
+const FADE = 0.4;
 /** Bilder (2D) bis hier (m), am Ende weich ausgeblendet */
 const FAR: [number, number] = [620, 720];
 
@@ -272,17 +278,26 @@ let PAL: THREE.DataTexture | null = null;
 const palette = () => (PAL ??= paletteTexture());
 
 /**
- * 3D-Menschen einer Stufe (lod 0 fein, 1 einfach): günstiges Licht (light.ts), eckig schattiert (Flächennormale aus
- * den Ableitungen), vorberechnetes Sonnenlicht, Himmelslicht, Laternen. Die Stufen teilen sich die Bildpunkte im
- * Überblendband (Bayer-Raster) – jede Person wechselt weich, je nach eigenem Abstand.
+ * Anteil der 3D-Darstellung (0 … 1) eines Menschen: f.x Beginn des Wechsels (s), f.y +1 zum Modell hin, −1 zum
+ * Bild zurück. Modell und Bild teilen sich die Bildpunkte im Bayer-Raster (Modell [0, k), Bild [k, 1)).
  */
-function crowdMaterial(rider: N, lod: 0 | 1): THREE.MeshBasicNodeMaterial {
+const share3d = (f: N, clock: N): N => {
+  const u = clamp(clock.sub(f.x).div(FADE), 0, 1);
+  return select(f.y.greaterThan(0), u, float(1).sub(u));
+};
+
+/**
+ * 3D-Menschen: günstiges Licht (light.ts), eckig schattiert (Flächennormale aus den Ableitungen), vorberechnetes
+ * Sonnenlicht, Himmelslicht, Laternen. Nur nah, eine Stufe (fein).
+ */
+function crowdMaterial(rider: N, clock: N): THREE.MeshBasicNodeMaterial {
   const m = new THREE.MeshBasicNodeMaterial();
   const c = attribute('color', 'vec3');
   const i0 = attribute('aI0', 'vec4');
   const i1 = attribute('aI1', 'vec4');
   const i2 = attribute('aI2', 'vec4');
   const i3 = attribute('aI3', 'vec4');
+  const i4 = attribute('aI4', 'vec4');
   m.positionNode = place({ p: positionGeometry, c, i0, i1, i3, time, rider });
   const vc = varying(crowdColor(c, i1, i2, i3, palette()), 'vCrowdCol');
   const pw = positionWorld;
@@ -290,91 +305,162 @@ function crowdMaterial(rider: N, lod: 0 | 1): THREE.MeshBasicNodeMaterial {
   const nW = fn.mul(sign(dot(fn, cameraPosition.sub(pw))));
   const g = groundMap(pw.xz);
   m.colorNode = lit({ col: vc, nWorld: nW, vis: terrainSun(pw.xz).mul(g.x), wrap: 0.25, ao: float(1.15), extra: lampLit(vc, g.w) });
-  const d = varying(i0.xz.sub(cameraPosition.xz).length(), 'vCrowdD');
-  const a = smoothstep(BAND_A[0] - BAND_A[1], BAND_A[0] + BAND_A[1], d);
-  const b = smoothstep(BAND_B[0] - BAND_B[1], BAND_B[0] + BAND_B[1], d);
-  const one = float(1);
-  if (lod === 0) useDither(m, float(0), one.sub(a)); else useDither(m, one.sub(a), one.sub(b));
-  m.name = lod === 0 ? 'crowd' : 'crowd-mid';
+  useDither(m, float(0), varying(share3d(i4, clock), 'vCrowd3'));
+  m.name = 'crowd';
   return m;
 }
 
 // ——— Bilder (2D) der Zuschauer: aus den 3D-Menschen gebacken ———
 
-/** Atlas: 16 × 10 Zellen (je Vorlage zwei Bewegungsbilder), Zelle 128 × 202 Bildpunkte = 1,9 × 3 m (Platz für Fahnen) */
-const A_COLS = 16, A_ROWS = 10, CELL_W = 1.9, CELL_H = 3.0, CELL_PX = 128;
-export const VARIANTS = (A_COLS * A_ROWS) / 2;
+/** Blickwinkel der Bilder (Grad zwischen Blickrichtung des Menschen und Richtung zur Kamera); negative gespiegelt */
+const ANG = [0, 45, 90];
+const NA = ANG.length;
+/** Zelle 2,1 × 3,4 m (Platz für hochgehaltene Fahnen), 136 × 220 Bildpunkte */
+const CELL_W = 2.1, CELL_H = 3.4, CELL_PX = 136;
+const CELL_PY = Math.round((CELL_PX * CELL_H) / CELL_W);
 /** Füße so weit über der Zellenunterkante (m) */
 const FOOT = 0.06;
 
-/** Vorlagen: so sehen die Zuschauer aus (Kleidung, Haltung) – jede Person draußen ist eine davon (gleich im 3D-Bild und im Bild) */
-function makeVariants(): Person[] {
+/** Vorlagen je Haltung (Anzahl; kid: Kinder) – jede Person draußen ist eine davon */
+const SPEC: [number, number, boolean?][] = [
+  [Act.clap, 5], [Act.cheer, 5], [Act.wave, 5], [Act.idle, 4], [Act.film, 3], [Act.shout, 4], [Act.jump, 4], [Act.flag, 6],
+  [Act.lean, 4], [Act.dance, 2], [Act.sign, 2], [Act.devil, 2], [Act.ola, 2], [Act.cheer, 1, true], [Act.wave, 1, true],
+];
+export const VARIANTS = SPEC.reduce((s, [, n]) => s + n, 0);
+const CELLS = VARIANTS * NA * 2;
+const A_COLS = 20;
+const A_ROWS = Math.ceil(CELLS / A_COLS);
+
+/** Takt der Bewegung (Zyklen je Bewegungssekunde des Shaders) – die beiden Bilder liegen einen halben Takt auseinander */
+const ACT_F: Record<number, number> = {
+  [Act.clap]: 2, [Act.wave]: 1.3, [Act.cheer]: 1.45, [Act.flag]: 1.2, [Act.shout]: 1, [Act.jump]: 1.25, [Act.dance]: 1,
+  [Act.devil]: 1.2, [Act.idle]: 0.2, [Act.film]: 0.3, [Act.lean]: 2, [Act.sign]: 0.2,
+};
+/** Zeit beim Backen (Shader-Sekunden) */
+const T_BAKE = 12.3;
+/** dreht sich zum Fahrer (wie gpCrowd: nicht beim Laufen, Schild, Hüpfen, La-Ola) */
+const turns = (act: number) => !((act > 7.5 && act < 9.5) || (act > 11.5 && act < 17.5));
+
+interface Variant { p: Person; ph: [number, number]; kid: boolean }
+
+/** Vorlagen: so sehen die Zuschauer aus (Kleidung, Haltung) – je Haltung ein paar verschiedene */
+function makeVariants(): Variant[] {
   const r = mulberry32(0x5eed42);
-  const out: Person[] = [];
+  const out: Variant[] = [];
   const zones: Zone[] = ['tifosi', 'pass', 'village'];
-  const ok = new Set<number>([Act.idle, Act.clap, Act.wave, Act.cheer, Act.film, Act.flag, Act.shout, Act.jump, Act.dance]);
-  while (out.length < VARIANTS) {
-    const p = randomPerson(r, zones[out.length % 3], { row: 1 + (out.length % 3) });
-    if (!ok.has(p.act)) continue;
-    p.cup = false;
-    out.push(p);
+  for (const [act, n, kid] of SPEC) {
+    for (let k = 0; k < n; k++) {
+      let p: Person | null = null;
+      for (let tries = 0; tries < 20000 && !p; tries++) {
+        const q = randomPerson(r, zones[(out.length + tries) % 3], { row: act === Act.lean ? 0 : 1 + (tries % 2), kid: !!kid });
+        if (act === Act.ola) { if (q.act !== Act.sign && q.act !== Act.flag && q.act !== Act.devil && q.hatType !== 5) { q.act = Act.ola; p = q; } }
+        else if (q.act === act && (act === Act.devil || q.hatType !== 5)) p = q;
+      }
+      if (!p) { p = randomPerson(r, 'tifosi', { row: 1 }); p.act = act; }
+      p.cup = false;
+      if (kid) p.height = 0.62;
+      // zwei Bewegungsbilder einen halben Takt auseinander (La-Ola: Arme unten, Arme oben)
+      const ph0 = ((out.length * 0.137) % 1) * 0.1;
+      let ph: [number, number];
+      if (act === Act.ola) {
+        const at = (w: number) => (1.2 * (4 + w) - T_BAKE * 0.31) / 37;
+        ph = [at(0.7), at(0.18)];
+      } else {
+        const half = 0.5 / (ACT_F[act] ?? 1);
+        ph = [ph0, ph0 + half / (37 + T_BAKE * 0.31 * 0.25 * 7)];
+      }
+      out.push({ p, ph, kid: !!kid });
+    }
   }
   return out;
 }
 
-/** Bild-Zuschauer: Viereck zur Kamera gedreht (nur um die Senkrechte), Zelle aus dem Atlas, zwei Bewegungsbilder überblendet */
-function impostorMaterial(atlas: THREE.Texture, flipV: boolean): THREE.MeshBasicNodeMaterial {
+/**
+ * Bild-Zuschauer: Viereck zur Kamera gedreht (nur um die Senkrechte), so schmal wie der Mensch (Umriss der
+ * Vorlage). Blickwinkel wie beim Modell: Blickrichtung (mit der Drehung zum Fahrer) gegen die Richtung zur Kamera –
+ * das passende Bild, zwischen zwei Winkeln und zwischen den zwei Bewegungsbildern kurz im Raster überblendet.
+ */
+function impostorMaterial(atlas: THREE.Texture, flipV: boolean, bounds: THREE.Vector4[], rider: N, clock: N): THREE.MeshBasicNodeMaterial {
   const m = new THREE.MeshBasicNodeMaterial();
   const iA = attribute('iA', 'vec4');
   const iB = attribute('iB', 'vec4');
+  const iC = attribute('iC', 'vec4');
   const q = positionGeometry;
   const P = iA.xyz;
   const sc = iA.w;
-  const toC = cameraPosition.sub(P);
-  const hz = normalize(vec3(toC.x, 0, toC.z));
-  const right = vec3(hz.z, 0, hz.x.negate());
-  m.positionNode = P.add(right.mul(q.x.mul(CELL_W).mul(sc))).add(vec3(0, q.y.mul(CELL_H).sub(FOOT).mul(sc), 0));
-  // Bewegung: zwei Bilder je Vorlage, weich überblendet (Raster), je Person eigener Takt
-  const blend = tsl.sin(time.mul(iB.z).add(iB.y.mul(6.283))).mul(0.5).add(0.5);
-  const t2 = tsl.fract(tsl.float(52.9829189).mul(tsl.fract(tsl.screenCoordinate.x.mul(0.06711056).add(tsl.screenCoordinate.y.mul(0.00583715)))));
-  const frame = select(t2.lessThan(blend), float(1), float(0));
-  const cell = iB.x.mul(2).add(frame);
-  const col = cell.sub(floor(cell.div(A_COLS)).mul(A_COLS));
-  const row = floor(cell.div(A_COLS));
-  const u = col.add(q.x.add(0.5)).div(A_COLS);
-  const rows = (A_ROWS * CELL_PX * CELL_H) / CELL_W;
-  void rows;
-  // Zeile 0 oben im Bild
-  const vTop = row.add(float(1).sub(q.y)).div(A_ROWS);
+  const vI = iB.x;
+  const B = uniformArray(bounds, 'vec4').element(int(vI.add(0.5)));
+  // Blickrichtung wie gpCrowd: zum Fahrer gedreht, je näher er ist
+  const toR = rider.xz.sub(P.xz);
+  const distR = toR.length();
+  const TAU = Math.PI * 2;
+  const wrapA = (a: N): N => mod(a.add(Math.PI), TAU).sub(Math.PI);
+  const delta = wrapA(atan(toR.x, toR.y).sub(iB.w));
+  const att = float(1).sub(smoothstep(30, 150, distR)).mul(iC.z);
+  const yaw = iB.w.add(clamp(delta, -1.05, 1.05).mul(0.65).mul(att));
+  const toC = cameraPosition.xz.sub(P.xz);
+  const phi = wrapA(atan(toC.x, toC.y).sub(yaw));
+  // Winkelstufe: 0°, 45°, 90° (darüber die Seite); Überblenden ±5° um die Mitte zwischen zwei Stufen
+  const s = clamp(abs(phi).div(Math.PI / 4), 0, 2);
+  const a0 = floor(min(s, float(1.999)));
+  const mA = smoothstep(0.38, 0.62, s.sub(a0));
+  const mirror = select(phi.lessThan(0), float(-1), float(1));
+  // Bewegungsbild: Daumenkino im Takt der Haltung (kurz überblendet); La-Ola (iB.z < 0): Arme oben, wenn die Welle da ist
+  const ft = fract(time.mul(iB.z).add(iB.y));
+  const flip = smoothstep(0.45, 0.5, ft).mul(float(1).sub(smoothstep(0.95, 1, ft)));
+  const w = fract(time.mul(0.31).add(iB.y.mul(37)).div(1.2));
+  const ola = smoothstep(0, 0.12, w).mul(float(1).sub(smoothstep(0.24, 0.42, w)));
+  const mF = select(iB.z.lessThan(0), ola, flip);
+  // Viereck: symmetrisch (Spiegeln tauscht nur die Seiten im Bild), so breit und hoch wie der Umriss
+  const toC3 = normalize(vec3(toC.x, 0, toC.y));
+  const right = vec3(toC3.z, 0, toC3.x.negate());
+  const xc = q.x.mul(B.x);
+  const yc = q.y.mul(B.y);
+  m.positionNode = P.add(right.mul(xc.mul(CELL_W).mul(sc))).add(vec3(0, yc.mul(CELL_H).sub(FOOT).mul(sc), 0));
+  const vXY = varying(vec2(xc, yc), 'vImpXY');
+  const vSel = varying(vec4(vI, a0, mA, mirror), 'vImpSel');
+  const g = groundMap(P.xz, true);
+  const vL = varying(vec4(mF, share3d(iC, clock), terrainSun(P.xz, true).mul(g.x), g.w), 'vImpL');
+  const vD = varying(toC.length(), 'vImpD');
+  // je Bildpunkt: Winkelstufe und Bewegungsbild (eigene Rauschmuster, damit sich die Überblendungen nicht decken)
+  const sc0 = screenCoordinate.xy;
+  const tA = interleavedGradientNoise(sc0);
+  const tF = interleavedGradientNoise(sc0.add(vec2(17, 31)));
+  // ganze Zahlen aus den Zwischenwerten (die kommen interpoliert minimal daneben an – sonst springt die Spalte)
+  const a = floor(vSel.y.add(0.5)).add(select(tA.lessThan(vSel.z), float(1), float(0)));
+  const f = select(tF.lessThan(vL.x), float(1), float(0));
+  const cell = floor(vSel.x.add(0.5)).mul(NA).add(a).mul(2).add(f);
+  const row = floor(cell.add(0.5).div(A_COLS));
+  const col = cell.sub(row.mul(A_COLS));
+  const uIn = vXY.x.mul(vSel.w).add(0.5);
+  const u = col.add(uIn).div(A_COLS);
+  const vTop = row.add(float(1).sub(vXY.y)).div(A_ROWS);
   const v = flipV ? vTop : float(1).sub(vTop);
-  const tx = texture(atlas, tsl.vec2(u, v));
+  // Mip-Stufe aus den stetigen Koordinaten (der Zellwechsel im Raster würde sonst die kleinste Stufe erzwingen)
+  const gx = vec2(dFdx(uIn).div(A_COLS), dFdx(vXY.y).div(A_ROWS));
+  const gy = vec2(dFdy(uIn).div(A_COLS), dFdy(vXY.y).div(A_ROWS));
+  const tx = texture(atlas, vec2(u, v)).grad(gx, gy);
   // Farbe liegt als Wurzel und vormultipliziert im Atlas (Mip-Stufen ohne dunkle Ränder)
   const alb = tx.rgb.div(max(tx.a, float(0.02)));
   const albedo = alb.mul(alb);
-  const vis = varying(terrainSun(P.xz, true), 'vImpSunC');
-  const n = normalize(hz.add(vec3(0, 0.55, 0)));
-  m.colorNode = lit({ col: albedo, nWorld: n, vis, wrap: 0.35, ao: float(1.05) });
-  // Deckung: Rand weich (Raster aus dem Alpha), dazu der Stufenwechsel zu den 3D-Menschen und das Ausblenden fern
-  const d = varying(toC.xz.length(), 'vImpD');
-  const b = smoothstep(BAND_B[0] - BAND_B[1], BAND_B[0] + BAND_B[1], d);
-  const far = float(1).sub(smoothstep(FAR[0], FAR[1], d));
+  const n = normalize(toC3.add(vec3(0, 0.55, 0)));
+  m.colorNode = lit({ col: albedo, nWorld: n, vis: vL.z, wrap: 0.35, ao: float(1.05), extra: lampLit(albedo, vL.w) });
+  // Deckung: Rand (Alpha), Wechsel zum Modell (Bayer wie beim Modell: Bild belegt [k, 1)), fern ausblenden
+  const far = float(1).sub(smoothstep(FAR[0], FAR[1], vD));
   const t = bayer4();
-  const show = t.greaterThanEqual(float(1).sub(b)).and(t.lessThan(far)).and(tx.a.greaterThan(0.42));
+  const show = t.greaterThanEqual(vL.y).and(t.lessThan(far)).and(tx.a.greaterThan(0.42));
   m.opacityNode = select(show, float(1), float(0));
   m.alphaTestNode = float(0.5);
   m.name = 'crowd-2d';
   return m;
 }
 
-/** alle Teile (Körper und Zubehör) einer Stufe in einer Geometrie */
-function mergedPerson(lod: 0 | 1): THREE.BufferGeometry {
+/** alle Teile (Körper und alles Zubehör) in einer Geometrie (fein) */
+function mergedPerson(): THREE.BufferGeometry {
   const pos: number[] = [], col: number[] = [], nor: number[] = [], idx: number[] = [];
   const dummy = new Float32Array(PS);
-  // mittlere Stufe ohne seltenes Kleinzeug (Teufel, Rucksack, Zopf, Becher)
-  const skip = lod === 1 ? new Set(['horns', 'trident', 'backpack', 'ponytail', 'cup', 'glasses', 'phone']) : new Set<string>();
   for (const k of KINDS) {
-    if (skip.has(k)) continue;
-    const g = crowdGeometry(k, lod, dummy, 1);
+    const g = crowdGeometry(k, 0, dummy, 1);
     if (!g) continue;
     const o = pos.length / 3;
     const P = g.getAttribute('position'), C = g.getAttribute('color'), Nn = g.getAttribute('normal');
@@ -396,11 +482,14 @@ function mergedPerson(lod: 0 | 1): THREE.BufferGeometry {
 
 /** Zuschauer je Seite und 2 m Straße höchstens (dichte Stellen) – außerhalb der Zuschauerzonen der Strecke */
 const FILL_MAX = 3.2;
+/** Floats je Mensch: Modell (Daten wie crowd3d + Wechsel), Bild */
+const PS3 = PS + 4;
+const PSI = 12;
 
-interface Group { geo: THREE.InstancedBufferGeometry; buf: THREE.InstancedInterleavedBuffer; data: Float32Array; mesh: THREE.Mesh }
+interface Buf { geo: THREE.InstancedBufferGeometry; buf: THREE.InstancedInterleavedBuffer; data: Float32Array; mesh: THREE.Mesh; cap: number }
 
-/** Mensch mit Vorlage (vi: Index im Atlas, −1 = kein Bild; vs: Maßstab zur Vorlage) */
-type PV = Person & { vi?: number; vs?: number };
+/** Mensch mit Vorlage (vi: Index der Vorlage; vs: Maßstab zur Vorlage) und Darstellung (s3: 1 Modell, t3: Wechsel seit) */
+type PV = Person & { vi: number; vs: number; s3: number; t3: number };
 
 /** Ground: Höhe des Straßenrands in Abstand dx vom Bankett (Querprofil) */
 export type Ground = (s: Seg, sg: number, dx: number) => number;
@@ -408,62 +497,77 @@ export type Ground = (s: Seg, sg: number, dx: number) => number;
 export class Crowd {
   readonly group = new THREE.Group();
   readonly rider = uniform(new THREE.Vector3());
-  private people: Person[] = [];
+  /** Uhr der Wechsel (s, wie performance.now) */
+  private clock = uniform(0);
+  private people: PV[] = [];
   private src = new Float32Array(0);
-  private groups: Group[] = [];
-  private mats: THREE.MeshBasicNodeMaterial[];
-  private bases: THREE.BufferGeometry[];
+  private mat3: THREE.MeshBasicNodeMaterial;
+  private base3: THREE.BufferGeometry;
+  private model: Buf | null = null;
   /** Vorlagen (Kleidung, Haltung) – ihre Bilder liegen im Atlas */
   private variants = makeVariants();
+  private byAct = new Map<number, number[]>();
+  private kids: number[] = [];
   /** Bild-Zuschauer: ein Netz (Viereck je Mensch) */
-  private imp: { mesh: THREE.Mesh; geo: THREE.InstancedBufferGeometry; buf: THREE.InstancedInterleavedBuffer; data: Float32Array; cap: number } | null = null;
+  private imp: Buf | null = null;
 
   private at = new THREE.Vector3(1e9, 0, 0);
+  private atR = new THREE.Vector3(1e9, 0, 0);
+  /** Prüfhilfe: alle als Bild ('2d') oder alle als Modell ('3d') */
+  debugMode: 'auto' | '2d' | '3d' = 'auto';
   /** Pappschilder (Quads im Atlas der Banden) */
   signs: { pos: number[]; uv: number[] } = { pos: [], uv: [] };
 
   constructor() {
-    this.mats = [crowdMaterial(this.rider, 0), crowdMaterial(this.rider, 1)];
-    this.bases = [mergedPerson(0), mergedPerson(1)];
+    this.mat3 = crowdMaterial(this.rider, this.clock);
+    this.base3 = mergedPerson();
+    this.variants.forEach((V, i) => {
+      if (V.kid) { this.kids.push(i); return; }
+      const l = this.byAct.get(V.p.act) ?? [];
+      l.push(i);
+      this.byAct.set(V.p.act, l);
+    });
   }
 
   /**
-   * Bilder der Vorlagen backen (einmal beim Laden): alle Vorlagen in zwei Bewegungen als 3D-Menschen nebeneinander,
-   * von vorn gerade (orthografisch) in einen Atlas mit Mip-Stufen gezeichnet. Farbe ohne Licht (nur Formschatten)
-   * als Wurzel – das Licht der Welt kommt im Bild-Material dazu.
+   * Bilder der Vorlagen backen (einmal beim Laden): jede Vorlage in drei Blickwinkeln und zwei Bewegungen als
+   * 3D-Mensch, orthografisch in einen Atlas gezeichnet. Farbe ohne Licht (nur Formschatten) als Wurzel – das Licht
+   * der Welt kommt im Bild-Material dazu. Danach je Vorlage der Umriss (für schmale Vierecke).
    */
   async bake(renderer: THREE.WebGPURenderer) {
-    const W = A_COLS * CELL_PX, H = Math.round(A_ROWS * CELL_PX * (CELL_H / CELL_W));
+    const W = A_COLS * CELL_PX, H = A_ROWS * CELL_PY;
     const rt = new THREE.RenderTarget(W, H, { type: THREE.UnsignedByteType, depthBuffer: true });
     rt.texture.colorSpace = THREE.NoColorSpace;
-    const n = VARIANTS * 2;
-    const data = new Float32Array(n * PS);
+    const data = new Float32Array(CELLS * PS);
+    const cw = CELL_W, ch = CELL_H;
     for (let v = 0; v < VARIANTS; v++) {
-      for (let f = 0; f < 2; f++) {
-        const c = v * 2 + f;
-        const p = { ...this.variants[v] };
-        p.x = ((c % A_COLS) + 0.5) * CELL_W;
-        p.y = -(Math.floor(c / A_COLS) + 1) * CELL_H + FOOT;
-        p.z = 0;
-        p.yaw = 0;
-        // zweites Bild: ein halber Takt später (andere Haltung)
-        p.phase = (v * 0.137) % 1 + f * 0.0068;
-        packPerson(p, data, c);
+      for (let a = 0; a < NA; a++) {
+        for (let f = 0; f < 2; f++) {
+          const c = (v * NA + a) * 2 + f;
+          const p = { ...this.variants[v].p };
+          p.x = ((c % A_COLS) + 0.5) * cw;
+          p.y = -(Math.floor(c / A_COLS) + 1) * ch + FOOT;
+          p.z = 0;
+          // Kamera schaut von +z: Blickwinkel phi = −Drehung
+          p.yaw = -(ANG[a] * Math.PI) / 180;
+          p.phase = this.variants[v].ph[f];
+          packPerson(p, data, c);
+        }
       }
     }
     const geo = new THREE.InstancedBufferGeometry();
-    const base = this.bases[0];
-    geo.setIndex(base.index);
-    for (const k of ['position', 'color', 'normal']) geo.setAttribute(k, base.getAttribute(k));
+    geo.setIndex(this.base3.index);
+    for (const k of ['position', 'color', 'normal']) geo.setAttribute(k, this.base3.getAttribute(k));
     const buf = new THREE.InstancedInterleavedBuffer(data, PS, 1);
     for (let k = 0; k < 4; k++) geo.setAttribute(`aI${k}`, new THREE.InterleavedBufferAttribute(buf, 4, k * 4));
-    geo.instanceCount = n;
+    geo.instanceCount = CELLS;
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
     const m = new THREE.MeshBasicNodeMaterial();
     const c = attribute('color', 'vec3');
     const i0 = attribute('aI0', 'vec4'), i1 = attribute('aI1', 'vec4'), i2 = attribute('aI2', 'vec4'), i3 = attribute('aI3', 'vec4');
-    // Blick zum Fahrer vorn (leicht aufgeregt), feste Zeit
-    m.positionNode = place({ p: positionGeometry, c, i0, i1, i3, time: float(12.3), rider: vec3(A_COLS * CELL_W * 0.5, 0, 18) });
+    // Fahrer 18 m geradeaus vor jedem: aufgeregt, aber ohne Drehung (die rechnet das Bild-Material selbst)
+    const rider = vec3(i0.x.add(sin(i0.w).mul(18)), 0, i0.z.add(cos(i0.w).mul(18)));
+    m.positionNode = place({ p: positionGeometry, c, i0, i1, i3, time: float(T_BAKE), rider });
     const col = crowdColor(c, i1, i2, i3, palette());
     const pw = positionWorld;
     const fn = normalize(cross(dFdx(pw), dFdy(pw)));
@@ -476,7 +580,7 @@ export class Crowd {
     mesh.frustumCulled = false;
     const scene = new THREE.Scene();
     scene.add(mesh);
-    const cam = new THREE.OrthographicCamera(0, A_COLS * CELL_W, 0, -A_ROWS * CELL_H, 0.1, 50);
+    const cam = new THREE.OrthographicCamera(0, A_COLS * cw, 0, -A_ROWS * ch, 0.1, 50);
     cam.position.set(0, 0, 20);
     cam.updateMatrixWorld();
     const prevRT = renderer.getRenderTarget();
@@ -492,13 +596,38 @@ export class Crowd {
     m.dispose();
     // zurücklesen und als gewöhnliche Textur hochladen: so entstehen die Mip-Stufen sicher (fern bleibt der Mensch
     // sichtbar). Zeilenfolge prüfen: oben in jeder Zelle ist Luft, unten stehen die Füße
-    const px = (await renderer.readRenderTargetPixelsAsync(rt, 0, 0, W, H)) as Uint8Array;
+    const raw = (await renderer.readRenderTargetPixelsAsync(rt, 0, 0, W, H)) as Uint8Array;
     rt.dispose();
+    // WebGPU liefert Zeilen auf 256 Bytes aufgefüllt (die letzte ohne Füllung)
+    const stride = raw.length === W * H * 4 ? W * 4 : Math.ceil((W * 4) / 256) * 256;
+    const px = stride === W * 4 ? new Uint8Array(raw) : new Uint8Array(W * H * 4);
+    if (stride !== W * 4) for (let y = 0; y < H; y++) px.set(raw.subarray(y * stride, y * stride + W * 4), y * W * 4);
     const rowA = (y: number) => { let n = 0; for (let x = 0; x < W; x++) if (px[(y * W + x) * 4 + 3] > 0) n++; return n; };
     let first = 0, last = 0;
     for (let y = 0; y < 6; y++) { first += rowA(y); last += rowA(H - 1 - y); }
     this.flipV = first <= last;
-    const tex = new THREE.DataTexture(new Uint8Array(px), W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
+    // Umriss je Vorlage über alle ihre Zellen: halbe Breite (symmetrisch) und Höhe, in Zellmaßen
+    const bounds: THREE.Vector4[] = [];
+    for (let v = 0; v < VARIANTS; v++) {
+      let hw = 0.05, top = 0.3;
+      for (let k = 0; k < NA * 2; k++) {
+        const cI = v * NA * 2 + k;
+        const x0 = (cI % A_COLS) * CELL_PX, r = Math.floor(cI / A_COLS);
+        for (let yy = 0; yy < CELL_PY; yy++) {
+          // yy: 0 oben in der Zelle
+          const y = this.flipV ? r * CELL_PY + yy : H - 1 - (r * CELL_PY + yy);
+          const o = y * W * 4;
+          for (let xx = 0; xx < CELL_PX; xx++) {
+            if (px[o + (x0 + xx) * 4 + 3] < 40) continue;
+            hw = Math.max(hw, Math.abs((xx + 0.5) / CELL_PX - 0.5));
+            top = Math.max(top, 1 - yy / CELL_PY);
+          }
+        }
+      }
+      bounds.push(new THREE.Vector4(Math.min(0.5, hw + 3 / CELL_PX), Math.min(1, top + 3 / CELL_PY), 0, 0));
+    }
+    this.bounds = bounds;
+    const tex = new THREE.DataTexture(px, W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
     tex.colorSpace = THREE.NoColorSpace;
     tex.generateMipmaps = true;
     tex.minFilter = THREE.LinearMipmapLinearFilter;
@@ -506,36 +635,50 @@ export class Crowd {
     tex.anisotropy = 4;
     tex.needsUpdate = true;
     this.atlasTex = tex;
-    this.buildImpostors();
+    this.buildImpostors(2048);
   }
   private atlasTex: THREE.DataTexture | null = null;
+  private bounds: THREE.Vector4[] = [];
+  private impMat: THREE.MeshBasicNodeMaterial | null = null;
+  /** Atlas-Zeilen von oben (WebGPU) oder von unten (WebGL) gelesen */
+  flipV = true;
 
   /** Netz der Bild-Zuschauer (wächst bei Bedarf) */
-  private buildImpostors(cap = 2048) {
+  private buildImpostors(cap: number) {
     if (!this.atlasTex) return;
     if (this.imp) { this.imp.mesh.removeFromParent(); this.imp.geo.dispose(); }
     const geo = new THREE.InstancedBufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0], 3));
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, 0, 0, 1, 0, 0, 1, 1, 0, -1, 1, 0], 3));
     geo.setIndex([0, 1, 2, 0, 2, 3]);
-    const data = new Float32Array(cap * 8);
-    const buf = new THREE.InstancedInterleavedBuffer(data, 8, 1);
+    this.impMat ??= impostorMaterial(this.atlasTex, this.flipV, this.bounds, this.rider, this.clock);
+    this.imp = this.buffer(geo, this.impMat, PSI, cap, ['iA', 'iB', 'iC']);
+  }
+
+  /** Instanzpuffer mit Attributen je vier Floats */
+  private buffer(geo: THREE.InstancedBufferGeometry, mat: THREE.Material, stride: number, cap: number, names: string[]): Buf {
+    const data = new Float32Array(cap * stride);
+    const buf = new THREE.InstancedInterleavedBuffer(data, stride, 1);
     buf.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('iA', new THREE.InterleavedBufferAttribute(buf, 4, 0));
-    geo.setAttribute('iB', new THREE.InterleavedBufferAttribute(buf, 4, 4));
+    names.forEach((nm, k) => geo.setAttribute(nm, new THREE.InterleavedBufferAttribute(buf, 4, k * 4)));
     geo.instanceCount = 0;
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
-    this.impMat ??= impostorMaterial(this.atlasTex, this.flipV);
-    const mesh = new THREE.Mesh(geo, this.impMat);
+    const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     mesh.matrixAutoUpdate = false;
     mesh.visible = false;
     this.group.add(mesh);
-    this.imp = { mesh, geo, buf, data, cap };
     this.at.set(1e9, 0, 0);
+    return { geo, buf, data, mesh, cap };
   }
-  private impMat: THREE.MeshBasicNodeMaterial | null = null;
-  /** Atlas-Zeilen von oben (WebGPU) oder von unten (WebGL) gelesen */
-  flipV = true;
+
+  /** 3D-Netz (wächst bei Bedarf) */
+  private buildModel(cap: number) {
+    if (this.model) { this.model.mesh.removeFromParent(); this.model.geo.dispose(); }
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setIndex(this.base3.index);
+    for (const k of ['position', 'color', 'normal']) geo.setAttribute(k, this.base3.getAttribute(k));
+    this.model = this.buffer(geo, this.mat3, PS3, cap, ['aI0', 'aI1', 'aI2', 'aI3', 'aI4']);
+  }
 
   get count() { return this.people.length; }
 
@@ -546,7 +689,6 @@ export class Crowd {
 
   /** Strecke (m) je Mensch – für das Abbauen hinter dem Fahrer */
   private atZ: number[] = [];
-  private cap = 0;
 
   /**
    * Streaming: Zuschauer der Segmente i0 … i1 (halboffen) dazunehmen. Liefert die Pappschilder dieses Bereichs
@@ -584,7 +726,7 @@ export class Crowd {
   /** Streaming: Zuschauer abbauen (keep: Strecke in m) */
   prune(keep: (at: number) => boolean) {
     const n = this.people.length;
-    const people: Person[] = [];
+    const people: PV[] = [];
     const atZ: number[] = [];
     this.people.forEach((p, k) => { if (keep(this.atZ[k])) { people.push(p); atZ.push(this.atZ[k]); } });
     if (people.length === n) return;
@@ -594,42 +736,39 @@ export class Crowd {
     this.repack();
   }
 
-  /** Daten aller Menschen neu packen; Gruppen wachsen bei Bedarf */
+  /** Daten aller Menschen neu packen (nur die neuen, die alten bleiben gleich) */
   private repack(from = 0) {
     const n = this.people.length;
     const old = this.src;
     this.src = new Float32Array(Math.max(1, n) * PS);
-    // nur die neuen packen (beim Nachladen kommen Menschen hinten dazu; die alten Daten bleiben gleich)
     if (from > 0 && old.length >= from * PS) this.src.set(old.subarray(0, from * PS));
     else from = 0;
     for (let k = from; k < n; k++) packPerson(this.people[k], this.src, k);
     this.at.set(1e9, 0, 0);
-    if (n <= this.cap && this.groups.length) return;
-    for (const g of this.groups) { g.mesh.removeFromParent(); g.geo.dispose(); }
-    this.groups = [];
-    this.cap = Math.max(64, Math.ceil(n * 1.5));
-    // nur Menschen nahe der Kamera stehen in den Gruppen: kein Wegschneiden als Ganzes
-    const sphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
-    for (let lod = 0; lod < 2; lod++) {
-      const base = this.bases[lod];
-      const geo = new THREE.InstancedBufferGeometry();
-      geo.setIndex(base.index);
-      for (const k of ['position', 'color', 'normal']) geo.setAttribute(k, base.getAttribute(k));
-      const data = new Float32Array(this.cap * PS);
-      const buf = new THREE.InstancedInterleavedBuffer(data, PS, 1);
-      buf.setUsage(THREE.DynamicDrawUsage);
-      for (let k = 0; k < 4; k++) geo.setAttribute(`aI${k}`, new THREE.InterleavedBufferAttribute(buf, 4, k * 4));
-      geo.instanceCount = 0;
-      geo.boundingSphere = sphere;
-      const mesh = new THREE.Mesh(geo, this.mats[lod]);
-      mesh.matrixAutoUpdate = false;
-      mesh.frustumCulled = false;
-      mesh.castShadow = lod === 0;
-      mesh.receiveShadow = true;
-      mesh.visible = false;
-      this.group.add(mesh);
-      this.groups.push({ geo, buf, data, mesh });
-    }
+    if (!this.model) this.buildModel(768);
+  }
+
+  /** Vorlage zur Haltung wählen und übernehmen (Kleidung, Haltung) – so passen Modell und Bild zusammen */
+  private adopt(p: Person, r: () => number): PV {
+    let act = p.act;
+    if (act === Act.hold || act === Act.sit) act = Act.idle;
+    else if (act === Act.run || act === Act.jog) act = Act.cheer;
+    else if (act === Act.runFlag || act === Act.jogFlag) act = Act.flag;
+    const kid = p.height < 0.8;
+    const list = kid ? this.kids : (this.byAct.get(act) ?? this.byAct.get(Act.cheer)!);
+    const vi = list[Math.floor(r() * list.length)];
+    const V = this.variants[vi].p;
+    p.skin = V.skin; p.top = V.top; p.bottom = V.bottom; p.hair = V.hair; p.hat = V.hat; p.hatType = V.hatType;
+    p.accent = V.accent; p.flag = V.flag; p.shorts = V.shorts; p.sleeves = V.sleeves; p.longHair = V.longHair;
+    p.glasses = V.glasses; p.stripe = V.stripe; p.beard = V.beard; p.backpack = V.backpack; p.ponytail = V.ponytail; p.cup = false;
+    p.width = V.width;
+    p.act = V.act;
+    const q = p as PV;
+    q.vi = vi;
+    q.vs = p.height / V.height;
+    q.s3 = 0;
+    q.t3 = -1e6;
+    return q;
   }
 
   private crowdPeople(t: Track, ground: Ground, s: Seg, sg: number, lim: number, v: number, dx0: number) {
@@ -667,54 +806,24 @@ export class Crowd {
         if (EDGE + ex + dx > lim - 0.45) break;
         const kid = ri === 0 && r() < 0.1;
         if (kid) dx -= 0.06;
-        const p = randomPerson(r, zone, { row: ri, kid });
-        this.adopt(p, r);
-        if (!s.crowd && p.act === Act.lean) p.act = Act.idle;
-        if (group && r() < 0.2) p.act = Act.sign;
-        if (ri === 0 && !kid && !group && r() < 0.05) p.act = Act.sign;
-        if (p.act === Act.sign) { u += 0.4; if (u >= end) break; }
-        if (p.act === Act.sign && p.hatType === 5) p.act = Act.devil;
-        if (p.act === Act.sign) p.cup = false;
-        if (ola && p.act !== Act.sign && p.act !== Act.flag && p.act !== Act.devil && r() < 0.85) {
-          p.act = Act.ola;
-          p.phase = ((s.i * SEG + u) * 0.03) / 37;
+        const p0 = randomPerson(r, zone, { row: ri, kid });
+        if (!s.crowd && p0.act === Act.lean) p0.act = Act.idle;
+        if (group && r() < 0.2) p0.act = Act.sign;
+        if (ri === 0 && !kid && !group && r() < 0.05) p0.act = Act.sign;
+        if (p0.act === Act.sign && p0.hatType === 5) p0.act = Act.devil;
+        if (ola && p0.act !== Act.sign && p0.act !== Act.flag && p0.act !== Act.devil && !kid && r() < 0.85) {
+          p0.act = Act.ola;
+          p0.phase = ((s.i * SEG + u) * 0.03) / 37;
         }
+        const p = this.adopt(p0, r);
+        if (p.act === Act.sign) { u += 0.4; if (u >= end) break; }
         placeAt(p, u, dx);
         out.push(p);
         if (p.act === Act.sign) this.signBoard(p, r);
-        if (ri > 0 && !kid && p.act !== Act.sign && p.act !== Act.devil && r() < 0.05) {
-          p.act = Act.hold;
-          p.cup = false;
-          const c = randomPerson(r, zone, { row: ri, kid: true });
-          c.act = Act.sit;
-          c.height = 0.56 + r() * 0.06;
-          // sitzt auf den Schultern: kein eigenes Bild (fern sieht man den Vater)
-          (c as PV).vi = -1;
-          c.yaw = p.yaw;
-          c.x = p.x - Math.sin(p.yaw) * 0.1 * p.height;
-          c.z = p.z - Math.cos(p.yaw) * 0.1 * p.height;
-          c.y = p.y + 1.47 * p.height - 0.9 * c.height;
-          out.push(c);
-        }
         const wide = p.act === Act.flag ? 0.4 : p.act === Act.sign ? 0.75 : p.act === Act.wave ? 0.12 : 0;
         u += step[0] + wide + r() * step[1] + (!group && r() < 0.06 ? 0.5 + r() * 0.7 : 0);
       }
     }
-  }
-
-  /** Aussehen (und Grundhaltung) einer Vorlage übernehmen – so passen 3D-Mensch und Bild zusammen */
-  private adopt(p: Person, r: () => number) {
-    const v = Math.floor(r() * VARIANTS);
-    const V = this.variants[v];
-    p.skin = V.skin; p.top = V.top; p.bottom = V.bottom; p.hair = V.hair; p.hat = V.hat; p.hatType = V.hatType;
-    p.accent = V.accent; p.flag = V.flag; p.shorts = V.shorts; p.sleeves = V.sleeves; p.longHair = V.longHair;
-    p.glasses = V.glasses; p.stripe = V.stripe; p.beard = V.beard; p.backpack = V.backpack; p.ponytail = V.ponytail; p.cup = false;
-    p.width = V.width;
-    const basic = p.act === Act.idle || p.act === Act.clap || p.act === Act.wave || p.act === Act.cheer || p.act === Act.film
-      || p.act === Act.flag || p.act === Act.shout || p.act === Act.jump || p.act === Act.dance;
-    if (basic) p.act = V.act;
-    (p as PV).vi = v;
-    (p as PV).vs = p.height / V.height;
   }
 
   /**
@@ -743,13 +852,15 @@ export class Crowd {
     const reach = side.drop || side.wall > 0 ? Math.min(room, 0.9) : side.tilt > 0.12 ? Math.min(room, 9) : Math.min(room, 3.2);
     if (reach < 0.3) return;
     const w = { x: 0, y: 0, z: 0, th: 0 };
+    const calm = [Act.clap, Act.cheer, Act.wave, Act.idle];
     for (let k = 0; k < n; k++) {
       // vorn dichter, weiter hinten lockerer
       const dx = 0.35 + Math.pow(r(), 1.6) * (reach - 0.35);
       const u = r() * SEG;
-      const p = randomPerson(r, zone, { row: dx < 0.9 ? 0 : 1 + Math.min(2, Math.floor(dx / 2)) });
-      this.adopt(p, r);
-      if (p.act === Act.lean || p.act === Act.sign || p.act === Act.devil) p.act = this.variants[(p as PV).vi ?? 0].act;
+      const p0 = randomPerson(r, zone, { row: dx < 0.9 ? 0 : 1 + Math.min(2, Math.floor(dx / 2)) });
+      // ohne Bande kein Anlehnen, Schilder und Teufel nur in den Zuschauerzonen
+      if (p0.act === Act.lean || p0.act === Act.sign || p0.act === Act.devil) p0.act = calm[Math.floor(r() * calm.length)];
+      const p = this.adopt(p0, r);
       const gh = ground(s, sg, dx);
       t.world(z + u, sg * (EDGE + ex + dx), gh, w);
       p.x = w.x; p.y = w.y; p.z = w.z;
@@ -779,50 +890,84 @@ export class Crowd {
     for (const k of [0, 1, 2, 0, 2, 3]) { this.signs.pos.push(...q[k]); this.signs.uv.push(...uv[k]); }
   }
 
-  /** Stufen je Mensch nach Abstand (neu, wenn die Kamera 3 m weiter ist) */
   private dirAt = new THREE.Vector2(0, 0);
-  /** dir: Blickrichtung der Kamera – Menschen hinter der Kamera fallen weg (neu, wenn sie sich um ~10° dreht) */
-  update(cam: THREE.Vector3, rider: THREE.Vector3, force = false, dir?: THREE.Vector3) {
+  private vp = new THREE.Matrix4();
+  /**
+   * Darstellung je Mensch (neu, wenn Kamera oder Fahrer 2 m weiter sind oder die Kamera sich um ~10° dreht):
+   * Modell nah am Fahrer oder an der Kamera, sonst Bild – mit Spielraum, damit niemand hin und her wechselt.
+   * Was außerhalb des Bildausschnitts liegt (mit Rand), wird nicht gezeichnet.
+   */
+  update(cam: THREE.Vector3, rider: THREE.Vector3, force = false, dir?: THREE.Vector3, camera?: THREE.Camera) {
     this.rider.value.copy(rider);
+    const now = performance.now() / 1000;
+    this.clock.value = now;
     let dx = 0, dz = 0;
     if (dir) { const l = Math.hypot(dir.x, dir.z) || 1; dx = dir.x / l; dz = dir.z / l; }
     const turned = !!dir && dx * this.dirAt.x + dz * this.dirAt.y < 0.985;
-    if (!this.groups.length || (!force && !turned && this.at.distanceToSquared(cam) < 9)) return;
+    const moved = this.at.distanceToSquared(cam) >= 4 || this.atR.distanceToSquared(rider) >= 4;
+    if (!this.model || (!force && !turned && !moved)) return;
+    // Sprung der Kamera (Schnitt, Start): sofort umstellen, ohne Überblenden
+    const cut = this.at.distanceToSquared(cam) > 400;
     this.at.copy(cam);
+    this.atR.copy(rider);
     this.dirAt.set(dx, dz);
-    const cnt = [0, 0];
-    let ni = 0;
+    let e: ArrayLike<number> | null = null;
+    if (camera) {
+      camera.updateMatrixWorld();
+      this.vp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      e = this.vp.elements;
+    }
     const n = this.people.length;
-    const imp = this.imp;
-    if (imp && n > imp.cap) this.buildImpostors(Math.ceil(n * 1.4));
+    if (this.imp && n > this.imp.cap) this.buildImpostors(Math.ceil(n * 1.4));
+    const M = this.model;
     const I = this.imp;
-    const M = 2.5;
+    let n3 = 0, ni = 0, grow = false;
     for (let k = 0; k < n; k++) {
-      const p = this.people[k] as PV;
-      const d = Math.hypot(p.x - cam.x, p.z - cam.z);
-      if (d > FAR[1]) continue;
-      if (dir && d > 14 && (p.x - cam.x) * dx + (p.z - cam.z) * dz < -0.3 * d) continue;
-      // im Überblendband in beide Stufen (der Shader teilt die Bildpunkte)
-      const put = (lod: number) => {
-        const g = this.groups[lod];
-        g.data.set(this.src.subarray(k * PS, k * PS + PS), cnt[lod] * PS);
-        cnt[lod]++;
-      };
-      if (d < BAND_A[0] + BAND_A[1] + M) put(0);
-      if (d > BAND_A[0] - BAND_A[1] - M && d < BAND_B[0] + BAND_B[1] + M) put(1);
-      if (I && d > BAND_B[0] - BAND_B[1] - M && (p.vi ?? 0) >= 0) {
-        const o = ni * 8;
+      const p = this.people[k];
+      const ox = p.x - cam.x, oz = p.z - cam.z;
+      const dC = Math.hypot(ox, oz);
+      const dR = Math.hypot(p.x - rider.x, p.z - rider.z);
+      const near = this.debugMode === 'auto' ? Math.min(dC, dR) : this.debugMode === '3d' ? 0 : 1e9;
+      if (p.s3 === 0 && near < R_IN) { p.s3 = 1; p.t3 = cut ? now - FADE : now; }
+      else if (p.s3 === 1 && near > R_OUT) { p.s3 = 0; p.t3 = cut ? now - FADE : now; }
+      if (dC > FAR[1]) continue;
+      // außerhalb des Bildausschnitts (Rand für Drehen und Fahren bis zum nächsten Mal): weglassen
+      if (e) {
+        const y = p.y + 0.9;
+        const cw = e[3] * p.x + e[7] * y + e[11] * p.z + e[15];
+        if (cw < 1) { if (dC > 4) continue; } else {
+          const cx = e[0] * p.x + e[4] * y + e[8] * p.z + e[12];
+          const cy = e[1] * p.x + e[5] * y + e[9] * p.z + e[13];
+          if (Math.abs(cx) > 2 * cw + 4 || Math.abs(cy) > 1.5 * cw + 4) continue;
+        }
+      } else if (dir && dC > 14 && ox * dx + oz * dz < -0.3 * dC) continue;
+      const fading = now - p.t3 < FADE;
+      const dirK = p.s3 ? 1 : -1;
+      if (p.s3 === 1 || fading) {
+        if (n3 < M.cap) {
+          const o = n3 * PS3;
+          M.data.set(this.src.subarray(k * PS, k * PS + PS), o);
+          M.data[o + PS] = p.t3; M.data[o + PS + 1] = dirK; M.data[o + PS + 2] = 0; M.data[o + PS + 3] = 0;
+          n3++;
+        } else grow = true;
+      }
+      if (I && (p.s3 === 0 || fading)) {
+        const o = ni * PSI;
         const D = I.data;
-        D[o] = p.x; D[o + 1] = p.y; D[o + 2] = p.z; D[o + 3] = p.vs ?? 1;
-        D[o + 4] = p.vi ?? 0; D[o + 5] = p.phase; D[o + 6] = 1.6 + hash(k * 7 + 3) * 1.6; D[o + 7] = 0;
+        D[o] = p.x; D[o + 1] = p.y; D[o + 2] = p.z; D[o + 3] = p.vs;
+        // Takt wie gpCrowd (Bewegungszeit läuft mit 0,31 × eigenem Faktor), zwei Bilder je Takt; La-Ola: eigene Welle
+        const fr7 = (p.phase * 7) % 1;
+        const rate = p.act === Act.ola ? -1 : (ACT_F[p.act] ?? 1) * 0.31 * (0.9 + 0.25 * fr7);
+        D[o + 4] = p.vi; D[o + 5] = p.phase; D[o + 6] = rate; D[o + 7] = p.yaw;
+        D[o + 8] = p.t3; D[o + 9] = dirK; D[o + 10] = turns(p.act) ? 1 : 0; D[o + 11] = 0;
         ni++;
       }
     }
-    this.groups.forEach((g, lod) => {
-      g.geo.instanceCount = cnt[lod];
-      g.mesh.visible = cnt[lod] > 0;
-      g.buf.needsUpdate = true;
-    });
+    // mehr Modelle als Platz: beim nächsten Mal mit größerem Netz
+    if (grow) { this.buildModel(M.cap * 2); return; }
+    M.geo.instanceCount = n3;
+    M.mesh.visible = n3 > 0;
+    M.buf.needsUpdate = true;
     if (I) {
       I.geo.instanceCount = ni;
       I.mesh.visible = ni > 0;
@@ -830,23 +975,22 @@ export class Crowd {
     }
   }
 
-  /** Vorwärmen: beide Stufen einmal zeichnen */
+  /** Vorwärmen: beide Darstellungen einmal zeichnen */
   warm(on: boolean) {
-    // noch keine Zuschauer: Gruppen trotzdem anlegen (Shader jetzt übersetzen, nicht beim ersten Fan)
-    if (on && !this.groups.length) this.repack();
-    for (const g of this.groups) {
-      if (on) { g.geo.instanceCount = Math.max(1, g.geo.instanceCount); g.mesh.visible = true; }
+    // noch keine Zuschauer: Netze trotzdem anlegen (Shader jetzt übersetzen, nicht beim ersten Fan)
+    if (on && !this.model) this.buildModel(768);
+    for (const b of [this.model, this.imp]) {
+      if (!b) continue;
+      if (on) { b.geo.instanceCount = Math.max(1, b.geo.instanceCount); b.mesh.visible = true; }
     }
-    if (on && this.imp) { this.imp.geo.instanceCount = Math.max(1, this.imp.geo.instanceCount); this.imp.mesh.visible = true; }
     if (!on) this.at.set(1e9, 0, 0);
   }
 
   dispose() {
-    for (const g of this.groups) { g.mesh.removeFromParent(); g.geo.dispose(); }
-    for (const b of this.bases) b.dispose();
-    for (const m of this.mats) m.dispose();
+    for (const b of [this.model, this.imp]) if (b) { b.mesh.removeFromParent(); b.geo.dispose(); }
+    this.base3.dispose();
+    this.mat3.dispose();
     this.impMat?.dispose();
-    if (this.imp) this.imp.geo.dispose();
     this.atlasTex?.dispose();
   }
 }

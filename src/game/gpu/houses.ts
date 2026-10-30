@@ -11,7 +11,7 @@ import { buildHouse, houseMaterials, HMATS, type HMat } from './house';
 import { buildBarn, buildChurch } from './buildings';
 import { commit, disposeGroup, instGroup, STRIDE, type InstGroup } from './inst';
 import type { Trees } from './trees';
-import { tsl } from './nodes';
+import { tsl, viewTest } from './nodes';
 
 const { attribute, cameraPosition, float, select, smoothstep, varying } = tsl;
 
@@ -30,7 +30,7 @@ const SHUTTERS: [number, number, number][] = [[0.025, 0.1, 0.04], [0.2, 0.028, 0
 const FOOT: [number, number][] = [[-5.95, -6.1], [5.95, -6.1], [5.95, 8.7], [-5.95, 8.7], [0, 1.3]];
 
 /** Stufenwechsel (Mitte, halbe Breite des Überblendbands, m): voll → mittel, mittel → fern */
-const B0: [number, number] = [30, 5];
+const B0: [number, number] = [20, 4];
 const B1: [number, number] = [115, 14];
 const MARGIN = 7;
 /** große Bauten (Kirche): Stufenwechsel so viel weiter weg */
@@ -271,13 +271,14 @@ export class Houses {
    * dir: Blickrichtung der Kamera – Häuser weit hinter der Kamera fallen weg (neu verteilt, wenn sich die Kamera
    * um mehr als ~10° dreht)
    */
-  update(cam: THREE.Vector3, force = false, dir?: THREE.Vector3) {
+  update(cam: THREE.Vector3, force = false, dir?: THREE.Vector3, camera?: THREE.PerspectiveCamera) {
     let dx = 0, dz = 0;
     if (dir) { const l = Math.hypot(dir.x, dir.z) || 1; dx = dir.x / l; dz = dir.z / l; }
     const turned = !!dir && dx * this.dirAt.x + dz * this.dirAt.y < 0.985;
     if (!this.spots.length || (!force && !turned && this.at.distanceToSquared(cam) < 36)) return;
     this.at.copy(cam);
     this.dirAt.set(dx, dz);
+    const view = camera ? viewTest(camera, 1.35) : null;
     const cnt = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
     const put = (lod: number, s: Spot) => {
       // während addRange noch baut (es gibt zwischendurch ab), kann es mehr Häuser als Platz geben – die neuen,
@@ -295,6 +296,8 @@ export class Houses {
       const d = Math.hypot(s.x - cam.x, s.z - cam.z);
       // weit hinter der Kamera: nicht zeichnen
       if (dir && d > 45 && (s.x - cam.x) * dx + (s.z - cam.z) * dz < -0.3 * d) continue;
+      // neben dem Bildausschnitt (mit Rand fürs Drehen bis zum nächsten Mal): nicht zeichnen
+      if (view && !view(s.x, s.y + 6, s.z, s.kind === KIND.church ? 24 : 13)) continue;
       // Kirchen (groß, hoch) erst später in die gröbere Stufe
       const f = s.kind === KIND.church ? BIG : 1;
       // im Überblendband in beide Stufen

@@ -247,9 +247,9 @@ export class Peloton {
     const fn = fn0.mul(select(dot(fn0, cameraPosition.sub(positionWorld)).greaterThan(0), float(1), float(-1)));
     const shade = lit({ col, nWorld: fn, vis, wrap: 0.25 });
     m.colorNode = select(sIdx.equal(9), vec3(0.004, 0.004, 0.004), shade);
-    // Überblendung mit dem vollen Modell (gleiche Abstände wie dort): die Bildpunkte, die das volle Modell freigibt
-    const dC = varying(iP.xz.sub(cameraPosition.xz).length(), 'vPelD');
-    const g = select(iC.y.greaterThan(0.5), tsl.smoothstep(26, 36, dC), float(1));
+    // Überblendung mit dem vollen Modell: Anteil dieser Darstellung (iC.z, von der Fahrt gesetzt – ein Wechsel je
+    // Fahrer, zeitlich überblendet), die Bildpunkte, die das volle Modell freigibt
+    const g = select(iC.y.greaterThan(0.5), iC.z, float(1));
     m.opacityNode = select(bayer4().greaterThanEqual(float(1).sub(g)), float(1), float(0));
     m.alphaTestNode = float(0.5);
     m.name = 'peloton';
@@ -258,12 +258,12 @@ export class Peloton {
 
   /** Daten setzen: Liste der Fahrer (Weltlage, Richtung, Schräglage, Kurbel, Kit) */
   begin() { this.n = 0; }
-  /** pooled: hat auch ein volles Modell – dann nur im Überblendband (26–36 m) anteilig sichtbar */
-  add(x: number, y: number, z: number, th: number, lean: number, pedal: number, kit: Kit, down: boolean, pooled = false) {
+  /** pooled: hat auch ein volles Modell – dann nur mit dem Anteil share sichtbar (Raster, das volle Modell den Rest) */
+  add(x: number, y: number, z: number, th: number, lean: number, pedal: number, kit: Kit, down: boolean, pooled = false, share = 1) {
     if (this.n >= this.cap) return;
     const ki = this.kitIdx.get(kit.jersey) ?? 0;
     const si = Math.max(0, SKINS.indexOf(kit.skin));
-    this.data.set([x, y, z, -th, lean, pedal, Math.min(KITS - 1, ki), si, down ? 1 : 0, pooled ? 1 : 0, 0, 0], this.n * 12);
+    this.data.set([x, y, z, -th, lean, pedal, Math.min(KITS - 1, ki), si, down ? 1 : 0, pooled ? 1 : 0, share, 0], this.n * 12);
     this.n++;
   }
   commit() {

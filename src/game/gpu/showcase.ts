@@ -283,6 +283,7 @@ export class Showcase {
     // Zuschauer wie im Spiel (Bewegung in WGSL – nur mit WebGPU)
     if ((r.backend as unknown as { isWebGPUBackend?: boolean }).isWebGPUBackend && !this.param('nocrowd', 0)) {
       const crowd = (this.crowd = new Crowd());
+      await crowd.bake(r);
       crowd.build(track, (sg0, sg, dx) => corridor.edgeHeight(sg0, sg, dx), (i, sg) => terrain.lim(i)[sg < 0 ? 0 : 1], i0, i1);
       this.scene.add(crowd.group);
       if (crowd.signs.pos.length) this.scene.add(signMesh(crowd.signs, adsM.map!));
