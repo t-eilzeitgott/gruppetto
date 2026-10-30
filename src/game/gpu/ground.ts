@@ -7,6 +7,7 @@ import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
 import { decodeAlbedo, grain, planar, triplanar, triplanarCol, tsl, unTile, unTile3, vn1, vnoise, type N } from './nodes';
 import { cheapMaterial } from './light';
+import { QUALITY } from './quality';
 import { groundMap, lampLit, terrainSun } from './sunmap';
 
 const { abs, attribute, cameraPosition, cross, dFdx, dFdy, dot, float, fract, fwidth, max, min, mix, normalize, normalWorldGeometry, positionGeometry, positionWorld, select, sign, smoothstep, texture, transformNormalToView, varying, vec2, vec3, vertexColor } = tsl;
@@ -39,6 +40,8 @@ interface Mix {
   /** Blüten im Gras (gebackene Punkte, Rang im Alpha) */
   dots?: THREE.Texture;
   detail: boolean; // feine Texturen (nah) – sonst nur die großen
+  /** Qualität „schonend“: nah ohne Korn, Trittpfade, Blüten, Erdflecken und Fels-Normalen, Fels überall gröber */
+  simple?: boolean;
   /** ganz fern (grobe Stufe): Fels nur von oben */
   far?: boolean;
   /** Straßenrand (Kies und Beton) */
@@ -181,13 +184,13 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   const tint = mix(base, base.mul(vec3(1.25, 1.05, 0.62)), dryW.mul(0.55).add(steepG.mul(0.3)).min(0.8)).mul(macro.x.mul(0.6).add(0.75).clamp(0.7, 1.25));
   let grassCol: N = tint.mul(m.detail ? mix(gC.mul(0.35).add(0.65), gDet.mul(0.7).add(gC.mul(0.3)), flat) : mix(float(1), gC.mul(0.6).add(0.4), flat));
   // nah: unregelmäßige Helligkeit über einen halben Meter und feines Korn (wiederholt sich nie, blendet fern aus)
-  if (m.detail) grassCol = grassCol.mul(grain(pos.xz, 0.55, 0.11)).mul(grain(pos.xz.add(17.3), 0.13, 0.12));
+  if (m.detail && !m.simple) grassCol = grassCol.mul(grain(pos.xz, 0.55, 0.11)).mul(grain(pos.xz.add(17.3), 0.13, 0.12));
   // Vielfalt statt Grashalmen: Wiesenarten über ein paar Dutzend Meter (je Ecke, kostet nichts je Bildpunkt)
   const mz: N = V.mz;
   const lush = smoothstep(0.3, 0.62, mz.x);
   const lean = smoothstep(0.32, 0.66, mz.y).mul(float(1).sub(lush));
   grassCol = grassCol.mul(mix(vec3(1, 1, 1), vec3(0.8, 0.97, 0.72), lush.mul(0.8))).mul(mix(vec3(1, 1, 1), vec3(1.17, 1.09, 0.78), lean.mul(0.85))).mul(mz.z.mul(0.32).add(0.9));
-  if (m.detail) {
+  if (m.detail && !m.simple) {
     // Viehgangeln: an steilen Weiden schmale Trittpfade entlang der Höhenlinien (nur wo das Muster nicht flimmert)
     const sl = float(1).sub(nG.y);
     const slopeM = smoothstep(0.07, 0.15, sl).mul(float(1).sub(smoothstep(0.32, 0.45, sl)));
@@ -204,7 +207,7 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
     grassCol = grassCol.mul(tuft.mul(0.6).add(0.8));
   }
   const camD = pos.sub(cameraPosition).length();
-  if (m.dots) {
+  if (m.dots && !m.simple) {
     const fd = texture(m.dots, pos.xz.div(3));
     const many = V.many.mul(flat);
     const texPx = fwidth(pos.x).add(fwidth(pos.z)).mul(0.5).div(3).mul(512);
@@ -222,8 +225,8 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   let n: N = gF ? normalize(mix(nG, gF.n, flat)) : nG;
   const rk2: N = V.rk2;
   // ein Kieszugriff für Erde, Geröll und Bankett (nur nah)
-  const gv = m.detail ? planar(S.gravel.albedo, S.gravel.nra, unTile(S.noise.albedo, pos.xz.div(1.6), 0.4), nG, 0.8) : null;
-  if (m.detail && gv) {
+  const gv = m.detail && (!m.simple || m.road) ? planar(S.gravel.albedo, S.gravel.nra, unTile(S.noise.albedo, pos.xz.div(1.6), 0.4), nG, 0.8) : null;
+  if (m.detail && gv && !m.simple) {
     const dirt = smoothstep(0.8, 0.9, rk2.y.add(steepG.mul(0.12))).mul(0.8);
     const soil = mix(vec3(0.075, 0.058, 0.04), decodeAlbedo(gv.col).mul(0.55), smoothstep(0.85, 1.2, decodeAlbedo(gv.col).x.div(meanOf(S.gravel).x)));
     col = mix(col, soil, dirt);
@@ -294,7 +297,7 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
     // Fels als Matrix (Farbe, Normale, Verschattung als Spalten): eine Verzweigung für alles – sonst baut three die
     // Zugriffe für jede Verzweigung neu. lite (mittlere Stufe ab LITE_ROCK m): nur die Farben der drei Seiten (die
     // Normalen kommen aus dem Relief), ohne die feinen Bänke – drei Zugriffe und eine Rauschstufe weniger
-    const rockOf = (lite: boolean): N => {
+    const rockOf = (lite: boolean, lod: number): N => {
       const sc = m.detail ? 9 : 27;
       const warp = unTile3(S.noise.albedo, pos, sc, 0.45);
       // mittlere Stufe nah: die Feinheit der Normalen läuft zur Grenze hin aus (dahinter die Variante ohne)
@@ -303,19 +306,21 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
       // mittlere Stufe: die Wandtextur (27 m) nur halb so kräftig – sonst ein Vorhang aus gleichen Streifen über den
       // ganzen Berg; die großen Formen kommen aus dem Relief
       const rRaw = m.detail ? decodeAlbedo(r.col).div(meanOf(S.cliff)) : mix(vec3(1, 1, 1), decodeAlbedo(r.col).div(meanOf(S.cliff)), 0.5);
-      const rr = rockRelief(pos, nR, m.detail ? r.n : normalize(mix(nR, r.n, 0.5)), strata, lite ? 1 : 0);
+      const rr = rockRelief(pos, nR, m.detail ? r.n : normalize(mix(nR, r.n, 0.5)), strata, lod);
       const rc = rRaw.mul(m.rockTint).mul(0.6).add(rRaw.mul(vec3(0.2, 0.19, 0.17)).mul(0.4)).mul(rr.k.mul(1.15));
       return tsl.mat3(rc, rr.n, vec3(r.ao, 0, 0));
     };
     const noRock = tsl.mat3(vec3(0, 0, 0), nR, vec3(1, 0, 0));
-    const M = select(hasRock, m.detail ? rockOf(false) : select(camD.lessThan(LITE_ROCK), rockOf(false), rockOf(true)), noRock);
+    // schonend: nah ohne Normalenkarten (Relief ohne feine Bänke), mittlere Stufe überall wie ganz fern
+    const M = select(hasRock, m.detail ? (m.simple ? rockOf(true, 1) : rockOf(false, 0))
+      : m.simple ? rockOf(true, 2) : select(camD.lessThan(LITE_ROCK), rockOf(false, 0), rockOf(true, 1)), noRock);
     rockCol = M.element(0);
     rockN = M.element(1);
     rockAo = M.element(2).x;
   }
   rockCol = rockCol.mul(zone.z.mul(0.45).add(0.8)).mul(mix(vec3(1, 1, 1), vec3(1.12, 1.0, 0.84), smoothstep(0.55, 0.85, zone.x)));
   // nah: Korn im Fels (Wände: aus Höhe und Lage längs der Wand)
-  if (m.detail) rockCol = rockCol.mul(grain(vec2(pos.x.add(pos.z.mul(0.71)), pos.y.add(pos.z.mul(0.37))), 0.37, 0.16));
+  if (m.detail && !m.simple) rockCol = rockCol.mul(grain(vec2(pos.x.add(pos.z.mul(0.71)), pos.y.add(pos.z.mul(0.37))), 0.37, 0.16));
   const ledgeG = smoothstep(0.82, 0.95, normalize(rockN).y).mul(float(1).sub(smoothstep(0.05, 0.4, m.sn))).mul(smoothstep(0.3, 0.6, zone.y.add(0.15)));
   const rkV = rkW.mul(float(1).sub(ledgeG.mul(0.85)));
   col = mix(col, rockCol, rkV);
@@ -379,7 +384,7 @@ export function terrainMaterial(S: Surfaces, lv: number, dots?: THREE.Texture, w
   const can = lift ? varying(smoothstep(0.5, 2.5, lift), 'vCan') : undefined;
   const mat = apply(shade(S, {
     tint: vertexColor(), rockTint: attribute('aRock', 'vec3'),
-    fo, rk, sn, sc, gr: float(0), cc: float(0), canopy: lv > 0, detail: lv === 0, far: lv >= 2, dots: lv === 0 ? dots : undefined, can,
+    fo, rk, sn, sc, gr: float(0), cc: float(0), canopy: lv > 0, detail: lv === 0, far: lv >= 2, dots: lv === 0 ? dots : undefined, can, simple: QUALITY.landSimple,
   }, spacing), `terrain${lv}`, { sun: attribute('aSun', 'vec2'), ground: lv === 0 });
   if (lift && !/[?&]nocan\b/.test(location.search)) mat.positionNode = positionGeometry.add(vec3(0, lift, 0));
   // Prüfmodus: Stufen einfärben (?lvcolor)
@@ -396,6 +401,6 @@ export function corridorMaterial(S: Surfaces, dots?: THREE.Texture): THREE.MeshB
   const w = attribute('aW', 'vec4');
   const c = attribute('aC', 'vec4');
   return apply(shade(S, {
-    tint: vertexColor(), rockTint: c.yzw, fo: w.x, rk: w.y, sn: w.z, gr: w.w, cc: c.x, canopy: false, detail: true, road: true, dots,
+    tint: vertexColor(), rockTint: c.yzw, fo: w.x, rk: w.y, sn: w.z, gr: w.w, cc: c.x, canopy: false, detail: true, road: true, dots, simple: QUALITY.landSimple,
   }, 3), 'corridor', { ground: true });
 }

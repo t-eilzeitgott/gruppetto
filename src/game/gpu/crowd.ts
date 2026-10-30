@@ -13,6 +13,7 @@
  *   genau eine Darstellung da – kein Hin und Her je nach Kameraabstand.
  * Jeder Mensch draußen ist eine Vorlage (Kleidung und Haltung), im Bild wie im Modell dieselbe.
  */
+import { QUALITY } from './quality';
 import * as THREE from 'three/webgpu';
 import { EDGE, SEG, type Seg, type Track } from '../abfahrt/track';
 import { mulberry32 } from '../abfahrt/rng';
@@ -267,12 +268,18 @@ function crowdColor(c: N, i1: N, i2: N, i3: N, pal: THREE.DataTexture): N {
 }
 
 /** 3D-Modell ab hier (m, zum Fahrer oder zur Kamera, je nachdem was näher ist), zurück zum Bild erst über R_OUT */
-export const R_IN = 7;
-const R_OUT = 18;
+export let R_IN = 7;
+let R_OUT = 18;
 /** Überblenden beim Wechsel (s) */
 const FADE = 0.4;
 /** Bilder (2D) bis hier (m), am Ende weich ausgeblendet */
-const FAR: [number, number] = [400, 470];
+let FAR: [number, number] = [400, 470];
+/** Reichweiten aus der Qualitätsstufe (beim Aufbau): ohne 3D-Modelle nie hinein (nur Bilder) */
+function applyQuality() {
+  R_IN = QUALITY.crowd3d ? 7 : -1;
+  R_OUT = 18;
+  FAR = [Math.max(60, QUALITY.crowdFar - 70), QUALITY.crowdFar];
+}
 
 let PAL: THREE.DataTexture | null = null;
 const palette = () => (PAL ??= paletteTexture());
@@ -523,6 +530,7 @@ export class Crowd {
   signs: { pos: number[]; uv: number[] } = { pos: [], uv: [] };
 
   constructor() {
+    applyQuality();
     this.mat3 = crowdMaterial(this.rider, this.clock, true);
     this.mat3s = crowdMaterial(this.rider, this.clock, false);
     this.base3 = mergedPerson();

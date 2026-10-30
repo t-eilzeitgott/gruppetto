@@ -3,6 +3,7 @@
  * Straße und am Talhang, mit dem Giebel talwärts, ab und zu zwei, drei beieinander wie ein Weiler. Jedes Haus mit
  * eigener Putzfarbe und Ladenfarbe. Alle Häuser zusammen: fünf Zeichenaufrufe je Stufe (Instanzen).
  */
+import { QUALITY } from './quality';
 import * as THREE from 'three/webgpu';
 import type { Terrain } from '../abfahrt/terrain3d';
 import type { Track } from '../abfahrt/track';
@@ -30,8 +31,14 @@ const SHUTTERS: [number, number, number][] = [[0.025, 0.1, 0.04], [0.2, 0.028, 0
 const FOOT: [number, number][] = [[-5.95, -6.1], [5.95, -6.1], [5.95, 8.7], [-5.95, 8.7], [0, 1.3]];
 
 /** Stufenwechsel (Mitte, halbe Breite des Überblendbands, m): voll → mittel, mittel → fern */
-const B0: [number, number] = [20, 4];
-const B1: [number, number] = [115, 14];
+let B0: [number, number] = [20, 4];
+let B1: [number, number] = [115, 14];
+/** Stufenwechsel aus der Qualitätsstufe (beim Aufbau) */
+function applyQuality() {
+  const k = QUALITY.houseK;
+  B0 = [20 * k, 4 * k];
+  B1 = [115 * k, 14 * k];
+}
 const MARGIN = 7;
 /** große Bauten (Kirche): Stufenwechsel so viel weiter weg */
 const BIG = 1.6;
@@ -70,6 +77,7 @@ export class Houses {
   private at = new THREE.Vector3(1e9, 0, 0);
 
   constructor(S: Record<SurfaceId, Surface>, _msaa: boolean) {
+    applyQuality();
     // Stufe je Gruppe in iC.w (0 nah, 1 mittel, 2 fern); Abstand im Shader
     // Raster-Überblendung (nodes.ditherVis): die Stufen teilen sich die Bildpunkte, nie dieselben – kein Flackern
     this.mats = houseMaterials(S, (I) => {

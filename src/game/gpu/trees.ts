@@ -11,6 +11,7 @@
  * Zeichenaufrufe: die Modelle je Variante eine Gruppe um die Kamera (neu verteilt alle 6 m Fahrt), die Bilder je
  * Zelle von 256 m eine Gruppe für alle Varianten (Variante in iS.w).
  */
+import { QUALITY } from './quality';
 import * as THREE from 'three/webgpu';
 import type { TreeSpot } from '../abfahrt/terrain3d';
 import { TREE_VARIANT_KINDS, treeModel, treeTint, treeVariant } from '../abfahrt/forest3d';
@@ -34,19 +35,27 @@ const fr = (x: number) => x - Math.floor(x);
 const NV = TREE_VARIANT_KINDS.length;
 const CONIFER = new Set(['pine', 'pineSnow', 'larch']);
 
-/** Stufenwechsel Modell → Bild: Mitte und halbe Breite des Überblendbands (m) */
-const B0: [number, number] = [40, 8];
+/** Stufenwechsel Modell → Bild: Mitte und halbe Breite des Überblendbands (m) – aus der Qualitätsstufe (beim Aufbau) */
+let B0: [number, number] = [40, 8];
 /** ganz fern: Bilder blenden aus */
 const FAR: [number, number] = [1550, 1850];
 /** Spielraum: die Verteilung wird erst nach 6 m Kamerafahrt erneuert */
 const MARGIN = 7;
-const N0 = B0[0] + B0[1] + MARGIN;
-const M0 = B0[0] - B0[1] - MARGIN;
+let N0 = B0[0] + B0[1] + MARGIN;
+let M0 = B0[0] - B0[1] - MARGIN;
 /**
  * bis hier steht ein Baum sicher ganz als Modell (bis zur nächsten Verteilung): ohne Raster-Material. Ausstanzen
  * (discard) schaltet auf Apples Grafik das Weglassen verdeckter Bildpunkte ab – im dichten Wald zahlt sich das aus
  */
-const S0 = M0;
+let S0 = M0;
+/** Reichweiten aus der Qualitätsstufe übernehmen (vor dem Bau der Materialien) */
+function applyQuality() {
+  const c = QUALITY.treeNear;
+  B0 = [c, Math.max(4, Math.round(c * 0.2))];
+  N0 = B0[0] + B0[1] + MARGIN;
+  M0 = Math.max(0, B0[0] - B0[1] - MARGIN);
+  S0 = M0;
+}
 
 const CELL = 256;
 
@@ -199,7 +208,7 @@ export class Trees {
   private matSolid: THREE.MeshBasicNodeMaterial;
   private nearAt = new THREE.Vector3(1e9, 0, 0);
   private nearDirty = true;
-  private nearSphere = new THREE.Sphere(new THREE.Vector3(), N0 + 40);
+  private nearSphere = new THREE.Sphere(new THREE.Vector3(), 87);
   readonly sunDir = uniform(new THREE.Vector3(0, 1, 0));
   /**
    * Sichtweite der Bilder-Bäume (m) und ab wo nur noch jeder zweite steht (größer): tausende winzige Flächen
@@ -218,6 +227,8 @@ export class Trees {
 
   /** msaa: Kantenglättung an (dann Bildränder über „alpha to coverage“, sonst harter Schnitt) */
   constructor(renderer: THREE.WebGPURenderer, private msaa: boolean, low = false) {
+    applyQuality();
+    this.nearSphere.radius = N0 + 40;
     this.atlas = bakeAtlas(renderer, low ? 96 : 160);
     this.geos = Array.from({ length: NV }, (_, i) => baseGeo(i));
     this.mat = this.model(true);

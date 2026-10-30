@@ -3,6 +3,7 @@
  * Dunst, Regen) als Sätze von Werten für Sonne, Himmel, Dunst und Farbfilter – dazu die Einstellungen, die der
  * Nutzer selbst verstellen kann (Schalter und Regler im Menü). Beides lässt sich weich überblenden.
  */
+import type { QualityLevel } from './quality';
 import * as THREE from 'three/webgpu';
 import { tsl } from './nodes';
 
@@ -146,12 +147,14 @@ export interface Settings {
    * halb so viel Arbeit je Sekunde – das Telefon wird langsamer warm und drosselt später
    */
   fpsMax: number;
+  /** Qualitätsstufe (quality.ts): Reichweiten und Schattierung der Welt – wirkt nach Neuladen */
+  quality: QualityLevel;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   mood: 'mittag', cycle: false, shadows: true, bloom: true, grade: true, vignette: true, grain: true, fog: true, rain: true, crowd: true, life: true, grass: true, cinema: false,
   exposure: 1, warm: 0, sat: 1, contrast: 1, sun: 1, env: 1, fogK: 1, bloomK: 1, vignetteK: 1, grainK: 1, maxDpr: 2,
-  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4, oppMax: 12, minDpr: 0.85, drama: false, sunset: false, treeFar: 1850, fpsMax: 0,
+  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4, oppMax: 12, minDpr: 0.85, drama: false, sunset: false, treeFar: 1850, fpsMax: 0, quality: 'mittel',
 };
 
 /** Spiel (Abfahrt auf WebGPU): goldene Stunde, dramatischer Himmel, Sonnenuntergangs-Licht */

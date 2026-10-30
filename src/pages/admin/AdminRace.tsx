@@ -11,6 +11,7 @@ import { useApp } from '../../app/context';
 import { useQuery } from '../../app/query';
 import { source } from '../../app/config';
 import { cx, Segmented, useTitle } from '../../ui/kit';
+import { QUALITY_PRESETS, type QualityLevel } from '../../game/gpu/quality';
 import { Icon } from '../../ui/Icon';
 import { useGameLock, PauseIcon, PlayIcon, lsGet, lsSet } from '../gameKit';
 import { HudBanner, PowerRing, RaceBar, writeBar, writeRing, type HudBannerData } from '../hud';
@@ -59,6 +60,16 @@ const CAMS: { value: RaceCam; label: string }[] = [
   { value: 'side', label: 'Seite' },
   { value: 'drone', label: 'Drohne' },
 ];
+const QUALITY_OPTS: { value: QualityLevel; label: string }[] = [
+  { value: 'schonend', label: 'Schonend' },
+  { value: 'mittel', label: 'Mittel' },
+  { value: 'hoch', label: 'Hoch' },
+];
+const QUALITY_HINT: Record<string, string> = {
+  schonend: 'So wenig Arbeit wie möglich: weniger Bildpunkte, einfache Landschaft, kurze Sichtweiten, keine Pflanzen und Tiere, Zuschauer nur als Bilder – das Telefon bleibt kühler.',
+  mittel: 'Ausgewogen: volle Welt, Auflösung bis ×2, 60 Bilder je Sekunde.',
+  hoch: 'Alles und weit: hohe Auflösung, lange Sichtweiten, Bildrate frei – nur für kühle, schnelle Geräte.',
+};
 const FPS_CAPS: { value: string; label: string }[] = [
   { value: '30', label: '30 fps' },
   { value: '60', label: '60 fps' },
@@ -414,6 +425,11 @@ export function RaceGpuPage({ mode = 'abfahrt' }: { mode?: 'abfahrt' | 'tt' }) {
 
   const settingsPanel = (
     <>
+      <div className="race-sec">
+        <span className="abf-range__label">Qualität</span>
+        <span className="abf-range__hint">{QUALITY_HINT[settings.quality] ?? QUALITY_HINT.mittel} Wechsel lädt die Seite neu; alles darunter bleibt einzeln einstellbar.</span>
+        <Segmented label="Qualität" value={settings.quality ?? 'mittel'} options={QUALITY_OPTS} onChange={(q) => { change({ ...QUALITY_PRESETS[q].settings, quality: q }); window.setTimeout(() => location.reload(), 150); }} />
+      </div>
       <div className="abf-gfx">
         <span className="abf-range__label">Himmel und Licht</span>
         {SKY.map((t) => <Switch key={t.k} on={!!settings[t.k]} label={t.label} hint={t.hint} onChange={(v) => change({ [t.k]: v } as Partial<Settings>)} />)}

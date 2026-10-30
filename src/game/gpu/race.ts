@@ -37,6 +37,7 @@ const LOAD_AHEAD = 1100;
 import { Objects, Particles } from './objects';
 import { Overlay } from './overlay';
 import { tsl } from './nodes';
+import { QUALITY, setQuality } from './quality';
 
 const { pass } = tsl;
 
@@ -101,7 +102,7 @@ const HEAT_DPR = 1;
  * Gegner: volles Modell ab PEL_FADE[0] m (Kamera), zurück zum einfachen erst über PEL_FADE[1] – jeder wechselt einmal
  * und blendet dabei PEL_T Sekunden über (früher: ständig halb/halb, solange einer in 26–36 m mitfuhr)
  */
-const PEL_FADE: [number, number] = [28, 38];
+let PEL_FADE: [number, number] = [28, 38];
 /** Kostenanalyse: so oft je Bild zeichnen (Grafik ausgelastet, voller Takt) */
 const REPEAT = 3;
 const PEL_T = 0.4;
@@ -219,8 +220,11 @@ export class Race {
     // steht fest) – gespeicherte ältere Einstellungen ändern daran nichts
     // Leuchten (Bloom) aus: kostete auf dem iPhone ~6 ms je Bild (Lichthöfe der Laternen und Fenster leuchten selbst)
     this.settings = { ...loadSettings(opts.settingsKey ?? RACE_KEY, opts.defaults ?? RACE_DEFAULTS), mood: 'abend', cycle: false, shadows: false, bloom: false };
-    // Bildrate höchstens hieß kurz „fpsCap“ (Vorgabe 60, nicht selbst gewählt): vergessen, jetzt gilt „frei“
+    // Bildrate höchstens hieß kurz „fpsCap“ (Vorgabe 60, nicht selbst gewählt): vergessen
     delete (this.settings as unknown as Record<string, unknown>).fpsCap;
+    // Qualitätsstufe: Reichweiten und Schattierung der Welt, bevor irgendetwas gebaut wird
+    setQuality(this.settings.quality);
+    PEL_FADE = [QUALITY.riderNear, QUALITY.riderNear + 10];
     this.renderer = new THREE.WebGPURenderer({ antialias: false, powerPreference: 'high-performance', reversedDepthBuffer: true, trackTimestamp: true } as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
   }
 
@@ -698,7 +702,7 @@ export class Race {
     if (pel) {
       pel.begin();
       for (const o of e.opps) {
-        if (o.z < p.z - 160 || o.z > p.z + 950) continue;
+        if (o.z < p.z - 160 || o.z > p.z + QUALITY.pelAhead) continue;
         t.world(o.z, o.x, 0, this.w);
         // mit vollem Modell: nur sein Anteil (beim Wechsel), sonst gar nicht
         const pooled = this.poolOf.has(o.id);
