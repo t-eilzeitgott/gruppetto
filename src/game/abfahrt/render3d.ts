@@ -27,8 +27,9 @@ import { wreckPose, type Wreck } from './wreck';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import { Houses3D } from './houses3d';
 import { Villages3D } from './village3d';
-import { LAMP_GLSL, LAMP_U, lampFrag, lampHalos, pickLamps, warmLamps } from './lamps3d';
+import { LAMP_GLSL, LAMP_U, haloMaterial, lampFrag, lampHalos, pickLamps, warmLamps } from './lamps3d';
 import { SunsetGlow } from './sunset3d';
+import { EV, SEC, type Perf3D } from './perf3d';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
@@ -1444,6 +1445,9 @@ export class Renderer3D {
 
   /** dt: Spielzeit dieses Bildes (s); raw: echter Abstand zum vorigen Bild (s), für das Budget beim Nachladen */
   draw(g: RaceView, dt: number, raw = dt) {
+    // Kostenanalyse: sie zeichnet selbst (Spiel steht)
+    if (this.analysing) return;
+    const P = this.prof;
     this.applyRange();
     const d0 = performance.now();
     // Größenwechsel genau hier: die Leinwand wird gleich danach neu bemalt
@@ -1504,6 +1508,7 @@ export class Renderer3D {
       this.gl.compile(this.scene, this.camera);
       this.rs.mesh.visible = false;
     }
+    P?.mark(SEC.licht);
     // Landschaftsproben zuerst: die Abschnitte fragen beim Bau nach Geländehöhen
     if (this.terrain?.window(Math.max(0, p.z - 900), Math.max(p.z + 4600, this.routeEnd))) {
       // neue oder weggefallene Straßenstücke ändern die Höhen ringsum: betroffene Kacheln neu bauen
@@ -1517,8 +1522,10 @@ export class Renderer3D {
     // Dörfer weit voraus festlegen (Dorfebene und Dorfstraße, bevor dort Landschaft und Straße entstehen)
     this.villages?.ahead(p.z + 6500);
     if (this.idleBuild && !this.houses.ready) this.houses.buildStep();
+    P?.mark(SEC.welt);
     const w0 = performance.now();
     this.updateChunks(g, dt);
+    P?.mark(SEC.abschnitte);
     this.updateCamera(g, dt);
     this.houses.prune(p.z - 450);
     this.houses.update(this.camera.position);
@@ -1527,22 +1534,40 @@ export class Renderer3D {
       this.camera.position.set(d[0], d[1], d[2]);
       this.camera.lookAt(d[3], d[4], d[5]);
     }
+    P?.mark(SEC.kamera);
     this.pickLamps(p.z);
     // Sonnenuntergangs-Licht (Abfahrt am Abend; nicht unter dem Wetter – das hat seine eigene Nachbearbeitung)
     this.sunset.update(this.camera, ATMO.fogSunDir.value, track.kind === 'descent' && this.debugTod === null, this.tunnelDim, dt);
     this.updateEnvironment(biome, dt);
+    P?.mark(SEC.umgebung);
     this.updateTerrain(g, dt);
     this.work = performance.now() - w0;
+    P?.mark(SEC.landschaft);
     this.updateRiders(g);
+    P?.mark(SEC.fahrer);
     this.updateSky(g, biome, dt);
     // Wasser strömt: eine Texturlänge je Sekunde (wie schnell das aussieht, legt die Dichte der Koordinaten fest)
     if (this.fallMat?.map) this.fallMat.map.offset.y = (this.fallMat.map.offset.y - dt) % 1;
+    P?.mark(SEC.himmel);
     this.updateCrowd(g, dt);
+    P?.mark(SEC.zuschauer);
     this.updateObjects(g);
     this.updateParticles(g);
-    if (this.post) this.post(() => this.gl.render(this.scene, this.camera), g);
-    else this.gl.render(this.scene, this.camera);
+    P?.mark(SEC.dinge);
+    // Messfahrt: etwa alle 1,5 s ein Probebild – vorher auf die Grafik warten (Rückstau), danach auf ihr Ende
+    // (Grafikzeit dieses Bildes; WebGL auf dem iPhone kennt keine Zeitstempel)
+    const probe = P?.wantProbe() ?? false;
+    let tA = 0, tB = 0;
+    if (probe) { tA = performance.now(); this.syncGl(); tB = performance.now(); }
+    if (this.post) this.post(() => { this.gl.render(this.scene, this.camera); this.takeCounts(); }, g);
+    else { this.gl.render(this.scene, this.camera); this.takeCounts(); }
+    if (probe && P) {
+      const tS = performance.now();
+      this.syncGl();
+      P.setProbe({ drain: tB - tA, submit: tS - tB, gpu: performance.now() - tB });
+    }
     this.drawOverlay(g);
+    P?.mark(SEC.zeichnen);
     // neue Teile vorab hochladen (eine Portion je Bild), bevor sie sichtbar werden
     const u0 = performance.now();
     this.updateStaging();
@@ -1550,6 +1575,200 @@ export class Renderer3D {
     this.work += performance.now() - u0;
     const rest = performance.now() - d0 - this.work;
     this.baseMs += (Math.min(30, rest) - this.baseMs) * 0.08;
+    // neue Shader (auf dem iPhone oft Hunderte Millisekunden)
+    const np = this.gl.info.programs?.length ?? 0;
+    if (P && np > this.progCount && this.progCount > 0) P.event(EV.shader, `${np - this.progCount} neue Shader (jetzt ${np})`);
+    this.progCount = np;
+    P?.mark(SEC.hochladen);
+  }
+
+  // ------------------------------------------------------------------ Messen (perf3d.ts)
+
+  /** Messfahrt: Bausteine je Bild und Ereignisse (null: keine Messung) */
+  prof: Perf3D | null = null;
+  /** Hauptdurchgang des letzten Bilds: Zeichenaufrufe, Dreiecke */
+  lastCalls = 0;
+  lastTris = 0;
+  private progCount = 0;
+  /** Kostenanalyse läuft: das Spiel zeichnet nicht */
+  analysing = false;
+  private px1 = new Uint8Array(4);
+  private takeCounts() { const i = this.gl.info.render; this.lastCalls = i.calls; this.lastTris = i.triangles; }
+  /** auf die Grafik warten (ein Bildpunkt lesen erzwingt, dass alles Gezeichnete fertig ist) */
+  private syncGl() {
+    const c = this.gl.getContext();
+    c.readPixels(0, 0, 1, 1, c.RGBA, c.UNSIGNED_BYTE, this.px1);
+  }
+  /** Fahrer als volle Modelle im Bild */
+  get ridersShown(): number {
+    let n = this.player?.group.visible ? 1 : 0;
+    for (const m of this.riders.values()) if (m.group.visible) n++;
+    return n;
+  }
+  /** Ort auf der Strecke: 0 freie Strecke, 1 Ortsdurchfahrt (Häuser an der Straße), 2 Dorf */
+  placeAt(z: number): number {
+    const t = this.track;
+    if (!t) return 0;
+    const s = t.segAt(z);
+    if (s.bL || s.bR) return 1;
+    return this.villages?.inside(z, 0) ? 2 : 0;
+  }
+
+  /**
+   * Kostenanalyse an dieser Stelle (Spiel in der Pause, Kamera steht): je Variante – eine Ebene aus, andere Auflösung –
+   * mehrmals zeichnen und dann auf die Grafik warten. Gemessen wird die Zeit je Bild für CPU und Grafik zusammen
+   * (WebGL auf dem iPhone kennt keine Zeitstempel), dazu die CPU-Zeit fürs Abschicken. Jede Variante abwechselnd mit der
+   * Basis (ein warmes Telefon taktet herunter – so laufen beide unter denselben Bedingungen). Danach ist alles wie vorher.
+   */
+  async costAnalysis(g: RaceView, meta: string[], progress?: (i: number, n: number, label: string) => void, quick = false): Promise<string> {
+    if (this.analysing) return '';
+    this.analysing = true;
+    const gl = this.gl;
+    const M = this.mats;
+    const frame = () => new Promise<void>((res) => { requestAnimationFrame(() => res()); });
+    // Ebenen nach Materialien (die Welt besteht aus wenigen, geteilten Materialien)
+    const cats = new Map<string, Set<THREE.Material>>();
+    const add = (k: string, ...ms: (THREE.Material | null | undefined)[]) => {
+      let set = cats.get(k);
+      if (!set) { set = new Set(); cats.set(k, set); }
+      for (const m of ms) if (m) set.add(m);
+    };
+    add('Landschaft nah (Stufe 0, mit See)', this.terrMats[0], this.waterMats[0]);
+    add('Landschaft fern (Stufen 1 und 2, Talboden)', this.terrMats[1], this.terrMats[2], this.waterMats[1], this.waterMats[2], this.valleyMat);
+    add('Bäume (Bilder)', this.bbMat);
+    add('Straße, Bankett, Mauern, Hänge am Rand', M.asphalt, M.fresh, M.cobble, M.gravel, M.verge, M.marks, M.barrier, M.masonry, M.terrain, M.portal);
+    add('Ortshäuser, Dächer, Kleinteile der Dörfer', M.facade, M.roof, M.tiles);
+    add('Requisiten (Laternen, Zäune, Felsen, Wahrzeichen)', M.props, this.markMat, this.fallMat, this.mistMat);
+    add('Banden, Schilder, Bögen, Spruchbänder', M.ads, M.sign, M.billboard, this.fanMat, ...this.labelMat.values());
+    add('Zuschauer (Bilder)', this.sprMat, this.crowdMat, this.runMat);
+    add('Halos der Laternen', haloMaterial());
+    add('Lichterketten und Lampions', M.bulb, M.lantern, M.glow, M.lampGlow);
+    add('Tunnel', M.tunWall, M.tunRoad, M.tunMarks, M.tunSign);
+    add('Himmel', this.skyMat);
+    const known = new Set<THREE.Material>();
+    for (const set of cats.values()) for (const m of set) known.add(m);
+    // Gruppen von Objekten
+    const objs = new Map<string, THREE.Object3D[]>();
+    const riders: THREE.Object3D[] = [this.rs.mesh];
+    if (this.player) riders.push(this.player.group);
+    for (const m of this.riders.values()) riders.push(m.group);
+    if (this.fadeWarm) riders.push(this.fadeWarm.group);
+    for (const l of this.riderPool.values()) for (const m of l) riders.push(m.group);
+    objs.set('Fahrer und Gegner (Modelle und Bilder)', riders);
+    objs.set('Alpenhäuser (Dörfer, Höfe)', [this.houses.group]);
+    objs.set('Berge am Horizont', [this.mtn, this.mtnOld].filter((x): x is THREE.Mesh => !!x));
+    objs.set('Leben am Himmel, Partikel, Flaschen', [this.skyLife.group, this.parts, this.objRoot]);
+    const inObj = new Set<THREE.Object3D>();
+    for (const l of objs.values()) for (const o of l) o.traverse((x) => { inObj.add(x); });
+    // was keiner Ebene gehört (zur Vollständigkeit)
+    const rest = new Set<THREE.Material>();
+    const signs = cats.get('Banden, Schilder, Bögen, Spruchbänder')!;
+    this.scene.traverseVisible((o) => {
+      if (inObj.has(o) || o === this.sunset.mesh) return;
+      const ms = (o as THREE.Mesh).material;
+      if (!ms) return;
+      for (const m of Array.isArray(ms) ? ms : [ms]) if (!known.has(m)) (m.name === 'arch' ? signs : rest).add(m);
+    });
+    if (rest.size) cats.set(`Sonstiges (${[...rest].map((m) => m.name || m.type).join(', ')})`, rest);
+    // Zustand merken und wiederherstellen
+    const matVis = new Map<THREE.Material, boolean>();
+    const objVis = new Map<THREE.Object3D, boolean>();
+    const q0 = this.quality;
+    const lampW = LAMP_U.uLampP.value.map((v) => v.w);
+    const drama0 = this.skyMat.uniforms.uDrama.value as number;
+    const sunVis0 = this.sunset.mesh.visible;
+    const shadowAuto0 = gl.shadowMap.autoUpdate;
+    let usePost = true;
+    const hideMats = (set: Set<THREE.Material> | undefined) => { for (const m of set ?? []) { if (!matVis.has(m)) matVis.set(m, m.visible); m.visible = false; } };
+    const hideObjs = (list: THREE.Object3D[] | undefined) => { for (const o of list ?? []) { if (!objVis.has(o)) objVis.set(o, o.visible); o.visible = false; } };
+    const setQ = (q: number) => { if (this.quality !== q) { this.quality = q; this.resize(); } };
+    const restore = () => {
+      for (const [m, v] of matVis) m.visible = v;
+      matVis.clear();
+      for (const [o, v] of objVis) o.visible = v;
+      objVis.clear();
+      LAMP_U.uLampP.value.forEach((v, i) => { v.w = lampW[i]; });
+      this.skyMat.uniforms.uDrama.value = drama0;
+      this.sunset.mesh.visible = sunVis0;
+      gl.shadowMap.autoUpdate = shadowAuto0;
+      usePost = true;
+      setQ(q0);
+    };
+    const weather = !!this.post && this.debugTod !== null;
+    const steps: [string, () => void][] = [['Basis', () => undefined]];
+    for (const [k, set] of cats) steps.push([`ohne ${k}`, () => hideMats(set)]);
+    for (const [k, l] of objs) if (l.length) steps.push([`ohne ${k}`, () => hideObjs(l)]);
+    steps.push(
+      ['ohne Lichtkegel der Laternen am Boden', () => { for (const v of LAMP_U.uLampP.value) v.w = 0; }],
+      ['ohne dramatischen Himmel (Wolken, Türme, Strahlen)', () => { this.skyMat.uniforms.uDrama.value = 0; }],
+      ['ohne Sonnenuntergangs-Licht', () => { this.sunset.mesh.visible = false; }],
+    );
+    if (gl.shadowMap.enabled) steps.push(['ohne Schattenkarte (Durchgang je Bild)', () => { gl.shadowMap.autoUpdate = false; gl.shadowMap.needsUpdate = false; }]);
+    if (weather) steps.push(['ohne Wetter-Nachbearbeitung', () => { usePost = false; }]);
+    steps.push(['nur Himmel', () => { for (const set of cats.values()) if (!set.has(this.skyMat)) hideMats(set); for (const l of objs.values()) hideObjs(l); this.sunset.mesh.visible = false; }]);
+    for (const q of [0.5, 0.75, 1]) if (Math.abs(q - q0) > 0.01) steps.push([`Auflösung ${Math.round(q * 100)} % (statt ${Math.round(q0 * 100)} %)`, () => setQ(q)]);
+    // (nur für Tests im Emulator: wenige Varianten, kurz)
+    if (quick) steps.splice(3, steps.length - 5);
+    // Messen: K-mal zeichnen, dann auf die Grafik warten (Zeit je Bild: CPU und Grafik); vorher den Rückstau abwarten
+    const K = 2;
+    let calls = 0, tris = 0;
+    const render = () => {
+      if (usePost && this.post) this.post(() => { gl.render(this.scene, this.camera); this.takeCounts(); }, g);
+      else { gl.render(this.scene, this.camera); this.takeCounts(); }
+      calls = this.lastCalls; tris = this.lastTris;
+    };
+    const block = async (ms: number[], cpu: number[]) => {
+      for (let k = 0; k < (quick ? 1 : 2); k++) { await frame(); render(); }
+      for (let k = 0; k < (quick ? 1 : 5); k++) {
+        await frame();
+        this.syncGl();
+        const t0 = performance.now();
+        for (let j = 0; j < K; j++) render();
+        const t1 = performance.now();
+        this.syncGl();
+        const t2 = performance.now();
+        ms.push((t2 - t0) / K);
+        cpu.push((t1 - t0) / K);
+      }
+    };
+    const med = (a: number[]) => { if (!a.length) return -1; const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length / 2)]; };
+    const rows: { name: string; ms: number; base: number; cpu: number; calls: number; tris: number; size: string }[] = [];
+    const size = new THREE.Vector2();
+    try {
+      for (let i = 0; i < steps.length; i++) {
+        const [name, set] = steps[i];
+        progress?.(i, steps.length, name);
+        const mB: number[] = [], cB: number[] = [], mV: number[] = [], cV: number[] = [];
+        let c = 0, t = 0;
+        for (let round = 0; round < (quick ? 1 : 2); round++) {
+          restore();
+          await block(mB, cB);
+          restore();
+          set();
+          await block(mV, cV);
+          c = calls; t = tris;
+        }
+        gl.getDrawingBufferSize(size);
+        rows.push({ name, ms: med(mV), base: med(mB), cpu: med(cV), calls: c, tris: t, size: `${size.x}×${size.y}` });
+      }
+    } finally {
+      restore();
+      this.analysing = false;
+    }
+    const b = rows[0];
+    const f = (x: number) => (x < 0 ? '–' : x.toFixed(2));
+    // Unterschied zur Basis: − spart so viel, + kostet so viel mehr
+    const d = (r: { ms: number; base: number }) => (r.ms < 0 || r.base < 0 ? '–' : `${r.base - r.ms >= 0 ? '−' : '+'}${Math.abs(r.base - r.ms).toFixed(2)}`);
+    const mem = gl.info.memory;
+    const lines = [
+      ...meta,
+      `Szene: ${b.calls} Zeichenaufrufe, ${Math.round(b.tris / 1000)}k Dreiecke, ${gl.info.programs?.length ?? 0} Programme, ${mem.geometries} Geometrien, ${mem.textures} Texturen, ${this.chunks.size} Abschnitte, ${this.tiles.size} Kacheln, Schatten ${gl.shadowMap.enabled ? 'an' : 'aus'}, Wetter ${weather ? 'an' : 'aus'}`,
+      `Ebenen: ${[...cats.entries()].map(([k, set]) => `${k} = ${set.size} Material${set.size === 1 ? '' : 'ien'}`).join('; ')}`,
+      'Hinweis: ein warmes Telefon taktet herunter – dann sind alle Zeiten bis gut doppelt so hoch. Nur im selben Zustand vergleichen (am besten kühl).',
+      `Variante | ms je Bild (CPU + Grafik, Median; ${K}× gezeichnet, dann gewartet) | zur Basis (− spart, + kostet mehr; im Wechsel gemessen) | davon CPU fürs Abschicken | Aufrufe | Dreiecke k | Zeichenfläche`,
+      ...rows.map((r) => `${r.name} | ${f(r.ms)} | ${r === b ? '' : d(r)} | ${f(r.cpu)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.size}`),
+    ];
+    return lines.join('\n');
   }
 
   /** Himmel: Flieger; in den Finals der Hubschrauber über der Spitze des Feldes */
@@ -2034,6 +2253,7 @@ export class Renderer3D {
 
   /** Kachel fertig gebaut: einsetzen – ersetzt sie eine sichtbare, erst wenn sie auf der Grafikkarte ist */
   private tileDone(key: number, t: Tile) {
+    this.prof?.event(EV.tile);
     const old = this.tiles.get(key);
     if (old && !t.staged && this.boxSet[t.lv] && old.objs[0]?.visible && !old.out) {
       // die alte ist damit nicht mehr veraltet (sonst würde sie gleich noch einmal gebaut)
@@ -2771,6 +2991,7 @@ export class Renderer3D {
       }
     }
     if (this.mtnWait?.ready) {
+      this.prof?.event(EV.mtn, `Berge am Horizont getauscht (${this.mtnWait.biome})`);
       if (this.mtnOld) { this.scene.remove(this.mtnOld); this.mtnOld.geometry.dispose(); (this.mtnOld.material as THREE.Material).dispose(); }
       this.mtnOld = this.mtn;
       this.mtn = this.mtnWait.m;
@@ -2797,7 +3018,7 @@ export class Renderer3D {
   // ------------------------------------------------------------------ Abschnitte
 
   /** Abschnitt im Bau (in Schritten) */
-  private chunkGen: { k: number; it: Generator<void, Chunk, void> } | null = null;
+  private chunkGen: { k: number; it: Generator<void, Chunk, void>; cpu: number; frames: number } | null = null;
   /** Zeitgrenze für den Bau in Häppchen (performance.now(); Infinity: am Stück) */
   private deadline = Infinity;
   /** Beginn des Bauens in diesem Bild */
@@ -3165,7 +3386,9 @@ export class Renderer3D {
     // beim Start alles auf einmal (die Straße muss im ersten Bild stehen)
     if (this.chunks.size === 0) {
       this.chunkGen = null;
+      const t0 = performance.now();
       for (let k = from; k <= to; k++) this.addChunk(k, this.buildChunk(g, k), false);
+      this.prof?.event(EV.sync, `alle Abschnitte ${from}–${to} am Stück gebaut: ${(performance.now() - t0).toFixed(1)} ms`);
       return;
     }
     // der Abschnitt unter dem Fahrer und der nächste müssen stehen (z. B. nach einem Sprung): sofort bauen
@@ -3174,7 +3397,9 @@ export class Renderer3D {
     for (let k = Math.max(from, cur); k <= Math.min(to, cur + 1); k++) {
       if (this.chunks.has(k)) continue;
       if (this.chunkGen?.k === k) this.chunkGen = null;
+      const t0 = performance.now();
       this.addChunk(k, this.buildChunk(g, k), false);
+      this.prof?.event(EV.sync, `Abschnitt ${k} (${Math.round(k * CH * SEG)} m) sofort gebaut: ${(performance.now() - t0).toFixed(1)} ms`);
     }
     // danach mit Zeitbudget je Bild (nächste zuerst), auf der Startkarte großzügiger; der Bau gibt an der
     // Zeitgrenze von selbst ab (feine Häppchen)
@@ -3188,20 +3413,26 @@ export class Renderer3D {
     }
     this.deadline = t0 + budget;
     this.dlStart = t0;
+    let tl = t0;
     while (performance.now() < this.deadline) {
       if (!this.chunkGen) {
         let k = from;
         while (k <= to && this.chunks.has(k)) k++;
         if (k > to) break;
-        this.chunkGen = { k, it: this.chunkSteps(g, k) };
+        this.chunkGen = { k, it: this.chunkSteps(g, k), cpu: 0, frames: 0 };
       }
       const r = this.chunkGen.it.next();
       if (r.done) {
         // weit voraus fertig: weich einblenden (in Kehren liegt er oft schon im Bild)
         this.addChunk(this.chunkGen.k, r.value, true, true);
+        const now = performance.now();
+        const cg = this.chunkGen;
+        this.prof?.event(EV.chunk, `Abschnitt ${cg.k} (${Math.round(cg.k * CH * SEG)} m) fertig: ${(cg.cpu + now - tl).toFixed(1)} ms in ${cg.frames + 1} Bildern`);
+        tl = now;
         this.chunkGen = null;
       }
     }
+    if (this.chunkGen) { this.chunkGen.cpu += performance.now() - tl; this.chunkGen.frames++; }
     this.deadline = Infinity;
   }
 
@@ -4998,6 +5229,8 @@ export class Renderer3D {
     const bannerMat = new THREE.MeshLambertMaterial({ map: tex });
     const sideMat = new THREE.MeshLambertMaterial({ color });
     const box = new THREE.BoxGeometry(span, 1.3, 0.18);
+    // (Name für die Kostenanalyse: gehört zu Banden, Schildern, Bögen)
+    poleMat.name = bannerMat.name = sideMat.name = 'arch';
     disp.push(poleMat, pole, bannerMat, sideMat, box);
     for (const sg of [-1, 1]) {
       const m = new THREE.Mesh(pole, poleMat);

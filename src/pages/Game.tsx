@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { acquireStage, hasWarmStage, prewarm, releaseStage, type Stage } from '../game/abfahrt/pool';
 import type { WarmArgs } from '../app/warm';
 import { afterPaint } from '../lib/afterPaint';
@@ -6,7 +6,7 @@ import { useApp } from '../app/context';
 import { useMembers } from '../app/hooks';
 import { invalidate, useQuery } from '../app/query';
 import { navigate } from '../app/router';
-import { source } from '../app/config';
+import { BUILD_ID, source } from '../app/config';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
 import { Abfahrt, type Friend, type GameEvent, type HudState, type RunResult, type ScoreCat } from '../game/abfahrt/engine';
@@ -16,6 +16,10 @@ import { FrameClock } from '../game/frameClock';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { Track } from '../game/abfahrt/track';
 import { nextWeatherName } from '../game/abfahrt/weather';
+import { EV, Perf3D, PLACES, SEC, type Report } from '../game/abfahrt/perf3d';
+import { rangeDrop, viewRange } from '../game/abfahrt/viewRange';
+import { gfxOn } from '../game/abfahrt/gfxOpts';
+import { copyText, shareFile } from './admin/gpuKit';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, Segmented, cx, useTitle } from '../ui/kit';
@@ -34,6 +38,9 @@ const LS_TUTORIAL = 'gruppetto.abfahrt.runs';
 const LS_LEARN = 'gruppetto.abfahrt.learned';
 /** eigener Zähler fürs Tutorial: die neue Steuerung (ducken, bremsen) sieht jeder einmal */
 const LS_COACH = 'gruppetto.abfahrt.coachRuns';
+/** letzter Bericht der Messfahrt (zum erneuten Kopieren) */
+const LS_REPORT = 'gruppetto.abfahrt.messbericht';
+const PLACE_LABEL: Record<string, string> = { frei: 'freie Strecke', ortsdurchfahrt: 'Ortsdurchfahrten', dorf: 'Dörfer' };
 
 /** Tutorial der ersten Läufe: eine Geste nach der anderen, bis sie einmal geklappt hat */
 type Step = 'steer' | 'tuck' | 'brake';
@@ -120,6 +127,19 @@ export function GamePage() {
   const [coach, setCoach] = useState<Step | null>(null);
   const coachRef = useRef<{ on: boolean; step: Step | null; t: number; hold: number; learned: Set<Step> }>({ on: false, step: null, t: 0, hold: 0, learned: new Set() });
 
+  // Messmodus (Admin oder ?mess): Messfahrt (jedes Bild) und Kostenanalyse (je Ebene an einer Stelle)
+  const canMeasure = !!me.is_admin || /[?&]mess\b/.test(window.location.search);
+  const perfRef = useRef(new Perf3D());
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [measuring, setMeasuring] = useState(false);
+  const [recInfo, setRecInfo] = useState({ s: 0, hitches: 0 });
+  const [report, setReport] = useState<Report | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [lastReport, setLastReport] = useState<string | null>(() => lsGet(LS_REPORT));
+  const [cost, setCost] = useState<{ i: number; n: number; label: string } | null>(null);
+  const [costText, setCostText] = useState<string | null>(null);
+  const [costCopied, setCostCopied] = useState(false);
+
   const names = useMemo(() => (members.data ?? []).map((m) => m.display_name ?? '').filter(Boolean), [members.data]);
   const track = useMemo(() => new Track(day, names), [day, names]);
   const mine = season.data?.find((b) => b.user_id === me.id);
@@ -204,6 +224,8 @@ export function GamePage() {
   const onOver = (r: RunResult) => {
     setResult(r);
     setUi('over');
+    // Messfahrt: mit dem Ende der Fahrt beenden und den Bericht zeigen
+    if (perfRef.current.rec) stopMeasure();
     // Testfahrt: nichts speichern, nichts werten
     if (cruiseRef.current) return;
     const runs = (Number(lsGet(LS_TUTORIAL)) || 0) + 1;
@@ -251,6 +273,7 @@ export function GamePage() {
         return undefined;
       }
       const { renderer, canvas, overlay } = st;
+      canvasRef.current = canvas;
       stage.append(canvas, overlay);
       renderer.resize();
       renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
@@ -276,7 +299,13 @@ export function GamePage() {
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGlGen((x) => x + 1); } };
       // Bildrate (im Pausenmenü einschaltbar)
       const fps = new FpsMeter(stage);
+      // Messfahrt (perf3d.ts): Bausteine je Bild, Regler, Phasen
+      const P = perfRef.current;
+      let lastPhase = '';
+      let lastRange = rangeDrop();
       const loop = (now: number) => {
+        const rec = !!P.rec;
+        if (rec) P.begin(now);
         const dt = clock.tick(now);
         const raw = clock.raw;
         const eng = engineRef.current!;
@@ -289,6 +318,8 @@ export function GamePage() {
         }
         lostT = 0;
         if (uiRef.current !== 'paused') eng.update(dt);
+        if (rec) P.mark(SEC.spiel);
+        renderer.prof = rec ? P : null;
         const c0 = performance.now();
         renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.period));
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt, raw);
@@ -301,7 +332,21 @@ export function GamePage() {
         // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
         if (uiRef.current === 'playing' && !low) {
           const nq = gov.frame(raw, renderer.quality);
-          if (nq !== null) renderer.setQuality(nq); // wirkt direkt vor dem nächsten Bild (kein schwarzes Bild)
+          if (nq !== null) {
+            if (rec) P.event(EV.quality, `Auflösung ${Math.round(renderer.quality * 100)} % → ${Math.round(nq * 100)} %`);
+            renderer.setQuality(nq); // wirkt direkt vor dem nächsten Bild (kein schwarzes Bild)
+          }
+        }
+        if (rec && P.rec) {
+          const rd = rangeDrop();
+          if (rd !== lastRange) { P.event(EV.range, `Sichtweite ${viewRange().label}${rd ? ` (${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`); lastRange = rd; }
+          const ph = uiRef.current === 'paused' ? 'paused' : eng.phase;
+          if (ph !== lastPhase) { P.event(EV.phase, ph); lastPhase = ph; }
+          P.mark(SEC.anzeige);
+          P.end({
+            dt: raw * 1000, period: clock.period, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
+            quality: renderer.quality, px: renderer.gl.getPixelRatio(), range: rd, z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+          });
         }
         raf = requestAnimationFrame(loop);
       };
@@ -525,6 +570,60 @@ export function GamePage() {
     else if (uiRef.current === 'paused') setUi('playing');
   };
 
+  // ——— Messmodus ———
+  /** Gerät, Bildschirm, Auflösung, Sichtweite, Grafik – für Bericht und Kostenanalyse */
+  const deviceInfo = () => {
+    const r = rendererRef.current;
+    const cv = canvasRef.current;
+    const rd = rangeDrop();
+    return {
+      geraet: navigator.userAgent,
+      bildschirm: `${window.innerWidth}×${window.innerHeight} ×${window.devicePixelRatio || 1}`,
+      zeichenflaeche: cv ? `${cv.width}×${cv.height}` : '?',
+      aufloesung: r ? `${Math.round(r.quality * 100)} % (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
+      sichtweite: `${viewRange().label}${rd ? ` (vom Regler ${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`,
+      grafik: `Lichtfilter & Wetter ${gfxOn('licht') ? 'an' : 'aus'}, Sonnenschatten ${gfxOn('schatten') ? 'an' : 'aus'}, Landschaftsdetails ${gfxOn('details') ? 'an' : 'aus'}`,
+    };
+  };
+  const startMeasure = () => {
+    perfRef.current.startRec({ version: BUILD_ID, aufnahme: new Date().toISOString(), strecke: track.title, tag: day, fahrerfeld: FIELD, wetter: nextWeatherName() ?? 'aus', ...deviceInfo() });
+    setMeasuring(true);
+    setRecInfo({ s: 0, hitches: 0 });
+    setReport(null);
+    setCopied(false);
+    if (uiRef.current === 'paused') setUi('playing');
+  };
+  function stopMeasure() {
+    const d = deviceInfo();
+    const r = perfRef.current.stopRec({ ende: new Date().toISOString(), aufloesung_ende: d.aufloesung, sichtweite_ende: d.sichtweite });
+    setMeasuring(false);
+    if (r) { setReport(r); setCopied(false); lsSet(LS_REPORT, r.text); setLastReport(r.text); }
+  }
+  useEffect(() => {
+    if (!measuring) return undefined;
+    const id = window.setInterval(() => { const p = perfRef.current; setRecInfo({ s: p.recSeconds, hitches: p.hitches }); }, 500);
+    return () => window.clearInterval(id);
+  }, [measuring]);
+  const runCost = () => {
+    const r = rendererRef.current;
+    const eng = engineRef.current;
+    if (!r || !eng || cost) return;
+    const d = deviceInfo();
+    const seg = eng.track.segAt(eng.p.z);
+    const sec = eng.track.sections[seg.sec];
+    const meta = [
+      `gruppetto Abfahrt (WebGL) Kostenanalyse · ${new Date().toISOString()} · Version ${BUILD_ID}`,
+      `Gerät: ${d.geraet}`,
+      `Bildschirm ${d.bildschirm} · Zeichenfläche ${d.zeichenflaeche} · Auflösung ${d.aufloesung} · Sichtweite ${d.sichtweite} · ${d.grafik}`,
+      `Ort: ${Math.round(eng.p.z)} m (${PLACE_LABEL[PLACES[r.placeAt(eng.p.z)]]}), Abschnitt ${sec?.name ?? '?'} (${sec?.biome ?? '?'}), ${r.ridersShown} Fahrer als Modell im Bild, Phase ${eng.phase}`,
+    ];
+    setCost({ i: 0, n: 1, label: 'startet' });
+    setCostText(null);
+    void r.costAnalysis(eng, meta, (i, n, label) => setCost({ i, n, label }))
+      .then((t) => { setCost(null); setCostText(t || null); setCostCopied(false); })
+      .catch((e: unknown) => { setCost(null); setCostText(`Kostenanalyse abgebrochen: ${String(e)}`); });
+  };
+
   // Daumensteuerung
   const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
     if (ui !== 'playing' && ui !== 'countdown') return;
@@ -615,6 +714,69 @@ export function GamePage() {
             <RangePicker />
             <FpsSwitch />
             <GfxSwitches />
+            {canMeasure ? (
+              <div className="abf-gfx">
+                <span className="abf-range__label">Messmodus</span>
+                <span className="abf-range__hint">
+                  Messfahrt: zeichnet jedes Bild auf – Bildzeit, CPU je Baustein, Grafikzeit (Probebild alle 1,5 s), Auflösung und Sichtweite
+                  (was der Regler tut), Ortsdurchfahrten und Dörfer getrennt, Nachladen, neue Shader. Endet mit der Fahrt oder mit Stopp.
+                  Kostenanalyse: misst genau hier, was jede Ebene kostet (gut eine Minute, das Spiel bleibt in der Pause) – am besten mitten im Ort anhalten.
+                </span>
+                <div className="race-row">
+                  {measuring
+                    ? <button type="button" className="btn btn--secondary btn--sm" onClick={stopMeasure}>Messung beenden</button>
+                    : <button type="button" className="btn btn--secondary btn--sm" onClick={startMeasure} disabled={!!cost}>Messfahrt starten</button>}
+                  <button type="button" className="btn btn--secondary btn--sm" onClick={runCost} disabled={!!cost || measuring}>{cost ? `Messe ${cost.i + 1}/${cost.n} …` : 'Kostenanalyse hier'}</button>
+                </div>
+                {cost ? <span className="abf-range__hint">{cost.label}</span> : null}
+                {lastReport ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { void copyText(lastReport).then((ok) => setCopied(ok)); }}>{copied ? 'Kopiert ✓' : 'Letzten Messbericht kopieren'}</button> : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {measuring && ui !== 'paused' ? (
+        <div className="gpu-rec abf-rec">
+          <i />
+          <span>Messung {Math.floor(recInfo.s / 60)}:{String(Math.floor(recInfo.s % 60)).padStart(2, '0')} · {recInfo.hitches} Ruckler</span>
+          <button type="button" onClick={stopMeasure}>Stopp</button>
+        </div>
+      ) : null}
+
+      {costText ? (
+        <div className="gpu-report">
+          <strong>Kostenanalyse fertig</strong>
+          <pre className="gpu-report__pre">{costText.split('\n').filter((l) => !l.startsWith('Gerät:')).join('\n')}</pre>
+          <div className="gpu-menu__row gpu-menu__actions">
+            <button type="button" className="gpu-chip is-on" onClick={() => { void copyText(costText).then((ok) => setCostCopied(ok)); }}>{costCopied ? 'Kopiert ✓' : 'Ergebnis kopieren'}</button>
+            <button type="button" className="gpu-chip" onClick={() => setCostText(null)}>Schließen</button>
+          </div>
+        </div>
+      ) : null}
+
+      {report ? (
+        <div className="gpu-report">
+          <strong>Messfahrt fertig</strong>
+          <div className="gpu-report__grid">
+            <span>Dauer</span><b>{report.summary.s.toFixed(0)} s</b>
+            <span>Bildrate</span><b>{report.summary.fps.toFixed(0)} fps (Takt {Math.round(1000 / report.summary.period)} Hz)</b>
+            <span>1 % langsamste</span><b>{report.summary.low1.toFixed(0)} fps</b>
+            <span>Ruckler</span><b>{report.summary.hitches}</b>
+            <span>schlimmstes Bild</span><b>{report.summary.worst.toFixed(0)} ms</b>
+            <span>CPU (95 %)</span><b>{report.summary.cpuP95.toFixed(1)} ms</b>
+            <span>Grafik (Probe, Median)</span><b>{report.summary.gpuMed !== null ? `${report.summary.gpuMed.toFixed(1)} ms` : '–'}</b>
+            {report.summary.places.map((p) => (
+              <Fragment key={p.name}>
+                <span>{PLACE_LABEL[p.name] ?? p.name}</span>
+                <b>{p.fps.toFixed(0)} fps · 60 % unter {p.p60.toFixed(1)} ms{p.gpu !== null ? ` · Grafik ${p.gpu.toFixed(1)} ms` : ''}</b>
+              </Fragment>
+            ))}
+          </div>
+          <div className="gpu-menu__row gpu-menu__actions">
+            <button type="button" className="gpu-chip is-on" onClick={() => { void copyText(report.text).then((ok) => setCopied(ok)); }}>{copied ? 'Kopiert ✓' : 'Bericht kopieren'}</button>
+            <button type="button" className="gpu-chip" onClick={() => { void shareFile(report.full, `abfahrt-messfahrt-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`); }}>Vollständig als Datei</button>
+            <button type="button" className="gpu-chip" onClick={() => setReport(null)}>Schließen</button>
           </div>
         </div>
       ) : null}
@@ -643,6 +805,9 @@ export function GamePage() {
                     <button type="button" className="btn btn--secondary btn--sm" onClick={() => start(2)}>2×</button>
                     <button type="button" className="btn btn--secondary btn--sm" onClick={() => start(3)}>3×</button>
                   </div>
+                ) : null}
+                {canMeasure ? (
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); startMeasure(); }}>Losfahren mit Messfahrt</button>
                 ) : null}
                 <BikeChip bikes={bikes} />
                 <MiniBoard rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} totalM={mine?.total_m ?? 0} />
