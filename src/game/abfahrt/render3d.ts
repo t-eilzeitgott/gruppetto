@@ -29,6 +29,7 @@ import { Houses3D } from './houses3d';
 import { Villages3D } from './village3d';
 import { LAMP_GLSL, LAMP_U, haloMaterial, lampFrag, lampHalos, pickLamps, warmLamps } from './lamps3d';
 import { SunsetGlow } from './sunset3d';
+import { TT_PODIUM, TtStart3D, ttCrowdGap } from './ttstart3d';
 import { EV, SEC, type Perf3D } from './perf3d';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
@@ -494,6 +495,8 @@ export class Renderer3D {
   /** Zuschauer in der Ferne: Bilder aus dem Vorrat (einmal aus den 3D-Figuren gezeichnet) */
   private crowdAtlas!: CrowdAtlas;
   private sprMat!: THREE.MeshLambertMaterial;
+  /** Zeitfahren: Startbereich (Podest, Rampe, Uhr, Personal) */
+  private ttStart: TtStart3D | null = null;
   private runners: Runner[] = [];
   private runBuf = new THREE.InstancedInterleavedBuffer(new Float32Array(6 * STRIDE), STRIDE, 1).setUsage(THREE.DynamicDrawUsage);
   private runMeshes: THREE.Mesh[] = [];
@@ -1544,6 +1547,7 @@ export class Renderer3D {
     this.work = performance.now() - w0;
     P?.mark(SEC.landschaft);
     this.updateRiders(g);
+    this.ttStart?.update(g, dt);
     P?.mark(SEC.fahrer);
     this.updateSky(g, biome, dt);
     // Wasser strömt: eine Texturlänge je Sekunde (wie schnell das aussieht, legt die Dichte der Koordinaten fest)
@@ -1795,6 +1799,17 @@ export class Renderer3D {
     this.routeEnd = 0;
     this.pre = null;
     this.terrain = new Terrain(track);
+    // Zeitfahren: hinter dem Startpodest ein ebener Platz auf Höhe seines Fußes (sonst eine Grube unter der Straße)
+    if (track.kind === 'tt') {
+      const w = { x: 0, y: 0, z: 0, th: 0 };
+      const yp = track.heightAt(0) - TT_PODIUM;
+      const pts: number[] = [];
+      for (let f = -0.5; f >= -90; f -= f > -6 ? 0.5 : 2) {
+        track.world(f, 0, 0, w);
+        pts.push(w.x, yp, w.z, Math.min(1, Math.max(0, (-f - 0.5) / 2.5)));
+      }
+      this.terrain.addFlat(pts, 34, 1, [], true);
+    }
     // Abfahrt wie in der WebGPU-Welt: zerklüftete Berge (Grate, Rinnen, Felsbänder) und Bergwald (geschlossene
     // Bestände mit klarem Waldrand statt verstreuter Einzelbäume)
     if (track.kind === 'descent') { this.terrain.rugged = true; this.terrain.woods = true; }
@@ -1822,6 +1837,20 @@ export class Renderer3D {
     this.camReg = null;
     this.newSigns(track.names);
     this.clearChunks();
+    this.ttStart?.dispose();
+    this.ttStart = null;
+    if (track.kind === 'tt') {
+      const T = this.terrain;
+      this.ttStart = new TtStart3D({
+        track, props: this.mats.props, ads: this.mats.ads, people: this.runMat, shadow: this.shadowTex, glow: this.mats.lampGlow.map!,
+        accent: this.accent, aniso: Math.min(4, this.gl.capabilities.getMaxAnisotropy()),
+        side: (f, sg, dx) => {
+          const s = track.seg(Math.max(track.first, Math.floor(f / SEG)));
+          return this.groundAt(sg < 0 ? s.L : s.R, s, sg, dx, T.lim(s.i)[sg < 0 ? 0 : 1] - track.extra(s.i)) ?? 0;
+        },
+      });
+      this.scene.add(this.ttStart.root);
+    }
     this.cam.init = false;
     this.resetDirector(false);
     this.runners = [];
@@ -5362,6 +5391,8 @@ export class Renderer3D {
    */
   private crowdPeople(out: Person[], s: Seg, sg: number, lim: number, v: number, dx0: number) {
     const t = this.track!;
+    // Zeitfahren: dort wartet der Teamwagen hinter der Absperrung
+    if (ttCrowdGap(t, s.i, sg)) return;
     const biome = t.sections[s.sec].biome;
     const zone: Zone = biome === 'pass' ? 'pass' : biome === 'village' ? 'village' : 'tifosi';
     const r = mulberry32(s.i * 7919 + (sg > 0 ? 104729 : 0));
@@ -6393,7 +6424,7 @@ export class Renderer3D {
 
   dispose() {
     this.offGfx();
-    try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); this.markers?.dispose(); } catch { /* Kontext evtl. schon weg */ }
+    try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); this.markers?.dispose(); this.ttStart?.dispose(); } catch { /* Kontext evtl. schon weg */ }
     try { this.gl.dispose(); } catch { /* egal */ }
     // Kontext sofort freigeben: iOS erlaubt nur wenige gleichzeitig – sonst bleibt ein späteres Spiel schwarz
     try { this.gl.forceContextLoss(); } catch { /* egal */ }

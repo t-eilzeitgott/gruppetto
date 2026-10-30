@@ -747,6 +747,7 @@ export class Terrain {
     // Welt-Editor: Hügel und Mulden (vor den Klemmen – die Straße bleibt frei)
     { const bumps = this.track.bumps; if (bumps.length) o.h += bumpAt(bumps, x, z); }
     // Dörfer (WebGPU-Welt): das Gelände beiderseits der Dorfstraße flacher (Terrassen statt Steilhang)
+    let keepW = 0;
     for (const f of this.flats) {
       if (x < f.box[0] || x > f.box[2] || z < f.box[1] || z > f.box[3]) continue;
       const p = f.pts;
@@ -761,6 +762,7 @@ export class Terrain {
         wv *= sstep(FLAT_AVOID[0], FLAT_AVOID[1], Math.sqrt(da));
       }
       if (wv > 0) o.h -= (o.h - by) * f.k * wv;
+      if (f.keep) keepW = Math.max(keepW, wv * f.k);
     }
     if (!sg || sg.n === 0) return o;
     const CR = clampR(cell);
@@ -843,7 +845,8 @@ export class Terrain {
       // die Straße selbst als Asphaltband in der Landschaft (ohne Straßenstück sah man sonst einen Graben als Loch)
       o.road = sstep(EDGE + 1.6 + nEx, EDGE - 0.2 + nEx, a);
       o.cut = sstep(CR + 40 + nEx, EDGE + 1 + nEx, a);
-      const k = sstep(lim + 2.5, lim - 1, a);
+      // (nicht auf einer festen Ebene ohne Straße darauf – dem Platz hinter dem Startpodest)
+      const k = sstep(lim + 2.5, lim - 1, a) * (1 - keepW);
       if (k > 0) { o.h -= 1.4 * k; o.near = true; }
     }
     return o;
@@ -857,16 +860,17 @@ export class Terrain {
    * Dorfebenen: Straßenpunkte (x, y, z, Gewicht an den Enden), Reichweite L (m), Stärke k (0 … 1), Punkte anderer
    * Straßenschenkel (x, z), an denen die Ebene ausläuft
    */
-  readonly flats: { pts: Float32Array; L: number; k: number; box: [number, number, number, number]; avoid: Float32Array }[] = [];
+  readonly flats: { pts: Float32Array; L: number; k: number; box: [number, number, number, number]; avoid: Float32Array; keep: boolean }[] = [];
   /**
    * Dorfebene anlegen (vor dem Bau der Kacheln dort). avoid: Punkte (x, z) anderer Schenkel der Straße, die der Ebene
    * nahe kommen und deutlich höher oder tiefer liegen – dort läuft die Ebene aus, sonst stünde angehobenes Gelände
-   * als Wand neben der anderen Straße (deren Klemme reicht nur ein paar Meter weit)
+   * als Wand neben der anderen Straße (deren Klemme reicht nur ein paar Meter weit). keep: die Ebene gilt auch im
+   * Korridor der Straße (dort wird das Gelände sonst unter die Straße gezogen) – für Plätze ohne Straße darauf
    */
-  addFlat(pts: number[], L: number, k: number, avoid: number[] = []) {
+  addFlat(pts: number[], L: number, k: number, avoid: number[] = [], keep = false) {
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (let i = 0; i < pts.length; i += 4) { x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]); z0 = Math.min(z0, pts[i + 2]); z1 = Math.max(z1, pts[i + 2]); }
-    this.flats.push({ pts: new Float32Array(pts), L, k, box: [x0 - L, z0 - L, x1 + L, z1 + L], avoid: new Float32Array(avoid) });
+    this.flats.push({ pts: new Float32Array(pts), L, k, box: [x0 - L, z0 - L, x1 + L, z1 + L], avoid: new Float32Array(avoid), keep });
   }
 
   /** Abstand (Draufsicht) zum nächsten Straßenstück im Rechenbereich – für Bäume und Requisiten */

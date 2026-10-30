@@ -266,6 +266,58 @@ function personGeometry(kind: Kind, lod: 0 | 1): THREE.BufferGeometry | null {
   return g;
 }
 
+// ------------------------------------------------------------------ Personal am Start (Zeitfahren)
+
+/**
+ * Feste Haltungen fürs Personal am Start: A = linker, B = rechter Arm (seitlich heben, nach vorn heben, Ellbogen,
+ * zur Mitte), legs = Schwung und Knie je Bein, body = Höhe, Vorlage, Nicken. Die Hände liegen dort, wo sie sein
+ * sollen (am Sattel, an der Kamera) – gerechnet mit derselben Kinematik wie im Shader (staffHand).
+ */
+const STAFF: Record<number, { A: number[]; B: number[]; legs: number[]; body: number[] }> = {
+  // hält das Rad am Sattel: vorgebeugt, beide Hände vorn auf Sattelhöhe
+  19: { A: [0.45, 1.0, 0.25, 0.7], B: [0.65, 0.95, 0.55, 0.75], legs: [0.22, 0.16, -0.06, 0.06], body: [0, 0.22, 0] },
+  // fotografiert stehend: Kamera am Auge, Ellbogen vorn
+  20: { A: [0.6, 1.4, 1.85, 0.2], B: [0.65, 1.5, 1.9, 0.1], legs: [0.06, 0.04, -0.04, 0.02], body: [0, 0.03, 0] },
+  // fotografiert kniend (ein Knie am Boden)
+  21: { A: [0.6, 1.4, 1.85, 0.2], B: [0.65, 1.5, 1.9, 0.1], legs: [0, 1.57, 1.5, 1.57], body: [-0.44, 0.05, 0] },
+  // steht ruhig, Hände vorn gefaltet (Kommissär, Zeitnehmer, Polizist, Mechaniker)
+  22: { A: [0.3, 0.2, 1.25, 1.05], B: [0.3, 0.15, 1.25, 1.1], legs: [0, 0, 0, 0], body: [0, 0, 0] },
+  // Kameramann: Kamera auf der rechten Schulter, linke Hand am Objektiv
+  23: { A: [0.65, 1.55, 0.95, 0.45], B: [0.6, 0.95, 2.15, -0.05], legs: [0.12, 0.08, -0.1, 0.04], body: [0, 0.04, 0] },
+  // Starter: rechte Hand hoch über dem Kopf (zählt herunter), die linke locker
+  24: { A: [0.1, 0.12, 0.3, 0.05], B: [2.9, 0.2, 0.15, 0.1], legs: [0.05, 0.03, -0.03, 0.02], body: [0, 0, 0] },
+};
+const v4 = (a: number[]) => `vec4(${a.map((x) => x.toFixed(3)).join(', ')})`;
+const v3s = (a: number[]) => `vec3(${a.map((x) => x.toFixed(3)).join(', ')})`;
+const STAFF_GLSL = Object.entries(STAFF).map(([k, s], i) =>
+  `${i ? 'else ' : ''}if (act < ${Number(k) + 0.5}) { A = ${v4(s.A)}; B = ${v4(s.B)}; legs = ${v4(s.legs)}; body = ${v3s(s.body)}; }`).join('\n    ');
+
+type V3 = [number, number, number];
+const rX3 = (p: V3, a: number): V3 => { const c = Math.cos(a), s = Math.sin(a); return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
+const rY3 = (p: V3, a: number): V3 => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]; };
+const rZ3 = (p: V3, a: number): V3 => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]; };
+
+/**
+ * Punkt am Körper einer Person mit fester Haltung (Personal am Start), in ihren eigenen Koordinaten (Blick +z, vor
+ * Größe und Drehung): Hand (sg −1 links, +1 rechts) oder – ohne sg – ein Punkt am Oberkörper (z. B. die Schulter).
+ */
+export function staffPoint(act: number, p: V3, sg: -1 | 1 | 0 = 0): V3 {
+  const s = STAFF[act];
+  let q: V3 = [p[0], p[1], p[2]];
+  if (s && sg) {
+    const P = sg < 0 ? s.A : s.B;
+    const Sh: V3 = [sg * 0.228, 1.39, 0];
+    const El: V3 = [sg * 0.25, 1.105, 0];
+    if (q[1] < 1.1) { const d = rX3([q[0] - El[0], q[1] - El[1], q[2] - El[2]], -P[2]); q = [El[0] + d[0], El[1] + d[1], El[2] + d[2]]; }
+    const d = rZ3(rY3(rX3([q[0] - Sh[0], q[1] - Sh[1], q[2] - Sh[2]], -P[1]), -sg * P[3]), sg * P[0]);
+    q = [Sh[0] + d[0], Sh[1] + d[1], Sh[2] + d[2]];
+  }
+  if (s) { q = rX3(q, s.body[1]); q[1] += s.body[0]; }
+  return q;
+}
+/** Hand einer Person mit fester Haltung (siehe staffPoint) */
+export const staffHand = (act: number, sg: -1 | 1): V3 => staffPoint(act, [sg * 0.25, 0.81, 0.008], sg);
+
 // ------------------------------------------------------------------ Shader
 
 const VERT_HEAD = /* glsl */ `
@@ -298,7 +350,10 @@ void armPose(float act, float t, float e, out vec4 A, out vec4 B, out vec4 legs,
   body = vec3(0.0); // Hüpfen, Vorlage, Kopfnicken
   A = idleA; B = idleB;
   float ex = smoothstep(0.15, 0.75, e);
-  if (act < 0.5) {            // ruhig – klatscht, wenn der Fahrer vorbeikommt
+  if (act > 18.5) {           // Personal am Start (Zeitfahren): feste Haltungen, nur ein leises Atmen
+    ${STAFF_GLSL}
+    body.x += 0.005 * sin(t * 1.7);
+  } else if (act < 0.5) {            // ruhig – klatscht, wenn der Fahrer vorbeikommt
     A = mix(idleA, clap, ex * 0.9); B = mix(idleB, clap, ex * 0.9);
   } else if (act < 1.5) {     // klatschen
     A = clap; B = clap;
@@ -485,6 +540,11 @@ const VERT_BEGIN = /* glsl */ `
 #endif
   float bodyTurn = clamp(delta, -1.05, 1.05) * 0.65 * att;
   float headTurn = clamp(delta - bodyTurn, -0.85, 0.85) * att + (1.0 - att) * 0.4 * sin(t * 0.33 + ph * 20.0);
+  // Personal am Start: Körper fest (Hände am Sattel, an der Kamera); wer ruhig dasteht, schaut dem Fahrer zu
+  if (act > 18.5) {
+    bodyTurn = 0.0;
+    headTurn = abs(act - 22.0) < 0.1 ? clamp(delta, -0.9, 0.9) * (1.0 - smoothstep(20.0, 60.0, dist)) : 0.05 * sin(t * 0.5 + ph * 20.0);
+  }
 #ifdef CROWD_BAKE
   headTurn = 0.0;
 #endif
@@ -570,7 +630,11 @@ export const CROWD_VERT = { head: VERT_HEAD, begin: VERT_BEGIN };
 // ------------------------------------------------------------------ Instanzen
 
 /** Was ein einzelner Zuschauer tut */
-export const Act = { idle: 0, clap: 1, wave: 2, cheer: 3, film: 4, flag: 5, shout: 6, hold: 7, run: 8, runFlag: 9, sit: 10, lean: 11, sign: 12, jog: 13, jogFlag: 14, jump: 15, ola: 16, dance: 17, devil: 18 } as const;
+export const Act = {
+  idle: 0, clap: 1, wave: 2, cheer: 3, film: 4, flag: 5, shout: 6, hold: 7, run: 8, runFlag: 9, sit: 10, lean: 11, sign: 12, jog: 13, jogFlag: 14, jump: 15, ola: 16, dance: 17, devil: 18,
+  // Personal am Start (Zeitfahren): feste Haltungen ohne Jubel (siehe STAFF)
+  holdBike: 19, photo: 20, photoKneel: 21, still: 22, tvCam: 23, starterUp: 24,
+} as const;
 
 export interface Person {
   x: number; y: number; z: number; yaw: number;
@@ -770,4 +834,72 @@ export function randomPerson(r: Rnd, zone: Zone, opts: { row: number; kid?: bool
     shorts, sleeves, longHair, glasses, stripe,
     beard, backpack, ponytail, cup,
   };
+}
+
+/** Rollen am Start eines Zeitfahrens */
+export type StaffRole = 'official' | 'photographer' | 'tv' | 'police' | 'mechanic';
+
+/**
+ * Personal am Start (ohne Ort): Kommissäre in Dunkelblau mit hellem Hemdkragen, Fotografen in Schwarz, Khaki und
+ * Jeans (oft mit Kappe), Kameraleute in Schwarz, Polizei in Dunkelblau mit weißer Mütze, Mechaniker in den
+ * Teamfarben (kit: Farbe aus dem Trikot-Bereich der Palette, sonst zufällig).
+ */
+export function staffPerson(r: Rnd, role: StaffRole, act: number, kit = -1): Person {
+  const skin = inRange(r, 'skin');
+  let hair = inRange(r, 'hair');
+  if (r() < 0.2) hair = RANGE.hair[0] + 5 + Math.floor(r() * 2);
+  let top = NAVY, bottom = RANGE.bottom[0], hat = NAVY, hatType = 0, accent = WHITE;
+  let sleeves = true, shorts = false, glasses = r() < 0.25, stripe = false;
+  switch (role) {
+    case 'official':
+      // Jury: dunkelblaue Jacke über hellem Hemd, dunkle Hose
+      top = r() < 0.7 ? NAVY : RANGE.neutral[0] + 13;
+      accent = r() < 0.6 ? WHITE : RANGE.colour[0] + 8;
+      stripe = true;
+      bottom = oneOf(r, [RANGE.bottom[0] + 2, RANGE.bottom[0] + 10, RANGE.bottom[0]]);
+      hatType = r() < 0.3 ? 1 : 0;
+      break;
+    case 'photographer':
+      top = oneOf(r, [BLACK, BLACK, RANGE.neutral[0] + 9, RANGE.neutral[0] + 5, RANGE.neutral[0] + 12, RANGE.colour[0] + 6]);
+      bottom = oneOf(r, [RANGE.bottom[0] + 1, RANGE.bottom[0] + 4, RANGE.bottom[0] + 2, RANGE.bottom[0] + 9]);
+      hatType = r() < 0.6 ? 1 : 0;
+      hat = oneOf(r, [BLACK, WHITE, GREY, RANGE.neutral[0] + 9]);
+      sleeves = r() < 0.5;
+      shorts = r() < 0.2;
+      accent = top;
+      break;
+    case 'tv':
+      top = BLACK; bottom = RANGE.bottom[0] + 2; hat = BLACK; hatType = r() < 0.7 ? 1 : 0; accent = GREY; sleeves = r() < 0.6;
+      break;
+    case 'police':
+      top = NAVY; bottom = NAVY; hat = WHITE; hatType = 1; accent = WHITE; stripe = true; glasses = r() < 0.5;
+      break;
+    case 'mechanic':
+      top = kit >= 0 ? kit : inRange(r, 'kit');
+      accent = WHITE;
+      stripe = r() < 0.6;
+      bottom = RANGE.bottom[0] + 2;
+      hatType = 1; hat = top; sleeves = r() < 0.3;
+      break;
+  }
+  return {
+    x: 0, y: 0, z: 0, yaw: 0,
+    height: 0.95 + r() * 0.12, width: 0.95 + r() * 0.2,
+    act, phase: r(),
+    skin, top, bottom, hair, hat, hatType, accent, flag: 0,
+    shorts, sleeves, longHair: false, glasses, stripe,
+    beard: role !== 'police' && r() < 0.18, backpack: false, ponytail: false, cup: false,
+  };
+}
+
+/** Palettenplatz einer Trikotfarbe (für Mechaniker in Teamfarben): der nächste aus dem Trikot-Bereich */
+export function kitSlot(hex: string): number {
+  const c = lin(hex);
+  let best = RANGE.kit[0], bd = Infinity;
+  for (let i = 0; i < RANGE.kit[1]; i++) {
+    const p = PAL[RANGE.kit[0] + i];
+    const d = (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2 + (p[2] - c[2]) ** 2;
+    if (d < bd) { bd = d; best = RANGE.kit[0] + i; }
+  }
+  return best;
 }
