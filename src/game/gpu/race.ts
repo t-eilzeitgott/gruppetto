@@ -123,7 +123,10 @@ export class Race {
   private camera = new THREE.PerspectiveCamera(60, 1, 0.3, 24000);
   private pipeBloom: THREE.RenderPipeline | null = null;
   private pipeFlat: THREE.RenderPipeline | null = null;
-  private get pipeline(): THREE.RenderPipeline | null { return this.atmo?.bloomOn ? this.pipeBloom : this.pipeFlat; }
+  /** Kostenanalyse: Bildkette nur mit Tonwerten (zeigt, was die übrige Nachbearbeitung kostet) */
+  private pipeMin: THREE.RenderPipeline | null = null;
+  private pipeOverride: THREE.RenderPipeline | null = null;
+  private get pipeline(): THREE.RenderPipeline | null { return this.pipeOverride ?? (this.atmo?.bloomOn ? this.pipeBloom : this.pipeFlat); }
   private scenePass: ReturnType<typeof pass> | null = null;
   private atmo: Atmo | null = null;
   settings: Settings;
@@ -214,6 +217,8 @@ export class Race {
     // steht fest) – gespeicherte ältere Einstellungen ändern daran nichts
     // Leuchten (Bloom) aus: kostete auf dem iPhone ~6 ms je Bild (Lichthöfe der Laternen und Fenster leuchten selbst)
     this.settings = { ...loadSettings(opts.settingsKey ?? RACE_KEY, opts.defaults ?? RACE_DEFAULTS), mood: 'abend', cycle: false, shadows: false, bloom: false };
+    // Bildrate höchstens hieß kurz „fpsCap“ (Vorgabe 60, nicht selbst gewählt): vergessen, jetzt gilt „frei“
+    delete (this.settings as unknown as Record<string, unknown>).fpsCap;
     this.renderer = new THREE.WebGPURenderer({ antialias: false, powerPreference: 'high-performance', reversedDepthBuffer: true, trackTimestamp: true } as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
   }
 
@@ -257,7 +262,7 @@ export class Race {
     this.maxDpr = Math.min(window.devicePixelRatio || 1, this.settings.maxDpr);
     // Szene anfangs höchstens doppelt (die Regelung geht von dort nach oben oder unten); mit begrenzter Bildrate ab
     // „Szene mindestens“: so wenig Arbeit je Bild wie eingestellt (größer nur mit viel Luft)
-    this.dpr = Math.min(this.maxDpr, Math.max(this.settings.minDpr, this.settings.fpsCap > 0 ? 0 : 2));
+    this.dpr = Math.min(this.maxDpr, Math.max(this.settings.minDpr, this.settings.fpsMax > 0 ? 0 : 2));
     this.canvasDpr = this.canvasFor(this.dpr);
     r.setPixelRatio(this.canvasDpr);
     r.toneMapping = THREE.AgXToneMapping;
@@ -357,6 +362,12 @@ export class Race {
       pl.outputColorTransform = false;
       pl.outputNode = atmo.outputNode(color, withBloom);
       if (withBloom) this.pipeBloom = pl; else this.pipeFlat = pl;
+    }
+    {
+      const pl = new THREE.RenderPipeline(r);
+      pl.outputColorTransform = false;
+      pl.outputNode = tsl.vec4(tsl.renderOutput(color).rgb.clamp(0, 1), 1);
+      this.pipeMin = pl;
     }
 
     // die ersten gut 1,1 km am Stück (danach baut die Fahrt selbst nach)
@@ -1297,7 +1308,7 @@ export class Race {
     const mn = Math.min(...(this.rafIv.length >= 30 ? this.rafIv : this.intervals));
     const disp = mn < 9.6 ? 1000 / 120 : mn < 12.5 ? 1000 / 90 : 1000 / 60;
     // Ziel: Takt des Bildschirms, mit Begrenzung deren Takt
-    const cap = this.settings.fpsCap;
+    const cap = this.settings.fpsMax;
     this.period = cap > 0 ? Math.max(disp, 1000 / cap) : disp;
     if (this.intervals.length < 60 || this.paused) return;
     const P = this.period;
@@ -1354,7 +1365,7 @@ export class Race {
     this.rafT = t;
     // Bildrate begrenzen (60 auf einem 120-Hz-Bildschirm: jeder zweite Aufruf): weniger Arbeit je Sekunde – das
     // Telefon wird langsamer warm und drosselt später (nicht in der Kostenanalyse, die misst je Bild)
-    const cap = this.settings.fpsCap;
+    const cap = this.settings.fpsMax;
     if (cap > 0 && this.ready && !this.analysing && this.drawnT && t - this.drawnT < 1000 / cap - 3) return;
     this.drawnT = t;
     try {
@@ -1434,7 +1445,11 @@ export class Race {
       ['ohne Landschaft (Boden, Berge)', () => hide('field')],
       ['ohne Straße, Rand, Tunnel', () => hide('road')],
       ['ohne Dinge auf der Straße', () => hide('objects')],
+      ['ohne Boden nah (Stufe 0)', () => hideMat('terrain0')],
+      ['ohne Boden fern (Stufen 1, 2)', () => hideMat('terrain1', 'terrain2')],
+      ['Nachbearbeitung nur Tonwerte (ohne Farbe, Schärfe, Korn, Abendlicht, Tempo-Linien)', () => { this.pipeOverride = this.pipeMin; }],
       ['nur Himmel + Nachbearbeitung', () => hide(...groups.map(([k]) => k))],
+      ['nur Himmel + nur Tonwerte', () => { hide(...groups.map(([k]) => k)); this.pipeOverride = this.pipeMin; }],
       ['Szene ×1.0', () => setDpr(Math.min(1, maxD))],
       ['Szene ×1.4', () => setDpr(Math.min(1.4, maxD))],
       ...(maxD >= 2 ? [['Szene ×2.0', () => setDpr(2)] as [string, () => void]] : []),
@@ -1443,6 +1458,7 @@ export class Race {
     const p90 = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * 0.9)]; };
     const rows: { name: string; gpu: number; gpu90: number; base: number; draw: number; cpu: number; frame: number; calls: number; tris: number; px: string }[] = [];
     const restore = () => {
+      this.pipeOverride = null;
       if (JSON.stringify(this.settings) !== JSON.stringify(S0)) this.applySettings(S0, true);
       for (const [o, v] of vis0) o.visible = v;
       for (const [m, v] of matVis0) m.visible = v;
@@ -1503,7 +1519,7 @@ export class Race {
     const lines = [
       `gruppetto Abfahrt-WebGPU Kostenanalyse · ${new Date().toISOString()} · ${this.backendName} · GPU-Zeitstempel ${this.gpuTiming ? 'ja' : 'nein'}`,
       `Gerät: ${navigator.userAgent}`,
-      `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, Bildrate höchstens ${S0.fpsCap > 0 ? S0.fpsCap : 'frei'}, MSAA ${S0.msaa}, Bild ×${this.canvasDpr}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => ((this.opts.defaults ?? RACE_DEFAULTS) as unknown as Record<string, unknown>)[k] !== v)))}`,
+      `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, Bildrate höchstens ${S0.fpsMax > 0 ? S0.fpsMax : 'frei'}, MSAA ${S0.msaa}, Bild ×${this.canvasDpr}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => ((this.opts.defaults ?? RACE_DEFAULTS) as unknown as Record<string, unknown>)[k] !== v)))}`,
       'Hinweis: ein warmes Telefon drosselt – dann sind alle Zeiten bis gut doppelt so hoch. Nur im selben Zustand vergleichen (am besten kühl).',
       `Variante | GPU ms je Bild (Median; gemessen bei ${REPEAT}× Zeichnen je Bild, damit die Grafik voll taktet; Ersparnis zur Basis im Wechsel gemessen) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms (beim Messen) | Aufrufe | Dreiecke k | Szene in Bild (Bildpunkte)`,
       ...rows.map((r) => `${r.name} | ${f(r.gpu)}${r === b ? '' : d(r.gpu, r.base)} | ${f(r.gpu90)} | ${f(r.draw)}${r === b ? '' : d(r.draw, b.draw)} | ${f(r.cpu)} | ${f(r.frame)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.px}`),
@@ -1528,6 +1544,36 @@ export class Race {
     const dt = Math.min(0.05, dtMs / 1000);
     const world = this.world;
     const e = this.eng;
+    this.adapt(dtMs, t);
+    // Erst zeichnen (Stand aus dem vorigen Aufruf), dann das nächste Bild vorbereiten: so arbeitet die Grafik, während
+    // die CPU rechnet. Safari führt beides sonst nacheinander aus, die Grafik wartet je Bild auf die CPU – und Apples
+    // Grafik taktet in solchen Pausen herunter (gesättigt, in der Kostenanalyse, war sie mehrfach schneller als in der
+    // Fahrt). Dafür zeigt das Bild den Stand von vor einem Aufruf (wie in Spielen üblich).
+    // Kostenanalyse: die Grafik mehrfach je Bild arbeiten lassen – nur ausgelastet läuft Apples Grafik mit vollem
+    // Takt, sonst messen die Zeitstempel ihr Heruntertakten mit
+    if (this.ready && !this.offscreen) {
+      const n = this.analysing ? REPEAT : 1;
+      for (let k = 0; k < n; k++) {
+        // die Szene rendert nur einmal je Bild der Knoten: für jede Wiederholung ein neues (sonst nur die Nachbearbeitung)
+        if (k > 0) (this.renderer as unknown as { _nodes: { nodeFrame: { update(): void } } })._nodes.nodeFrame.update();
+        // Zähler nur einmal je Bild zurücksetzen: sonst bekämen die Zeitstempel der Wiederholungen dieselben Namen
+        this.draw(this.pipeline, k === 0);
+      }
+    }
+    P.mark(8);
+    // Zähler dieses Bilds (die Karten unten zeichnen dazu)
+    const info = this.renderer.info.render;
+    const calls = info.drawCalls;
+    const tris = info.triangles;
+    // 2D-Ebene (Hinweise, Tempo-Linien): derselbe Stand wie das Bild
+    if (this.ready && e && this.rider) {
+      this.screenPos.copy(this.rider.group.position).setY(this.rider.group.position.y + 1.6).project(this.camera);
+      const w = this.host.clientWidth || window.innerWidth;
+      this.overlay.draw({ popups: e.popups, v: e.p.v, playing: e.phase === 'playing' && !this.paused, px: (this.screenPos.x * 0.5 + 0.5) * w, time: this.time });
+      this.opts.onFrame?.(dt);
+    }
+    P.mark(10);
+    // nächstes Bild vorbereiten: Fahrt, Kamera, Licht, Stufen, Nachladen
     if (this.ready && world && e && this.rider) {
       const run = !this.paused;
       if (run) this.time += dt;
@@ -1573,27 +1619,6 @@ export class Race {
       if (++this.punchAt >= 30) { this.punchAt = 0; this.orderPunch(); }
       P.mark(9);
     }
-    this.adapt(dtMs, t);
-    // Kostenanalyse: die Grafik mehrfach je Bild arbeiten lassen – nur ausgelastet läuft Apples Grafik mit vollem
-    // Takt, sonst messen die Zeitstempel ihr Heruntertakten mit
-    if (this.ready && !this.offscreen) {
-      const n = this.analysing ? REPEAT : 1;
-      for (let k = 0; k < n; k++) {
-        // die Szene rendert nur einmal je Bild der Knoten: für jede Wiederholung ein neues (sonst nur die Nachbearbeitung)
-        if (k > 0) (this.renderer as unknown as { _nodes: { nodeFrame: { update(): void } } })._nodes.nodeFrame.update();
-        // Zähler nur einmal je Bild zurücksetzen: sonst bekämen die Zeitstempel der Wiederholungen dieselben Namen
-        this.draw(this.pipeline, k === 0);
-      }
-    }
-    P.mark(8);
-    // 2D-Ebene (Hinweise, Tempo-Linien)
-    if (this.ready && e && this.rider) {
-      this.screenPos.copy(this.rider.group.position).setY(this.rider.group.position.y + 1.6).project(this.camera);
-      const w = this.host.clientWidth || window.innerWidth;
-      this.overlay.draw({ popups: e.popups, v: e.p.v, playing: e.phase === 'playing' && !this.paused, px: (this.screenPos.x * 0.5 + 0.5) * w, time: this.time });
-      this.opts.onFrame?.(dt);
-    }
-    P.mark(10);
     if (this.ready) this.avgCpu += (performance.now() - t0 - this.avgCpu) * 0.05;
     const be = this.renderer.backend as unknown as { trackTimestamp?: boolean };
     if (this.ready && !this.offscreen) this.gpuFrames++;
@@ -1621,16 +1646,15 @@ export class Race {
       const vs = this.atmo?.visState ?? '';
       if (vs !== this.shownVis) { if (this.shownVis) P.event(EV.vis, vs); this.shownVis = vs; }
     }
-    const info = this.renderer.info.render;
     if (this.ready) {
       P.end({
-        dt: rawMs, period: this.period, calls: info.drawCalls, tris: info.triangles, dpr: this.dpr, z: e?.p.z ?? 0, v: e?.p.v ?? 0,
+        dt: rawMs, period: this.period, calls, tris, dpr: this.dpr, z: e?.p.z ?? 0, v: e?.p.v ?? 0,
         cam: ['chase', 'low', 'side', 'drone'].indexOf(this._cam), opps: this.poolOf.size,
       });
     }
     this.opts.onStats?.({
       fps: 1000 / this.avgMs, ms: this.avgMs, period: this.period, dpr: this.dpr, cpu: this.avgCpu, gpu: this.gpuMs,
-      tris: info.triangles, calls: info.drawCalls, loading: this.ready ? 1 : this.loadFrac, stage: this.stage,
+      tris, calls, loading: this.ready ? 1 : this.loadFrac, stage: this.stage,
       built: world && e ? world.builtFrom(e.p.z) : 0, z: e?.p.z ?? 0, buildMs: world?.stats.ms ?? 0, backend: this.backendName,
     });
   }
@@ -1751,7 +1775,7 @@ export class Race {
       ua: navigator.userAgent, bildschirm: `${screen.width}×${screen.height}`, pixeldichte: window.devicePixelRatio, fenster: `${window.innerWidth}×${window.innerHeight}`,
       technik: this.backendName, grafik: pick, gpu_zeitstempel: this.gpuTiming,
       // „aufloesung“ in den Verläufen: Szene (kleiner gerechnet, hochskaliert); das Bild selbst in bild_dpr
-      bild_dpr: this.canvasDpr, msaa: this.settings.msaa, fps_grenze: this.settings.fpsCap || null,
+      bild_dpr: this.canvasDpr, msaa: this.settings.msaa, fps_grenze: this.settings.fpsMax || null,
     };
   }
 
@@ -1783,7 +1807,7 @@ export class Race {
     const md = Math.min(window.devicePixelRatio || 1, s.maxDpr);
     if (md !== this.maxDpr) { this.maxDpr = md; this.canvasDpr = this.canvasFor(Math.min(this.dpr, md)); this.renderer.setPixelRatio(this.canvasDpr); }
     // Begrenzung neu an: wie beim Start ab „Szene mindestens“
-    if (s.fpsCap > 0 && s.fpsCap !== prev.fpsCap) this.dpr = s.minDpr;
+    if (s.fpsMax > 0 && s.fpsMax !== prev.fpsMax) this.dpr = s.minDpr;
     this.setDpr(Math.max(Math.min(this.dpr, md), Math.min(s.minDpr, md)));
     const w = this.world;
     if (w) {

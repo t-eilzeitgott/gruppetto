@@ -434,8 +434,8 @@ export function RaceGpuPage({ mode = 'abfahrt' }: { mode?: 'abfahrt' | 'tt' }) {
         <Slider label="Szene mindestens (kleiner gerechnet, hochskaliert und nachgeschärft)" value={settings.minDpr} min={0.8} max={3} step={0.05} onChange={(v) => change({ minDpr: v })} />
         <div className="race-sec">
           <span className="abf-range__label">Bildrate höchstens</span>
-          <span className="abf-range__hint">Weniger Bilder je Sekunde: das Telefon bleibt kühler und drosselt später („frei“: so viele, wie der Bildschirm zeigt)</span>
-          <Segmented label="Bildrate höchstens" value={String(settings.fpsCap > 0 ? settings.fpsCap : 0)} options={FPS_CAPS} onChange={(v) => change({ fpsCap: Number(v) })} />
+          <span className="abf-range__hint">Weniger Wärme und Akku – kann auf dem iPhone aber langsamer machen (die Grafik taktet in den Pausen herunter). „frei“: so viele, wie der Bildschirm zeigt</span>
+          <Segmented label="Bildrate höchstens" value={String(settings.fpsMax > 0 ? settings.fpsMax : 0)} options={FPS_CAPS} onChange={(v) => change({ fpsMax: Number(v) })} />
         </div>
         <Switch on={settings.msaa > 0} label="Kantenglättung (4×)" hint="Wirkt nach Neuladen der Seite" onChange={(v) => { change({ msaa: v ? 4 : 0 }); window.setTimeout(() => location.reload(), 150); }} />
         <Switch on={showFps} label="Bildrate anzeigen" hint="Bildzeit, CPU, GPU, Auflösung, Nachladen" onChange={(v) => { setShowFps(v); lsSet(LS_FPS, v ? '1' : '0'); }} />

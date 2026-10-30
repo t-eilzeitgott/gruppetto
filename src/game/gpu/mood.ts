@@ -142,16 +142,16 @@ export interface Settings {
   /** Bäume als Bilder bis so weit (m); dahinter nur das Kronendach im Boden */
   treeFar: number;
   /**
-   * Bildrate höchstens (Bilder je Sekunde; 0: so viele, wie der Bildschirm zeigt). Auf dem Telefon begrenzt die
-   * Wärme: mit weniger Bildern bleibt es kühler und drosselt später
+   * Bildrate höchstens (Bilder je Sekunde; 0: so viele, wie der Bildschirm zeigt) – weniger Wärme und Akku. Auf dem
+   * iPhone kann es aber langsamer werden: mit Pausen zwischen den Bildern taktet die Grafik herunter
    */
-  fpsCap: number;
+  fpsMax: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   mood: 'mittag', cycle: false, shadows: true, bloom: true, grade: true, vignette: true, grain: true, fog: true, rain: true, crowd: true, life: true, grass: true, cinema: false,
   exposure: 1, warm: 0, sat: 1, contrast: 1, sun: 1, env: 1, fogK: 1, bloomK: 1, vignetteK: 1, grainK: 1, maxDpr: 2,
-  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4, oppMax: 12, minDpr: 0.85, drama: false, sunset: false, treeFar: 1850, fpsCap: 0,
+  splitK: 1, bthrK: 1, rainK: 1, wetK: 1, hemiK: 1, sunElev: 0, sunAzim: 0, shadowRes: 2048, shadowRange: 55, msaa: 4, oppMax: 12, minDpr: 0.85, drama: false, sunset: false, treeFar: 1850, fpsMax: 0,
 };
 
 /** Spiel (Abfahrt auf WebGPU): goldene Stunde, dramatischer Himmel, Sonnenuntergangs-Licht */
@@ -159,7 +159,7 @@ export const DEFAULT_SETTINGS: Settings = {
  * Spiel (Abfahrt auf WebGPU): goldene Stunde, dramatischer Himmel, Sonnenuntergangs-Licht; Bild in doppelter
  * Auflösung, die Szene darin höchstens bis ×1,4 kleiner gerechnet; Leuchten aus (eigene Bildkette)
  */
-export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'abend', drama: true, sunset: true, bloom: false, shadows: false, cycle: false, oppMax: 10, treeFar: 1100, maxDpr: 2, minDpr: 1.4, fpsCap: 60 };
+export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'abend', drama: true, sunset: true, bloom: false, shadows: false, cycle: false, oppMax: 10, treeFar: 1100, maxDpr: 2, minDpr: 1.4, fpsMax: 0 };
 /** v2: neue Grafik (günstiges Licht, Auflösung der Szene) – alte Einstellungen gelten nicht mehr */
 export const RACE_KEY = 'gruppetto.gpu.race2';
 /** Zeitfahren (Abfahrt auf WebGPU): wie die Abfahrt – Sonnenuntergang, Lichter an */
