@@ -117,7 +117,7 @@ export function unpackXY(t: N): N {
  * Projektion von drei Seiten (Fels an steilen Wänden): Farbe und Weltnormale.
  * scale: Meter je Kachel. Normalen nach „UDN“: Tangentennormale auf die Fläche der Projektion gekippt.
  */
-export function triplanar(albedo: Texture, nra: Texture, pos: N, nGeo: N, scale: number, sharp = 4, top?: { albedo: Texture; nra: Texture }, bump = 1, warp?: N) {
+export function triplanar(albedo: Texture, nra: Texture, pos: N, nGeo: N, scale: number, sharp = 4, top?: { albedo: Texture; nra: Texture }, bump: number | N = 1, warp?: N) {
   const w0 = abs(nGeo).pow(float(sharp));
   const w = w0.div(w0.x.add(w0.y).add(w0.z));
   const s = 1 / scale;
@@ -146,6 +146,18 @@ export function triplanar(albedo: Texture, nra: Texture, pos: N, nGeo: N, scale:
   const dZ = vec3(tZ.x, tZ.y, 0);
   const n = normalize(nGeo.add(dX.mul(w.x)).add(dY.mul(w.y)).add(dZ.mul(w.z)));
   return { col, rough, ao, n };
+}
+
+/** wie triplanar, nur die Farbe (drei Zugriffe statt sechs): Normale ist die der Fläche, keine Verschattung */
+export function triplanarCol(albedo: Texture, topAlbedo: Texture, pos: N, nGeo: N, scale: number, sharp = 4, warp?: N) {
+  const w0 = abs(nGeo).pow(float(sharp));
+  const w = w0.div(w0.x.add(w0.y).add(w0.z));
+  const s = 1 / scale;
+  const uvX = warp ? pos.zy.mul(s).add(warp) : pos.zy.mul(s);
+  const uvY = warp ? pos.xz.mul(s).add(warp) : pos.xz.mul(s);
+  const uvZ = warp ? pos.xy.mul(s).add(warp.yx) : pos.xy.mul(s);
+  const col = texture(albedo, uvX).rgb.mul(w.x).add(texture(topAlbedo, uvY).rgb.mul(w.y)).add(texture(albedo, uvZ).rgb.mul(w.z));
+  return { col, rough: float(1), ao: float(1), n: nGeo };
 }
 
 /** von oben projiziert (Wiese, Schnee, Kies): Farbe und Weltnormale */

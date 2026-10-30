@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
-import { decodeAlbedo, grain, planar, planarN, triplanar, tsl, unTile, unTile3, vn1, vnoise, type N } from './nodes';
+import { decodeAlbedo, grain, planar, triplanar, triplanarCol, tsl, unTile, unTile3, vn1, vnoise, type N } from './nodes';
 import { cheapMaterial } from './light';
 import { groundMap, lampLit, terrainSun } from './sunmap';
 
@@ -16,6 +16,9 @@ const { abs, attribute, cameraPosition, cross, dFdx, dFdy, dot, float, fract, fw
  * nah flach (dort stehen die echten Bäume), ab gut 80 m wächst es weich heraus. Die Baumspitzen ragen darüber.
  */
 const CAN_FADE: [number, number] = [75, 175];
+
+/** mittlere Landschaft: Fels ab hier ohne Normalenkarten und feine Bänke (Bildpunkte dort kleiner als die Feinheit) */
+const LITE_ROCK = 650;
 
 type Surfaces = Record<SurfaceId, Surface>;
 
@@ -56,7 +59,7 @@ const foBase = (m: Mix): N => smoothstep(0.1, 0.5, m.fo);
  * liegen. Wände werden von zwei Seiten betrachtet (x- und z-zugewandt, weich gemischt).
  * Ergebnis: Helligkeit (Rinnen, Bänke, Streifen) und die gekippte Normale.
  */
-function rockRelief(pos: N, nG: N, n: N, strata: N): { k: N; n: N } {
+function rockRelief(pos: N, nG: N, n: N, strata: N, lod = 0): { k: N; n: N } {
   if (/[?&]norelief\b/.test(location.search)) return { k: float(1), n };
   const ax = abs(nG.x), az = abs(nG.z);
   const wx0 = ax.mul(ax).mul(ax.mul(ax)), wz0 = az.mul(az).mul(az.mul(az));
@@ -70,27 +73,30 @@ function rockRelief(pos: N, nG: N, n: N, strata: N): { k: N; n: N } {
     // drei Größen: Runsen (110 m), Rinnen (33 m), Furchen (9,5 m); Tiefe wie die Breite (fraktal)
     const a = vn1(uu.div(110), seed);
     const b = vn1(uu.div(33), seed + 3);
+    // fern (Stufe 2): Furchen und Streifen wären kleiner als ein Bildpunkt – ihr Mittel statt der Rechnung
+    if (lod >= 2) return { g: a.v.mul(0.45).add(b.v.mul(0.33)).add(0.11), d: a.d.mul(16 / 110).add(b.d.mul(5 / 33)), st: null };
     const c = vn1(uu.div(9.5), seed + 9);
     const st = vn1(uu.div(2.6), seed + 5);
     return {
       g: a.v.mul(0.45).add(b.v.mul(0.33)).add(c.v.mul(0.22)),
       d: a.d.mul(16 / 110).add(b.d.mul(5 / 33)).add(c.d.mul(1.4 / 9.5)),
-      st: st.v,
+      st: st.v as N | null,
     };
   };
   const X = gully(pos.z, 11);
   const Z = gully(pos.x, 23);
   const g = X.g.mul(wx).add(Z.g.mul(wz));
-  const st = X.st.mul(wx).add(Z.st.mul(wz));
+  const st = X.st && Z.st ? X.st.mul(wx).add(Z.st.mul(wz)) : null;
   const grad = vec3(Z.d.mul(wz), 0, X.d.mul(wx));
-  // Schichtbänke: leicht schräg gestellte Lagen (überall dieselbe Neigung, wie ein gekippter Kalkstock)
+  // Schichtbänke: leicht schräg gestellte Lagen (überall dieselbe Neigung, wie ein gekippter Kalkstock); ab der
+  // mittleren Stufe ohne die feinen Bänke (1,7 m)
   const ys = pos.y.add(pos.x.mul(0.09)).sub(pos.z.mul(0.055));
   const s1 = vn1(ys.div(5.5), 31);
-  const s2 = vn1(ys.div(1.7), 37);
-  const sb = s1.v.mul(0.7).add(s2.v.mul(0.3));
-  const ds = s1.d.mul(0.7 / 5.5).add(s2.d.mul(0.3 / 1.7)).mul(strata);
-  // Wasserstreifen: schmal, dunkel, nur stellenweise (Quellhorizonte)
-  const wet = smoothstep(0.66, 0.92, st).mul(smoothstep(0.45, 0.75, vn1(pos.y.div(27), 41).v)).mul(steep);
+  const s2 = lod >= 1 ? null : vn1(ys.div(1.7), 37);
+  const sb = s2 ? s1.v.mul(0.7).add(s2.v.mul(0.3)) : s1.v.mul(0.7).add(0.15);
+  const ds = (s2 ? s1.d.mul(0.7 / 5.5).add(s2.d.mul(0.3 / 1.7)) : s1.d.mul(0.7 / 5.5)).mul(strata);
+  // Wasserstreifen: schmal, dunkel, nur stellenweise (Quellhorizonte) – fern nicht
+  const wet = st ? smoothstep(0.66, 0.92, st).mul(smoothstep(0.45, 0.75, vn1(pos.y.div(27), 41).v)).mul(steep) : float(0);
   // Flecken (Bergsturznarben hell, Flechten dunkel), 60–150 m
   const patch = vnoise(vec2(pos.z.div(83), pos.y.div(61)), 4096).mul(wx).add(vnoise(vec2(pos.x.div(83).add(17.3), pos.y.div(61)), 4096).mul(wz));
   const k = g.mul(0.8).add(0.58).mul(sb.sub(0.5).mul(strata.mul(0.5)).add(1)).mul(float(1).sub(wet.mul(0.45))).mul(patch.mul(0.36).add(0.82));
@@ -210,10 +216,13 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   }
   let col: N = grassCol;
   let ao: N = gF ? mix(float(1), gF.ao, flat) : float(1);
-  let n: N = gF ? normalize(mix(nG, gF.n, flat)) : normalize(mix(nG, planarN(S.grass.nra, pos.xz.div(m.canopy ? 47 : 23), nG, 3.2), 0.7));
+  // Stufen 1 und 2 (ab ~230 m): nur, was man dort noch sieht – keine Normalenkarte der Wiese, kein Kies (Geröll als
+  // Farbe), Fels ohne Normalenkarten, fern ohne Schneetextur und mit gröberem Relief. Auf dem iPhone kostete die
+  // ferne Landschaft ein Viertel des ganzen Bilds (Kostenanalyse: −1,43 von 5,87 ms)
+  let n: N = gF ? normalize(mix(nG, gF.n, flat)) : nG;
   const rk2: N = V.rk2;
-  // ein Kieszugriff für Erde, Geröll und Bankett
-  const gv = m.detail || m.sc ? planar(S.gravel.albedo, S.gravel.nra, unTile(S.noise.albedo, pos.xz.div(m.detail ? 1.6 : 9), 0.4), nG, m.detail ? 0.8 : 1.4) : null;
+  // ein Kieszugriff für Erde, Geröll und Bankett (nur nah)
+  const gv = m.detail ? planar(S.gravel.albedo, S.gravel.nra, unTile(S.noise.albedo, pos.xz.div(1.6), 0.4), nG, 0.8) : null;
   if (m.detail && gv) {
     const dirt = smoothstep(0.8, 0.9, rk2.y.add(steepG.mul(0.12))).mul(0.8);
     const soil = mix(vec3(0.075, 0.058, 0.04), decodeAlbedo(gv.col).mul(0.55), smoothstep(0.85, 1.2, decodeAlbedo(gv.col).x.div(meanOf(S.gravel).x)));
@@ -251,12 +260,14 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
     col = mix(col, concrete, m.cc);
     n = mix(n, mix(nG, gv.n, 0.25), m.cc);
   }
-  // Geröll unter den Wänden
-  const screeCol: N = gv ? decodeAlbedo(gv.col).div(meanOf(S.gravel)).mul(m.rockTint).mul(1.05) : null;
-  if (gv && m.sc) {
+  // Geröll unter den Wänden (fern ohne Kiestextur: die Felsfarbe der Gegend)
+  const screeCol: N = gv ? decodeAlbedo(gv.col).div(meanOf(S.gravel)).mul(m.rockTint).mul(1.05) : m.rockTint.mul(1.05);
+  if (m.sc) {
     col = mix(col, screeCol, m.sc);
-    ao = mix(ao, gv.ao, m.sc);
-    n = normalize(mix(n, gv.n, m.sc));
+    if (gv) {
+      ao = mix(ao, gv.ao, m.sc);
+      n = normalize(mix(n, gv.n, m.sc));
+    }
   }
   // Fels: nah und mittel von drei Seiten (Wände mit Schichtbänken, von oben Blöcke), ganz fern nur von oben
   const outcrop = smoothstep(0.72, 0.82, rk2.x.add(steepG.mul(0.15))).mul(steepG).mul(float(1).sub(foBase(m)));
@@ -272,7 +283,7 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   const strata = smoothstep(0.25, 0.7, zone.y).mul(0.7).add(0.3);
   if (m.far) {
     const t = texture(S.rock.albedo, pos.xz.div(60));
-    const rr = rockRelief(pos, nR, nR, strata);
+    const rr = rockRelief(pos, nR, nR, strata, 2);
     const tc = mix(vec3(1, 1, 1), decodeAlbedo(t.rgb).div(meanOf(S.rock)), 0.5);
     const M = select(hasRock, tsl.mat3(tc.mul(m.rockTint).mul(rr.k.mul(0.95)), rr.n, vec3(1, 0, 0)), tsl.mat3(vec3(0, 0, 0), n, vec3(1, 0, 0)));
     rockCol = M.element(0);
@@ -280,15 +291,24 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
     rockAo = float(1);
   } else {
     const top = { albedo: S.rock.albedo, nra: S.rock.nra };
-    const r = triplanar(S.cliff.albedo, S.cliff.nra, pos, nR, m.detail ? 9 : 27, 10, top, m.detail ? 1.5 : 2, unTile3(S.noise.albedo, pos, m.detail ? 9 : 27, 0.45));
-    // mittlere Stufe: die Wandtextur (27 m) nur halb so kräftig – sonst ein Vorhang aus gleichen Streifen über den
-    // ganzen Berg; die großen Formen kommen aus dem Relief
-    const rRaw = m.detail ? decodeAlbedo(r.col).div(meanOf(S.cliff)) : mix(vec3(1, 1, 1), decodeAlbedo(r.col).div(meanOf(S.cliff)), 0.5);
-    const rr = rockRelief(pos, nR, m.detail ? r.n : normalize(mix(nR, r.n, 0.5)), strata);
-    // eine Verzweigung für alles (Farbe, Normale, Verschattung als Spalten einer Matrix) – sonst baut three die
-    // Zugriffe für jede Verzweigung neu
-    const rc = rRaw.mul(m.rockTint).mul(0.6).add(rRaw.mul(vec3(0.2, 0.19, 0.17)).mul(0.4)).mul(rr.k.mul(1.15));
-    const M = select(hasRock, tsl.mat3(rc, rr.n, vec3(r.ao, 0, 0)), tsl.mat3(vec3(0, 0, 0), nR, vec3(1, 0, 0)));
+    // Fels als Matrix (Farbe, Normale, Verschattung als Spalten): eine Verzweigung für alles – sonst baut three die
+    // Zugriffe für jede Verzweigung neu. lite (mittlere Stufe ab LITE_ROCK m): nur die Farben der drei Seiten (die
+    // Normalen kommen aus dem Relief), ohne die feinen Bänke – drei Zugriffe und eine Rauschstufe weniger
+    const rockOf = (lite: boolean): N => {
+      const sc = m.detail ? 9 : 27;
+      const warp = unTile3(S.noise.albedo, pos, sc, 0.45);
+      // mittlere Stufe nah: die Feinheit der Normalen läuft zur Grenze hin aus (dahinter die Variante ohne)
+      const bump: N | number = m.detail ? 1.5 : float(2).mul(float(1).sub(smoothstep(LITE_ROCK * 0.75, LITE_ROCK, camD)));
+      const r = lite ? triplanarCol(S.cliff.albedo, S.rock.albedo, pos, nR, sc, 10, warp) : triplanar(S.cliff.albedo, S.cliff.nra, pos, nR, sc, 10, top, bump, warp);
+      // mittlere Stufe: die Wandtextur (27 m) nur halb so kräftig – sonst ein Vorhang aus gleichen Streifen über den
+      // ganzen Berg; die großen Formen kommen aus dem Relief
+      const rRaw = m.detail ? decodeAlbedo(r.col).div(meanOf(S.cliff)) : mix(vec3(1, 1, 1), decodeAlbedo(r.col).div(meanOf(S.cliff)), 0.5);
+      const rr = rockRelief(pos, nR, m.detail ? r.n : normalize(mix(nR, r.n, 0.5)), strata, lite ? 1 : 0);
+      const rc = rRaw.mul(m.rockTint).mul(0.6).add(rRaw.mul(vec3(0.2, 0.19, 0.17)).mul(0.4)).mul(rr.k.mul(1.15));
+      return tsl.mat3(rc, rr.n, vec3(r.ao, 0, 0));
+    };
+    const noRock = tsl.mat3(vec3(0, 0, 0), nR, vec3(1, 0, 0));
+    const M = select(hasRock, m.detail ? rockOf(false) : select(camD.lessThan(LITE_ROCK), rockOf(false), rockOf(true)), noRock);
     rockCol = M.element(0);
     rockN = M.element(1);
     rockAo = M.element(2).x;
@@ -311,7 +331,7 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   const snowRaw = m.sn.mul(V.patchy.mul(0.9).add(0.2)).mul(mix(float(1), ledge, rkW.mul(0.7)));
   const sn = smoothstep(0.36, 0.46, snowRaw);
   // Schneetextur nur, wo Schnee liegt
-  const sA = decodeAlbedo(texture(S.snow.albedo, pos.xz.div(m.detail ? 6 : 17)).rgb).div(meanOf(S.snow));
+  const sA: N = m.far ? vec3(1, 1, 1) : decodeAlbedo(texture(S.snow.albedo, pos.xz.div(m.detail ? 6 : 17)).rgb).div(meanOf(S.snow));
   const snowCol = select(sn.greaterThan(0.001), sA.mul(vec3(0.83, 0.86, 0.9)).mul(sA.x.mul(0.25).add(0.75).clamp(0.6, 1.2)), vec3(0, 0, 0));
   col = mix(col, snowCol, sn);
   ao = mix(ao, float(0.95), sn);

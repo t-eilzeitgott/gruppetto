@@ -1330,7 +1330,7 @@ export class Race {
       if (now - this.probe.at < 1500) return;
       const p = this.probe;
       this.probe = null;
-      const better = this.avgMs < p.ms * 0.96 || (gpu > 0 && p.gpu > 0 && gpu < p.gpu * 0.93);
+      const better = this.avgMs < p.ms * 0.97 || (gpu > 0 && p.gpu > 0 && gpu < p.gpu * 0.95);
       if (!better) {
         this.dprFloor = p.from;
         this.floorUntil = now + 20000;
@@ -1354,9 +1354,12 @@ export class Race {
     const lo = Math.min(Math.max(this.settings.minDpr, this.dprFloor), this.maxDpr);
     // Wärme: hält die Bildrate auch bei „Szene mindestens“ zwei Sekunden lang nicht (das Telefon drosselt), weiter
     // bis ×1,0 – lieber etwas weicher als ruckelig; mit Luft geht es von selbst wieder hoch
-    const floor = this.slowFor > 2000 ? Math.min(lo, Math.max(HEAT_DPR, this.dprFloor)) : lo;
+    const hot = this.slowFor > 2000 && this.dpr <= lo + 0.01;
+    const floor = hot ? Math.min(lo, Math.max(HEAT_DPR, this.dprFloor)) : lo;
     let want = this.dpr;
-    if (this.slowFor > 500) want = Math.max(floor, this.dpr * (this.avgMs > P * 1.8 ? 0.84 : 0.9));
+    // nie über den jetzigen Stand (unter „Szene mindestens“ geht es nur wegen Wärme – nicht gleich wieder hoch); heiß
+    // ein großer Schritt, damit die Ersparnis messbar ist (kleine Schritte brachten heiß kaum etwas)
+    if (this.slowFor > 500) want = Math.min(this.dpr, Math.max(floor, this.dpr * (hot ? 0.8 : this.avgMs > P * 1.8 ? 0.84 : 0.9)));
     else if (this.fastFor > 3000) want = Math.min(this.maxDpr, this.dpr * 1.05);
     want = Math.round(want * 100) / 100;
     if (Math.abs(want - this.dpr) >= 0.01) {
@@ -1626,11 +1629,12 @@ export class Race {
       // hier fehlt dem Bild. Die Welt wird dafür früher (1,35 km voraus) angefangen; im Mittel braucht ein
       // Abschnitt ~0,15 ms je Bild – erst wenn sie knapp wird, mehr
       const ms = this.budget || (idle ? 6 : lead < 450 ? 4 : lead < 700 ? 2.2 : lead < 950 ? 1 : 0.5);
-      world.step(e.p.z, performance.now() + ms);
+      // Kostenanalyse: die Welt steht still (sonst kämen während der Messung neue Teile dazu)
+      if (!this.analysing) world.step(e.p.z, performance.now() + ms);
       // Dorfstraßen auch in der Strecke der Fahrphysik (Wiese statt Abgrund am Rand)
       world.villages.patch(e.track);
       if (front !== this.lastBuilt) { if (front > this.lastBuilt) P.event(EV.piece, `Welt bis ${Math.round(front)} m`); this.lastBuilt = front; }
-      this.updateMaps(false);
+      if (!this.analysing) this.updateMaps(false);
       if (++this.punchAt >= 30) { this.punchAt = 0; this.orderPunch(); }
       P.mark(9);
     }
