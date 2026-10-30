@@ -820,7 +820,7 @@ export function buildHouse(lod: 0 | 1 | 2): Record<HMat, THREE.BufferGeometry> {
 }
 
 /** Materialien der Häuser (Instanzen: iP Ort/Drehung, iS.w Putzfarbe 0 … 1, iC Farbe der Läden) */
-export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnType<typeof instNodes>) => [N, N]) | null): Record<HMat, THREE.MeshLambertNodeMaterial> {
+export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnType<typeof instNodes>) => [N, N]) | null): Record<HMat, THREE.MeshBasicNodeMaterial> {
   // günstiges Licht (light.ts): Lambert mit gemessenem Umgebungslicht – Häuser sind matt (Putz, Holz, Schindeln)
   const make = (name: string, shade: (I: ReturnType<typeof instNodes>) => { col: N; rough: N; ao?: N; xy?: N; metal?: N; k?: number }, emissive?: (I: ReturnType<typeof instNodes>) => N) => {
     const I = instNodes();
@@ -876,8 +876,9 @@ export function houseMaterials(S: Record<SurfaceId, Surface>, fade: ((I: ReturnT
       // Nacht: Fensterscheiben leuchten warm (je Haus unterschiedlich viele)
       const e = attribute('aE', 'vec4');
       const glass = e.x.lessThan(0.1).and(e.z.lessThan(0.5));
-      const on = smoothstep(0.35, 0.5, I.extra.add(positionGeometry.x.mul(0.37).add(positionGeometry.z.mul(0.23)).sin().mul(0.5)));
-      return select(glass, vec3(1.0, 0.72, 0.38).mul(on).mul(MOOD_U.night as unknown as N).mul(2.5), vec3(0, 0, 0));
+      // abends brennt fast überall Licht (je Fenster etwas anders hell)
+      const on = smoothstep(0.05, 0.25, I.extra.add(positionGeometry.x.mul(0.37).add(positionGeometry.z.mul(0.23)).sin().mul(0.5))).mul(0.6).add(0.4);
+      return select(glass, vec3(1.0, 0.68, 0.34).mul(on).mul(MOOD_U.lights as unknown as N).mul(2.6), vec3(0, 0, 0));
     }),
   };
 }

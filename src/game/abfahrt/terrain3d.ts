@@ -56,6 +56,51 @@ function fbm(x: number, y: number, oct = 4): number {
   }
   return s / norm;
 }
+/** Wertrauschen mit Ableitung (für die Erosionsformen): Wert 0 … 1, Ableitungen je Einheit der Eingabe */
+const ND = { v: 0, dx: 0, dy: 0 };
+function vnoiseD(x: number, y: number): void {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const fx = x - xi;
+  const fy = y - yi;
+  const u = fx * fx * (3 - 2 * fx);
+  const v = fy * fy * (3 - 2 * fy);
+  const du = 6 * fx * (1 - fx);
+  const dv = 6 * fy * (1 - fy);
+  const a = h2(xi, yi);
+  const b = h2(xi + 1, yi);
+  const c = h2(xi, yi + 1);
+  const d = h2(xi + 1, yi + 1);
+  const k = a - b - c + d;
+  ND.v = a + (b - a) * u + (c - a) * v + k * u * v;
+  ND.dx = (b - a + k * v) * du;
+  ND.dy = (c - a + k * u) * dv;
+}
+/**
+ * Zerklüftung wie durch Erosion (nach Inigo Quilez): jede feinere Stufe wird dort schwächer, wo das Gelände aus den
+ * gröberen schon steil ist – glatte Rinnen und Mulden, scharfe Grate und Rippen. Ergebnis etwa −1 … 1.
+ */
+function eroded(x: number, z: number, mid: number, fine: number): number {
+  let a = 0;
+  let b = 1;
+  let f = 1 / 640;
+  let dx = 0;
+  let dz = 0;
+  for (let o = 0; o < 6; o++) {
+    // feinere Stufen nur, wo die Kacheln sie auch zeigen (sonst stünden an den Grenzen der Detailstufen Stufen im
+    // Gelände): Wellen unter 256 m nur bis ~1,4 km neben der Straße, unter 64 m nur bis ~200 m
+    const k = o < 2 ? 1 : o < 4 ? mid : fine;
+    if (k <= 0) break;
+    vnoiseD(x * f + o * 31.7, z * f - o * 17.9);
+    dx += ND.dx * k;
+    dz += ND.dy * k;
+    a += (k * b * (ND.v - 0.5) * 2) / (1 + dx * dx + dz * dz);
+    b *= 0.5;
+    f *= 2.02;
+  }
+  return a;
+}
+
 /**
  * Waldmaske des Bergwalds (wie beim Setzen der Bäume): Waldanteil f plus großflächiges Rauschen – zerklüftete
  * Waldränder statt Höhenlinien
@@ -316,6 +361,11 @@ export class Terrain {
    * Kronendach (aCan) folgt genau dieser Waldmaske. Vor dem ersten Kachelbau setzen.
    */
   woods = false;
+  /**
+   * zerklüftete Berge (WebGPU-Welt): abseits der Straße Grate, Rinnen und Rippen wie durch Erosion, oben
+   * Felsbänder (gestufte Wände) – vor dem ersten Kachelbau setzen
+   */
+  rugged = false;
 
   constructor(track: Track) {
     this.track = track;
@@ -655,6 +705,25 @@ export class Terrain {
     // dazwischen Mulden – sonst steht dort eine glatte Wand. Im Talboden bleibt es ruhig.
     const sp = sstep(150, 430, dr) * sstep(25, 190, o.h - o.floor) * (1 - wb);
     if (sp > 0) o.h += ((ridged(x / 430 + 5.3, z / 430 - 2.1) - 0.42) * 95 + (ridged(x / 170 - 1.7, z / 170 + 4.2) - 0.42) * 26) * sp;
+    if (this.rugged) {
+      // abseits der Straße und über dem Talboden: Erosionsformen, je höher desto kräftiger
+      const above = o.h - o.floor;
+      const wR = sstep(55, 240, dr) * sstep(10, 170, above) * (1 - wb);
+      if (wR > 0) {
+        const mid = sstep(1550, 1250, dr);
+        let h = o.h + eroded(x, z, mid, sstep(215, 140, dr)) * (60 + 70 * sstep(150, 500, above)) * wR;
+        // Felsbänder: gestufte Wände (flache Simse, steile Stufen), leicht geneigt und gewellt
+        const tw = wR * sstep(80, 260, h - o.floor) * 0.6 * mid;
+        if (tw > 0) {
+          const st = 32;
+          const k = (h + (vnoise(x / 380 + 3.3, z / 380 - 8.1) - 0.5) * 50 + x * 0.04) / st;
+          const fl = Math.floor(k);
+          const fr = k - fl;
+          h += ((fl + sstep(0.3, 0.7, fr)) - k) * st * tw;
+        }
+        o.h = h;
+      }
+    }
     // Seegrund, zum Ufer hin weich ansteigend (keine senkrechten Wände rund um den See)
     if (wb > 0) o.h += (o.lakeY - 6 - Math.min(20, dr * 0.05) - o.h) * wb;
     // Welt-Editor: Hügel und Mulden (vor den Klemmen – die Straße bleibt frei)

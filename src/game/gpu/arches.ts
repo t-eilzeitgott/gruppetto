@@ -20,7 +20,7 @@ const PAL_H = 16;
 const AH = CELLS * CH + PAL_H;
 
 export class Arches {
-  readonly mat: THREE.MeshLambertNodeMaterial;
+  readonly mat: THREE.MeshBasicNodeMaterial;
   private canvas: HTMLCanvasElement;
   private tex: THREE.CanvasTexture;
   private slots = new Map<string, number>();

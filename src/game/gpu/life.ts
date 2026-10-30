@@ -12,9 +12,11 @@ import type { Terrain, TreeSpot } from '../abfahrt/terrain3d';
 import type { Track } from '../abfahrt/track';
 import { commit, disposeGroup, instGroup, instNodes, STRIDE, type InstGroup } from './inst';
 import { tsl, useDither, type N } from './nodes';
+import { lit } from './light';
+import { footSun, lampLit } from './sunmap';
 import type { ForestEdge } from './forest';
 
-const { atan, attribute, cameraPosition, cos, float, min, mix, normalize, positionGeometry, select, sin, smoothstep, time, transformNormalToView, varying, vec2, vec3, vertexColor } = tsl;
+const { atan, attribute, cameraPosition, cos, float, min, mix, positionGeometry, select, sin, smoothstep, time, varying, vec2, vec3, vertexColor } = tsl;
 
 type V3 = [number, number, number];
 const hash = (a: number, b = 0) => {
@@ -363,8 +365,8 @@ class Scatter {
 }
 
 /** Herdentiere (Kuh, Schaf): grasen, Kopf hebt sich ab und zu, Schwanz schlägt (Teile in aE.x, Fellfarbe aus der Instanz) */
-export function herdMaterial(name: string, headPivot: V3, tailPivot: V3, graze: number, fade: [number, number] = [260, 330]): THREE.MeshLambertNodeMaterial {
-  const m = new THREE.MeshLambertNodeMaterial();
+export function herdMaterial(name: string, headPivot: V3, tailPivot: V3, graze: number, fade: [number, number] = [260, 330]): THREE.MeshBasicNodeMaterial {
+  const m = new THREE.MeshBasicNodeMaterial();
   const e = attribute('aE', 'vec2');
   const part = e.x;
   const ph = attribute('iC', 'vec4').w;
@@ -384,8 +386,9 @@ export function herdMaterial(name: string, headPivot: V3, tailPivot: V3, graze: 
   const local = select(part.lessThan(0.5), p, select(part.lessThan(1.5), head, tail));
   const I = instNodes(fade, local);
   m.positionNode = I.world;
-  m.normalNode = I.normal;
-  m.colorNode = mix(vertexColor().xyz, vertexColor().xyz.mul(I.color), e.y);
+  const F = footSun(I.at, 'vHerdSun');
+  const col = mix(vertexColor().xyz, vertexColor().xyz.mul(I.color), e.y);
+  m.colorNode = lit({ col, nWorld: I.nWorld, vis: F.vis, wrap: 0.3, extra: lampLit(col, F.lamp) });
   m.name = name;
   return m;
     }
@@ -534,17 +537,18 @@ export class Life {
 
   private flowerKind(): Scatter {
     const geo = this.geo(flowerClump());
-    const m = this.mat(new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide }));
+    const m = this.mat(new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide }));
     const I = instNodes([42, 62]);
     const e = attribute('aE', 'vec2');
     m.positionNode = I.world.add(wind(I.at, e.y, 0.06));
-    m.normalNode = I.normal;
     const petal = e.x;
     // Blütenmitte: bei hellen Blüten gelb (Margerite), sonst dunkler in der Farbe der Blüte
     const white = smoothstep(0.55, 0.7, min(I.color.x, I.color.z));
     const center = mix(I.color.mul(0.5), vec3(0.75, 0.52, 0.04), white);
     const bloom = mix(center, I.color, smoothstep(0.62, 0.8, petal));
-    m.colorNode = mix(vertexColor().xyz, bloom, smoothstep(0.25, 0.5, petal));
+    const fcol = mix(vertexColor().xyz, bloom, smoothstep(0.25, 0.5, petal));
+    const F = footSun(I.at, 'vFlowerSun');
+    m.colorNode = lit({ col: fcol, nWorld: I.nWorld, vis: F.vis, wrap: 0.6, extra: lampLit(fcol, F.lamp) });
     m.name = 'flowers';
     return new Scatter([{ geo, mat: m, to: 62, shadow: false }], 32);
   }
@@ -555,11 +559,12 @@ export class Life {
       const to = [70, 260];
       const band = 10;
       const lods: Lod[] = geos.map((geo, q) => {
-        const m = this.mat(new THREE.MeshLambertNodeMaterial());
+        const m = this.mat(new THREE.MeshBasicNodeMaterial());
         const I = instNodes();
         m.positionNode = I.world.add(wind(I.at, positionGeometry.y.mul(0.8), 0.04));
-        m.normalNode = I.normal;
-        m.colorNode = vertexColor().xyz.mul(I.color);
+        const scol = vertexColor().xyz.mul(I.color);
+        const F = footSun(I.at, 'vShrubSun');
+        m.colorNode = lit({ col: scol, nWorld: I.nWorld, vis: F.vis, wrap: 0.5, ao: float(1.2), extra: lampLit(scol, F.lamp) });
         const d = varying(I.at.xz.sub(cameraPosition.xz).length(), 'vShrubD');
         const [lo, hi] = lodBand(d, to, band, smoothstep(230, 260, d));
         useDither(m, lo, hi);
@@ -573,12 +578,13 @@ export class Life {
 
   private fernKind(): Scatter {
     const geo = this.geo(fern());
-    const m = this.mat(new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide }));
+    const m = this.mat(new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide }));
     const I = instNodes([34, 48]);
     const e = attribute('aE', 'vec2');
     m.positionNode = I.world.add(wind(I.at, e.y, 0.08));
-    m.normalNode = I.normal;
-    m.colorNode = vertexColor().xyz.mul(I.color);
+    const fcol = vertexColor().xyz.mul(I.color);
+    const F = footSun(I.at, 'vFernSun');
+    m.colorNode = lit({ col: fcol, nWorld: I.nWorld, vis: F.vis, wrap: 0.6, extra: lampLit(fcol, F.lamp) });
     m.name = 'ferns';
     return new Scatter([{ geo, mat: m, to: 48, shadow: false }], 32);
   }
@@ -591,7 +597,7 @@ export class Life {
 
   private birdKind(): Scatter {
     const geo = this.geo(bird());
-    const m = this.mat(new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide }));
+    const m = this.mat(new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide }));
     const iP = attribute('iP', 'vec4');
     const iS = attribute('iS', 'vec4');
     const iC = attribute('iC', 'vec4');
@@ -613,8 +619,7 @@ export class Life {
     const qb = vec3(q0.x.mul(cos(bank)).sub(q0.y.mul(sin(bank))), q0.x.mul(sin(bank)).add(q0.y.mul(cos(bank))), q0.z);
     const qr = vec3(qb.x.mul(cos(yaw)).add(qb.z.mul(sin(yaw))), qb.y, qb.z.mul(cos(yaw)).sub(qb.x.mul(sin(yaw))));
     m.positionNode = pos.add(qr);
-    m.normalNode = transformNormalToView(normalize(vec3(0, 1, 0)));
-    m.colorNode = iC.xyz;
+    m.colorNode = lit({ col: iC.xyz, nWorld: vec3(0, 1, 0), vis: float(1), wrap: 0.5 });
     m.name = 'birds';
     return new Scatter([{ geo, mat: m, to: 5000, shadow: false }], 4000, 0, false);
   }

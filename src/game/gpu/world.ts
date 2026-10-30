@@ -20,6 +20,7 @@ import { ForestEdge } from './forest';
 import { Houses } from './houses';
 import { Life } from './life';
 import { Trees } from './trees';
+import { warmLamps } from './lamps';
 import { Tunnels } from './tunnel';
 import { Arches } from './arches';
 import { Towns } from './town';
@@ -118,6 +119,42 @@ export class World {
 
   private late = () => performance.now() > this.until;
 
+  /** Mittellinie der Strecke alle 4 m in Zellen zu 32 m (bis rEnd gefüllt) – Abstand zu jeder Stelle der Straße */
+  private rGrid = new Map<number, number[]>();
+  private rEnd = 0;
+  private roadIndex(zEnd: number) {
+    const t = this.track;
+    const end = Math.min(zEnd, (t.length - 2) * SEG);
+    for (let z = this.rEnd; z <= end; z += 4) {
+      t.world(z, 0, 0, this.w);
+      const k = (Math.floor(this.w.x / 32) + 32768) * 65536 + (Math.floor(this.w.z / 32) + 32768);
+      let l = this.rGrid.get(k);
+      if (!l) { l = []; this.rGrid.set(k, l); }
+      l.push(this.w.x, this.w.z);
+    }
+    this.rEnd = Math.max(this.rEnd, end + 4);
+  }
+  /** Abstand zur nächsten Stelle der Straße (alle Schenkel); fern: groß */
+  roadDistAll(x: number, z: number): number {
+    const cx = Math.floor(x / 32), cz = Math.floor(z / 32);
+    let bd = Infinity;
+    for (let j = -2; j <= 2; j++) {
+      for (let i = -2; i <= 2; i++) {
+        const l = this.rGrid.get((cx + i + 32768) * 65536 + (cz + j + 32768));
+        if (!l) continue;
+        for (let q = 0; q < l.length; q += 2) { const d = (l[q] - x) ** 2 + (l[q + 1] - z) ** 2; if (d < bd) bd = d; }
+      }
+    }
+    return bd === Infinity ? 1e9 : Math.sqrt(bd);
+  }
+
+  /** alle Dinge, die Schatten auf den Boden werfen oder ihn beleuchten (Bodenkarte, sunmap.ts) */
+  readonly splats = (x0: number, z0: number, x1: number, z1: number, shadow: (x: number, z: number, h: number, r: number, kind: number) => void, light: (x: number, z: number, r: number, k: number) => void) => {
+    this.trees.splats(x0, z0, x1, z1, shadow);
+    this.houses.splats(x0, z0, x1, z1, shadow);
+    this.towns.splats(x0, z0, x1, z1, shadow, light);
+  };
+
   /** Streckenpunkte eines Bereichs (alle 8 m) */
   private route(z0: number, z1: number): RouteSample[] {
     const out: RouteSample[] = [];
@@ -214,8 +251,10 @@ export class World {
       }
       yield;
     }
-    // Häuser (Abstand zur Straße über alle Stellen der Strecke)
-    const roadDist = (x: number, z: number) => { const n = this.forest.near(x, z); return n ? n.d : 1e9; };
+    // Häuser (Abstand zur Straße über alle Stellen der Strecke – auch über die, die erst später gebaut werden: nach
+    // einer Kehre liegt der nächste Schenkel oft gleich daneben, früher stand dort dann ein Haus auf der Fahrbahn)
+    this.roadIndex(z1 + 1600);
+    const roadDist = (x: number, z: number) => this.roadDistAll(x, z);
     this.lbl = 'haeuser';
     yield* this.houses.addRange({ track: this.track, terrain: this.terrain, trees: this.trees, roadDist, occ: this.towns.occ }, z0, z1, 6, this.late);
     // Pflanzen und Tiere
@@ -434,6 +473,7 @@ export class World {
     }
     group.add(this.arches.warm());
     group.add(this.towns.warm());
+    group.add(warmLamps());
     this.arches.plate(group, 2, 0, 0, 'GRUPPETTO', '');
     if (this.signMat) {
       const g = new THREE.BufferGeometry();

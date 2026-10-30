@@ -7,8 +7,9 @@
  */
 import * as THREE from 'three/webgpu';
 import { tsl, type N } from './nodes';
+import { terrainSun } from './sunmap';
 
-const { float, normalize, select, transformNormalToView, uniform, vec3 } = tsl;
+const { dot, float, max, normalize, positionWorld, select, uniform, vec3 } = tsl;
 
 /** Umgebungslicht je Richtung (schon mit der Stärke der Stimmung und dem Tunnel verrechnet) */
 export const AMB = {
@@ -36,17 +37,29 @@ export function ambientAt(n: N): N {
 }
 
 /**
- * Lambert-Material mit Umgebungslicht: col (lineare Grundfarbe), nWorld (Weltnormale, mit Relief), ao
- * (Verschattung in Vertiefungen), extra: zusätzliches Leuchten (z. B. Fenster bei Nacht).
+ * Licht der günstigen Materialien, ausgeschrieben (keine Lichter der Szene, kein Schattendurchgang): Sonne nach
+ * Lambert mal vorberechnetes Sonnenlicht (vis – Berge, Bäume; ohne Angabe aus der Geländelicht-Karte an der
+ * Weltlage), dazu das gemessene Himmelslicht mit Verschattung (ao) und zusätzliches Leuchten (extra: Fenster,
+ * Laternen). wrap: weiches Licht um die Kante (Laub, Stoff: 0,3 … 0,6)
  */
-export function cheapMaterial(o: { col: N; nWorld: N; ao?: N; extra?: N; params?: THREE.MeshLambertNodeMaterialParameters }): THREE.MeshLambertNodeMaterial {
-  const m = new THREE.MeshLambertNodeMaterial(o.params);
+export function lit(o: { col: N; nWorld: N; ao?: N; vis?: N; extra?: N; wrap?: number }): N {
   const n = normalize(o.nWorld);
-  m.colorNode = o.col;
-  m.normalNode = transformNormalToView(n);
-  let amb: N = o.col.mul(ambientAt(n));
+  const ndl = dot(n, SUN.dir);
+  const diff = o.wrap ? max(float(0), ndl.add(o.wrap).div(1 + o.wrap)) : max(float(0), ndl);
+  const vis = o.vis ?? terrainSun(positionWorld.xz);
+  let amb: N = ambientAt(n);
   if (o.ao) amb = amb.mul(o.ao);
-  m.emissiveNode = o.extra ? amb.add(o.extra) : amb;
+  const c = o.col.mul(SUN.col.mul(diff.mul(vis)).add(amb));
+  return o.extra ? c.add(o.extra) : c;
+}
+
+/**
+ * Günstiges Material: unbeleuchtet (MeshBasic) mit dem Licht aus lit() – je Bildpunkt nur Rechnungen und ein
+ * Zugriff in die Geländelicht-Karte
+ */
+export function cheapMaterial(o: { col: N; nWorld: N; ao?: N; vis?: N; extra?: N; wrap?: number; params?: THREE.MeshBasicNodeMaterialParameters }): THREE.MeshBasicNodeMaterial {
+  const m = new THREE.MeshBasicNodeMaterial(o.params);
+  m.colorNode = lit(o);
   return m;
 }
 

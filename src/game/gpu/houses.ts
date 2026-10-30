@@ -72,6 +72,11 @@ export class Houses {
   }
 
   get count() { return this.spots.length; }
+
+  /** Schatten der Häuser für die Bodenkarte (sunmap.ts) */
+  splats(x0: number, z0: number, x1: number, z1: number, shadow: (x: number, z: number, h: number, r: number, kind: number) => void) {
+    for (const s of this.spots) if (s.x >= x0 && s.x <= x1 && s.z >= z0 && s.z <= z1) shadow(s.x, s.z, 9.5, 5.5, 1);
+  }
   /** Plätze (für Tiere und Pflanzen ringsum) */
   get positions(): { x: number; z: number }[] { return this.spots.map((s) => ({ x: s.x, z: s.z })); }
 
@@ -152,7 +157,7 @@ export class Houses {
           if (hash(seed, 1) > 0.8) continue;
           track.world(z, side * (lim + 8 + hash(seed, 2) * 6), 0, w);
           const toward = track.world(z, 0, 0, { x: 0, y: 0, z: 0, th: 0 });
-          const sp = tryAt(w.x, w.z, seed, 17, 11, toward, z);
+          const sp = tryAt(w.x, w.z, seed, 17, 13, toward, z);
           if (!sp) continue;
           this.spots.push(sp);
           placed++;

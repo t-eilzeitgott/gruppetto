@@ -7,6 +7,7 @@ import * as THREE from 'three/webgpu';
 import type { Surface, SurfaceId } from './bake';
 import { decodeAlbedo, planar, planarN, triplanar, tsl, vn1, vnoise, type N } from './nodes';
 import { cheapMaterial } from './light';
+import { groundMap, lampLit, terrainSun } from './sunmap';
 
 const { abs, attribute, cameraPosition, cross, dFdx, dFdy, dot, float, fract, fwidth, max, min, mix, normalize, normalWorldGeometry, positionGeometry, positionWorld, select, sign, smoothstep, texture, transformNormalToView, varying, vec2, vec3, vertexColor } = tsl;
 
@@ -311,11 +312,20 @@ function shade(S: Surfaces, m: Mix, spacing: number) {
   col = mix(col, snowCol, sn);
   ao = mix(ao, float(0.95), sn);
   n = mix(n, normalize(mix(nG, n, 0.35)), sn);
-  return { col, ao, n: normalize(n) };
+  return { col, ao: ao as N, n: normalize(n) };
 }
 
-function apply(o: ReturnType<typeof shade>, name: string): THREE.MeshLambertNodeMaterial {
-  const mat = cheapMaterial({ col: o.col, nWorld: o.n, ao: o.ao });
+/**
+ * Material aus der Schattierung: Sonnenlicht vorberechnet (sun: Sonne und Himmel je Ecke aus den Kacheln, sonst
+ * die Geländelicht-Karte), ground: Schatten der Dinge und Laternenlicht aus der Bodenkarte (nah)
+ */
+function apply(o: ReturnType<typeof shade>, name: string, opt: { sun?: N; ground?: boolean } = {}): THREE.MeshBasicNodeMaterial {
+  const pos = positionWorld;
+  const g = opt.ground ? groundMap(pos.xz) : null;
+  let vis: N = opt.sun ? opt.sun.x : terrainSun(pos.xz);
+  if (g) vis = vis.mul(g.x);
+  const ao = opt.sun ? o.ao.mul(opt.sun.y) : o.ao;
+  const mat = cheapMaterial({ col: o.col, nWorld: o.n, ao, vis, extra: g ? lampLit(o.col, g.w) : undefined });
   mat.name = name;
   return mat;
 }
@@ -325,7 +335,7 @@ function apply(o: ReturnType<typeof shade>, name: string): THREE.MeshLambertNode
  * aRock = Felsfarbe, aNz = großflächiges Rauschen. lv 0 mit echten Bäumen, darüber Kronendach. woods: Bergwald
  * (Terrain.woods – die Waldmaske im Attribut ist schon die der Bäume).
  */
-export function terrainMaterial(S: Surfaces, lv: number, dots?: THREE.Texture, woods = false): THREE.MeshLambertNodeMaterial {
+export function terrainMaterial(S: Surfaces, lv: number, dots?: THREE.Texture, woods = false): THREE.MeshBasicNodeMaterial {
   const aMat = attribute('aMat', 'vec4');
   const aNz = attribute('aNz', 'vec2');
   // Waldrand und Baumgrenze ausgefranst (sonst eine gerade Höhenlinie quer über den Berg); im Bergwald ist die
@@ -346,21 +356,22 @@ export function terrainMaterial(S: Surfaces, lv: number, dots?: THREE.Texture, w
   const mat = apply(shade(S, {
     tint: vertexColor(), rockTint: attribute('aRock', 'vec3'),
     fo, rk, sn, sc, gr: float(0), cc: float(0), canopy: lv > 0, detail: lv === 0, far: lv >= 2, dots: lv === 0 ? dots : undefined, can,
-  }, spacing), `terrain${lv}`);
+  }, spacing), `terrain${lv}`, { sun: attribute('aSun', 'vec2'), ground: lv === 0 });
   if (lift && !/[?&]nocan\b/.test(location.search)) mat.positionNode = positionGeometry.add(vec3(0, lift, 0));
   // Prüfmodus: Stufen einfärben (?lvcolor)
   if (/[?&]lvcolor\b/.test(location.search)) mat.colorNode = vec3(lv === 0 ? 0.6 : 0.05, lv === 1 ? 0.6 : 0.05, lv === 2 ? 0.6 : 0.05);
   if (/[?&]dbgmat\b/.test(location.search)) { mat.colorNode = vec3(fo, rk, sn).mul(0.5).add(0.02); mat.normalNode = transformNormalToView(normalize(normalWorldGeometry)); }
   if (/[?&]dbgny\b/.test(location.search)) { mat.colorNode = vec3(normalize(normalWorldGeometry).y, float(lv).mul(0.3), 0); mat.normalNode = transformNormalToView(vec3(0, 1, 0)); }
+  if (/[?&]dbgsun\b/.test(location.search)) { const a = attribute('aSun', 'vec2'); mat.colorNode = vec3(a.x, a.y.mul(0.5), terrainSun(positionWorld.xz).mul(0.5)); }
   if (/[?&]dbgcol\b/.test(location.search)) { mat.colorNode = vertexColor(); mat.normalNode = transformNormalToView(normalize(normalWorldGeometry)); }
   return mat;
 }
 
 /** Straßenrand (Korridor): Farbe der Gegend je Ecke, Gewichte aW = (Wald, Fels, Schnee, Kies), aC = (Beton, Felsfarbe) */
-export function corridorMaterial(S: Surfaces, dots?: THREE.Texture): THREE.MeshLambertNodeMaterial {
+export function corridorMaterial(S: Surfaces, dots?: THREE.Texture): THREE.MeshBasicNodeMaterial {
   const w = attribute('aW', 'vec4');
   const c = attribute('aC', 'vec4');
   return apply(shade(S, {
     tint: vertexColor(), rockTint: c.yzw, fo: w.x, rk: w.y, sn: w.z, gr: w.w, cc: c.x, canopy: false, detail: true, road: true, dots,
-  }, 3), 'corridor');
+  }, 3), 'corridor', { ground: true });
 }

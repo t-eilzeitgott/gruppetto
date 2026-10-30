@@ -8,8 +8,8 @@ import { tsl } from './nodes';
 
 const { uniform } = tsl;
 
-export type MoodId = 'mittag' | 'gold' | 'nacht' | 'morgen' | 'regen';
-export const MOOD_IDS: MoodId[] = ['mittag', 'gold', 'nacht', 'morgen', 'regen'];
+export type MoodId = 'mittag' | 'gold' | 'nacht' | 'morgen' | 'regen' | 'abend';
+export const MOOD_IDS: MoodId[] = ['mittag', 'gold', 'nacht', 'morgen', 'regen', 'abend'];
 
 /** Werte des Himmels (werden je Stimmung einmal in Würfeltexturen gebacken) */
 export interface SkyParams { elev: number; azim: number; turbidity: number; rayleigh: number; mie: number; mieG: number; cover: number; density: number; cloudElev: number }
@@ -27,6 +27,10 @@ export interface Light {
   bloom: number; bthr: number;
   /** Nacht (Sterne, Fenster), Regen (Streifen), nasse Straße, Sonnenglühen (0 aus, 1 Sonne, 2 Mond) */
   night: number; rain: number; wet: number; glow: number;
+  /** Lichter an: Fenster, Laternen (0 … 1) */
+  lights: number;
+  /** Farbe des Himmelslichts (Faktoren auf das gemessene; Abend: kühler – Schatten blau, Sonne warm) */
+  ambR: number; ambG: number; ambB: number;
 }
 
 export interface Mood { id: MoodId; name: string; sky: SkyParams; light: Light }
@@ -40,7 +44,7 @@ export const MOODS: Record<MoodId, Mood> = {
     light: {
       elev: 34, azim: 215, sunI: 3.4, sunR: 1, sunG: 0.95, sunB: 0.86, env: 0.17, hemi: 0, exposure: 0.5, fog: 0.5, fogThin: 1,
       ...grade(0.25, 1.08, 1.08, 0.3, 0.06, 0.35, [0.92, 0.96, 1.08], [1.08, 1.0, 0.9]),
-      bloom: 0.06, bthr: 4, night: 0, rain: 0, wet: 0, glow: 1,
+      bloom: 0.06, bthr: 4, night: 0, rain: 0, wet: 0, glow: 1, lights: 0, ambR: 1, ambG: 1, ambB: 1,
     },
   },
   gold: {
@@ -48,7 +52,7 @@ export const MOODS: Record<MoodId, Mood> = {
     light: {
       elev: 6, azim: 200, sunI: 4.2, sunR: 1, sunG: 0.58, sunB: 0.3, env: 0.3, hemi: 0.25, exposure: 0.8, fog: 0.9, fogThin: 1,
       ...grade(0.55, 1.12, 1.15, 0.45, 0.1, 0.6, [0.84, 0.9, 1.14], [1.12, 1.0, 0.84]),
-      bloom: 0.12, bthr: 2.5, night: 0, rain: 0, wet: 0, glow: 1,
+      bloom: 0.12, bthr: 2.5, night: 0, rain: 0, wet: 0, glow: 1, lights: 0.3, ambR: 1, ambG: 1, ambB: 1,
     },
   },
   nacht: {
@@ -56,7 +60,7 @@ export const MOODS: Record<MoodId, Mood> = {
     light: {
       elev: 38, azim: 120, sunI: 0.35, sunR: 0.55, sunG: 0.66, sunB: 1.0, env: 0.2, hemi: 0.4, exposure: 1.3, fog: 0.4, fogThin: 1,
       ...grade(-0.35, 0.75, 1.12, 0.55, 0.18, 0.5, [0.85, 0.9, 1.2], [1, 1, 1]),
-      bloom: 0.2, bthr: 1.2, night: 1, rain: 0, wet: 0, glow: 2,
+      bloom: 0.2, bthr: 1.2, night: 1, rain: 0, wet: 0, glow: 2, lights: 1, ambR: 1, ambG: 1, ambB: 1,
     },
   },
   morgen: {
@@ -64,7 +68,7 @@ export const MOODS: Record<MoodId, Mood> = {
     light: {
       elev: 5, azim: 110, sunI: 3.6, sunR: 1, sunG: 0.76, sunB: 0.5, env: 0.3, hemi: 0.3, exposure: 0.8, fog: 1.9, fogThin: 1.6,
       ...grade(0.3, 0.95, 1.05, 0.35, 0.1, 0.4, [0.9, 0.94, 1.1], [1.1, 1.0, 0.9]),
-      bloom: 0.15, bthr: 2, night: 0, rain: 0, wet: 0, glow: 1,
+      bloom: 0.15, bthr: 2, night: 0, rain: 0, wet: 0, glow: 1, lights: 0, ambR: 1, ambG: 1, ambB: 1,
     },
   },
   regen: {
@@ -72,7 +76,17 @@ export const MOODS: Record<MoodId, Mood> = {
     light: {
       elev: 30, azim: 205, sunI: 0.45, sunR: 0.8, sunG: 0.85, sunB: 0.95, env: 0.26, hemi: 0.15, exposure: 0.4, fog: 1.7, fogThin: 1.2,
       ...grade(-0.3, 0.72, 1.1, 0.5, 0.15, 0.4, [0.88, 0.92, 1.08], [1, 1, 1]),
-      bloom: 0.08, bthr: 3, night: 0, rain: 1, wet: 1, glow: 0,
+      bloom: 0.08, bthr: 3, night: 0, rain: 1, wet: 1, glow: 0, lights: 0.4, ambR: 1, ambG: 1, ambB: 1,
+    },
+  },
+  // Sonnenuntergang (Abfahrt und Zeitfahren auf WebGPU): die Sonne knapp über den Graten, links voraus – Gipfel und
+  // Hänge zur Sonne glühen, die Täler liegen im Schatten, in den Häusern und Laternen brennt Licht
+  abend: {
+    id: 'abend', name: 'Sonnenuntergang', sky: { elev: 3.5, azim: 245, turbidity: 7.5, rayleigh: 3.4, mie: 0.016, mieG: 0.87, cover: 0.42, density: 0.55, cloudElev: 0.46 },
+    light: {
+      elev: 3.5, azim: 245, sunI: 5.4, sunR: 1, sunG: 0.5, sunB: 0.24, env: 0.42, hemi: 0, exposure: 0.95, fog: 0.85, fogThin: 1,
+      ...grade(0.4, 1.14, 1.12, 0.42, 0.08, 0.6, [0.82, 0.88, 1.18], [1.14, 0.98, 0.82]),
+      bloom: 0.14, bthr: 2.2, night: 0, rain: 0, wet: 0, glow: 1, lights: 1, ambR: 0.72, ambG: 0.84, ambB: 1.2,
     },
   },
 };
@@ -140,11 +154,11 @@ export const DEFAULT_SETTINGS: Settings = {
  * Spiel (Abfahrt auf WebGPU): goldene Stunde, dramatischer Himmel, Sonnenuntergangs-Licht; Bild in doppelter
  * Auflösung, die Szene darin höchstens bis ×1,4 kleiner gerechnet; Leuchten aus (eigene Bildkette)
  */
-export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'gold', drama: true, sunset: true, bloom: false, oppMax: 10, treeFar: 1100, maxDpr: 2, minDpr: 1.4 };
+export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'abend', drama: true, sunset: true, bloom: false, shadows: false, cycle: false, oppMax: 10, treeFar: 1100, maxDpr: 2, minDpr: 1.4 };
 /** v2: neue Grafik (günstiges Licht, Auflösung der Szene) – alte Einstellungen gelten nicht mehr */
 export const RACE_KEY = 'gruppetto.gpu.race2';
-/** Zeitfahren (Abfahrt auf WebGPU): Morgen im Dunst, dramatischer Himmel – Zeitfahren beginnen früh */
-export const TT_DEFAULTS: Settings = { ...RACE_DEFAULTS, mood: 'morgen' };
+/** Zeitfahren (Abfahrt auf WebGPU): wie die Abfahrt – Sonnenuntergang, Lichter an */
+export const TT_DEFAULTS: Settings = { ...RACE_DEFAULTS };
 export const TT_KEY = 'gruppetto.gpu.tt';
 
 const KEY = 'gruppetto.gpu.settings';
@@ -200,6 +214,8 @@ export function dirOf(elev: number, azim: number): THREE.Vector3 {
 /** Uniforms, die mehrere Materialien lesen (Nacht: Fenster leuchten; nasse Straße; Regen) */
 export const MOOD_U = {
   night: uniform(0) as { value: number },
+  /** Fenster und Laternen an (0 … 1) */
+  lights: uniform(0) as { value: number },
   wet: uniform(0) as { value: number },
   rain: uniform(0) as { value: number },
 };

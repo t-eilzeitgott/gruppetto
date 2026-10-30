@@ -29,6 +29,8 @@ import { adsMaterial, marksMaterial, metalMaterial, paintMaterial, roadMaterial,
 import { Rider, teamKit } from './rider';
 import { EV, Perf, type Report } from './perf';
 import { World } from './world';
+import { SunBake } from './sunbake';
+import { SunMaps } from './sunmap';
 /** beim Laden so weit voraus bauen (den Rest bis AHEAD holt das Nachladen im Countdown) */
 const LOAD_AHEAD = 1100;
 import { Objects, Particles } from './objects';
@@ -178,9 +180,19 @@ export class Race {
   private onWinError: ((e: Event) => void) | null = null;
   private errCount = 0;
   private screenPos = new THREE.Vector3();
+  /** vorberechnetes Sonnenlicht und die Karten von oben */
+  private sunBake: SunBake | null = null;
+  private maps: SunMaps | null = null;
+  private mapFocus = new THREE.Vector3();
+  private fieldDone = -1;
+  private piecesSeen = -1;
+  /** Sonne am eigenen Fahrer (geglättet): Licht der Fahrer und Dinge (PBR) folgt den vorberechneten Schatten */
+  private sunHere = 1;
 
   constructor(private host: HTMLElement, private opts: RaceOptions) {
-    this.settings = loadSettings(opts.settingsKey ?? RACE_KEY, opts.defaults ?? RACE_DEFAULTS);
+    // immer Sonnenuntergang, ohne Wetterwechsel und ohne Schattenkarte: die Schatten sind vorberechnet (die Sonne
+    // steht fest) – gespeicherte ältere Einstellungen ändern daran nichts
+    this.settings = { ...loadSettings(opts.settingsKey ?? RACE_KEY, opts.defaults ?? RACE_DEFAULTS), mood: 'abend', cycle: false, shadows: false };
     this.renderer = new THREE.WebGPURenderer({ antialias: false, powerPreference: 'high-performance', reversedDepthBuffer: true, trackTimestamp: true } as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
   }
 
@@ -226,8 +238,8 @@ export class Race {
     r.setPixelRatio(this.maxDpr);
     r.toneMapping = THREE.AgXToneMapping;
     r.toneMappingExposure = 0.62;
-    r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFShadowMap;
+    // keine Schattenkarte: Schatten sind vorberechnet (sunbake.ts, sunmap.ts)
+    r.shadowMap.enabled = false;
     r.info.autoReset = false;
     this.host.appendChild(r.domElement);
     r.domElement.style.display = 'block';
@@ -248,10 +260,9 @@ export class Race {
     const S: Record<SurfaceId, Surface> = bakeSurfaces(r, low ? 0.25 : 1);
     const dots = bakeFlowerDots(r, low ? 256 : 512);
     await step(0.06, 'Himmel');
-    const moodParam = /[?&]mood=([a-z]+)/.exec(location.search)?.[1] as Settings['mood'] | undefined;
-    if (moodParam) this.settings = { ...this.settings, mood: moodParam };
     const skySize = Number(/[?&]sky=(\d+)/.exec(location.search)?.[1] ?? 0) || (low ? 128 : 512);
     const atmo = (this.atmo = new Atmo(r, this.scene, this.settings, skySize, false));
+    atmo.staticSun = true;
     atmo.apply(this.settings, true);
     if (this.disposed) return;
 
@@ -259,6 +270,7 @@ export class Race {
     const track = (this.track = new Track(this.opts.dayKey, this.opts.names, this.opts.tt ? 'tt' : 'descent', this.opts.tt?.town ?? null));
     const terrain = (this.terrain = new Terrain(track));
     terrain.woods = true;
+    terrain.rugged = true;
     const adsM = adsMaterial(adsTex(this.opts.names));
     const world = (this.world = new World({
       renderer: r, track, terrain, msaa: gpu && this.settings.msaa > 0, low,
@@ -275,6 +287,14 @@ export class Race {
     this.scene.add(world.group);
     world.trees.sunDir.value.copy(atmo.sunDir);
     world.trees.setFar(this.settings.treeFar);
+    // Sonnenlicht vorberechnen: je Kachel beim Bau (Berge auf Täler), dazu die Karten von oben (Bäume, Häuser, Laternen)
+    const sd = atmo.sunDir;
+    const bake = (this.sunBake = new SunBake());
+    bake.setSun(sd.x, sd.y, sd.z);
+    world.field.sun = bake;
+    const maps = (this.maps = new SunMaps(r, () => world.field.group));
+    maps.setSun(sd);
+    maps.sources.push(world.splats);
     const objects = (this.objects = new Objects());
     this.scene.add(objects.group);
     const particles = (this.particles = new Particles());
@@ -323,6 +343,7 @@ export class Race {
     await step(0.74, 'Shader werden übersetzt');
     this.place(0);
     this.updateCamera(0);
+    this.updateMaps(true);
     await this.warmup((f) => { this.loadFrac = 0.74 + 0.25 * f; });
     if (this.disposed) return;
     log('vorgewärmt');
@@ -954,27 +975,39 @@ export class Race {
     if (at) { this.camera.fov = fov; this.cam.fov = fov; this.camera.updateProjectionMatrix(); }
   }
 
-  /** Schattenausschnitt folgt dem Fahrer, im Lichtraster eingerastet */
+  /**
+   * Sonne: steht fest (Sonnenuntergang), ohne Schattenkarte. Das Licht der Fahrer und Dinge (PBR, die einzigen,
+   * die noch die Sonne der Szene sehen) folgt dem vorberechneten Sonnenlicht am eigenen Fahrer – im Schatten der
+   * Berge wird es weich dunkler
+   */
   private updateSun() {
     const atmo = this.atmo!;
-    const sun = atmo.sun;
     this.world?.trees.sunDir.value.copy(atmo.sunDir);
     const e = this.eng!;
-    e.track.world(e.p.z + 22, 0, 0, this.w);
-    const c = this.free ? this.free.at.clone() : new THREE.Vector3(this.w.x, this.w.y, this.w.z);
-    const d = atmo.sunDir;
-    const right = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0, 1, 0)).normalize();
-    const up = new THREE.Vector3().crossVectors(right, d).normalize();
-    const texel = 110 / 2048;
-    const a = Math.round(c.dot(right) / texel) * texel;
-    const b = Math.round(c.dot(up) / texel) * texel;
-    const snapped = right.multiplyScalar(a).add(up.multiplyScalar(b)).addScaledVector(d, c.dot(d));
-    sun.target.position.copy(snapped);
-    sun.position.copy(snapped).addScaledVector(d, 1500);
-    sun.target.updateMatrixWorld();
-    // Ausschnitt und Tiefe der Schattenkamera wirklich anwenden (beim Start blieb sonst die Voreinstellung von
-    // three.js stehen – 10 × 10 m bis 500 m, das Licht steht aber 1500 m weit weg: keine Schatten im Spiel)
-    (sun.shadow.camera as THREE.OrthographicCamera).updateProjectionMatrix();
+    let want = 1;
+    if (this.sunBake && this.rider) {
+      const g = this.rider.group.position;
+      want = this.sunBake.sunAt(g.x, g.y + 1, g.z, 3);
+    }
+    this.sunHere += (want - this.sunHere) * 0.08;
+    const c = atmo.cur;
+    atmo.sun.intensity = c.sunI * (1 - this.tunnelK) * (0.08 + 0.92 * this.sunHere);
+    void e;
+  }
+
+  /** Karten von oben (Geländelicht, Bodenschatten, Laternen): neu, wenn der Fahrer weit genug ist oder Neues da ist */
+  private updateMaps(force: boolean) {
+    const maps = this.maps;
+    const world = this.world;
+    const e = this.eng;
+    if (!maps || !world || !e) return;
+    // Mittelpunkt etwas voraus (dort liegt das meiste Bild)
+    e.track.world(e.p.z + 220, 0, 0, this.w);
+    this.mapFocus.set(this.w.x, this.w.y, this.w.z);
+    if (world.field.done !== this.fieldDone) { this.fieldDone = world.field.done; maps.terrainChanged(); }
+    const pc = world.stats.built + world.stats.dropped * 1000;
+    if (pc !== this.piecesSeen) { this.piecesSeen = pc; maps.groundChanged(); }
+    maps.update(this.mapFocus, performance.now(), force);
   }
 
   /** Tunnel: Licht von außen weg (Sonne, Himmel), Lampenlicht; Tageslicht der Portale in der Farbe der Stimmung */
@@ -1102,7 +1135,6 @@ export class Race {
     const steps: [string, () => void][] = [
       ['Basis (Auflösung ×' + base.toFixed(2) + ')', () => undefined],
       ['ohne Leuchten (Bloom-Kette)', () => this.applySettings({ ...S0, bloom: false }, true)],
-      ['ohne Schattendurchgang', () => { this.atmo!.sun.shadow.autoUpdate = false; }],
       ['ohne Sonnenuntergangs-Licht', () => this.applySettings({ ...S0, sunset: false }, true)],
       ['ohne Fahrer und Gegner', () => hide('riders')],
       ['ohne Zuschauer', () => hide('crowd')],
@@ -1121,7 +1153,6 @@ export class Race {
     const p90 = (a: number[]) => { if (!a.length) return -1; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * 0.9)]; };
     const rows: { name: string; gpu: number; gpu90: number; base: number; draw: number; cpu: number; frame: number; calls: number; tris: number; px: string }[] = [];
     const restore = () => {
-      if (this.atmo) this.atmo.sun.shadow.autoUpdate = S0.shadows;
       if (JSON.stringify(this.settings) !== JSON.stringify(S0)) this.applySettings(S0, true);
       for (const [o, v] of vis0) o.visible = v;
       setDpr(base);
@@ -1243,6 +1274,7 @@ export class Race {
       const ms = this.budget || (idle ? 6 : lead < 450 ? 4 : lead < 700 ? 2.2 : lead < 950 ? 1 : 0.5);
       world.step(e.p.z, performance.now() + ms);
       if (front !== this.lastBuilt) { if (front > this.lastBuilt) P.event(EV.piece, `Welt bis ${Math.round(front)} m`); this.lastBuilt = front; }
+      this.updateMaps(false);
       P.mark(9);
     }
     this.adapt(dtMs, t);
@@ -1453,6 +1485,7 @@ export class Race {
     this.rider?.dispose();
     for (const R of this.pool) R.dispose();
     this.atmo?.dispose();
+    this.maps?.dispose();
     this.frameRT?.dispose();
     this.renderer.dispose();
   }

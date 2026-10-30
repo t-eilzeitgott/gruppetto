@@ -16,8 +16,10 @@ import type { TreeSpot } from '../abfahrt/terrain3d';
 import { TREE_VARIANT_KINDS, treeModel, treeTint, treeVariant } from '../abfahrt/forest3d';
 import { ditherVis, tsl, useDither, type N } from './nodes';
 import { commit, disposeGroup, instGroup, instNodes, STRIDE, type InstGroup } from './inst';
+import { lit, SUN } from './light';
+import { terrainSun } from './sunmap';
 
-const { attribute, cameraPosition, clamp, cos, dot, float, fwidth, int, max, normalize, positionGeometry, positionWorld, pow, sin, smoothstep, sqrt, step, texture, time, transformNormalToView, uniform, uniformArray, uv, varying, vec2, vec3, vec4, vertexColor, normalGeometry } = tsl;
+const { attribute, cameraPosition, clamp, cos, dot, float, fwidth, int, max, normalize, positionGeometry, positionWorld, pow, sin, smoothstep, sqrt, step, texture, time, uniform, uniformArray, uv, varying, vec2, vec3, vec4, vertexColor, normalGeometry } = tsl;
 
 /** Zufall aus einer Zahl (fest je Baum) */
 const rnd = (n: number) => {
@@ -180,8 +182,8 @@ export class Trees {
   /** Grundformen je Variante */
   private geos: THREE.BufferGeometry[];
   private quad = unitQuad();
-  private mat: THREE.MeshLambertNodeMaterial;
-  private impMat: THREE.MeshLambertNodeMaterial;
+  private mat: THREE.MeshBasicNodeMaterial;
+  private impMat: THREE.MeshBasicNodeMaterial;
   private atlas: Atlas;
   private cells = new Map<string, Cell>();
   /** Modelle um die Kamera: je Variante eine Gruppe */
@@ -218,8 +220,8 @@ export class Trees {
   private dist(at: N, name: string): N { return varying(at.xz.sub(cameraPosition.xz).length(), name); }
 
   /** Modell (nah): deckend, Farbe aus den Ecken mal Baumfarbe, Wind, etwas Durchscheinen im Gegenlicht */
-  private model(): THREE.MeshLambertNodeMaterial {
-    const m = new THREE.MeshLambertNodeMaterial();
+  private model(): THREE.MeshBasicNodeMaterial {
+    const m = new THREE.MeshBasicNodeMaterial();
     const I = instNodes();
     // Wind: jeder Baum mit eigener Phase (aus dem Ort), oben mehr als unten
     const y = positionGeometry.y;
@@ -228,20 +230,30 @@ export class Trees {
     const t = time;
     const off = vec3(sin(t.mul(1.25).add(ph)).add(sin(t.mul(2.9).add(ph.mul(1.7)).add(y.mul(0.4))).mul(0.3)), 0, cos(t.mul(1.05).add(ph.mul(1.3))).mul(0.7)).mul(sway.mul(0.16));
     m.positionNode = I.world.add(off);
-    m.normalNode = transformNormalToView(normalize(varying(I.rot(softNormal()), 'vTreeN')));
+    const nW = normalize(varying(I.rot(softNormal()), 'vTreeN'));
     const col: N = vertexColor().xyz.mul(I.color);
-    m.colorNode = col;
-    const view = normalize(positionWorld.sub(cameraPosition));
-    m.emissiveNode = col.mul(pow(max(float(0), dot(view, this.sunDir)), 5).mul(sway.min(1).mul(0.5).add(0.08)));
+    m.colorNode = this.foliageLight(col, nW, varying(terrainSun(I.at.xz, true), 'vTreeSun'), clamp(y.mul(1 / 9), 0, 1));
     const d = this.dist(I.at, 'vTreeD');
     useDither(m, float(0), float(1).sub(smoothstep(B0[0] - B0[1], B0[0] + B0[1], d)));
     m.name = 'trees-near';
     return m;
   }
 
+  /**
+   * Licht des Laubs: weich um die Krone herum (wrap), Sonne nur, wo das vorberechnete Sonnenlicht hinkommt, viel
+   * Himmelslicht (Laub streut es nach innen – sonst stehen die Bäume im Schatten fast schwarz da), unten und innen
+   * etwas dunkler, gegen die tiefe Sonne leuchten die Ränder warm durch
+   */
+  private foliageLight(col: N, nW: N, vis: N, up: N): N {
+    const view = normalize(positionWorld.sub(cameraPosition));
+    const back = pow(max(float(0), dot(view, this.sunDir)), 4).mul(0.55).mul(vis);
+    const ao = up.mul(0.42).add(0.7);
+    return lit({ col: col.mul(1.12), nWorld: nW, ao: ao.mul(1.3), vis, wrap: 0.55, extra: col.mul(SUN.col).mul(back) });
+  }
+
   /** Bild für die Ferne: Fläche zur Kamera gedreht (um die Hochachse), Normale aus dem Bild mitgedreht */
-  private impostorMaterial(): THREE.MeshLambertNodeMaterial {
-    const m = new THREE.MeshLambertNodeMaterial();
+  private impostorMaterial(): THREE.MeshBasicNodeMaterial {
+    const m = new THREE.MeshBasicNodeMaterial();
     const iP = attribute('iP', 'vec4');
     const iS = attribute('iS', 'vec4');
     const iC = attribute('iC', 'vec4');
@@ -262,8 +274,8 @@ export class Trees {
     const nb = texture(this.atlas.normal, auv).xyz.mul(2).sub(1);
     const R = varying(right, 'vImpR');
     const D = varying(dir, 'vImpD');
-    m.normalNode = transformNormalToView(normalize(R.mul(nb.x).add(vec3(0, 1, 0).mul(nb.y)).add(D.mul(nb.z))));
-    m.colorNode = a.rgb.mul(a.rgb).mul(iC.xyz);
+    const nW = normalize(R.mul(nb.x).add(vec3(0, 1, 0).mul(nb.y)).add(D.mul(nb.z)));
+    m.colorNode = this.foliageLight(a.rgb.mul(a.rgb).mul(iC.xyz), nW, varying(terrainSun(iP.xz, true), 'vImpSun'), uv().y.mul(1.3).clamp(0, 1));
     const d = this.dist(iP.xyz, 'vImpDist');
     const b = smoothstep(B0[0] - B0[1], B0[0] + B0[1], d);
     const out = smoothstep(this.farU.sub(300), this.farU, d);
@@ -325,6 +337,18 @@ export class Trees {
       const n = c.spots.length;
       c.spots = c.spots.filter((t) => (t.x - x) ** 2 + (t.z - z) ** 2 > r * r);
       if (c.spots.length !== n) { c.dirty = true; this.count -= n - c.spots.length; }
+    }
+  }
+
+  /** Schatten der Bäume für die Bodenkarte (sunmap.ts): Fuß, Höhe, Kronenradius je Baum im Rechteck */
+  splats(x0: number, z0: number, x1: number, z1: number, shadow: (x: number, z: number, h: number, r: number, kind: number) => void) {
+    for (const c of this.cells.values()) {
+      if (c.cx + CELL / 2 < x0 || c.cx - CELL / 2 > x1 || c.cz + CELL / 2 < z0 || c.cz - CELL / 2 > z1) continue;
+      for (const t of c.spots) {
+        if (t.x < x0 || t.x > x1 || t.z < z0 || t.z > z1) continue;
+        const con = CONIFER.has(t.kind);
+        shadow(t.x, t.z, t.s * (con ? 15.5 : 10), t.s * (con ? 2.0 : 2.9), 0);
+      }
     }
   }
 

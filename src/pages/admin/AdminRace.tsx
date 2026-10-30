@@ -28,7 +28,7 @@ import { dist, placeThumb } from '../finale';
 import { raceBar } from '../hud';
 import type { Race, RaceCam, RaceStats, TagView } from '../../game/gpu/race';
 import type { Report } from '../../game/gpu/perf';
-import { loadSettings, MOOD_IDS, MOODS, RACE_DEFAULTS, RACE_KEY, TT_DEFAULTS, TT_KEY, type MoodId, type Settings } from '../../game/gpu/mood';
+import { loadSettings, MOODS, RACE_DEFAULTS, RACE_KEY, TT_DEFAULTS, TT_KEY, type Settings } from '../../game/gpu/mood';
 import { copyText, lsRead, lsWrite, shareFile } from './gpuKit';
 
 type Ui = 'loading' | 'ready' | 'countdown' | 'playing' | 'paused' | 'over';
@@ -41,8 +41,6 @@ const km = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ','
 const SKY: { k: keyof Settings; label: string; hint: string }[] = [
   { k: 'drama', label: 'Dramatischer Himmel', hint: 'Quellwolken, angestrahlte Wolkenfelder, Strahlen – gebacken, kostet beim Fahren nichts' },
   { k: 'sunset', label: 'Sonnenuntergangs-Licht', hint: 'Warmer Schein um die tiefe Sonne, ganz dezent – fast kostenlos' },
-  { k: 'cycle', label: 'Wetterwechsel', hint: 'Alle Stimmungen der Reihe nach (alle 16 s)' },
-  { k: 'shadows', label: 'Sonnenschatten', hint: 'Weiche Schatten um den Fahrer' },
   { k: 'bloom', label: 'Leuchten', hint: 'Glanz um helle Stellen (Bloom)' },
   { k: 'grade', label: 'Farbfilter', hint: 'Wärme, Kontrast, kühle Schatten' },
   { k: 'vignette', label: 'Vignette', hint: 'Dunklere Bildränder' },
@@ -406,16 +404,11 @@ export function RaceGpuPage({ mode = 'abfahrt' }: { mode?: 'abfahrt' | 'tt' }) {
     return () => window.clearInterval(id);
   }, [measuring]);
 
-  const moodName = (id: MoodId) => MOODS[id].name.replace('Goldene Stunde', 'Abend');
   const pct = Math.round((stats?.loading ?? 0) * 100);
   const running = ui === 'playing' || ui === 'paused' || ui === 'countdown';
 
   const settingsPanel = (
     <>
-      <div className="race-sec">
-        <span className="abf-range__label">Stimmung</span>
-        <Segmented label="Stimmung" value={settings.mood} options={MOOD_IDS.map((id) => ({ value: id, label: moodName(id) }))} onChange={(id) => change({ mood: id, cycle: false })} />
-      </div>
       <div className="abf-gfx">
         <span className="abf-range__label">Himmel und Licht</span>
         {SKY.map((t) => <Switch key={t.k} on={!!settings[t.k]} label={t.label} hint={t.hint} onChange={(v) => change({ [t.k]: v } as Partial<Settings>)} />)}

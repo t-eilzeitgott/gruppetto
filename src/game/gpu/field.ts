@@ -8,7 +8,8 @@
  * die Kacheln nahe am Fahrer zuerst.
  */
 import * as THREE from 'three/webgpu';
-import { LEVELS, type Terrain, type TreeSpot } from '../abfahrt/terrain3d';
+import { LEVELS, type Terrain, type TileData, type TreeSpot } from '../abfahrt/terrain3d';
+import type { SunBake } from './sunbake';
 
 export interface RouteSample { x: number; z: number }
 
@@ -54,6 +55,10 @@ export class Field {
   private blocks = new Map<string, Block>();
   private dirty = new Set<Block>();
   private byGeo = new Map<THREE.BufferGeometry, Tile>();
+  /** fertige Kachel, deren Sonnenlicht gerade gebacken wird (erst danach wird sie gezeigt) */
+  private shade: { tile: Tile; data: TileData; out: Float32Array; it: Generator<void, void, void> } | null = null;
+  /** vorberechnetes Sonnenlicht (fest stehende Sonne); ohne: alles im Licht */
+  sun: SunBake | null = null;
 
   constructor(private terrain: Terrain, route: RouteSample[], private mats: THREE.Material[], private ev: FieldEvents = {}) {
     this.extend(route);
@@ -151,6 +156,7 @@ export class Field {
     this.tiles = this.tiles.filter((t) => {
       if (keep[t.lv].has(t.key)) return true;
       if (this.gen?.tile === t) this.gen = null;
+      if (this.shade?.tile === t) this.shade = null;
       gone.push(t);
       return false;
     });
@@ -159,6 +165,7 @@ export class Field {
       if (t.state === 'done') { this.doneSets[t.lv].delete(nk(t.tx, t.tz)); this.done--; }
       this.total--;
       if (t.mesh) { this.byGeo.delete(t.mesh.geometry); t.mesh.geometry.dispose(); t.mesh = null; }
+      this.sun?.removeTile(t.lv, t.tx, t.tz);
       const b = this.blockOf(t);
       b.tiles.delete(t);
       this.dirty.add(b);
@@ -202,7 +209,7 @@ export class Field {
 
   /** Gibt es um (x, z) noch etwas zu bauen? */
   hasWork(x: number, z: number, near: number): boolean {
-    if (this.gen) return true;
+    if (this.gen || this.shade) return true;
     for (const t of this.tiles) if (t.state === 'todo' && Field.weight(t, x, z) <= near) return true;
     return false;
   }
@@ -220,7 +227,19 @@ export class Field {
    */
   build(x: number, z: number, until: number, near = Infinity, only = -1): boolean {
     let built = false;
+    const late = () => performance.now() > until;
     while (performance.now() < until) {
+      // Sonnenlicht der fertigen Kachel backen (in Schritten), dann zeigen
+      if (this.shade) {
+        const r = this.shade.it.next();
+        if (!r.done) continue;
+        const { tile, data, out } = this.shade;
+        this.shade = null;
+        (data.geo as unknown as THREE.BufferGeometry).setAttribute('aSun', new THREE.BufferAttribute(out, 2));
+        this.finish(tile, data);
+        built = true;
+        continue;
+      }
       if (!this.gen) {
         let best: Tile | null = null;
         let bd = Infinity;
@@ -238,6 +257,17 @@ export class Field {
       if (!r.done) continue;
       const t = this.gen.tile;
       this.gen = null;
+      const geo = r.value.geo as unknown as THREE.BufferGeometry;
+      const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+      const out = new Float32Array(pos.count * 2).fill(1);
+      if (this.sun) {
+        // die eigenen Höhen zuerst ins Höhenfeld (die Kachel beschattet sich selbst), dann je Ecke backen
+        this.sun.addTile(t.lv, t.tx, t.tz, pos.array as Float32Array);
+        const can = geo.getAttribute('aCan') as THREE.BufferAttribute | undefined;
+        this.shade = { tile: t, data: r.value, out, it: this.sun.bake(t.lv, pos.array as Float32Array, pos.count, can ? (can.array as Float32Array) : null, out, late) };
+        continue;
+      }
+      geo.setAttribute('aSun', new THREE.BufferAttribute(out, 2));
       this.finish(t, r.value);
       built = true;
     }
@@ -263,7 +293,7 @@ export class Field {
     this.dirty.add(this.blockOf(t));
   }
 
-  private finish(t: Tile, d: import('../abfahrt/terrain3d').TileData) {
+  private finish(t: Tile, d: TileData) {
     t.state = 'done';
     this.done++;
     this.doneSets[t.lv].add(nk(t.tx, t.tz));
@@ -374,7 +404,7 @@ export class Field {
 }
 
 /** Attribute, die die Bodenmaterialien lesen (der Rest der Kachel bleibt beim Zusammenlegen weg) */
-const KEEP = ['position', 'normal', 'color', 'aMat', 'aRock', 'aNz', 'aCan'];
+const KEEP = ['position', 'normal', 'color', 'aMat', 'aRock', 'aNz', 'aCan', 'aSun'];
 
 /** Kachelgeometrien hintereinanderhängen (gleiche Attribute, mit Index) */
 function mergeGeos(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {

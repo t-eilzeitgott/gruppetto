@@ -7,6 +7,7 @@ import type { Surface, SurfaceId } from './bake';
 import { decodeAlbedo, h21, tsl, vn1, type N } from './nodes';
 import { MOOD_U } from './mood';
 import { ambientAt, cheapMaterial, SUN } from './light';
+import { groundMap, lampLit, terrainSun } from './sunmap';
 
 const { attribute, cameraPosition, clamp, dot, float, floor, fwidth, max, min, mix, normalize, normalWorldGeometry, positionWorld, pow, reflect, select, smoothstep, step, texture, uv, vec2, vec3, vertexColor } = tsl;
 
@@ -72,7 +73,7 @@ function roadWear(um: N, vm: N) {
 }
 
 /** Asphalt: u quer (0 … 1 über die Fahrbahn), v längs; aT = (rechts.x, rechts.z, vorn.x, vorn.z) */
-export function roadMaterial(S: Surfaces): THREE.MeshLambertNodeMaterial {
+export function roadMaterial(S: Surfaces): THREE.MeshBasicNodeMaterial {
   const p = uv();
   const a = texture(S.asphalt.albedo, p);
   const t = texture(S.asphalt.nra, p);
@@ -112,19 +113,24 @@ export function roadMaterial(S: Surfaces): THREE.MeshLambertNodeMaterial {
   const up = normalize(vec3(refl.x, max(refl.y, float(0.25)), refl.z));
   const sheen = ambientAt(up).mul(fres).mul(mix(float(0.5), float(1.5), wet)).mul(float(1).sub(rough.mul(0.45)));
   const hv = normalize(SUN.dir.sub(view));
-  const glint = pow(max(dot(n, hv), float(0)), mix(float(40), float(140), wet)).mul(fres.mul(0.8).add(0.02)).mul(SUN.col).mul(mix(float(0.12), float(2), wet));
-  const m = cheapMaterial({ col, nWorld: n, ao: t.w, extra: sheen.add(glint) });
+  // vorberechnetes Sonnenlicht: Berge (Geländelicht) und Dinge am Rand (Bodenkarte); Laternen spiegeln warm
+  const g = groundMap(positionWorld.xz);
+  const vis = terrainSun(positionWorld.xz).mul(g.x);
+  const glint = pow(max(dot(n, hv), float(0)), mix(float(40), float(140), wet)).mul(fres.mul(0.8).add(0.02)).mul(SUN.col).mul(mix(float(0.12), float(2), wet)).mul(vis);
+  const m = cheapMaterial({ col, nWorld: n, ao: t.w, vis, extra: sheen.add(glint).add(lampLit(col.add(fres.mul(0.05)), g.w)) });
   if (/[?&]dbgroad\b/.test(location.search)) m.colorNode = vec3(W.A.inside.add(W.A.edge), W.B.inside.add(W.B.edge), W.crack.add(W.joint)).mul(0.3).add(0.02);
   m.name = 'road';
   return m;
 }
 
 /** Fahrbahnmarkierung: weiße Farbe, abgefahren, mit den Körnern des Asphalts darunter */
-export function marksMaterial(S: Surfaces): THREE.MeshLambertNodeMaterial {
+export function marksMaterial(S: Surfaces): THREE.MeshBasicNodeMaterial {
   const p = uv();
   const a = decodeAlbedo(texture(S.asphalt.albedo, p).rgb).dot(vec3(0.33, 0.33, 0.34));
   const wet = MOOD_U.wet as unknown as N;
-  const m = cheapMaterial({ col: vec3(0.78, 0.78, 0.76).mul(a.div(0.075).mul(0.18).add(0.72)).mul(mix(1, 0.7, wet)), nWorld: normalWorldGeometry });
+  const col = vec3(0.78, 0.78, 0.76).mul(a.div(0.075).mul(0.18).add(0.72)).mul(mix(1, 0.7, wet));
+  const g = groundMap(positionWorld.xz);
+  const m = cheapMaterial({ col, nWorld: normalWorldGeometry, vis: terrainSun(positionWorld.xz).mul(g.x), extra: lampLit(col, g.w) });
   m.name = 'marks';
   return m;
 }
@@ -136,20 +142,20 @@ export function metalMaterial(): THREE.MeshStandardNodeMaterial {
   return m;
 }
 
-export function woodMaterial(): THREE.MeshLambertNodeMaterial {
+export function woodMaterial(): THREE.MeshBasicNodeMaterial {
   const m = cheapMaterial({ col: vertexColor().xyz, nWorld: normalWorldGeometry });
   m.name = 'wood';
   return m;
 }
 
-export function paintMaterial(): THREE.MeshLambertNodeMaterial {
+export function paintMaterial(): THREE.MeshBasicNodeMaterial {
   const m = cheapMaterial({ col: vertexColor().xyz, nWorld: normalWorldGeometry });
   m.name = 'paint';
   return m;
 }
 
 /** Werbebanden: Atlas aus dem Spiel (Leinwand) */
-export function adsMaterial(atlas: HTMLCanvasElement): THREE.MeshLambertNodeMaterial {
+export function adsMaterial(atlas: HTMLCanvasElement): THREE.MeshBasicNodeMaterial {
   const tex = new THREE.CanvasTexture(atlas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;

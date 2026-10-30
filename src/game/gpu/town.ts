@@ -18,10 +18,11 @@ import { buildHouse, hash, rowUnits, roofColor, roofKind, wallSet, type At, type
 import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, TINTABLE, WALL_PAL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from '../abfahrt/facade';
 import { flatNormals, GB, lin, type RGBf } from '../abfahrt/models3d';
 import { MOOD_U } from './mood';
-import { ambientAt } from './light';
+import { lit } from './light';
 import { tsl, type N } from './nodes';
+import { lampHalos } from './lamps';
 
-const { floor, frontFacing, normalize, normalWorldGeometry, select, texture, transformNormalToView, uniformArray, uv, vertexColor, clamp, int } = tsl;
+const { floor, frontFacing, normalize, normalWorldGeometry, select, texture, uniformArray, uv, vertexColor, clamp, int } = tsl;
 
 type TRegion = ReturnType<Terrain['region']>;
 interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg }
@@ -35,15 +36,12 @@ const DETAIL_FAR = 150;
 /** Materialien der Orte (einmal für die ganze Welt) */
 export interface TownMats { facade: THREE.Material; tiles: THREE.Material; plain: THREE.Material; signs: THREE.Material }
 
-/** Lambert mit Umgebungslicht, beidseitig richtig beleuchtet (Rückseiten: Normale gewendet) */
-function lambert(col: N, opts: { side?: THREE.Side; emissive?: N } = {}): THREE.MeshLambertNodeMaterial {
-  const m = new THREE.MeshLambertNodeMaterial({ side: opts.side ?? THREE.FrontSide });
+/** günstiges Licht (light.ts: Sonne × vorberechnetes Sonnenlicht, Himmel), beidseitig richtig (Rückseiten: Normale gewendet) */
+function lambert(col: N, opts: { side?: THREE.Side; emissive?: N } = {}): THREE.MeshBasicNodeMaterial {
+  const m = new THREE.MeshBasicNodeMaterial({ side: opts.side ?? THREE.FrontSide });
   const n0 = normalize(normalWorldGeometry);
   const n = opts.side === THREE.DoubleSide ? select(frontFacing, n0, n0.negate()) : n0;
-  m.colorNode = col;
-  m.normalNode = transformNormalToView(n);
-  const amb: N = col.mul(ambientAt(n));
-  m.emissiveNode = opts.emissive ? amb.add(opts.emissive) : amb;
+  m.colorNode = lit({ col, nWorld: n, extra: opts.emissive });
   return m;
 }
 
@@ -60,7 +58,8 @@ export function townMaterials(): TownMats {
   const lit = new THREE.CanvasTexture(fa.night);
   lit.colorSpace = THREE.SRGBColorSpace;
   lit.wrapS = THREE.RepeatWrapping;
-  const night = MOOD_U.night as unknown as N;
+  // abends: Fenster und Leuchtschilder an (Lichter der Stimmung)
+  const night = MOOD_U.lights as unknown as N;
   // Wandfarbe je Haus: ganzzahliger Anteil von u (Index in WALL_PAL), Maske im Alpha des Atlas
   const pal = uniformArray(WALL_PAL.map((h) => new THREE.Color(h)), 'color');
   const p = uv();
@@ -121,7 +120,11 @@ function* buildGeo(gb: GB): Generator<void, THREE.BufferGeometry, void> {
   return geo;
 }
 
-export interface TownPiece { group: THREE.Group; details: { mesh: THREE.Mesh; c: THREE.Vector3; r: number }[] }
+export interface TownPiece {
+  group: THREE.Group; details: { mesh: THREE.Mesh; c: THREE.Vector3; r: number }[];
+  /** Grundrisse (x, z, Radius) und Lampen (x, y, z) des Abschnitts – für die Bodenkarte (Schatten, Lichtkegel) */
+  occ: number[]; lights: number[];
+}
 
 export interface TownCtx {
   track: Track;
@@ -179,7 +182,7 @@ export class Towns {
     this.region = this.c.terrain.region(Math.min(ax0, a1.x) - 160, Math.min(az0, a1.z) - 160, Math.max(ax0, a1.x) + 160, Math.max(az0, a1.z) + 160);
     yield;
     const group = new THREE.Group();
-    const piece: TownPiece = { group, details: [] };
+    const piece: TownPiece = { group, details: [], occ: [], lights: [] };
     const treeSpots: TreeSpot[] = [];
     for (let c0 = i0; c0 < i1; c0 += CHUNK) {
       const T = newTown();
@@ -209,9 +212,13 @@ export class Towns {
       this.phase = 'netze';
       yield;
       yield* this.meshes(T, group, piece);
-      for (let k = 0; k < T.occ.length; k++) this.occ.push(T.occ[k]);
+      for (let k = 0; k < T.occ.length; k++) { this.occ.push(T.occ[k]); piece.occ.push(T.occ[k]); }
+      for (let k = 0; k < T.lanterns.length; k++) piece.lights.push(T.lanterns[k]);
       yield;
     }
+    // Lampen glimmen (abends)
+    const halos = lampHalos(piece.lights);
+    if (halos) group.add(halos);
     if (treeSpots.length) this.c.trees(treeSpots);
     group.traverse((o) => { o.matrixAutoUpdate = false; });
     group.updateMatrixWorld(true);
@@ -240,6 +247,20 @@ export class Towns {
     if (d) {
       const bs = d.geometry.boundingSphere!;
       piece.details.push({ mesh: d, c: bs.center.clone(), r: bs.radius });
+    }
+  }
+
+  /** Schatten der Ortshäuser und Lichtkegel der Lampen für die Bodenkarte (sunmap.ts) */
+  splats(x0: number, z0: number, x1: number, z1: number, shadow: (x: number, z: number, h: number, r: number, kind: number) => void, light: (x: number, z: number, r: number, k: number) => void) {
+    for (const p of this.pieces.values()) {
+      for (let o = 0; o < p.occ.length; o += 3) {
+        const x = p.occ[o], z = p.occ[o + 1];
+        if (x >= x0 && x <= x1 && z >= z0 && z <= z1) shadow(x, z, 12, p.occ[o + 2] * 0.85, 1);
+      }
+      for (let o = 0; o < p.lights.length; o += 3) {
+        const x = p.lights[o], z = p.lights[o + 2];
+        if (x >= x0 && x <= x1 && z >= z0 && z <= z1) light(x, z, p.lights[o + 1] > 0 ? 7 : 7, 0.9);
+      }
     }
   }
 
@@ -272,7 +293,7 @@ export class Towns {
     T.plain.quad(q[0], q[1], q[2], q[3], [1, 1, 1]);
     T.signs.quad(q[0], q[1], q[2], q[3], [1, 1, 1], [[0, 0], [1, 0], [1, 1], [0, 1]]);
     T.detail.quad(q[0], q[1], q[2], q[3], [1, 1, 1]);
-    const it = this.meshes(T, g, { group: g, details: [] });
+    const it = this.meshes(T, g, { group: g, details: [], occ: [], lights: [] });
     while (!it.next().done) { /* am Stück */ }
     return g;
   }

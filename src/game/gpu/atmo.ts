@@ -9,6 +9,7 @@ import { bakeSkyCube, makeDome, makeRain, makeSun, type CloudLight, type SkyCube
 import { dirOf, LIGHT_KEYS, MOOD_IDS, MOOD_U, MOODS, resolve, type Light, type MoodId, type Settings } from './mood';
 import { tsl, h21, type N } from './nodes';
 import { AMB, AMB_DIRS, AMB_KEYS, SUN } from './light';
+import { SUNMAP } from './sunmap';
 
 const { abs, cameraPosition, cubeTexture, dot, exp, float, floor, fog, max, mix, normalize, pmremTexture, positionView, positionWorld, pow, renderOutput, screenUV, screenSize, select, smoothstep, time, uniform, uv, varying, vec2, vec3, vec4 } = tsl;
 
@@ -85,6 +86,11 @@ export class Atmo {
    */
   private envNode: N;
   settings: Settings;
+  /**
+   * feste Sonne ohne Schattenkarte (Abfahrt auf WebGPU): die Schatten sind vorberechnet (sunbake.ts, sunmap.ts) –
+   * kein Schattendurchgang, die Sonne wirft keine Schatten
+   */
+  staticSun = false;
 
   /**
    * @param eager alle Himmel gleich backen (Testbild: Stimmungswechsel ohne Wartezeit); sonst nur den gezeigten,
@@ -179,9 +185,10 @@ export class Atmo {
     if (!a || !b) return;
     const k = this.next ? this.dome.mixT.value : 0;
     const env = this.cur.env * (1 - 0.8 * this.tunnelApplied);
+    const cr = this.cur.ambR ?? 1, cg = this.cur.ambG ?? 1, cb = this.cur.ambB ?? 1;
     AMB_KEYS.forEach((key, i) => {
       const c = AMB[key].value as THREE.Color;
-      c.setRGB((a[i * 3] + (b[i * 3] - a[i * 3]) * k) * env, (a[i * 3 + 1] + (b[i * 3 + 1] - a[i * 3 + 1]) * k) * env, (a[i * 3 + 2] + (b[i * 3 + 2] - a[i * 3 + 2]) * k) * env);
+      c.setRGB((a[i * 3] + (b[i * 3] - a[i * 3]) * k) * env * cr, (a[i * 3 + 1] + (b[i * 3 + 1] - a[i * 3 + 1]) * k) * env * cg, (a[i * 3 + 2] + (b[i * 3 + 2] - a[i * 3 + 2]) * k) * env * cb);
     });
   }
 
@@ -274,8 +281,10 @@ export class Atmo {
     const h = positionWorld.y.sub(cameraPosition.y);
     const thin = exp(h.max(-600).mul(float(-0.0012).mul(this.fogThin))).clamp(0.35, 2.2);
     const f = float(1).sub(exp(d.mul(-0.000085).mul(this.fogK).mul(thin))).mul(0.92);
-    // je Ecke gerechnet (Dunst ändert sich über eine Fläche kaum): spart je Bildpunkt zwei Würfelzugriffe
-    this.scene.fogNode = fog(varying(col, 'vFogCol'), varying(f, 'vFogF'));
+    // je Ecke gerechnet (Dunst ändert sich über eine Fläche kaum): spart je Bildpunkt zwei Würfelzugriffe; Farbe und
+    // Stärke in einem Übergabewert (WebGPU erlaubt nur 16 zwischen Vertex- und Pixel-Shader)
+    const fv = varying(vec4(col, f), 'vFog');
+    this.scene.fogNode = fog(fv.xyz, fv.w);
   }
 
   /** Einstellungen übernehmen (Stimmung weich wechseln) */
@@ -285,7 +294,7 @@ export class Atmo {
     this.settings = s;
     if (dramaChanged) this.swapVariant();
     // Schatten an/aus ohne Neubau der Materialien: die Karte bleibt angeschlossen, aus = Stärke 0 und kein Durchgang
-    this.sun.castShadow = true;
+    this.sun.castShadow = !this.staticSun;
     this.sun.shadow.intensity = s.shadows ? 1 : 0;
     this.sun.shadow.autoUpdate = s.shadows;
     const sh = this.sun.shadow;
@@ -425,6 +434,8 @@ export class Atmo {
     u.bloom.value = c.bloom; u.bthr.value = c.bthr;
     this.dome.night.value = c.night;
     MOOD_U.night.value = c.night;
+    MOOD_U.lights.value = c.lights;
+    SUNMAP.lamps.value = c.lights;
     MOOD_U.wet.value = c.wet;
     MOOD_U.rain.value = c.rain;
     this.rain.strength.value = c.rain;
