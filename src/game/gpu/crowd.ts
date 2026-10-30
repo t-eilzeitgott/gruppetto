@@ -272,7 +272,7 @@ const R_OUT = 18;
 /** Überblenden beim Wechsel (s) */
 const FADE = 0.4;
 /** Bilder (2D) bis hier (m), am Ende weich ausgeblendet */
-const FAR: [number, number] = [620, 720];
+const FAR: [number, number] = [400, 470];
 
 let PAL: THREE.DataTexture | null = null;
 const palette = () => (PAL ??= paletteTexture());

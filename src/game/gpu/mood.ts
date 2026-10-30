@@ -142,8 +142,8 @@ export interface Settings {
   /** Bäume als Bilder bis so weit (m); dahinter nur das Kronendach im Boden */
   treeFar: number;
   /**
-   * Bildrate höchstens (Bilder je Sekunde; 0: so viele, wie der Bildschirm zeigt) – weniger Wärme und Akku. Auf dem
-   * iPhone kann es aber langsamer werden: mit Pausen zwischen den Bildern taktet die Grafik herunter
+   * Bildrate höchstens (Bilder je Sekunde; 0: so viele, wie der Bildschirm zeigt). Gleichmäßige 60 statt 70–120:
+   * halb so viel Arbeit je Sekunde – das Telefon wird langsamer warm und drosselt später
    */
   fpsMax: number;
 }
@@ -159,7 +159,7 @@ export const DEFAULT_SETTINGS: Settings = {
  * Spiel (Abfahrt auf WebGPU): goldene Stunde, dramatischer Himmel, Sonnenuntergangs-Licht; Bild in doppelter
  * Auflösung, die Szene darin höchstens bis ×1,4 kleiner gerechnet; Leuchten aus (eigene Bildkette)
  */
-export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'abend', drama: true, sunset: true, bloom: false, shadows: false, cycle: false, oppMax: 10, treeFar: 1100, maxDpr: 2, minDpr: 1.4, fpsMax: 0 };
+export const RACE_DEFAULTS: Settings = { ...DEFAULT_SETTINGS, mood: 'abend', drama: true, sunset: true, bloom: false, shadows: false, cycle: false, oppMax: 10, treeFar: 1100, maxDpr: 2, minDpr: 1.4, fpsMax: 60 };
 /** v2: neue Grafik (günstiges Licht, Auflösung der Szene) – alte Einstellungen gelten nicht mehr */
 export const RACE_KEY = 'gruppetto.gpu.race2';
 /** Zeitfahren (Abfahrt auf WebGPU): wie die Abfahrt – Sonnenuntergang, Lichter an */

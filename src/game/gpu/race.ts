@@ -94,6 +94,8 @@ export type RaceCam = 'chase' | 'low' | 'side' | 'drone';
 
 /** Vorrat an Gegner-Modellen (beim Laden gebaut und vorgewärmt) */
 const POOL = 16;
+/** Szene höchstens so klein (wenn das Telefon drosselt und „Szene mindestens“ nicht reicht) */
+const HEAT_DPR = 1;
 /** Fahrerfeld: volles Modell → einfaches Modell weich zwischen diesen Abständen (m) */
 /**
  * Gegner: volles Modell ab PEL_FADE[0] m (Kamera), zurück zum einfachen erst über PEL_FADE[1] – jeder wechselt einmal
@@ -666,15 +668,18 @@ export class Race {
         this.perf.event(EV.opp, `Gegner ${o.id} im Bild (${Math.round(o.z - p.z)} m)`);
       }
       const R = this.pool[i];
-      R.group.visible = true;
       t.world(o.z, o.x, 0, this.w);
       R.group.position.set(this.w.x, this.w.y, this.w.z);
       R.group.rotation.y = -this.w.th;
       const d = cp.distanceTo(R.group.position);
-      R.far(d);
       const ghost = 'ghost' in o ? (o as { ghost: number }).ghost : 0;
       // mit Fahrerfeld: einmal ins volle Modell und zurück (mit Spielraum), dabei kurz überblenden (Raster)
       const fade = this.peloton ? this.pelShare(o.id, d) : 0;
+      // ganz an das Fahrerfeld übergeben: das Modell nicht mehr zeichnen (vorher lief es unsichtbar mit – je Fahrer
+      // vier Aufrufe und ~12 000 Dreiecke, deren Bildpunkte alle verworfen wurden) und nicht mehr bewegen
+      if (this.peloton && ghost <= 0 && fade >= 0.996 && !o.wreck) { R.group.visible = false; continue; }
+      R.group.visible = true;
+      R.far(d);
       R.ghost(ghost > 0 ? 1 - ghost : fade);
       R.shadows(d < 45 && ghost <= 0);
       R.blob(!o.wreck);
@@ -1277,20 +1282,27 @@ export class Race {
     this.scenePass?.setResolutionScale(sc);
     const a = this.atmo;
     if (a) {
-      a.sharp.value = sc < 0.97 ? Math.min(0.55, (1 - sc) * 1.4) : 0;
+      // nachschärfen: beim eigenen Hochskalieren, dazu etwas, wenn der Bildschirm das Bild noch vergrößert
+      const screenUp = this.canvasDpr < (window.devicePixelRatio || 1) - 0.2 ? 0.18 : 0;
+      a.sharp.value = Math.min(0.55, (sc < 0.97 ? (1 - sc) * 1.4 : 0) + screenUp);
       const w = this.host.clientWidth || window.innerWidth;
       const h = this.host.clientHeight || window.innerHeight;
       a.texel.value.set(1 / Math.max(1, w * this.dpr), 1 / Math.max(1, h * this.dpr));
     }
   }
 
-  /** Leinwand zur Szene: bis Szene ×2,0 reicht ×2 (Nachbearbeitung auf halb so vielen Bildpunkten), ab ×2,3 voll */
+  /**
+   * Leinwand zur Szene, in Stufen von ¼: die Nachbearbeitung arbeitet auf so vielen Bildpunkten wie die Szene (bei
+   * Szene ×1,45 und Bild ×2 war es fast doppelt so viel), den Rest vergrößert der Bildschirm. Mit Spielraum nach
+   * unten, ein Wechsel legt die Puffer neu an.
+   */
   private canvasFor(d: number): number {
     const full = this.maxDpr;
-    if (full <= 2) return full;
-    if (d <= 2.0) return 2;
-    if (d >= 2.3) return full;
-    return this.canvasDpr === 2 ? 2 : full;
+    const cur = this.canvasDpr;
+    const fit = Math.min(full, Math.max(1, Math.ceil(d * 4 - 1e-3) / 4));
+    if (d > cur + 1e-3 || cur > full) return fit;
+    if (d < cur - 0.24) return fit;
+    return cur;
   }
 
   /**
@@ -1340,8 +1352,11 @@ export class Race {
     else if (this.avgMs < P * 1.04 && (gpu < 0 || (gpu < P * 0.5 && gpu + cpu < P * 0.75))) { this.fastFor += dtMs; this.slowFor = 0; }
     else { this.slowFor = 0; this.fastFor = 0; }
     const lo = Math.min(Math.max(this.settings.minDpr, this.dprFloor), this.maxDpr);
+    // Wärme: hält die Bildrate auch bei „Szene mindestens“ zwei Sekunden lang nicht (das Telefon drosselt), weiter
+    // bis ×1,0 – lieber etwas weicher als ruckelig; mit Luft geht es von selbst wieder hoch
+    const floor = this.slowFor > 2000 ? Math.min(lo, Math.max(HEAT_DPR, this.dprFloor)) : lo;
     let want = this.dpr;
-    if (this.slowFor > 500) want = Math.max(lo, this.dpr * (this.avgMs > P * 1.8 ? 0.84 : 0.9));
+    if (this.slowFor > 500) want = Math.max(floor, this.dpr * (this.avgMs > P * 1.8 ? 0.84 : 0.9));
     else if (this.fastFor > 3000) want = Math.min(this.maxDpr, this.dpr * 1.05);
     want = Math.round(want * 100) / 100;
     if (Math.abs(want - this.dpr) >= 0.01) {
