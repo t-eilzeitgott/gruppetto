@@ -27,6 +27,8 @@ import { wreckPose, type Wreck } from './wreck';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import { Houses3D } from './houses3d';
 import { Villages3D } from './village3d';
+import { LAMP_GLSL, LAMP_U, lampFrag, lampHalos, pickLamps, warmLamps } from './lamps3d';
+import { SunsetGlow } from './sunset3d';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
@@ -67,6 +69,10 @@ const MORPH_AHEAD = [Math.round(VR0.morph[0][1] * 0.23), 0];
 const RING_MIN = [2, 2, 1];
 
 const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
+/** Tageszeit der Abfahrt (palette.ts: 0,58 Abendsonne … 0,7 Sonnenuntergang): fester Abend wie in der WebGPU-Abfahrt */
+const DESCENT_TOD = 0.62;
+/** Himmel der Abfahrt: aufgerissenes Wolkenfeld mit hohen Türmen und Schleiern (dazu die Schichten des dramatischen Himmels) */
+const DESCENT_SKY: SkyMood = { cover: 0.5, cirrus: 0.75, storm: 0, overcast: 0, towers: 1 };
 
 /** Mittelwert eines Kanals – so erscheint die Textur in der Ferne (kleinste Mipmap); sRGB-Bilder linear gemittelt */
 function texMean(cv: HTMLCanvasElement, srgb: boolean, ch = 0): number {
@@ -291,7 +297,7 @@ const EDGE_IN = ROAD_HALF - 0.5;
 const widen = (x: number, e: number) => (x >= EDGE_IN ? x + e : x <= -EDGE_IN ? x - e : x);
 /** Zuschauergruppe: 3D-Netze (fein, einfach) für 10 m Straße, die Bilder (spr) decken 20 m (zwei Gruppen teilen sich eins) */
 interface CrowdBatch { near: THREE.Mesh[]; mid: THREE.Mesh[]; spr: THREE.Mesh | null; c: THREE.Vector3; r: number; sc: THREE.Vector3; sr: number; lod: number }
-interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[]; detail: Detail | null }
+interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Mesh | null; lamps: Float32Array | null; crowd: CrowdBatch[]; detail: Detail | null }
 /** Kleinteile der Häuser eines Abschnitts: nur in der Nähe sichtbar */
 interface Detail { mesh: THREE.Mesh; c: THREE.Vector3; r: number }
 /** bis zu diesem Abstand (m, waagrecht bis zum Rand) zeigen Häuser Balkone, Fensterbänke und Blumen */
@@ -658,6 +664,7 @@ export class Renderer3D {
     this.sky.renderOrder = 9;
     this.sky.frustumCulled = false;
     this.scene.add(this.sky);
+    this.scene.add(this.sunset.mesh);
 
 
     // Talboden: nur noch Rückfallfläche tief unten (die Landschaft kommt aus dem Höhenfeld)
@@ -872,12 +879,14 @@ export class Renderer3D {
     // wear: Flicken, Risse und Fugen (Asphalt; die Fahrbahn trägt dafür ihre Straßenmeter in aRoad)
     const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number, wear = false) => {
       m.onBeforeCompile = (sh) => {
-        Object.assign(sh.uniforms, roadU);
+        Object.assign(sh.uniforms, roadU, { uLampP: LAMP_U.uLampP, uLampCol: LAMP_U.uLampCol });
         sh.vertexShader = sh.vertexShader
           .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wear ? '\nattribute vec3 aRoad;\nvarying vec2 vRoad;' : ''}`)
           .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wear ? '\nvRoad = aRoad.xy;' : ''}`);
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', `#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform float uTime;\nvarying vec3 vWP;${wear ? `\nvarying vec2 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}`)
+          .replace('#include <common>', `#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform float uTime;\nvarying vec3 vWP;${wear ? `\nvarying vec2 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
+          // Lichtkegel der Laternen auf Straße und Bankett
+          .replace('#include <lights_fragment_end>', lampFrag('vWP'))
           .replace('#include <map_fragment>', `
             #ifdef USE_MAP
               ${wear ? `// Körnung ohne erkennbare Wiederholung (sonst alle 5 m dieselben Steine): Koordinaten weich verbogen
@@ -895,7 +904,7 @@ export class Renderer3D {
               ${gfxOn('details') ? CLOUD('vWP.xz') : ''}
             #endif`);
       };
-      m.customProgramCacheKey = () => `road-${key}${wear ? 'w' : ''}${dk()}`;
+      m.customProgramCacheKey = () => `road-${key}${wear ? 'w' : ''}${dk()}|L`;
     };
     roadify(this.mats.asphalt, 'a', 0.34, true);
     roadify(this.mats.fresh, 'f', 0.18, true);
@@ -911,14 +920,16 @@ export class Renderer3D {
     const grassU = { uGrass: { value: grass.tex }, uGrassMean: { value: grass.mean } };
     const rockU = { uRock: { value: rockMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uCanD: this.canU, ...grassU };
     const rockify = (sh: THREE.WebGLProgramParametersWithUniforms) => {
-      Object.assign(sh.uniforms, rockU);
+      Object.assign(sh.uniforms, rockU, { uLampP: LAMP_U.uLampP, uLampCol: LAMP_U.uLampCol });
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vRockP;')
         .replace('#include <project_vertex>', '#include <project_vertex>\nvRockP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
       // (uRelief und uTime erklärt auf der feinsten Landschaftsstufe schon der Landschafts-Shader – nicht doppelt,
       // sonst übersetzt der Shader nicht und die Stufe bleibt unsichtbar)
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\nuniform sampler2D uRock;\n#ifndef SPLAT_U\nuniform sampler2D uRelief;\nuniform float uTime;\nuniform vec4 uCanD;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\n${NOISE_GLSL}\n${RELIEF_GLSL}\n${MEADOW_GLSL}\n#endif\nvarying vec3 vRockP;`)
+        .replace('#include <common>', `#include <common>\nuniform sampler2D uRock;\n#ifndef SPLAT_U\nuniform sampler2D uRelief;\nuniform float uTime;\nuniform vec4 uCanD;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\n${NOISE_GLSL}\n${RELIEF_GLSL}\n${MEADOW_GLSL}\n#endif\nvarying vec3 vRockP;\n${LAMP_GLSL}`)
+        // Lichtkegel der Laternen (Hänge am Straßenrand, Portale, feinste Landschaftsstufe)
+        .replace('#include <lights_fragment_end>', lampFrag('vRockP'))
         .replace('#include <map_fragment>', `
           #ifdef USE_MAP
             vec4 sampledDiffuseColor = texture2D(map, vMapUv);
@@ -984,7 +995,7 @@ export class Renderer3D {
     };
     for (const [m, key] of [[this.mats.terrain, 'rock-terr'], [this.mats.portal, 'rock-portal']] as [THREE.Material, string][]) {
       m.onBeforeCompile = rockify;
-      m.customProgramCacheKey = () => key + dk();
+      m.customProgramCacheKey = () => key + dk() + '|L';
     }
     // Landschaft pro Bildpunkt: Wald (Kronendach, organischer Rand), Fels und Schnee aus Gewichten je Ecke,
     // aufgebrochen mit Rauschen – statt verwaschener Eckpunktfarben
@@ -1246,7 +1257,7 @@ export class Renderer3D {
           // Prüfmodus: abgesenkte gröbere Stufe sichtbar = Loch in der feineren (magenta)
           .replace('#include <dithering_fragment>', '#include <dithering_fragment>\nif (uHole > 0.5 && vLow > 0.5) gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);');
       };
-      m.customProgramCacheKey = () => `${key}${lv}${rock ? dk() : ''}`;
+      m.customProgramCacheKey = () => `${key}${lv}${rock ? dk() + (lv === 0 ? '|L' : '') : ''}`;
       return m;
     };
     this.terrMats = LEVELS.map((_, lv) => lower(L({ vertexColors: true, map: lv === 0 ? detail : null }), lv, lv === 1 ? 110 : 380, 'terr', true));
@@ -1516,6 +1527,9 @@ export class Renderer3D {
       this.camera.position.set(d[0], d[1], d[2]);
       this.camera.lookAt(d[3], d[4], d[5]);
     }
+    this.pickLamps(p.z);
+    // Sonnenuntergangs-Licht (Abfahrt am Abend; nicht unter dem Wetter – das hat seine eigene Nachbearbeitung)
+    this.sunset.update(this.camera, ATMO.fogSunDir.value, track.kind === 'descent' && this.debugTod === null, this.tunnelDim, dt);
     this.updateEnvironment(biome, dt);
     this.updateTerrain(g, dt);
     this.work = performance.now() - w0;
@@ -1554,7 +1568,8 @@ export class Renderer3D {
 
   private reset(track: Track) {
     this.track = track;
-    this.mood = dailyMood(track.seed);
+    // Abfahrt: ein fester Abendhimmel (dramatischer Himmel, sky.ts) statt der Stimmung des Tages
+    this.mood = track.kind === 'descent' ? { ...DESCENT_SKY } : dailyMood(track.seed);
     this.skyMat.uniforms.uSeed.value = (hash(track.seed + 3) - 0.5) * 40;
     this.skyLife.reset();
     this.tunSpan.clear();
@@ -2241,7 +2256,8 @@ export class Renderer3D {
     if (this.debugTod !== null) return this.debugTod;
     const t = this.track!;
     const v = hash(t.seed);
-    if (t.kind === 'descent') return 0.1 + v * 0.08 + 0.56 * smooth01(g.p.z / 7500);
+    // Abfahrt: Abend wie in der WebGPU-Abfahrt – tiefe Sonne, warmes Licht, die Lichter brennen schon (updateLight)
+    if (t.kind === 'descent') return DESCENT_TOD;
     const fin = t.kind === 'sprint' ? SPRINT_FINISH : t.kind === 'tt' ? TT_FINISH : MOUNTAIN_FINISH;
     const a = 0.16 + v * 0.12;
     const b = 0.62 + hash(t.seed + 7) * 0.05;
@@ -2306,13 +2322,18 @@ export class Renderer3D {
     u.uTime.value = this.time.value;
     u.uCover.value = M.cover; u.uCirrus.value = M.cirrus; u.uStorm.value = M.storm; u.uOvercast.value = M.overcast; u.uTowers.value = M.towers;
     u.uStars.value = L.stars; u.uWarm.value = Math.max(0, Math.min(1, (L.t - 0.3) / 0.4));
-    this.mats.facade.emissiveIntensity = L.lights * 1.25;
-    this.houses.lights.value = L.lights;
-    this.mats.sign.emissiveIntensity = L.lights * 0.75;
-    const dusk = Math.max(0, Math.min(1, (L.lights - 0.08) / 0.4));
+    u.uDrama.value = this.track?.kind === 'descent' ? 1 : 0;
+    // Fenster, Laternen, Lichterketten: in der Abfahrt (Abend) überall an, sonst mit der Tageszeit
+    const lampsOn = this.track?.kind === 'descent' && this.debugTod === null ? 1 : L.lights;
+    this.mats.facade.emissiveIntensity = lampsOn * 1.25;
+    this.houses.lights.value = lampsOn;
+    this.mats.sign.emissiveIntensity = lampsOn * 0.75;
+    const dusk = Math.max(0, Math.min(1, (lampsOn - 0.08) / 0.4));
     this.mats.bulb.opacity = dusk;
     this.mats.lantern.opacity = dusk * 0.85;
-    this.mats.glow.opacity = Math.max(0, L.lights - 0.2) * 1.1;
+    this.mats.glow.opacity = Math.max(0, lampsOn - 0.2) * 1.1;
+    // Halos und Lichtkegel der Laternen (lamps3d.ts)
+    LAMP_U.uLampK.value = Math.max(0, Math.min(1, (lampsOn - 0.12) / 0.55));
     if (!this.holeMode) this.valleyMat.color.copy(fogC);
     // Berge am Horizont: dasselbe Licht wie die Landschaft (Lambert: Lichtfarbe · Stärke / π)
     {
@@ -2939,6 +2960,9 @@ export class Renderer3D {
     g.add(new THREE.Mesh(this.rs.mesh.geometry, this.rs.mesh.material));
     // Alpenhäuser (Dörfer, Höfe)
     for (const o of this.houses.warmObjects()) g.add(o);
+    // Halos der Laternen, Sonnenuntergangs-Licht
+    g.add(warmLamps());
+    g.add(new THREE.Mesh(this.sunset.mesh.geometry, this.sunset.mesh.material));
     if (!this.houses.group.parent) this.scene.add(this.houses.group);
     // Berge am Horizont: beide Spielarten am Leben halten (Landschaftswechsel tauscht ihr Material)
     this.peakU.uNoise.value ??= this.noiseMap;
@@ -3593,14 +3617,12 @@ export class Renderer3D {
       } else batch.spr = crowd[crowd.length - 1].spr;
       crowd.push(batch);
     }
-    let glow: THREE.Points | null = null;
+    // Laternen: Halo je Lampe (heller Kern, warmer Hof); ihre Köpfe werfen den Lichtkegel auf den Boden (pickLamps)
+    let glow: THREE.Mesh | null = null;
+    const lamps = glows.length ? new Float32Array(glows) : null;
     if (glows.length) {
-      const gg = new THREE.BufferGeometry();
-      gg.setAttribute('position', new THREE.Float32BufferAttribute(glows, 3));
-      disp.push(gg);
-      glow = new THREE.Points(gg, this.mats.glow);
-      glow.renderOrder = 5;
-      group.add(glow);
+      glow = lampHalos(glows);
+      if (glow) { disp.push(glow.geometry); group.add(glow); }
     }
     for (const [pts, mat] of [[town.lanterns, this.mats.lantern], [town.bulbs, this.mats.bulb]] as const) {
       if (!pts.length) continue;
@@ -3615,7 +3637,7 @@ export class Renderer3D {
     group.traverse((o) => { o.matrixAutoUpdate = false; o.updateMatrix(); });
     group.updateMatrixWorld(true);
     return {
-      idx: ci, group, glow, crowd, detail,
+      idx: ci, group, glow, lamps, crowd, detail,
       dispose: () => {
         for (const d of disp) d.dispose();
         for (const geo of crowdGeos) disposeCrowdGeometry(geo);
@@ -5606,6 +5628,22 @@ export class Renderer3D {
     let list = this.riderPool.get(m.kitKey);
     if (!list) { list = []; this.riderPool.set(m.kitKey, list); }
     list.push(m);
+  }
+
+  // ------------------------------------------------------------------ Laternen: Lichtkegel
+
+  private lampLists: Float32Array[] = [];
+  /** Sonnenuntergangs-Licht über dem ganzen Bild (sunset3d.ts) */
+  private sunset = new SunsetGlow();
+  /** Lichtkegel: die nächsten Laternen zur Kamera (aus den Abschnitten um den Fahrer) ins Uniform-Feld */
+  private pickLamps(z: number) {
+    const L = this.lampLists;
+    L.length = 0;
+    if (LAMP_U.uLampK.value > 0.001) {
+      const ci = Math.floor(z / (SEG * CH));
+      for (let k = ci - 2; k <= ci + 3; k++) { const c = this.chunks.get(k); if (c?.lamps) L.push(c.lamps); }
+    }
+    pickLamps(L, this.camera.position, LAMP_U.uLampK.value);
   }
 
   // ------------------------------------------------------------------ Häuser, Dörfer, Bäume weg

@@ -47,8 +47,10 @@ export const SKY_VERT = 'varying vec3 vDir; void main(){ vDir = normalize(positi
 export const SKY_FRAG = `
 uniform vec3 top; uniform vec3 horizon; uniform vec3 below; uniform vec3 sunDir; uniform vec3 sunCol; uniform float sunSize; uniform float uHoles;
 uniform sampler2D uNoise;
-uniform float uTime, uSeed, uCover, uCirrus, uStorm, uOvercast, uTowers, uStars, uWarm;
+uniform float uTime, uSeed, uCover, uCirrus, uStorm, uOvercast, uTowers, uStars, uWarm, uDrama;
 varying vec3 vDir;
+
+float lumF( vec3 c ) { return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); }
 
 float hash21( vec2 p ) { p = fract( p * vec2( 123.34, 456.21 ) ); p += dot( p, p + 45.32 ); return fract( p.x * p.y ); }
 
@@ -82,10 +84,54 @@ void main(){
 	zen = mix( zen, zen * vec3( 0.42, 0.47, 0.62 ) + vec3( 0.02, 0.02, 0.05 ), storm * 0.9 );
 	hz = mix( hz, hz * vec3( 0.5, 0.52, 0.58 ), storm * 0.85 );
 	zen = mix( zen, mix( hz, zen, 0.35 ) * vec3( 0.86, 0.88, 0.9 ), over );
-	vec3 c = h > 0.0 ? mix( hz, zen * 0.92, pow( e, 0.42 ) ) : mix( hz, below, clamp( - h * 6.0, 0.0, 1.0 ) );
+	/* (dramatischer Himmel: das Blau reicht weiter herab – Abendrot nur am Horizont, darüber klares Blau) */
+	vec3 c = h > 0.0 ? mix( hz, zen * 0.92, pow( e, mix( 0.42, 0.3, uDrama ) ) ) : mix( hz, below, clamp( - h * 6.0, 0.0, 1.0 ) );
 	/* Abendrot: zur Sonne hin färbt sich der Horizont in ihrer Farbe, gegenüber bleibt er kühl; unter einer Front glüht es */
 	float toSun = pow( s, 2.0 ) * ( 1.0 - smoothstep( 0.0, 0.5, e ) );
 	c += sunCol * toSun * ( 0.12 + 0.5 * dusk + 0.35 * storm ) * sunUp;
+
+	/* --- dramatischer Himmel (Abfahrt, wie in der WebGPU-Abfahrt): Farben wie bei gemalten Wolken – Licht in der Farbe
+	   der Sonne, Schatten schieferblau; Helligkeit aus dem blanken Himmel */
+	float drama = uDrama * ( 1.0 - storm ) * ( 1.0 - over );
+	float dBase = max( lumF( zen ) * 0.5 + lumF( hz ) * 0.5, 0.01 );
+	float dLow = clamp( 1.0 - ( degrees( asin( clamp( sd.y, - 1.0, 1.0 ) ) ) - 4.0 ) / 26.0, 0.0, 1.0 );
+	vec3 dWarm = mix( max( mix( sunCol / max( lumF( sunCol ), 1e-4 ), hz / max( lumF( hz ), 1e-4 ), 0.3 ), 0.0 ), vec3( 1.0 ), 0.22 );
+	vec3 dCool = max( mix( zen / max( lumF( zen ), 1e-4 ), vec3( 0.78, 0.74, 0.92 ), 0.45 ), 0.0 );
+	vec3 dLit = dWarm * dBase * ( 2.1 + dLow * 0.7 );
+	vec3 dShadow = dCool * dBase * ( 0.36 - dLow * 0.1 );
+	/* Blick von der Sonne weg (angestrahlt) … zur Sonne (Gegenlicht) */
+	float facing = dot( normalize( d.xz + vec2( 1e-5, 0.0 ) ), normalize( sd.xz + vec2( 1e-5, 0.0 ) ) );
+	float frontL = ( 1.0 - facing ) * 0.5;
+	float cosS = dot( d, sd );
+	float towerA = 0.0;
+	if ( drama > 0.001 ) {
+		/* Quelltürme rund um den Horizont: Höhenzug mit blumenkohligen Kanten, um die Sonne eine Lücke; von der
+		   Sonne weg angestrahlt (Alpenglühen), zur Sonne hin Schattenrisse mit Lichtsaum, unten im Dunst */
+		float az = atan( d.z, d.x );
+		vec2 cs = vec2( cos( az ), sin( az ) );
+		float ridge = texture2D( uNoise, cs * 0.55 + vec2( 0.31, 0.12 ) ).g * 0.6 + texture2D( uNoise, cs * 1.4 + vec2( 0.73, 0.41 ) ).r * 0.4;
+		float region = smoothstep( 0.35, 0.65, texture2D( uNoise, cs * 0.21 + vec2( 0.5, 0.9 ) ).b );
+		float gap = 1.0 - smoothstep( 0.86, 0.97, facing ) * 0.85;
+		float top = ( 0.025 + pow( ridge, 1.5 ) * 0.5 * region ) * gap + 0.006;
+		/* Kante: runde Bauschen (grob längs des Horizonts, wenig in der Höhe – sonst züngelt es wie Flammen) */
+		vec2 qb = cs * 4.2 + vec2( 0.0, h * 2.6 );
+		float bill = texture2D( uNoise, qb ).r * 0.7 + texture2D( uNoise, qb * 2.1 + 0.37 ).g * 0.3;
+		float edge = top + ( bill - 0.5 ) * ( top * 0.42 + 0.012 );
+		float inside = edge - h;
+		towerA = smoothstep( 0.0, 0.012, inside ) * smoothstep( - 0.08, - 0.01, h ) * drama * 0.9;
+		if ( towerA > 0.001 ) {
+			float h01 = clamp( h / max( top, 0.01 ), 0.0, 1.0 );
+			float above = texture2D( uNoise, cs * 4.2 + vec2( 0.0, ( h + 0.05 ) * 2.6 ) ).r;
+			float relief = clamp( ( bill - above ) * 3.0 + 0.5, 0.0, 1.0 );
+			/* unten im eigenen Schatten, oben und an den Bauschen angestrahlt */
+			float tl = clamp( frontL * 0.35 + smoothstep( 0.1, 0.95, h01 ) * 0.5 + ( relief - 0.5 ) * 0.9 - 0.08, 0.0, 1.0 );
+			vec3 tc = mix( dShadow, dLit, smoothstep( 0.08, 0.85, tl ) );
+			float rimT = exp( - max( inside, 0.0 ) / 0.0035 ) * ( max( facing, 0.0 ) * 0.9 * dLow + 0.2 );
+			tc += dWarm * max( lumF( c ), dBase ) * rimT * 0.65;
+			tc = mix( tc, c, pow( 1.0 - h01, 3.0 ) * 0.55 );
+			c = mix( c, tc, towerA );
+		}
+	}
 
 	/* --- Quellwolken: auf eine Ebene projiziert (Perspektive zum Horizont) */
 	float pe = e + 0.09;
@@ -119,6 +165,15 @@ void main(){
 	vec3 litCol = sunLit * ( 0.72 + 0.28 * ( 1.0 - thick ) );
 	vec3 cloudCol = mix( shadeCol, litCol, lit * mix( 0.5, 1.0, 1.0 - thick * uTowers ) );
 	cloudCol = mix( cloudCol, sunCol * ( 1.1 + 0.3 * dusk ), lowSun * thick * ( 0.3 + 0.3 * lit ) );
+	if ( drama > 0.001 ) {
+		/* aufgerissenes Wolkenfeld: dünne Ränder zur Sonne leuchten, dicke Kerne bleiben schieferblau; im Gegenlicht
+		   Glut in den dünnen Teilen, die dicken als Schattenriss */
+		float Lk = clamp( lit * 0.75 + frontL * 0.3 - thick * 0.25 + 0.1, 0.0, 1.0 );
+		vec3 dc = mix( dShadow, dLit, Lk );
+		float back = pow( cosS * 0.5 + 0.5, 8.0 );
+		dc = mix( dc, dShadow * 0.85 + dWarm * max( lumF( c ), dBase ) * ( 1.0 - thick ) * 1.15, back * 0.85 );
+		cloudCol = mix( cloudCol, dc, drama );
+	}
 	/* Silberstreifen: dünne Ränder vor der Sonne leuchten */
 	float rim = smoothstep( 0.0, 0.35, dens ) * ( 1.0 - smoothstep( 0.35, 0.95, dens ) );
 	cloudCol += sunCol * rim * pow( s, 6.0 ) * 1.4 * sunUp;
@@ -157,8 +212,20 @@ void main(){
 		c = mix( c, cirCol, cir * 0.55 * ( 1.0 - alpha * 0.8 ) );
 	}
 
+	/* --- dramatischer Himmel: Strahlen um die tiefe Sonne – helle Fächer, nach außen auslaufend */
+	if ( drama > 0.001 && dLow > 0.05 ) {
+		vec3 t1 = normalize( cross( vec3( 0.0, 1.0, 0.0 ), sd ) );
+		vec3 b1 = cross( sd, t1 );
+		float phi = atan( dot( d, b1 ), dot( d, t1 ) );
+		vec2 pc = vec2( cos( phi ), sin( phi ) );
+		float rays = smoothstep( 0.5, 0.8, texture2D( uNoise, pc * 2.2 + vec2( 0.2, 0.6 ) ).r ) * ( smoothstep( 0.5, 0.8, texture2D( uNoise, pc * 0.8 + vec2( 0.5, 0.1 ) ).g ) * 0.6 + 0.4 );
+		float ang = acos( clamp( cosS, - 1.0, 1.0 ) );
+		float fall = exp( - ang * 2.6 ) * smoothstep( 0.03, 0.14, ang ) * smoothstep( - 0.02, 0.05, h );
+		c += dWarm * dBase * rays * fall * 0.32 * dLow * drama;
+	}
+
 	/* --- Sonne: Scheibe, Hof, Glühen – hinter Wolken verdeckt, vor dem Abendrot weit leuchtend */
-	float occ = 1.0 - alpha * ( 0.92 - storm * 0.3 );
+	float occ = ( 1.0 - alpha * ( 0.92 - storm * 0.3 ) ) * ( 1.0 - towerA * 0.95 );
 	c += sunCol * ( pow( s, 900.0 ) * 3.0 * sunSize * occ + pow( s, 24.0 ) * ( 0.35 + 0.45 * dusk ) * ( 0.5 + 0.5 * occ ) + pow( s, 4.0 ) * ( 0.12 + 0.3 * dusk ) ) * sunUp;
 
 	/* --- Sterne */
@@ -184,5 +251,7 @@ export function skyUniforms(noise: THREE.Texture): Record<string, THREE.IUniform
     uHoles: { value: 0 }, uNoise: { value: noise },
     uTime: { value: 0 }, uSeed: { value: 0 }, uCover: { value: 0.4 }, uCirrus: { value: 0.5 }, uStorm: { value: 0 }, uOvercast: { value: 0 },
     uTowers: { value: 0.5 }, uStars: { value: 0 }, uWarm: { value: 0 },
+    /** dramatischer Himmel (Abfahrt): Quelltürme am Horizont, Wolkenfeld mit Lichtkanten, Strahlen um die tiefe Sonne */
+    uDrama: { value: 0 },
   };
 }
