@@ -593,7 +593,9 @@ export class Race {
     const p = e.p;
     const max = Math.min(POOL, Math.round(this.settings.oppMax));
     // Geister (Zeitfahren) erst, wenn sie eingeblendet sind (vor dem Start steht der Fahrer allein auf der Rampe)
-    const list = e.opps.filter((o) => o.z > p.z - 40 && o.z < p.z + 300 && !('ghost' in o && (o as { ghost: number }).ghost <= 0)).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, max);
+    // mit Fahrerfeld (Instanzen für die übrigen): volles Modell nur für die Nächsten in ~25 m (dort sieht man Details)
+    const near = this.peloton ? 26 : 300;
+    const list = e.opps.filter((o) => o.z > p.z - Math.min(40, near) && o.z < p.z + near && !('ghost' in o && (o as { ghost: number }).ghost <= 0)).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, max);
     const keep = new Set(list.map((o) => o.id));
     for (const [id, i] of this.poolOf) {
       if (keep.has(id)) continue;
@@ -850,6 +852,7 @@ export class Race {
   private lookOk = false;
   private swing = 0;
   private chaseLift = 0;
+  private camDir = new THREE.Vector3();
   /** Zeit (s) seit dem Ende der letzten TV-Einstellung */
   private tvCool = 99;
   /** Zusatzbogen des laufenden Kameraflugs (m), damit er nicht durch Hang oder Bäume geht */
@@ -1419,13 +1422,14 @@ export class Race {
       if (mood !== this.shownMood) { if (this.shownMood) P.event(EV.mood, mood); this.shownMood = mood; }
       P.mark(2);
       const cp = this.camera.position;
+      const cd = this.camera.getWorldDirection(this.camDir);
       world.trees.update(cp);
       P.mark(3);
-      world.houses.update(cp);
+      world.houses.update(cp, false, cd);
       P.mark(4);
       world.life.update(cp);
       P.mark(5);
-      world.crowd?.update(cp, this.rider.group.position);
+      world.crowd?.update(cp, this.rider.group.position, false, cd);
       P.mark(6);
       P.mark(7);
       this.objects?.update(e.track, e.p.z, this.time);
@@ -1557,6 +1561,11 @@ export class Race {
   /** Prüfhilfe: Szene (welche Materialien/Geometrien sind sichtbar) */
   get debugScene(): THREE.Scene { return this.scene; }
   get debugRenderer(): THREE.WebGPURenderer { return this.renderer; }
+  /** Prüfhilfe: liegt das Objekt im Sichtkegel der Kamera? */
+  get debugFrustum(): (o: THREE.Object3D) => boolean {
+    const f = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+    return (o) => { const m = o as THREE.Mesh; const bs = m.geometry?.boundingSphere; if (!bs) return true; const s = bs.clone().applyMatrix4(m.matrixWorld); return f.intersectsSphere(s); };
+  }
   /** Prüfhilfe (ohne Bildschirm): n Bilder zeichnen und auf die Grafik warten – Zeit je Bild (ms) */
   async benchDraw(n = 5): Promise<number> {
     const e = this.eng;

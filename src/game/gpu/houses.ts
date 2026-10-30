@@ -266,9 +266,18 @@ export class Houses {
   }
 
   /** Stufen nach Abstand verteilen (neu, wenn die Kamera 6 m weiter ist) */
-  update(cam: THREE.Vector3, force = false) {
-    if (!this.spots.length || (!force && this.at.distanceToSquared(cam) < 36)) return;
+  private dirAt = new THREE.Vector2(0, 0);
+  /**
+   * dir: Blickrichtung der Kamera – Häuser weit hinter der Kamera fallen weg (neu verteilt, wenn sich die Kamera
+   * um mehr als ~10° dreht)
+   */
+  update(cam: THREE.Vector3, force = false, dir?: THREE.Vector3) {
+    let dx = 0, dz = 0;
+    if (dir) { const l = Math.hypot(dir.x, dir.z) || 1; dx = dir.x / l; dz = dir.z / l; }
+    const turned = !!dir && dx * this.dirAt.x + dz * this.dirAt.y < 0.985;
+    if (!this.spots.length || (!force && !turned && this.at.distanceToSquared(cam) < 36)) return;
     this.at.copy(cam);
+    this.dirAt.set(dx, dz);
     const cnt = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
     const put = (lod: number, s: Spot) => {
       // während addRange noch baut (es gibt zwischendurch ab), kann es mehr Häuser als Platz geben – die neuen,
@@ -284,6 +293,8 @@ export class Houses {
     };
     for (const s of this.spots) {
       const d = Math.hypot(s.x - cam.x, s.z - cam.z);
+      // weit hinter der Kamera: nicht zeichnen
+      if (dir && d > 45 && (s.x - cam.x) * dx + (s.z - cam.z) * dz < -0.3 * d) continue;
       // Kirchen (groß, hoch) erst später in die gröbere Stufe
       const f = s.kind === KIND.church ? BIG : 1;
       // im Überblendband in beide Stufen

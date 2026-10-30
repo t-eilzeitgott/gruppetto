@@ -346,7 +346,7 @@ function farPerson(): THREE.BufferGeometry {
 
 /** Stufen: fein bis hier (m), einfach bis da, Kasten-Menschen bis dort */
 // enger als früher (16/30/170): am Start stehen über hundert Menschen, die feine Stufe hat 1300 Dreiecke und wirft Schatten
-const LOD_D = [11, 24, 150];
+const LOD_D = [11, 24, 125];
 
 interface Group { geo: THREE.InstancedBufferGeometry; buf: THREE.InstancedInterleavedBuffer; data: Float32Array; mesh: THREE.Mesh }
 
@@ -542,16 +542,23 @@ export class Crowd {
   }
 
   /** Stufen je Mensch nach Abstand (neu, wenn die Kamera 3 m weiter ist) */
-  update(cam: THREE.Vector3, rider: THREE.Vector3, force = false) {
+  private dirAt = new THREE.Vector2(0, 0);
+  /** dir: Blickrichtung der Kamera – Menschen hinter der Kamera fallen weg (neu, wenn sie sich um ~10° dreht) */
+  update(cam: THREE.Vector3, rider: THREE.Vector3, force = false, dir?: THREE.Vector3) {
     this.rider.value.copy(rider);
-    if (!this.groups.length || (!force && this.at.distanceToSquared(cam) < 9)) return;
+    let dx = 0, dz = 0;
+    if (dir) { const l = Math.hypot(dir.x, dir.z) || 1; dx = dir.x / l; dz = dir.z / l; }
+    const turned = !!dir && dx * this.dirAt.x + dz * this.dirAt.y < 0.985;
+    if (!this.groups.length || (!force && !turned && this.at.distanceToSquared(cam) < 9)) return;
     this.at.copy(cam);
+    this.dirAt.set(dx, dz);
     const cnt = [0, 0, 0];
     const n = this.people.length;
     for (let k = 0; k < n; k++) {
       const p = this.people[k];
       const d = Math.hypot(p.x - cam.x, p.z - cam.z);
       if (d > LOD_D[2]) continue;
+      if (dir && d > 16 && (p.x - cam.x) * dx + (p.z - cam.z) * dz < -0.3 * d) continue;
       const lod = d < LOD_D[0] ? 0 : d < LOD_D[1] ? 1 : 2;
       const g = this.groups[lod];
       g.data.set(this.src.subarray(k * PS, k * PS + PS), cnt[lod] * PS);
