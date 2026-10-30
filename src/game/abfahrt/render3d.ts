@@ -30,7 +30,7 @@ import { Villages3D } from './village3d';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
-import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, needs, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
+import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
 import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
 import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeTint, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
 import { mulberry32 } from './rng';
@@ -226,6 +226,30 @@ const FIELD_FAR = 650;
  */
 const LOOKS: Kit[] = Array.from({ length: 16 }, (_, i) => ({ ...TEAM_KITS[i % TEAM_KITS.length], skin: SKINS[(i * 3 + 1) % SKINS.length], number: String(11 + ((i * 37) % 180)) }));
 const LOOK_KEYS = new Set(LOOKS.map(riderKitKey));
+/**
+ * Feste Zuschauergruppen, wie sie an jeder Bergstraße sitzen und stehen – zehn Vorlagen, immer wieder verwendet:
+ * Familie mit Kindern, Fanclub mit Fahnen, Wanderer, Picknick, Paar, Radler mit Kindern, Senioren auf der Bank,
+ * Party, Fotografen, Clique am Hang. Sitzende auf Klappstühlen. u: längs der Straße (m), q: vom Bankett weg (m)
+ */
+const GROUPS: { u: number; q: number; act: number; kid?: boolean }[][] = [
+  [{ u: 0, q: 1.2, act: Act.sit }, { u: 0.7, q: 1.3, act: Act.sit }, { u: -0.6, q: 0.8, act: Act.cheer, kid: true }, { u: 1.4, q: 0.8, act: Act.jump, kid: true }, { u: 0.3, q: 2.2, act: Act.wave }],
+  [{ u: 0, q: 0.6, act: Act.flag }, { u: 0.9, q: 0.7, act: Act.cheer }, { u: 1.8, q: 0.5, act: Act.flag }, { u: 0.5, q: 1.7, act: Act.sit }, { u: 1.4, q: 1.8, act: Act.sit }, { u: -0.8, q: 1.0, act: Act.shout }],
+  [{ u: 0, q: 1.5, act: Act.sit }, { u: 1.1, q: 1.8, act: Act.sit }, { u: 2.0, q: 1.1, act: Act.clap }],
+  [{ u: 0, q: 1.4, act: Act.sit }, { u: 0.8, q: 1.0, act: Act.sit }, { u: 0.9, q: 2.1, act: Act.sit }, { u: 1.7, q: 1.5, act: Act.sit }],
+  [{ u: 0, q: 0.5, act: Act.clap }, { u: 0.6, q: 0.6, act: Act.film }],
+  [{ u: 0, q: 0.7, act: Act.cheer }, { u: 0.7, q: 0.6, act: Act.jump, kid: true }, { u: 1.3, q: 0.8, act: Act.wave, kid: true }, { u: 0.4, q: 1.8, act: Act.sit }],
+  [{ u: 0, q: 1.0, act: Act.sit }, { u: 0.65, q: 1.0, act: Act.sit }, { u: 1.3, q: 1.05, act: Act.sit }],
+  [{ u: 0, q: 0.8, act: Act.dance }, { u: 0.8, q: 1.1, act: Act.cheer }, { u: 1.6, q: 0.7, act: Act.dance }, { u: 0.4, q: 2.0, act: Act.jump }, { u: 1.3, q: 2.1, act: Act.shout }, { u: 2.3, q: 1.6, act: Act.sit }],
+  [{ u: 0, q: 0.5, act: Act.film }, { u: 1.0, q: 0.9, act: Act.film }, { u: 0.5, q: 1.8, act: Act.sit }],
+  [{ u: 0, q: 0.9, act: Act.sit }, { u: 0.7, q: 0.9, act: Act.sit }, { u: 1.4, q: 1.0, act: Act.sit }, { u: 2.1, q: 0.9, act: Act.sit }, { u: 0.3, q: 2.0, act: Act.cheer }, { u: 1.1, q: 2.1, act: Act.wave }, { u: 1.8, q: 2.1, act: Act.flag }],
+];
+/** Anteil der Straßenstücke (je Seite) mit einer Gruppe: etwa alle 50 m eine */
+const GROUP_P = 1 / 25;
+/** Böden, auf denen Gruppen sitzen und stehen */
+const GROUP_GROUND = new Set(['meadow', 'field', 'snow', 'pavement']);
+
+/** Zuschauer (Bilder) bis so weit (m) */
+const CROWD_FAR = 1300;
 const smoothstep = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 /** Fan-Bögen: Masten knapp hinter der Absperrung, Spruchband hoch genug für die hohe Finalkamera */
@@ -268,8 +292,6 @@ const widen = (x: number, e: number) => (x >= EDGE_IN ? x + e : x <= -EDGE_IN ? 
 /** Zuschauergruppe: 3D-Netze (fein, einfach) für 10 m Straße, die Bilder (spr) decken 20 m (zwei Gruppen teilen sich eins) */
 interface CrowdBatch { near: THREE.Mesh[]; mid: THREE.Mesh[]; spr: THREE.Mesh | null; c: THREE.Vector3; r: number; sc: THREE.Vector3; sr: number; lod: number }
 interface Chunk { idx: number; group: THREE.Group; dispose: () => void; glow: THREE.Points | null; crowd: CrowdBatch[]; detail: Detail | null }
-/** Zubehör der Zuschauer, das die einfache Stufe (ab 16 m) weglässt */
-const MID_SKIP = new Set<string>(['small']);
 /** Kleinteile der Häuser eines Abschnitts: nur in der Nähe sichtbar */
 interface Detail { mesh: THREE.Mesh; c: THREE.Vector3; r: number }
 /** bis zu diesem Abstand (m, waagrecht bis zum Rand) zeigen Häuser Balkone, Fensterbänke und Blumen */
@@ -3351,6 +3373,16 @@ export class Renderer3D {
       }
       // Wimpel- und Lichterketten quer über die Gasse
       if (s.bL && s.bR && s.i % 17 === 9 && !s.banner && !this.fanNear(s.i)) this.garland(town, a, s.bL, s.bR);
+      // --- feste Zuschauergruppen am Rand (abseits der Zuschauerzonen; alle als Bilder)
+      if (!s.crowd && !s.tunnel && !(s.bridge > 0) && !s.portal && !s.bL && !s.bR) {
+        for (const sg of [-1, 1]) {
+          const hg = hash(s.i * 2 + (sg > 0 ? 1 : 0) + 7919);
+          if (hg >= GROUP_P) continue;
+          const side = sg < 0 ? s.L : s.R;
+          if (!GROUP_GROUND.has(side.ground) || side.drop || side.wall > 0) continue;
+          this.crowdGroup(people[Math.min(7, Math.floor(r / 5))], roof, s, sg, sg < 0 ? lim.L[r] : lim.R[r], Math.floor(hash(s.i * 13 + 5) * GROUPS.length));
+        }
+      }
       // --- Sprites/Requisiten (Zuschauer: viele Menschen je Stück – nach jedem nachsehen)
       if (s.sprites) {
         for (const sp of s.sprites) {
@@ -3546,32 +3578,9 @@ export class Renderer3D {
       const pair = pi % 2 === 0 ? [...list, ...people[pi + 1]] : [...people[pi - 1], ...list];
       const sp = sphereOf(pair);
       const batch: CrowdBatch = { near: [], mid: [], spr: null, c, r: rad, sc: sp.c, sr: sp.rad, lod: -1 };
-      // nah: echte 3D-Menschen (ganz nah fein, bis 30 m vereinfacht)
-      for (const kind of KINDS) {
-        const sub = list.filter((pp) => needs(pp, kind));
-        if (!sub.length) continue;
-        // je Kleidungsart eine Geometrie für viele Menschen: zwischendurch nachsehen
-        if (this.late()) yield;
-        const data = new Float32Array(sub.length * STRIDE);
-        sub.forEach((pp, k) => packPerson(pp, data, k));
-        for (const lod of [0, 1] as const) {
-          // Kleinkram (Brille, Becher, Handy) ab 16 m: unter zwei Bildpunkte – weglassen spart einen Zeichenaufruf je
-          // Gruppe, sehen kann man es nicht
-          if (lod && MID_SKIP.has(kind)) continue;
-          const geo = crowdGeometry(kind, lod, data, sub.length);
-          if (!geo) continue;
-          geo.boundingSphere = sphere.clone();
-          crowdGeos.push(geo);
-          const m = new THREE.Mesh(geo, this.crowdMat);
-          m.visible = false;
-          // Zuschauer werfen keine Schatten: ihr Shader wählt die Stufe nach dem Abstand zur Kamera – in der
-          // Schattenkarte (Kamera = Sonne, weit weg) fiele ohnehin jeder heraus; der Aufruf wäre umsonst
-          m.userData.noShadow = true;
-          group.add(m);
-          (lod ? batch.mid : batch.near).push(m);
-        }
-      }
-      // weiter weg: alle als Bilder in einem Zeichenaufruf (je 20 m; die erste Hälfte baut es, die zweite teilt es)
+      void sphere;
+      // alle als Bilder in einem Zeichenaufruf (je 20 m; die erste Hälfte baut es, die zweite teilt es) – auch nah:
+      // keine 3D-Menschen mehr (spart je Abschnitt viele Netze und Zeichenaufrufe; Platz für viel mehr Zuschauer)
       if (pi % 2 === 0 || !people[pi - 1].length) {
         const sg = spriteGeometry(pair);
         sg.boundingSphere = new THREE.Sphere(sp.c, sp.rad + 4);
@@ -5101,8 +5110,9 @@ export class Renderer3D {
     const r = mulberry32(s.i * 7919 + (sg > 0 ? 104729 : 0));
     const group = v === 9;
     // dichter als früher: in der Ferne sind es Bilder (zwei Dreiecke je Mensch)
-    const rows = group ? (r() < 0.55 ? [dx0, dx0 + 0.78] : [dx0])
-      : v === 8 ? [0.45, 1.2, 1.95] : zone === 'village' ? [0.32, 1.02, 1.7] : [0.38, 1.1, 1.82, 2.55];
+    // dicht (alle als Bilder: Platz für viele): hinter den Banden bis zu sechs Reihen, in den Kehren eine große Traube
+    const rows = group ? (r() < 0.75 ? [dx0, dx0 + 0.78, dx0 + 1.56] : [dx0, dx0 + 0.78])
+      : v === 8 ? [0.45, 1.2, 1.95, 2.7, 3.45] : zone === 'village' ? [0.32, 1.02, 1.7, 2.4] : [0.38, 1.1, 1.82, 2.55, 3.3, 4.05];
     // La-Ola: in manchen Fanzonen läuft eine Welle die Absperrung entlang (alle 40 m ein Wellenberg)
     const ola = zone === 'tifosi' && s.crowd && !group && hash(Math.floor(s.i / 30) * 31 + 7) < 0.3;
     const side = sg < 0 ? s.L : s.R;
@@ -5135,18 +5145,18 @@ export class Renderer3D {
     const poles: number[] = [];
     if (s.crowd) for (let d = 0; d <= 2; d++) if (this.fanAt(s.i + d)) poles.push(d * SEG);
     for (let ri = 0; ri < rows.length; ri++) {
-      if (zone === 'tifosi' && ri === 3 && r() < 0.35) continue;
+      if (zone === 'tifosi' && ri >= 3 && r() < 0.2 + (ri - 3) * 0.15) continue;
       // Abstände so, dass sich niemand überschneidet – auch nicht mit dem Nachbarabschnitt (alle 4 m)
       let u = group ? r() * 1.2 : 0.3 + r() * 0.2;
-      const step = group ? [0.6, 0.45] : ri === 0 ? [0.66, 0.2] : ri === 1 ? [0.72, 0.26] : ri === 2 ? [0.8, 0.32] : [0.86, 0.38];
-      const end = group ? 1.8 + r() * 3.4 : 3.7;
+      const step = group ? [0.55, 0.4] : ri === 0 ? [0.62, 0.18] : ri === 1 ? [0.68, 0.24] : ri === 2 ? [0.74, 0.3] : [0.8, 0.36];
+      const end = group ? 2.6 + r() * 4.2 : 3.7;
       while (u < end) {
         let dx = rows[ri] + (r() - 0.5) * (ri ? 0.2 : 0.06);
         if (EDGE + dx > lim - 0.45) break;
         if (ri === 0 && poles.some((q) => Math.abs(u - q) < 0.34)) { u += 0.32; continue; }
         const kid = ri === 0 && r() < 0.1;
         if (kid) dx -= 0.06;
-        const p = randomPerson(r, zone, { row: ri, kid });
+        const p = randomPerson(r, zone, { row: Math.min(ri, 3), kid });
         if (!s.crowd && p.act === Act.lean) p.act = Act.idle; // ohne Absperrung lehnt sich niemand an
         if (group && r() < 0.2) p.act = Act.sign;
         // auch in der ersten Reihe ein paar Schilder – die liest man am besten
@@ -5183,6 +5193,68 @@ export class Renderer3D {
         const wide = p.act === Act.flag ? 0.4 : p.act === Act.sign ? 0.75 : p.act === Act.wave ? 0.12 : 0;
         u += step[0] + wide + r() * step[1] + (!group && r() < 0.06 ? 0.5 + r() * 0.7 : 0);
       }
+    }
+  }
+
+  /**
+   * Feste Zuschauergruppe (Vorlage gi) am Rand von Stück s: auf dem Querprofil, zur Straße und den ankommenden
+   * Fahrern gedreht; Sitzende auf Klappstühlen (in chairs). Nur wo der Hang flach genug ist.
+   */
+  private crowdGroup(out: Person[], chairs: GB, s: Seg, sg: number, lim: number, gi: number) {
+    const t = this.track!;
+    const side = sg < 0 ? s.L : s.R;
+    const pr = this.profile(side, s, sg, lim);
+    const ground = (dx: number) => {
+      const o = pr.o;
+      for (let k = 0; k < o.length - 1; k++) {
+        if (dx <= o[k + 1]) return pr.h[k] + (pr.h[k + 1] - pr.h[k]) * Math.max(0, Math.min(1, (dx - o[k]) / Math.max(1e-6, o[k + 1] - o[k])));
+      }
+      return pr.h[pr.h.length - 1];
+    };
+    const r = mulberry32(s.i * 4421 + (sg > 0 ? 17 : 3));
+    const q0 = 0.5 + r() * 1.6;
+    // zu steil (Böschung): lieber keine Gruppe
+    if (Math.abs(ground(q0 + 2.4) - ground(q0)) > 1.6) return;
+    if (EDGE + q0 + 2.4 > lim - 0.45) return;
+    const biome = t.sections[s.sec].biome;
+    const zone: Zone = biome === 'pass' ? 'pass' : biome === 'village' ? 'village' : 'tifosi';
+    const w = this.w2;
+    const chairCol = ([lin('#2f6db5'), lin('#2e8b57'), lin('#c0392b'), lin('#e1a32a')] as RGBf[])[Math.floor(r() * 4)];
+    for (const m of GROUPS[gi]) {
+      const u = m.u + (r() - 0.5) * 0.15;
+      const dq = q0 + m.q + (r() - 0.5) * 0.15;
+      const z = s.i * SEG + u;
+      const gh = ground(dq);
+      const p = randomPerson(r, zone, { row: 1, kid: !!m.kid });
+      p.act = m.act;
+      if (p.hatType === 5 && m.act !== Act.cheer && m.act !== Act.idle) p.hatType = 0;
+      t.world(z, sg * (EDGE + t.extraAt(z) + dq), gh, w);
+      p.x = w.x; p.y = w.y; p.z = w.z;
+      // zur Straße, etwas dorthin, wo die Fahrer herkommen
+      const rx = -sg * Math.cos(w.th), rz = -sg * Math.sin(w.th);
+      const bx = -Math.sin(w.th), bz = Math.cos(w.th);
+      const k = 0.35 + r() * 0.4;
+      p.yaw = Math.atan2(rx + bx * k, rz + bz * k) + (r() - 0.5) * 0.4;
+      if (m.act === Act.sit) {
+        // sitzt auf einem Klappstuhl: Sitz 0,45 m hoch (die Figur sitzt mit der Hüfte gut 0,9 × Größe über dem Fuß)
+        p.y = w.y + 0.45 - 0.9 * p.height;
+        p.cup = false;
+        const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw);
+        const sx = Math.cos(p.yaw), sz = -Math.sin(p.yaw);
+        const P = (a: number, b: number, h: number) => [w.x + sx * a + fx * b, w.y + h, w.z + sz * a + fz * b];
+        const quad = (a0: number, b0: number, a1: number, b1: number, h0: number, h1: number, col: RGBf) => {
+          chairs.quad(P(a0, b0, h0), P(a1, b1, h0), P(a1, b1, h1), P(a0, b0, h1), col);
+          chairs.quad(P(a1, b1, h0), P(a0, b0, h0), P(a0, b0, h1), P(a1, b1, h1), col);
+        };
+        const seatB = -0.1;
+        chairs.quad(P(-0.24, seatB - 0.22, 0.43), P(0.24, seatB - 0.22, 0.43), P(0.24, seatB + 0.22, 0.43), P(-0.24, seatB + 0.22, 0.43), chairCol);
+        quad(-0.24, seatB - 0.24, 0.24, seatB - 0.24, 0.43, 0.9, chairCol);
+        const leg = lin('#9aa0a6');
+        for (const a of [-0.22, 0.22]) {
+          quad(a, seatB - 0.22, a, seatB + 0.22, 0.0, 0.43, leg);
+        }
+      }
+      out.push(p);
     }
   }
 
@@ -5228,14 +5300,11 @@ export class Renderer3D {
         // Welche Stufe ein Mensch zeigt, entscheidet der Shader je Person (fein bis ~20 m, einfach bis ~50 m,
         // dahinter Bilder – mit weichen, gerasterten Übergängen). Hier nur: Gruppen weglassen, die gerade
         // niemanden in dieser Stufe haben (waagrechter Abstand wie im Shader)
-        const d = Math.hypot(cp.x - b.c.x, cp.z - b.c.z);
-        const dn = d - b.r - 0.5;
-        const df = d + b.r + 0.5;
-        const near = dn < 22;
-        const mid = dn < 54 && df > 16;
-        // Bilder: nach der ganzen 20-m-Gruppe (zwei Hälften teilen sich das Netz – sichtbar, wenn eine es braucht)
-        const spr = Math.hypot(cp.x - b.sc.x, cp.z - b.sc.z) + b.sr + 0.5 > 46;
-        const lod = (near ? 1 : 0) + (mid ? 2 : 0) + (spr ? 4 : 0);
+        // (alle Zuschauer sind Bilder: nur in der Ferne weglassen)
+        const near = false;
+        const mid = false;
+        const spr = Math.hypot(cp.x - b.sc.x, cp.z - b.sc.z) - b.sr < CROWD_FAR;
+        const lod = spr ? 4 : 0;
         if (lod === b.lod) continue;
         b.lod = lod;
         for (const m of b.near) m.visible = near;

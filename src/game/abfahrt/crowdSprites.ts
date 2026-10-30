@@ -6,9 +6,8 @@
  * keine festen Farben, sondern Masken mit Schattierung (Haut, Oberteil, Hose, Haare, Hut/Fahne) –
  * eingefärbt wird erst beim Zeichnen, für jeden Zuschauer anders.
  *
- * Pose und Takt kommen aus denselben Formeln wie bei den 3D-Figuren. Darum sieht man den Wechsel
- * in der Nähe kaum: dort stehen weiter echte 3D-Menschen, ab gut 30 m übernehmen die Bilder.
- * Ein Zuschauer kostet so nur zwei Dreiecke – Platz für deutlich mehr Menschen.
+ * Pose und Takt kommen aus denselben Formeln wie bei den 3D-Figuren. Alle Zuschauer sind Bilder (auch nah):
+ * ein Zuschauer kostet so nur zwei Dreiecke – Platz für deutlich mehr Menschen.
  */
 import * as THREE from 'three';
 import { Act, CROWD_FLAGS, CROWD_PAL, CROWD_VERT, KINDS, STRIDE, crowdGeometry, disposeCrowdGeometry, needs, packPerson, type Person } from './crowd3d';
@@ -16,11 +15,12 @@ import { freezeTarget } from './models3d';
 
 // ------------------------------------------------------------------ Bildvorrat
 
-/** Zelle im Vorrat: Pixel und Meter (Figur 1,75 m, Platz für erhobene Arme und Fahne) */
-const CW = 48;
-const CH = 96;
+/** Zelle im Vorrat: Pixel und Meter (Figur 1,75 m, Platz für erhobene Arme und Fahne). Alle Zuschauer sind Bilder –
+ * auch die vorderste Reihe gleich neben der Kamera: darum fein (64 × 128 Pixel je Figur) */
+const CW = 64;
+const CH = 128;
 const COLS = 32;
-const ROWS = 16;
+const ROWS = 12;
 const MW = 1.7;
 const MH = 3.4;
 /** Füße stehen so weit über dem Zellboden */
@@ -286,9 +286,8 @@ flat varying vec3 vCb;`)
       .replace('#include <beginnormal_vertex>', `
   vec3 sprP = aS0.xyz;
   vec2 toC = cameraPosition.xz - sprP.xz;
-  // Übergang von den 3D-Figuren (27–32 m): Bildpunkte, die dort noch die Figur zeigt, bleiben frei
-  vXa = 1.0 - smoothstep(46.0, 54.0, length(toC));
-  if (vXa >= 1.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  // alle Zuschauer als Bilder – auch nah (keine 3D-Figuren mehr, die Bildpunkte freihalten müssten)
+  vXa = 0.0;
   vec2 dC = toC / max(length(toC), 1e-3);
   // zur Kamera gewandt, etwas nach oben: bekommt Himmel und Sonne wie eine Figur
   vec3 objectNormal = normalize(vec3(dC.x, 0.55, dC.y));`)
@@ -344,6 +343,6 @@ flat varying vec3 vCb;`)
     diffuseColor = vec4(sc / max(cov, 0.04) * 1.22, clamp(aS, 0.0, 1.0));
   }`);
   };
-  m.customProgramCacheKey = () => 'crowd-spr-3';
+  m.customProgramCacheKey = () => 'crowd-spr-4';
   return m;
 }
