@@ -722,6 +722,12 @@ export class Terrain {
       if (wR > 0) {
         const mid = sstep(1550, 1250, dr);
         let h = o.h + eroded(x, z, mid, sstep(215, 140, dr)) * (60 + 70 * sstep(150, 500, above)) * wR;
+        // weit weg und hoch: spitze Gipfel und scharfe Grate (Hochgebirge statt Tafelberge)
+        const wP = sstep(480, 900, dr) * sstep(110, 330, h - o.floor) * (1 - wb);
+        if (wP > 0) {
+          const r = ridged(x / 1150 + 3.7, z / 1150 - 1.9);
+          h += Math.pow(r, 2.3) * 320 * wP;
+        }
         // Felsbänder: gestufte Wände (flache Simse, steile Stufen), leicht geneigt und gewellt
         const tw = wR * sstep(80, 260, h - o.floor) * 0.6 * mid;
         if (tw > 0) {
@@ -1217,7 +1223,9 @@ export class Terrain {
           const forest = sstep(C.forestThr, C.forestThr + 0.08, n1 + (n2 - 0.5) * 0.12) * sstep(C.treeLine + 25, C.treeLine - 15, above) * (1 - steep);
           // am Einschnitt der Straße negativ: der Shader macht steile Flächen sonst von sich aus zu Fels
           const rocky = Math.max(steep * (1 - 0.9 * CT[k]), sstep(C.rockLine - 20, C.rockLine + 60, above + (n1 - 0.5) * 40) * 0.85) - 0.5 * CT[k];
-          const snow = sstep(C.snowLine - 25, C.snowLine + 15, above + (n2 - 0.5) * 50 + (n1 - 0.5) * 60) * sstep(0.5, 0.74, ny);
+          // Schnee: hoch oben auch an steileren Flanken (angeweht, in Rinnen), je höher desto steiler
+          const sAbove = above + (n2 - 0.5) * 50 + (n1 - 0.5) * 60;
+          const snow = sstep(C.snowLine - 25, C.snowLine + 15, sAbove) * sstep(0.5 - 0.16 * sstep(C.snowLine, C.snowLine + 220, sAbove), 0.74 - 0.14 * sstep(C.snowLine, C.snowLine + 220, sAbove), ny);
           // Bergwald: Bodenfarbe genau nach der Maske der Bäume (sonst Waldboden ohne Bäume bzw. Bäume auf der Wiese)
           mat[v * 4] = this.woods ? sstep(0.26, 0.4, sstep(0.42, 0.62, forest + (mat[v * 4 + 3] - 0.5) * 0.25 + (nzA[v * 2] - 0.5) * 0.6)) : forest;
           mat[v * 4 + 1] = rocky; mat[v * 4 + 2] = snow;
