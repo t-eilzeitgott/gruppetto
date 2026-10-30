@@ -14,11 +14,11 @@ import { EDGE, SEG, type Seg, type Track } from '../abfahrt/track';
 import { mulberry32 } from '../abfahrt/rng';
 import { Act, CROWD_FLAGS, CROWD_NV, CROWD_PAL, KINDS, crowdGeometry, packPerson, randomPerson, STRIDE as PS, type Person, type Zone } from '../abfahrt/crowd3d';
 import { adCell, SIGN_COUNT } from '../abfahrt/tex3d';
-import { tsl, type N } from './nodes';
+import { bayer4, tsl, useDither, type N } from './nodes';
 import { lit } from './light';
 import { groundMap, lampLit, terrainSun } from './sunmap';
 
-const { attribute, cameraPosition, cross, dFdx, dFdy, dot, float, floor, fract, int, ivec2, normalize, positionGeometry, positionWorld, select, sign, textureLoad, time, uniform, varying, vec3, wgslFn } = tsl;
+const { attribute, cameraPosition, cross, dFdx, dFdy, dot, float, floor, fract, int, ivec2, max, normalize, positionGeometry, positionWorld, select, sign, smoothstep, texture, textureLoad, time, uniform, varying, vec3, wgslFn } = tsl;
 
 const hash = (n: number) => {
   let x = Math.imul(n ^ 0x6a09e667, 0x9e3779b1);
@@ -232,18 +232,8 @@ function paletteTexture(): THREE.DataTexture {
   return t;
 }
 
-function crowdMaterial(rider: N): THREE.MeshBasicNodeMaterial {
-  // günstiges Licht (light.ts): Lambert eckig schattiert (Flächennormale aus den Ableitungen), vorberechnetes
-  // Sonnenlicht (Berge, Bäume, Häuser), gemessenes Himmelslicht, Laternen
-  const m = new THREE.MeshBasicNodeMaterial();
-  const c = attribute('color', 'vec3');
-  const i0 = attribute('aI0', 'vec4');
-  const i1 = attribute('aI1', 'vec4');
-  const i2 = attribute('aI2', 'vec4');
-  const i3 = attribute('aI3', 'vec4');
-  m.positionNode = place({ p: positionGeometry, c, i0, i1, i3, time, rider });
-  // Farbe je Ecke (im Vertex-Shader): Fach → Farbe der Person
-  const pal = paletteTexture();
+/** Farbe je Ecke (Fach → Farbe der Person) – für die Menschen und für das Backen der Bilder */
+function crowdColor(c: N, i1: N, i2: N, i3: N, pal: THREE.DataTexture): N {
   const W = pal.image.width;
   const P = (i: N, row = 0): N => textureLoad(pal, ivec2(int(i.add(0.5).clamp(0, W - 1)), int(row))).rgb;
   const slot = c.x.round();
@@ -269,13 +259,110 @@ function crowdMaterial(rider: N): THREE.MeshBasicNodeMaterial {
   col = select(S(11), P(flagI.mul(3).add(stripe), 1), col);
   col = select(S(12), P(i3.z), col);
   col = select(S(13), select(fract(i1.w.mul(23)).greaterThan(0.5), vec3(0.86, 0.22, 0.03), vec3(0.72, 0.42, 0.06)), col);
-  const vc = varying(col, 'vCrowdCol');
+  return col;
+}
+
+/** Stufenwechsel (Mitte, halbe Breite, m): fein → einfach, einfach → Bild. Raster-Überblendung, kein Springen */
+const BAND_A: [number, number] = [6, 1.5];
+const BAND_B: [number, number] = [13, 2.5];
+/** Bilder (2D) bis hier (m), am Ende weich ausgeblendet */
+const FAR: [number, number] = [620, 720];
+
+let PAL: THREE.DataTexture | null = null;
+const palette = () => (PAL ??= paletteTexture());
+
+/**
+ * 3D-Menschen einer Stufe (lod 0 fein, 1 einfach): günstiges Licht (light.ts), eckig schattiert (Flächennormale aus
+ * den Ableitungen), vorberechnetes Sonnenlicht, Himmelslicht, Laternen. Die Stufen teilen sich die Bildpunkte im
+ * Überblendband (Bayer-Raster) – jede Person wechselt weich, je nach eigenem Abstand.
+ */
+function crowdMaterial(rider: N, lod: 0 | 1): THREE.MeshBasicNodeMaterial {
+  const m = new THREE.MeshBasicNodeMaterial();
+  const c = attribute('color', 'vec3');
+  const i0 = attribute('aI0', 'vec4');
+  const i1 = attribute('aI1', 'vec4');
+  const i2 = attribute('aI2', 'vec4');
+  const i3 = attribute('aI3', 'vec4');
+  m.positionNode = place({ p: positionGeometry, c, i0, i1, i3, time, rider });
+  const vc = varying(crowdColor(c, i1, i2, i3, palette()), 'vCrowdCol');
   const pw = positionWorld;
   const fn = normalize(cross(dFdx(pw), dFdy(pw)));
   const nW = fn.mul(sign(dot(fn, cameraPosition.sub(pw))));
   const g = groundMap(pw.xz);
   m.colorNode = lit({ col: vc, nWorld: nW, vis: terrainSun(pw.xz).mul(g.x), wrap: 0.25, ao: float(1.15), extra: lampLit(vc, g.w) });
-  m.name = 'crowd';
+  const d = varying(i0.xz.sub(cameraPosition.xz).length(), 'vCrowdD');
+  const a = smoothstep(BAND_A[0] - BAND_A[1], BAND_A[0] + BAND_A[1], d);
+  const b = smoothstep(BAND_B[0] - BAND_B[1], BAND_B[0] + BAND_B[1], d);
+  const one = float(1);
+  if (lod === 0) useDither(m, float(0), one.sub(a)); else useDither(m, one.sub(a), one.sub(b));
+  m.name = lod === 0 ? 'crowd' : 'crowd-mid';
+  return m;
+}
+
+// ——— Bilder (2D) der Zuschauer: aus den 3D-Menschen gebacken ———
+
+/** Atlas: 16 × 10 Zellen (je Vorlage zwei Bewegungsbilder), Zelle 128 × 202 Bildpunkte = 1,9 × 3 m (Platz für Fahnen) */
+const A_COLS = 16, A_ROWS = 10, CELL_W = 1.9, CELL_H = 3.0, CELL_PX = 128;
+export const VARIANTS = (A_COLS * A_ROWS) / 2;
+/** Füße so weit über der Zellenunterkante (m) */
+const FOOT = 0.06;
+
+/** Vorlagen: so sehen die Zuschauer aus (Kleidung, Haltung) – jede Person draußen ist eine davon (gleich im 3D-Bild und im Bild) */
+function makeVariants(): Person[] {
+  const r = mulberry32(0x5eed42);
+  const out: Person[] = [];
+  const zones: Zone[] = ['tifosi', 'pass', 'village'];
+  const ok = new Set<number>([Act.idle, Act.clap, Act.wave, Act.cheer, Act.film, Act.flag, Act.shout, Act.jump, Act.dance]);
+  while (out.length < VARIANTS) {
+    const p = randomPerson(r, zones[out.length % 3], { row: 1 + (out.length % 3) });
+    if (!ok.has(p.act)) continue;
+    p.cup = false;
+    out.push(p);
+  }
+  return out;
+}
+
+/** Bild-Zuschauer: Viereck zur Kamera gedreht (nur um die Senkrechte), Zelle aus dem Atlas, zwei Bewegungsbilder überblendet */
+function impostorMaterial(atlas: THREE.Texture, flipV: boolean): THREE.MeshBasicNodeMaterial {
+  const m = new THREE.MeshBasicNodeMaterial();
+  const iA = attribute('iA', 'vec4');
+  const iB = attribute('iB', 'vec4');
+  const q = positionGeometry;
+  const P = iA.xyz;
+  const sc = iA.w;
+  const toC = cameraPosition.sub(P);
+  const hz = normalize(vec3(toC.x, 0, toC.z));
+  const right = vec3(hz.z, 0, hz.x.negate());
+  m.positionNode = P.add(right.mul(q.x.mul(CELL_W).mul(sc))).add(vec3(0, q.y.mul(CELL_H).sub(FOOT).mul(sc), 0));
+  // Bewegung: zwei Bilder je Vorlage, weich überblendet (Raster), je Person eigener Takt
+  const blend = tsl.sin(time.mul(iB.z).add(iB.y.mul(6.283))).mul(0.5).add(0.5);
+  const t2 = tsl.fract(tsl.float(52.9829189).mul(tsl.fract(tsl.screenCoordinate.x.mul(0.06711056).add(tsl.screenCoordinate.y.mul(0.00583715)))));
+  const frame = select(t2.lessThan(blend), float(1), float(0));
+  const cell = iB.x.mul(2).add(frame);
+  const col = cell.sub(floor(cell.div(A_COLS)).mul(A_COLS));
+  const row = floor(cell.div(A_COLS));
+  const u = col.add(q.x.add(0.5)).div(A_COLS);
+  const rows = (A_ROWS * CELL_PX * CELL_H) / CELL_W;
+  void rows;
+  // Zeile 0 oben im Bild
+  const vTop = row.add(float(1).sub(q.y)).div(A_ROWS);
+  const v = flipV ? vTop : float(1).sub(vTop);
+  const tx = texture(atlas, tsl.vec2(u, v));
+  // Farbe liegt als Wurzel und vormultipliziert im Atlas (Mip-Stufen ohne dunkle Ränder)
+  const alb = tx.rgb.div(max(tx.a, float(0.02)));
+  const albedo = alb.mul(alb);
+  const vis = varying(terrainSun(P.xz, true), 'vImpSunC');
+  const n = normalize(hz.add(vec3(0, 0.55, 0)));
+  m.colorNode = lit({ col: albedo, nWorld: n, vis, wrap: 0.35, ao: float(1.05) });
+  // Deckung: Rand weich (Raster aus dem Alpha), dazu der Stufenwechsel zu den 3D-Menschen und das Ausblenden fern
+  const d = varying(toC.xz.length(), 'vImpD');
+  const b = smoothstep(BAND_B[0] - BAND_B[1], BAND_B[0] + BAND_B[1], d);
+  const far = float(1).sub(smoothstep(FAR[0], FAR[1], d));
+  const t = bayer4();
+  const show = t.greaterThanEqual(float(1).sub(b)).and(t.lessThan(far)).and(tx.a.greaterThan(0.42));
+  m.opacityNode = select(show, float(1), float(0));
+  m.alphaTestNode = float(0.5);
+  m.name = 'crowd-2d';
   return m;
 }
 
@@ -307,48 +394,13 @@ function mergedPerson(lod: 0 | 1): THREE.BufferGeometry {
   return out;
 }
 
-/**
- * Fernform (ab ~45 m): Kasten-Menschen mit denselben Teilnummern (Beine, Rumpf, Kopf, Arme) und der Fahne –
- * gut 120 Dreiecke statt 660. Farbfächer und Körperteile wie in crowd3d (S, P).
- */
-function farPerson(): THREE.BufferGeometry {
-  const pos: number[] = [], col: number[] = [], idx: number[] = [];
-  const add = (g: THREE.BufferGeometry, slot: number, part: number) => {
-    const o = pos.length / 3;
-    const P = g.getAttribute('position');
-    const C = g.getAttribute('color');
-    for (let i = 0; i < P.count; i++) {
-      pos.push(P.getX(i), P.getY(i), P.getZ(i));
-      if (C) col.push(C.getX(i), C.getY(i), C.getZ(i)); else col.push(slot, part, 0);
-    }
-    const ix = g.index!;
-    for (let i = 0; i < ix.count; i++) idx.push(ix.getX(i) + o);
-  };
-  const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, slot: number, part: number) => {
-    const g = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0);
-    g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-    add(g, slot, part);
-  };
-  for (const sg of [-1, 1]) box(sg * 0.1 - 0.065, 0, -0.07, sg * 0.1 + 0.065, 0.9, 0.07, 2, sg < 0 ? 14 : 16);
-  box(-0.17, 0.86, -0.12, 0.17, 1.48, 0.12, 1, 0);
-  box(-0.1, 1.5, -0.1, 0.1, 1.74, 0.11, 0, 5);
-  box(-0.105, 1.66, -0.11, 0.105, 1.78, 0.08, 4, 5);
-  for (const sg of [-1, 1]) box(sg * 0.25 - 0.05, 0.78, -0.05, sg * 0.25 + 0.05, 1.42, 0.05, 1, sg < 0 ? 1 : 3);
-  const flag = crowdGeometry('flag', 1, new Float32Array(PS), 1);
-  if (flag) add(flag, 0, 0);
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  out.setIndex(idx);
-  out.computeVertexNormals();
-  return out;
-}
-
-/** Stufen: fein bis hier (m), einfach bis da, Kasten-Menschen bis dort */
-// enger als früher (16/30/170): am Start stehen über hundert Menschen, die feine Stufe hat 1300 Dreiecke und wirft Schatten
-const LOD_D = [11, 24, 125];
+/** Zuschauer je Seite und 2 m Straße höchstens (dichte Stellen) – außerhalb der Zuschauerzonen der Strecke */
+const FILL_MAX = 3.2;
 
 interface Group { geo: THREE.InstancedBufferGeometry; buf: THREE.InstancedInterleavedBuffer; data: Float32Array; mesh: THREE.Mesh }
+
+/** Mensch mit Vorlage (vi: Index im Atlas, −1 = kein Bild; vs: Maßstab zur Vorlage) */
+type PV = Person & { vi?: number; vs?: number };
 
 /** Ground: Höhe des Straßenrands in Abstand dx vom Bankett (Querprofil) */
 export type Ground = (s: Seg, sg: number, dx: number) => number;
@@ -359,16 +411,131 @@ export class Crowd {
   private people: Person[] = [];
   private src = new Float32Array(0);
   private groups: Group[] = [];
-  private mat: THREE.Material;
+  private mats: THREE.MeshBasicNodeMaterial[];
   private bases: THREE.BufferGeometry[];
+  /** Vorlagen (Kleidung, Haltung) – ihre Bilder liegen im Atlas */
+  private variants = makeVariants();
+  /** Bild-Zuschauer: ein Netz (Viereck je Mensch) */
+  private imp: { mesh: THREE.Mesh; geo: THREE.InstancedBufferGeometry; buf: THREE.InstancedInterleavedBuffer; data: Float32Array; cap: number } | null = null;
+
   private at = new THREE.Vector3(1e9, 0, 0);
   /** Pappschilder (Quads im Atlas der Banden) */
   signs: { pos: number[]; uv: number[] } = { pos: [], uv: [] };
 
   constructor() {
-    this.mat = crowdMaterial(this.rider);
-    this.bases = [mergedPerson(0), mergedPerson(1), farPerson()];
+    this.mats = [crowdMaterial(this.rider, 0), crowdMaterial(this.rider, 1)];
+    this.bases = [mergedPerson(0), mergedPerson(1)];
   }
+
+  /**
+   * Bilder der Vorlagen backen (einmal beim Laden): alle Vorlagen in zwei Bewegungen als 3D-Menschen nebeneinander,
+   * von vorn gerade (orthografisch) in einen Atlas mit Mip-Stufen gezeichnet. Farbe ohne Licht (nur Formschatten)
+   * als Wurzel – das Licht der Welt kommt im Bild-Material dazu.
+   */
+  async bake(renderer: THREE.WebGPURenderer) {
+    const W = A_COLS * CELL_PX, H = Math.round(A_ROWS * CELL_PX * (CELL_H / CELL_W));
+    const rt = new THREE.RenderTarget(W, H, { type: THREE.UnsignedByteType, depthBuffer: true });
+    rt.texture.colorSpace = THREE.NoColorSpace;
+    const n = VARIANTS * 2;
+    const data = new Float32Array(n * PS);
+    for (let v = 0; v < VARIANTS; v++) {
+      for (let f = 0; f < 2; f++) {
+        const c = v * 2 + f;
+        const p = { ...this.variants[v] };
+        p.x = ((c % A_COLS) + 0.5) * CELL_W;
+        p.y = -(Math.floor(c / A_COLS) + 1) * CELL_H + FOOT;
+        p.z = 0;
+        p.yaw = 0;
+        // zweites Bild: ein halber Takt später (andere Haltung)
+        p.phase = (v * 0.137) % 1 + f * 0.0068;
+        packPerson(p, data, c);
+      }
+    }
+    const geo = new THREE.InstancedBufferGeometry();
+    const base = this.bases[0];
+    geo.setIndex(base.index);
+    for (const k of ['position', 'color', 'normal']) geo.setAttribute(k, base.getAttribute(k));
+    const buf = new THREE.InstancedInterleavedBuffer(data, PS, 1);
+    for (let k = 0; k < 4; k++) geo.setAttribute(`aI${k}`, new THREE.InterleavedBufferAttribute(buf, 4, k * 4));
+    geo.instanceCount = n;
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+    const m = new THREE.MeshBasicNodeMaterial();
+    const c = attribute('color', 'vec3');
+    const i0 = attribute('aI0', 'vec4'), i1 = attribute('aI1', 'vec4'), i2 = attribute('aI2', 'vec4'), i3 = attribute('aI3', 'vec4');
+    // Blick zum Fahrer vorn (leicht aufgeregt), feste Zeit
+    m.positionNode = place({ p: positionGeometry, c, i0, i1, i3, time: float(12.3), rider: vec3(A_COLS * CELL_W * 0.5, 0, 18) });
+    const col = crowdColor(c, i1, i2, i3, palette());
+    const pw = positionWorld;
+    const fn = normalize(cross(dFdx(pw), dFdy(pw)));
+    const nW = fn.mul(sign(dot(fn, vec3(0, 0, 1))));
+    const shade = max(dot(nW, normalize(vec3(-0.45, 0.55, 0.7))), float(0)).mul(0.5).add(0.62);
+    m.colorNode = col.mul(shade).max(0).sqrt();
+    m.fog = false;
+    m.name = 'crowd-bake';
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.frustumCulled = false;
+    const scene = new THREE.Scene();
+    scene.add(mesh);
+    const cam = new THREE.OrthographicCamera(0, A_COLS * CELL_W, 0, -A_ROWS * CELL_H, 0.1, 50);
+    cam.position.set(0, 0, 20);
+    cam.updateMatrixWorld();
+    const prevRT = renderer.getRenderTarget();
+    const prevC = renderer.getClearColor(new THREE.Color());
+    const prevA = renderer.getClearAlpha();
+    renderer.setRenderTarget(rt);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear();
+    renderer.render(scene, cam);
+    renderer.setRenderTarget(prevRT);
+    renderer.setClearColor(prevC, prevA);
+    geo.dispose();
+    m.dispose();
+    // zurücklesen und als gewöhnliche Textur hochladen: so entstehen die Mip-Stufen sicher (fern bleibt der Mensch
+    // sichtbar). Zeilenfolge prüfen: oben in jeder Zelle ist Luft, unten stehen die Füße
+    const px = (await renderer.readRenderTargetPixelsAsync(rt, 0, 0, W, H)) as Uint8Array;
+    rt.dispose();
+    const rowA = (y: number) => { let n = 0; for (let x = 0; x < W; x++) if (px[(y * W + x) * 4 + 3] > 0) n++; return n; };
+    let first = 0, last = 0;
+    for (let y = 0; y < 6; y++) { first += rowA(y); last += rowA(H - 1 - y); }
+    this.flipV = first <= last;
+    const tex = new THREE.DataTexture(new Uint8Array(px), W, H, THREE.RGBAFormat, THREE.UnsignedByteType);
+    tex.colorSpace = THREE.NoColorSpace;
+    tex.generateMipmaps = true;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    this.atlasTex = tex;
+    this.buildImpostors();
+  }
+  private atlasTex: THREE.DataTexture | null = null;
+
+  /** Netz der Bild-Zuschauer (wächst bei Bedarf) */
+  private buildImpostors(cap = 2048) {
+    if (!this.atlasTex) return;
+    if (this.imp) { this.imp.mesh.removeFromParent(); this.imp.geo.dispose(); }
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0], 3));
+    geo.setIndex([0, 1, 2, 0, 2, 3]);
+    const data = new Float32Array(cap * 8);
+    const buf = new THREE.InstancedInterleavedBuffer(data, 8, 1);
+    buf.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('iA', new THREE.InterleavedBufferAttribute(buf, 4, 0));
+    geo.setAttribute('iB', new THREE.InterleavedBufferAttribute(buf, 4, 4));
+    geo.instanceCount = 0;
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
+    this.impMat ??= impostorMaterial(this.atlasTex, this.flipV);
+    const mesh = new THREE.Mesh(geo, this.impMat);
+    mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false;
+    mesh.visible = false;
+    this.group.add(mesh);
+    this.imp = { mesh, geo, buf, data, cap };
+    this.at.set(1e9, 0, 0);
+  }
+  private impMat: THREE.MeshBasicNodeMaterial | null = null;
+  /** Atlas-Zeilen von oben (WebGPU) oder von unten (WebGL) gelesen */
+  flipV = true;
 
   get count() { return this.people.length; }
 
@@ -391,11 +558,20 @@ export class Crowd {
     const n0 = this.people.length;
     for (let i = i0; i < i1; i++) {
       const s = track.seg(i);
+      let zoneL = false, zoneR = false;
       for (const sp of s.sprites ?? []) {
         if (sp.k !== 'crowd') continue;
         const sg = sp.x < 0 ? -1 : 1;
+        if (sg < 0) zoneL = true; else zoneR = true;
         const before = this.people.length;
         this.crowdPeople(track, ground, s, sg, lim(i, sg), sp.v ?? 0, Math.abs(sp.x) - EDGE);
+        for (let k = before; k < this.people.length; k++) this.atZ.push(i * SEG);
+      }
+      // überall sonst: Zuschauer am Rand und in Reihen am Hang (wie bei einer großen Rundfahrt)
+      for (const sg of [-1, 1]) {
+        if ((sg < 0 ? zoneL : zoneR) || s.crowd) continue;
+        const before = this.people.length;
+        this.fill(track, ground, s, sg, lim(i, sg));
         for (let k = before; k < this.people.length; k++) this.atZ.push(i * SEG);
       }
     }
@@ -434,7 +610,7 @@ export class Crowd {
     this.cap = Math.max(64, Math.ceil(n * 1.5));
     // nur Menschen nahe der Kamera stehen in den Gruppen: kein Wegschneiden als Ganzes
     const sphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
-    for (let lod = 0; lod < 3; lod++) {
+    for (let lod = 0; lod < 2; lod++) {
       const base = this.bases[lod];
       const geo = new THREE.InstancedBufferGeometry();
       geo.setIndex(base.index);
@@ -445,7 +621,7 @@ export class Crowd {
       for (let k = 0; k < 4; k++) geo.setAttribute(`aI${k}`, new THREE.InterleavedBufferAttribute(buf, 4, k * 4));
       geo.instanceCount = 0;
       geo.boundingSphere = sphere;
-      const mesh = new THREE.Mesh(geo, this.mat);
+      const mesh = new THREE.Mesh(geo, this.mats[lod]);
       mesh.matrixAutoUpdate = false;
       mesh.frustumCulled = false;
       mesh.castShadow = lod === 0;
@@ -492,6 +668,7 @@ export class Crowd {
         const kid = ri === 0 && r() < 0.1;
         if (kid) dx -= 0.06;
         const p = randomPerson(r, zone, { row: ri, kid });
+        this.adopt(p, r);
         if (!s.crowd && p.act === Act.lean) p.act = Act.idle;
         if (group && r() < 0.2) p.act = Act.sign;
         if (ri === 0 && !kid && !group && r() < 0.05) p.act = Act.sign;
@@ -511,6 +688,8 @@ export class Crowd {
           const c = randomPerson(r, zone, { row: ri, kid: true });
           c.act = Act.sit;
           c.height = 0.56 + r() * 0.06;
+          // sitzt auf den Schultern: kein eigenes Bild (fern sieht man den Vater)
+          (c as PV).vi = -1;
           c.yaw = p.yaw;
           c.x = p.x - Math.sin(p.yaw) * 0.1 * p.height;
           c.z = p.z - Math.cos(p.yaw) * 0.1 * p.height;
@@ -520,6 +699,65 @@ export class Crowd {
         const wide = p.act === Act.flag ? 0.4 : p.act === Act.sign ? 0.75 : p.act === Act.wave ? 0.12 : 0;
         u += step[0] + wide + r() * step[1] + (!group && r() < 0.06 ? 0.5 + r() * 0.7 : 0);
       }
+    }
+  }
+
+  /** Aussehen (und Grundhaltung) einer Vorlage übernehmen – so passen 3D-Mensch und Bild zusammen */
+  private adopt(p: Person, r: () => number) {
+    const v = Math.floor(r() * VARIANTS);
+    const V = this.variants[v];
+    p.skin = V.skin; p.top = V.top; p.bottom = V.bottom; p.hair = V.hair; p.hat = V.hat; p.hatType = V.hatType;
+    p.accent = V.accent; p.flag = V.flag; p.shorts = V.shorts; p.sleeves = V.sleeves; p.longHair = V.longHair;
+    p.glasses = V.glasses; p.stripe = V.stripe; p.beard = V.beard; p.backpack = V.backpack; p.ponytail = V.ponytail; p.cup = false;
+    p.width = V.width;
+    const basic = p.act === Act.idle || p.act === Act.clap || p.act === Act.wave || p.act === Act.cheer || p.act === Act.film
+      || p.act === Act.flag || p.act === Act.shout || p.act === Act.jump || p.act === Act.dance;
+    if (basic) p.act = V.act;
+    (p as PV).vi = v;
+    (p as PV).vs = p.height / V.height;
+  }
+
+  /**
+   * Zuschauer außerhalb der Zuschauerzonen der Strecke: dichte und lockere Abschnitte im Wechsel (Wellen von einigen
+   * hundert Metern), in Kehren und Orten voll. Erste Reihe am Bankett, dahinter weitere Reihen, an Hängen bergauf
+   * in Rängen bis an den Rand des Korridors.
+   */
+  private fill(t: Track, ground: Ground, s: Seg, sg: number, lim: number) {
+    if (s.tunnel || s.bridge > 0) return;
+    const side = sg < 0 ? s.L : s.R;
+    const z = s.i * SEG;
+    const nz = (x: number, k: number) => { const a = Math.floor(x), f = x - a, u = f * f * (3 - 2 * f); return hash(a * 131 + k) * (1 - u) + hash((a + 1) * 131 + k) * u; };
+    let dens = (0.35 + 0.65 * nz(z / 260, sg > 0 ? 7 : 3)) * (0.6 + 0.4 * nz(z / 70, sg > 0 ? 11 : 13));
+    let near = false;
+    for (let d = -30; d <= 30 && !near; d += 6) if (t.seg(Math.max(t.first, s.i + d)).hairpin > 0) near = true;
+    if (near) dens = Math.max(dens, 0.95);
+    if (s.bL || s.bR) dens = Math.max(dens, 0.7);
+    const n = Math.floor(dens * FILL_MAX + hash(s.i * 977 + (sg > 0 ? 5 : 0)));
+    if (n <= 0) return;
+    const biome = t.sections[s.sec].biome;
+    const zone: Zone = biome === 'pass' ? 'pass' : biome === 'village' ? 'village' : 'tifosi';
+    const r = mulberry32(s.i * 6151 + (sg > 0 ? 337 : 0) + 99);
+    const ex = t.extra(s.i);
+    // wie weit hinaus: am Hang bergauf in Rängen, sonst ein paar Reihen; Abgrund, Felswand: nur vorn
+    const room = Math.max(0, lim - EDGE - ex - 0.6);
+    const reach = side.drop || side.wall > 0 ? Math.min(room, 0.9) : side.tilt > 0.12 ? Math.min(room, 9) : Math.min(room, 3.2);
+    if (reach < 0.3) return;
+    const w = { x: 0, y: 0, z: 0, th: 0 };
+    for (let k = 0; k < n; k++) {
+      // vorn dichter, weiter hinten lockerer
+      const dx = 0.35 + Math.pow(r(), 1.6) * (reach - 0.35);
+      const u = r() * SEG;
+      const p = randomPerson(r, zone, { row: dx < 0.9 ? 0 : 1 + Math.min(2, Math.floor(dx / 2)) });
+      this.adopt(p, r);
+      if (p.act === Act.lean || p.act === Act.sign || p.act === Act.devil) p.act = this.variants[(p as PV).vi ?? 0].act;
+      const gh = ground(s, sg, dx);
+      t.world(z + u, sg * (EDGE + ex + dx), gh, w);
+      p.x = w.x; p.y = w.y; p.z = w.z;
+      const rx = -sg * Math.cos(w.th), rz = -sg * Math.sin(w.th);
+      const bx = -Math.sin(w.th), bz = Math.cos(w.th);
+      const kk = 0.25 + r() * 0.45;
+      p.yaw = Math.atan2(rx + bx * kk, rz + bz * kk) + (r() - 0.5) * 0.5;
+      this.people.push(p);
     }
   }
 
@@ -552,23 +790,44 @@ export class Crowd {
     if (!this.groups.length || (!force && !turned && this.at.distanceToSquared(cam) < 9)) return;
     this.at.copy(cam);
     this.dirAt.set(dx, dz);
-    const cnt = [0, 0, 0];
+    const cnt = [0, 0];
+    let ni = 0;
     const n = this.people.length;
+    const imp = this.imp;
+    if (imp && n > imp.cap) this.buildImpostors(Math.ceil(n * 1.4));
+    const I = this.imp;
+    const M = 2.5;
     for (let k = 0; k < n; k++) {
-      const p = this.people[k];
+      const p = this.people[k] as PV;
       const d = Math.hypot(p.x - cam.x, p.z - cam.z);
-      if (d > LOD_D[2]) continue;
-      if (dir && d > 16 && (p.x - cam.x) * dx + (p.z - cam.z) * dz < -0.3 * d) continue;
-      const lod = d < LOD_D[0] ? 0 : d < LOD_D[1] ? 1 : 2;
-      const g = this.groups[lod];
-      g.data.set(this.src.subarray(k * PS, k * PS + PS), cnt[lod] * PS);
-      cnt[lod]++;
+      if (d > FAR[1]) continue;
+      if (dir && d > 14 && (p.x - cam.x) * dx + (p.z - cam.z) * dz < -0.3 * d) continue;
+      // im Überblendband in beide Stufen (der Shader teilt die Bildpunkte)
+      const put = (lod: number) => {
+        const g = this.groups[lod];
+        g.data.set(this.src.subarray(k * PS, k * PS + PS), cnt[lod] * PS);
+        cnt[lod]++;
+      };
+      if (d < BAND_A[0] + BAND_A[1] + M) put(0);
+      if (d > BAND_A[0] - BAND_A[1] - M && d < BAND_B[0] + BAND_B[1] + M) put(1);
+      if (I && d > BAND_B[0] - BAND_B[1] - M && (p.vi ?? 0) >= 0) {
+        const o = ni * 8;
+        const D = I.data;
+        D[o] = p.x; D[o + 1] = p.y; D[o + 2] = p.z; D[o + 3] = p.vs ?? 1;
+        D[o + 4] = p.vi ?? 0; D[o + 5] = p.phase; D[o + 6] = 1.6 + hash(k * 7 + 3) * 1.6; D[o + 7] = 0;
+        ni++;
+      }
     }
     this.groups.forEach((g, lod) => {
       g.geo.instanceCount = cnt[lod];
       g.mesh.visible = cnt[lod] > 0;
       g.buf.needsUpdate = true;
     });
+    if (I) {
+      I.geo.instanceCount = ni;
+      I.mesh.visible = ni > 0;
+      I.buf.needsUpdate = true;
+    }
   }
 
   /** Vorwärmen: beide Stufen einmal zeichnen */
@@ -578,12 +837,16 @@ export class Crowd {
     for (const g of this.groups) {
       if (on) { g.geo.instanceCount = Math.max(1, g.geo.instanceCount); g.mesh.visible = true; }
     }
+    if (on && this.imp) { this.imp.geo.instanceCount = Math.max(1, this.imp.geo.instanceCount); this.imp.mesh.visible = true; }
     if (!on) this.at.set(1e9, 0, 0);
   }
 
   dispose() {
     for (const g of this.groups) { g.mesh.removeFromParent(); g.geo.dispose(); }
     for (const b of this.bases) b.dispose();
-    this.mat.dispose();
+    for (const m of this.mats) m.dispose();
+    this.impMat?.dispose();
+    if (this.imp) this.imp.geo.dispose();
+    this.atlasTex?.dispose();
   }
 }

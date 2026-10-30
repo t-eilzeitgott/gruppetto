@@ -94,6 +94,9 @@ export type RaceCam = 'chase' | 'low' | 'side' | 'drone';
 
 /** Vorrat an Gegner-Modellen (beim Laden gebaut und vorgewärmt) */
 const POOL = 16;
+/** Fahrerfeld: volles Modell → einfaches Modell weich zwischen diesen Abständen (m) */
+const PEL_FADE: [number, number] = [26, 36];
+const smooth01 = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); };
 /** Fahrerfeld der Abfahrt: so viele Gegner höchstens voraus (in Gruppen); ?field=N zum Ausprobieren */
 const FIELD = Number(/[?&]field=(\d+)/.exec(typeof location !== 'undefined' ? location.search : '')?.[1] ?? 60);
 /** Kamera hinter dem Fahrer wie im Spiel */
@@ -297,6 +300,8 @@ export class Race {
       accent: this.opts.kit.jersey,
     }));
     this.scene.add(world.group);
+    // Zuschauer als Bilder (fern): Atlas aus den 3D-Menschen backen
+    if (world.crowd) await world.crowd.bake(r);
     world.trees.sunDir.value.copy(atmo.sunDir);
     world.trees.setFar(this.settings.treeFar);
     // Sonnenlicht vorberechnen: je Kachel beim Bau (Berge auf Täler), dazu die Karten von oben (Bäume, Häuser, Laternen)
@@ -596,7 +601,7 @@ export class Race {
     const max = Math.min(POOL, Math.round(this.peloton ? Math.max(this.settings.oppMax, 14) : this.settings.oppMax));
     // Geister (Zeitfahren) erst, wenn sie eingeblendet sind (vor dem Start steht der Fahrer allein auf der Rampe)
     // mit Fahrerfeld (Instanzen für die übrigen): volles Modell nur für die Nächsten in ~25 m (dort sieht man Details)
-    const near = this.peloton ? 34 : 300;
+    const near = this.peloton ? PEL_FADE[1] + 4 : 300;
     const list = e.opps.filter((o) => o.z > p.z - Math.min(40, near) && o.z < p.z + near && !('ghost' in o && (o as { ghost: number }).ghost <= 0)).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, max);
     const keep = new Set(list.map((o) => o.id));
     for (const [id, i] of this.poolOf) {
@@ -623,7 +628,9 @@ export class Race {
       const d = cp.distanceTo(R.group.position);
       R.far(d);
       const ghost = 'ghost' in o ? (o as { ghost: number }).ghost : 0;
-      R.ghost(ghost > 0 ? 1 - ghost : 0);
+      // mit Fahrerfeld: weich ins einfache Modell überblenden (Raster: beide teilen sich die Bildpunkte)
+      const fade = this.peloton ? smooth01((d - PEL_FADE[0]) / (PEL_FADE[1] - PEL_FADE[0])) : 0;
+      R.ghost(ghost > 0 ? 1 - ghost : fade);
       R.shadows(d < 45 && ghost <= 0);
       R.blob(!o.wreck);
       if (o.wreck) this.ragdoll(o.id, R, o.wreck, dt);
@@ -641,10 +648,13 @@ export class Race {
     if (pel) {
       pel.begin();
       for (const o of e.opps) {
-        if (this.poolOf.has(o.id) || o.z < p.z - 160 || o.z > p.z + 950) continue;
+        if (o.z < p.z - 160 || o.z > p.z + 950) continue;
         t.world(o.z, o.x, 0, this.w);
+        // mit vollem Modell: nur im Überblendband dazu (das Raster teilt die Bildpunkte)
+        const pooled = this.poolOf.has(o.id);
+        if (pooled && Math.hypot(this.w.x - cp.x, this.w.z - cp.z) < PEL_FADE[0] - 1) continue;
         const down = !!o.wreck;
-        pel.add(this.w.x, this.w.y, this.w.z, this.w.th, down ? (o.x > 0 ? 1.45 : -1.45) : o.lean, o.pedal, o.kit, down);
+        pel.add(this.w.x, this.w.y, this.w.z, this.w.th, down ? (o.x > 0 ? 1.45 : -1.45) : o.lean, o.pedal, o.kit, down, pooled);
       }
       pel.commit();
     }
