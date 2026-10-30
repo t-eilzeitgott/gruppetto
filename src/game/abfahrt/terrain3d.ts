@@ -146,6 +146,8 @@ const CANOPY = 12;
 export const LIM_MAX = EDGE + 12;
 /** Bis hierhin (ab Straßenmitte) bleibt das Höhenfeld sicher unter der Straße – je nach Gitterweite */
 const clampR = (cell: number) => EDGE + cell * 1.45 + 1;
+/** Dorfebene läuft zu anderen Straßenschenkeln hin aus: von voll (ab FLAT_AVOID[1] m) bis 0 (FLAT_AVOID[0] m) – jenseits der Klemme aller Stufen */
+export const FLAT_AVOID: [number, number] = [32, 72];
 /** Graben unter einem Viadukt: volle Tiefe bis BR_IN (m ab Straßenmitte), bis BR_OUT ausgelaufen */
 const BR_IN = 15;
 const BR_OUT = 34;
@@ -750,7 +752,14 @@ export class Terrain {
       const p = f.pts;
       let bd = Infinity, by = 0, bk = 0;
       for (let i = 0; i < p.length; i += 4) { const d = (p[i] - x) ** 2 + (p[i + 2] - z) ** 2; if (d < bd) { bd = d; by = p[i + 1]; bk = p[i + 3]; } }
-      const wv = sstep(f.L, f.L * 0.5, Math.sqrt(bd)) * bk;
+      let wv = sstep(f.L, f.L * 0.5, Math.sqrt(bd)) * bk;
+      // andere Schenkel der Straße (Kehre, Schleife) in der Nähe: dort läuft die Ebene aus
+      if (wv > 0 && f.avoid.length) {
+        const q = f.avoid;
+        let da = Infinity;
+        for (let i = 0; i < q.length; i += 2) { const d = (q[i] - x) ** 2 + (q[i + 1] - z) ** 2; if (d < da) da = d; }
+        wv *= sstep(FLAT_AVOID[0], FLAT_AVOID[1], Math.sqrt(da));
+      }
       if (wv > 0) o.h -= (o.h - by) * f.k * wv;
     }
     if (!sg || sg.n === 0) return o;
@@ -844,13 +853,20 @@ export class Terrain {
     return this.finish(x, z, this.base(x, z, cand), sg, cell);
   }
 
-  /** Dorfebenen: Straßenpunkte (x, y, z, Gewicht an den Enden), Reichweite L (m), Stärke k (0 … 1) */
-  readonly flats: { pts: Float32Array; L: number; k: number; box: [number, number, number, number] }[] = [];
-  /** Dorfebene anlegen (vor dem Bau der Kacheln dort) */
-  addFlat(pts: number[], L: number, k: number) {
+  /**
+   * Dorfebenen: Straßenpunkte (x, y, z, Gewicht an den Enden), Reichweite L (m), Stärke k (0 … 1), Punkte anderer
+   * Straßenschenkel (x, z), an denen die Ebene ausläuft
+   */
+  readonly flats: { pts: Float32Array; L: number; k: number; box: [number, number, number, number]; avoid: Float32Array }[] = [];
+  /**
+   * Dorfebene anlegen (vor dem Bau der Kacheln dort). avoid: Punkte (x, z) anderer Schenkel der Straße, die der Ebene
+   * nahe kommen und deutlich höher oder tiefer liegen – dort läuft die Ebene aus, sonst stünde angehobenes Gelände
+   * als Wand neben der anderen Straße (deren Klemme reicht nur ein paar Meter weit)
+   */
+  addFlat(pts: number[], L: number, k: number, avoid: number[] = []) {
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (let i = 0; i < pts.length; i += 4) { x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]); z0 = Math.min(z0, pts[i + 2]); z1 = Math.max(z1, pts[i + 2]); }
-    this.flats.push({ pts: new Float32Array(pts), L, k, box: [x0 - L, z0 - L, x1 + L, z1 + L] });
+    this.flats.push({ pts: new Float32Array(pts), L, k, box: [x0 - L, z0 - L, x1 + L, z1 + L], avoid: new Float32Array(avoid) });
   }
 
   /** Abstand (Draufsicht) zum nächsten Straßenstück im Rechenbereich – für Bäume und Requisiten */

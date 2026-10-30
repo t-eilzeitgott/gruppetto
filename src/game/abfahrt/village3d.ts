@@ -10,7 +10,7 @@
  * Teil (Häuser als Instanzen in Houses3D, Kleinteile als ein Netz).
  */
 import { EDGE, SEG, type Seg, type Track } from './track';
-import type { Region, Terrain, TreeSpot } from './terrain3d';
+import { FLAT_AVOID, type Region, type Terrain, type TreeSpot } from './terrain3d';
 import { GB, lin, type RGBf } from './models3d';
 import { KIND, type Houses3D, type Spot } from './houses3d';
 
@@ -147,7 +147,21 @@ export class Villages3D {
       pts.push(w.x, w.y - 0.6, w.z, e * e * (3 - 2 * e));
       x0 = Math.min(x0, w.x); x1 = Math.max(x1, w.x); z0 = Math.min(z0, w.z); z1 = Math.max(z1, w.z);
     }
-    this.c.terrain.addFlat(pts, 100, 0.9);
+    // andere Schenkel der Straße (Kehre, Schleife zurück), die der Dorfebene nahe kommen und deutlich höher oder
+    // tiefer liegen: dort läuft die Ebene aus (sonst stünde angehobenes Gelände als Wand neben der anderen Straße)
+    const avoid: number[] = [];
+    const reach = 100 + FLAT_AVOID[1];
+    for (let at = Math.max(t.first * SEG, za - 3000); at < zb + 3000; at += 4) {
+      if (at > za - 50 && at < zb + 50) continue;
+      t.world(at, 0, 0, w);
+      if (w.x < x0 - reach || w.x > x1 + reach || w.z < z0 - reach || w.z > z1 + reach) continue;
+      let bd = Infinity, by = 0;
+      for (let i = 0; i < pts.length; i += 4) { const d = (pts[i] - w.x) ** 2 + (pts[i + 2] - w.z) ** 2; if (d < bd) { bd = d; by = pts[i + 1] + 0.6; } }
+      const d = Math.sqrt(bd);
+      // (die eigene Straße vor und hinter dem Dorf steigt nur mit der Steigung an – das ist kein anderer Schenkel)
+      if (d < reach && Math.abs(w.y - by) > 2 + 0.25 * d) avoid.push(w.x, w.z);
+    }
+    this.c.terrain.addFlat(pts, 100, 0.9, avoid);
     // Dorfstraße: Wiese bis ans Bankett, keine Mauern und Abgründe, schmaler Korridor (Häuser gleich dahinter)
     const i0 = Math.floor((za - 30) / SEG), i1 = Math.ceil((zb + 30) / SEG);
     this.sides(t, i0, i1);
