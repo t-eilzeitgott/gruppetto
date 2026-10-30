@@ -162,6 +162,8 @@ export class Race {
   private intervals: number[] = [];
   private dpr = 1.5;
   private maxDpr = 2;
+  /** Auflösung des Bilds (Leinwand): höchstens maxDpr – ist die Szene klein, reicht ×2 (die Nachbearbeitung je Bildpunkt kostet) */
+  private canvasDpr = 2;
   private lastDprChange = 0;
   private slowFor = 0;
   private fastFor = 0;
@@ -253,9 +255,11 @@ export class Race {
     // Bild in voller Auflösung (Bildschirm, höchstens maxDpr), die Szene darin wird nach Bedarf kleiner gerechnet
     // und beim Hochskalieren nachgeschärft (setDpr) – die Oberfläche (HUD) ist ohnehin HTML und bleibt scharf
     this.maxDpr = Math.min(window.devicePixelRatio || 1, this.settings.maxDpr);
-    // Szene anfangs höchstens doppelt (die Regelung geht von dort nach oben oder unten)
-    this.dpr = Math.min(this.maxDpr, Math.max(this.settings.minDpr, 2));
-    r.setPixelRatio(this.maxDpr);
+    // Szene anfangs höchstens doppelt (die Regelung geht von dort nach oben oder unten); mit begrenzter Bildrate ab
+    // „Szene mindestens“: so wenig Arbeit je Bild wie eingestellt (größer nur mit viel Luft)
+    this.dpr = Math.min(this.maxDpr, Math.max(this.settings.minDpr, this.settings.fpsCap > 0 ? 0 : 2));
+    this.canvasDpr = this.canvasFor(this.dpr);
+    r.setPixelRatio(this.canvasDpr);
     r.toneMapping = THREE.AgXToneMapping;
     r.toneMappingExposure = 0.62;
     // keine Schattenkarte: Schatten sind vorberechnet (sunbake.ts, sunmap.ts)
@@ -1255,7 +1259,10 @@ export class Race {
    */
   private setDpr(d: number) {
     this.dpr = Math.max(0.3, Math.min(this.maxDpr, d));
-    const sc = this.dpr / this.maxDpr;
+    // Leinwand mitführen (selten: mit Spielraum, ein Wechsel legt die Puffer neu an)
+    const cd = this.canvasFor(this.dpr);
+    if (cd !== this.canvasDpr) { this.canvasDpr = cd; this.renderer.setPixelRatio(cd); }
+    const sc = this.dpr / this.canvasDpr;
     this.scenePass?.setResolutionScale(sc);
     const a = this.atmo;
     if (a) {
@@ -1264,6 +1271,15 @@ export class Race {
       const h = this.host.clientHeight || window.innerHeight;
       a.texel.value.set(1 / Math.max(1, w * this.dpr), 1 / Math.max(1, h * this.dpr));
     }
+  }
+
+  /** Leinwand zur Szene: bis Szene ×2,0 reicht ×2 (Nachbearbeitung auf halb so vielen Bildpunkten), ab ×2,3 voll */
+  private canvasFor(d: number): number {
+    const full = this.maxDpr;
+    if (full <= 2) return full;
+    if (d <= 2.0) return 2;
+    if (d >= 2.3) return full;
+    return this.canvasDpr === 2 ? 2 : full;
   }
 
   /**
@@ -1278,11 +1294,15 @@ export class Race {
     if (!this.ready || this.analysing) return;
     this.intervals.push(dtMs);
     if (this.intervals.length > 240) this.intervals.shift();
-    const mn = Math.min(...this.intervals);
-    this.period = mn < 9.6 ? 1000 / 120 : mn < 12.5 ? 1000 / 90 : 1000 / 60;
+    const mn = Math.min(...(this.rafIv.length >= 30 ? this.rafIv : this.intervals));
+    const disp = mn < 9.6 ? 1000 / 120 : mn < 12.5 ? 1000 / 90 : 1000 / 60;
+    // Ziel: Takt des Bildschirms, mit Begrenzung deren Takt
+    const cap = this.settings.fpsCap;
+    this.period = cap > 0 ? Math.max(disp, 1000 / cap) : disp;
     if (this.intervals.length < 60 || this.paused) return;
     const P = this.period;
     const gpu = this.avgGpu > 0 ? this.avgGpu : -1;
+    const cpu = this.avgCpu;
     if (this.probe) {
       if (now - this.probe.at < 1500) return;
       const p = this.probe;
@@ -1300,10 +1320,13 @@ export class Race {
     }
     if (now - this.lastDprChange < 900) return;
     if (this.dprFloor && now > this.floorUntil) this.dprFloor = 0;
-    const cpuBound = this.avgCpu > P * 0.8;
-    const gpuBound = gpu < 0 || gpu > P * 0.8;
+    const cpuBound = cpu > P * 0.8;
+    // Safari auf dem iPhone rechnet CPU und Grafik nacheinander (Bildzeit ≈ CPU + GPU): kleiner rechnen hilft schon,
+    // wenn die GPU den größeren Teil hat – nicht erst, wenn sie allein den Takt füllt
+    const gpuBound = gpu < 0 || gpu > P * 0.8 || (gpu > cpu && gpu + cpu > P * 0.85);
     if (this.avgMs > P * 1.12 && gpuBound && !cpuBound) { this.slowFor += dtMs; this.fastFor = 0; }
-    else if (this.avgMs < P * 1.04 && (gpu < 0 || gpu < P * 0.62)) { this.fastFor += dtMs; this.slowFor = 0; }
+    // größer nur mit viel Luft (GPU unter dem halben Takt): auf dem Telefon ist die Wärme die eigentliche Grenze
+    else if (this.avgMs < P * 1.04 && (gpu < 0 || (gpu < P * 0.5 && gpu + cpu < P * 0.75))) { this.fastFor += dtMs; this.slowFor = 0; }
     else { this.slowFor = 0; this.fastFor = 0; }
     const lo = Math.min(Math.max(this.settings.minDpr, this.dprFloor), this.maxDpr);
     let want = this.dpr;
@@ -1319,8 +1342,21 @@ export class Race {
     }
   }
 
+  /** Bildaufrufe des Browsers (auch übersprungene): ihr Abstand ist der Takt des Bildschirms */
+  private rafT = 0;
+  private rafIv: number[] = [];
+  /** Zeitstempel des zuletzt gezeichneten Bilds */
+  private drawnT = 0;
+
   private frame(t: number) {
     if (this.disposed) return;
+    if (this.rafT) { this.rafIv.push(t - this.rafT); if (this.rafIv.length > 240) this.rafIv.shift(); }
+    this.rafT = t;
+    // Bildrate begrenzen (60 auf einem 120-Hz-Bildschirm: jeder zweite Aufruf): weniger Arbeit je Sekunde – das
+    // Telefon wird langsamer warm und drosselt später (nicht in der Kostenanalyse, die misst je Bild)
+    const cap = this.settings.fpsCap;
+    if (cap > 0 && this.ready && !this.analysing && this.drawnT && t - this.drawnT < 1000 / cap - 3) return;
+    this.drawnT = t;
     try {
       this.frameBody(t);
     } catch (e) {
@@ -1444,12 +1480,12 @@ export class Race {
           restore();
           set();
           await block(gV, m);
-          calls = this.renderer.info.render.drawCalls;
-          tris = this.renderer.info.render.triangles;
+          calls = Math.round(this.renderer.info.render.drawCalls / REPEAT);
+          tris = Math.round(this.renderer.info.render.triangles / REPEAT);
         }
         const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
         // Szene (kleiner gerechnet) in der Bildgröße
-        const sc = this.dpr / this.maxDpr;
+        const sc = this.dpr / this.canvasDpr;
         rows.push({ name, gpu: med(gV), gpu90: p90(gV), base: med(gB), draw: med(m.draw), cpu: med(m.cpu), frame: med(m.frame), calls, tris, px: `${Math.round(size.x * sc)}×${Math.round(size.y * sc)} in ${size.x}×${size.y}` });
       }
     } finally {
@@ -1467,7 +1503,8 @@ export class Race {
     const lines = [
       `gruppetto Abfahrt-WebGPU Kostenanalyse · ${new Date().toISOString()} · ${this.backendName} · GPU-Zeitstempel ${this.gpuTiming ? 'ja' : 'nein'}`,
       `Gerät: ${navigator.userAgent}`,
-      `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, MSAA ${S0.msaa}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => ((this.opts.defaults ?? RACE_DEFAULTS) as unknown as Record<string, unknown>)[k] !== v)))}`,
+      `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, Bildrate höchstens ${S0.fpsCap > 0 ? S0.fpsCap : 'frei'}, MSAA ${S0.msaa}, Bild ×${this.canvasDpr}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => ((this.opts.defaults ?? RACE_DEFAULTS) as unknown as Record<string, unknown>)[k] !== v)))}`,
+      'Hinweis: ein warmes Telefon drosselt – dann sind alle Zeiten bis gut doppelt so hoch. Nur im selben Zustand vergleichen (am besten kühl).',
       `Variante | GPU ms je Bild (Median; gemessen bei ${REPEAT}× Zeichnen je Bild, damit die Grafik voll taktet; Ersparnis zur Basis im Wechsel gemessen) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms (beim Messen) | Aufrufe | Dreiecke k | Szene in Bild (Bildpunkte)`,
       ...rows.map((r) => `${r.name} | ${f(r.gpu)}${r === b ? '' : d(r.gpu, r.base)} | ${f(r.gpu90)} | ${f(r.draw)}${r === b ? '' : d(r.draw, b.draw)} | ${f(r.cpu)} | ${f(r.frame)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.px}`),
     ];
@@ -1539,7 +1576,15 @@ export class Race {
     this.adapt(dtMs, t);
     // Kostenanalyse: die Grafik mehrfach je Bild arbeiten lassen – nur ausgelastet läuft Apples Grafik mit vollem
     // Takt, sonst messen die Zeitstempel ihr Heruntertakten mit
-    if (this.ready && !this.offscreen) for (let k = 0; k < (this.analysing ? REPEAT : 1); k++) this.draw();
+    if (this.ready && !this.offscreen) {
+      const n = this.analysing ? REPEAT : 1;
+      for (let k = 0; k < n; k++) {
+        // die Szene rendert nur einmal je Bild der Knoten: für jede Wiederholung ein neues (sonst nur die Nachbearbeitung)
+        if (k > 0) (this.renderer as unknown as { _nodes: { nodeFrame: { update(): void } } })._nodes.nodeFrame.update();
+        // Zähler nur einmal je Bild zurücksetzen: sonst bekämen die Zeitstempel der Wiederholungen dieselben Namen
+        this.draw(this.pipeline, k === 0);
+      }
+    }
     P.mark(8);
     // 2D-Ebene (Hinweise, Tempo-Linien)
     if (this.ready && e && this.rider) {
@@ -1554,16 +1599,16 @@ export class Race {
     if (this.ready && !this.offscreen) this.gpuFrames++;
     if (this.ready && be.trackTimestamp && this.gpuFrames > 0 && !this.gpuPending) {
       this.gpuPending = true;
-      const nf = Math.max(1, this.gpuFrames);
       this.gpuFrames = 0;
       const rep = this.analysing ? REPEAT : 1;
+      // three.js liefert die GPU-Zeit des letzten Bilds der Abfrage (nicht die Summe aller Bilder seit der vorigen)
       this.renderer.resolveTimestampsAsync('render').then((v) => {
         if (typeof v !== 'number' || !(v > 0)) return;
-        if (rep > 1) { this.gpuSamples?.push(v / nf / rep); return; }
-        P.gpu = v / nf;
-        this.gpuMs = v / nf;
-        this.avgGpu = this.avgGpu ? this.avgGpu + (v / nf - this.avgGpu) * 0.08 : v / nf;
-        this.gpuSamples?.push(v / nf);
+        if (rep > 1) { this.gpuSamples?.push(v / rep); return; }
+        P.gpu = v;
+        this.gpuMs = v;
+        this.avgGpu = this.avgGpu ? this.avgGpu + (v - this.avgGpu) * 0.08 : v;
+        this.gpuSamples?.push(v);
       }).catch(() => undefined).finally(() => { this.gpuPending = false; });
     }
     if (this.ready) {
@@ -1606,9 +1651,9 @@ export class Race {
     });
   }
 
-  private draw(pl: THREE.RenderPipeline | null = this.pipeline) {
+  private draw(pl: THREE.RenderPipeline | null = this.pipeline, reset = true) {
     if (!pl) return;
-    this.renderer.info.reset();
+    if (reset) this.renderer.info.reset();
     if (this.offscreen) {
       const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
       if (!this.frameRT || this.frameRT.width !== size.x || this.frameRT.height !== size.y) {
@@ -1706,7 +1751,7 @@ export class Race {
       ua: navigator.userAgent, bildschirm: `${screen.width}×${screen.height}`, pixeldichte: window.devicePixelRatio, fenster: `${window.innerWidth}×${window.innerHeight}`,
       technik: this.backendName, grafik: pick, gpu_zeitstempel: this.gpuTiming,
       // „aufloesung“ in den Verläufen: Szene (kleiner gerechnet, hochskaliert); das Bild selbst in bild_dpr
-      bild_dpr: this.maxDpr, msaa: this.settings.msaa,
+      bild_dpr: this.canvasDpr, msaa: this.settings.msaa, fps_grenze: this.settings.fpsCap || null,
     };
   }
 
@@ -1736,7 +1781,9 @@ export class Race {
     this.dprFloor = 0;
     this.atmo?.apply(s, instant);
     const md = Math.min(window.devicePixelRatio || 1, s.maxDpr);
-    if (md !== this.maxDpr) { this.maxDpr = md; this.renderer.setPixelRatio(md); }
+    if (md !== this.maxDpr) { this.maxDpr = md; this.canvasDpr = this.canvasFor(Math.min(this.dpr, md)); this.renderer.setPixelRatio(this.canvasDpr); }
+    // Begrenzung neu an: wie beim Start ab „Szene mindestens“
+    if (s.fpsCap > 0 && s.fpsCap !== prev.fpsCap) this.dpr = s.minDpr;
     this.setDpr(Math.max(Math.min(this.dpr, md), Math.min(s.minDpr, md)));
     const w = this.world;
     if (w) {

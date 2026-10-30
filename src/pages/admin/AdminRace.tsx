@@ -59,6 +59,11 @@ const CAMS: { value: RaceCam; label: string }[] = [
   { value: 'side', label: 'Seite' },
   { value: 'drone', label: 'Drohne' },
 ];
+const FPS_CAPS: { value: string; label: string }[] = [
+  { value: '30', label: '30 fps' },
+  { value: '60', label: '60 fps' },
+  { value: '0', label: 'frei' },
+];
 const ORDER: ScoreCat[] = ['dist', 'overtake', 'bidons', 'draft', 'curves', 'near', 'air', 'bonus'];
 
 function Switch({ on, label, hint, onChange }: { on: boolean; label: string; hint?: string; onChange: (v: boolean) => void }) {
@@ -427,6 +432,11 @@ export function RaceGpuPage({ mode = 'abfahrt' }: { mode?: 'abfahrt' | 'tt' }) {
         <span className="abf-range__label">Technik</span>
         <Slider label="Bildauflösung (× Bildpunkte je Punkt)" value={settings.maxDpr} min={1} max={3} step={0.1} onChange={(v) => change({ maxDpr: v })} />
         <Slider label="Szene mindestens (kleiner gerechnet, hochskaliert und nachgeschärft)" value={settings.minDpr} min={0.8} max={3} step={0.05} onChange={(v) => change({ minDpr: v })} />
+        <div className="race-sec">
+          <span className="abf-range__label">Bildrate höchstens</span>
+          <span className="abf-range__hint">Weniger Bilder je Sekunde: das Telefon bleibt kühler und drosselt später („frei“: so viele, wie der Bildschirm zeigt)</span>
+          <Segmented label="Bildrate höchstens" value={String(settings.fpsCap > 0 ? settings.fpsCap : 0)} options={FPS_CAPS} onChange={(v) => change({ fpsCap: Number(v) })} />
+        </div>
         <Switch on={settings.msaa > 0} label="Kantenglättung (4×)" hint="Wirkt nach Neuladen der Seite" onChange={(v) => { change({ msaa: v ? 4 : 0 }); window.setTimeout(() => location.reload(), 150); }} />
         <Switch on={showFps} label="Bildrate anzeigen" hint="Bildzeit, CPU, GPU, Auflösung, Nachladen" onChange={(v) => { setShowFps(v); lsSet(LS_FPS, v ? '1' : '0'); }} />
         <Switch on={auto} label="Autopilot" hint="Fährt selbst: Linie, Flaschen, weicht Hindernissen aus" onChange={(v) => { setAuto(v); if (raceRef.current) raceRef.current.autopilot = v; }} />

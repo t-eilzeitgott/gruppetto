@@ -550,13 +550,13 @@ export class Life {
     const F = footSun(I.at, 'vFlowerSun');
     m.colorNode = lit({ col: fcol, nWorld: I.nWorld, vis: F.vis, wrap: 0.6, extra: lampLit(fcol, F.lamp) });
     m.name = 'flowers';
-    return new Scatter([{ geo, mat: m, to: 62, shadow: false }], 32);
+    return new Scatter([{ geo, mat: m, to: 50, shadow: false }], 32);
   }
 
   private shrubKinds(): [Scatter, Scatter] {
     const mk = (rose: boolean): Scatter => {
       const geos = [this.geo(shrub(1, rose)), this.geo(shrub(0, rose))];
-      const to = [70, 260];
+      const to = [60, 220];
       const band = 10;
       const lods: Lod[] = geos.map((geo, q) => {
         const m = this.mat(new THREE.MeshBasicNodeMaterial());
@@ -586,7 +586,7 @@ export class Life {
     const F = footSun(I.at, 'vFernSun');
     m.colorNode = lit({ col: fcol, nWorld: I.nWorld, vis: F.vis, wrap: 0.6, extra: lampLit(fcol, F.lamp) });
     m.name = 'ferns';
-    return new Scatter([{ geo, mat: m, to: 48, shadow: false }], 32);
+    return new Scatter([{ geo, mat: m, to: 40, shadow: false }], 32);
   }
 
   private herdKinds(): [Scatter, Scatter] {

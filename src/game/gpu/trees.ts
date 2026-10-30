@@ -35,7 +35,7 @@ const NV = TREE_VARIANT_KINDS.length;
 const CONIFER = new Set(['pine', 'pineSnow', 'larch']);
 
 /** Stufenwechsel Modell → Bild: Mitte und halbe Breite des Überblendbands (m) */
-const B0: [number, number] = [50, 9];
+const B0: [number, number] = [40, 8];
 /** ganz fern: Bilder blenden aus */
 const FAR: [number, number] = [1550, 1850];
 /** Spielraum: die Verteilung wird erst nach 6 m Kamerafahrt erneuert */
