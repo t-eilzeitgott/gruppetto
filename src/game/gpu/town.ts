@@ -37,7 +37,7 @@ const DETAIL_FAR = 150;
 export interface TownMats { facade: THREE.Material; tiles: THREE.Material; plain: THREE.Material; signs: THREE.Material }
 
 /** günstiges Licht (light.ts: Sonne × vorberechnetes Sonnenlicht, Himmel), beidseitig richtig (Rückseiten: Normale gewendet) */
-function lambert(col: N, opts: { side?: THREE.Side; emissive?: N } = {}): THREE.MeshBasicNodeMaterial {
+export function lambert(col: N, opts: { side?: THREE.Side; emissive?: N } = {}): THREE.MeshBasicNodeMaterial {
   const m = new THREE.MeshBasicNodeMaterial({ side: opts.side ?? THREE.FrontSide });
   const n0 = normalize(normalWorldGeometry);
   const n = opts.side === THREE.DoubleSide ? select(frontFacing, n0, n0.negate()) : n0;
@@ -97,7 +97,7 @@ function newTown(): Town {
  * Sammler → Geometrie in Schritten (wie GB.build, aber zwischen Kopieren, Normalen und Hülle wird abgegeben – ein
  * Ortsstück hat bis 45 000 Ecken, am Stück gut 5 ms). Hülle aus dem Quader der Ecken (ein Durchlauf statt drei).
  */
-function* buildGeo(gb: GB): Generator<void, THREE.BufferGeometry, void> {
+export function* buildGeo(gb: GB): Generator<void, THREE.BufferGeometry, void> {
   const p = gb.p.take();
   const c = gb.c.take();
   const u = gb.uv ? gb.u.take() : null;

@@ -1414,6 +1414,8 @@ export class Race {
       // Abschnitt ~0,15 ms je Bild – erst wenn sie knapp wird, mehr
       const ms = this.budget || (idle ? 6 : lead < 450 ? 4 : lead < 700 ? 2.2 : lead < 950 ? 1 : 0.5);
       world.step(e.p.z, performance.now() + ms);
+      // Dorfstraßen auch in der Strecke der Fahrphysik (Wiese statt Abgrund am Rand)
+      world.villages.patch(e.track);
       if (front !== this.lastBuilt) { if (front > this.lastBuilt) P.event(EV.piece, `Welt bis ${Math.round(front)} m`); this.lastBuilt = front; }
       this.updateMaps(false);
       P.mark(9);

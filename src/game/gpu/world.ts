@@ -18,6 +18,7 @@ import { Crowd } from './crowd';
 import { Field, type RouteSample } from './field';
 import { ForestEdge } from './forest';
 import { Houses } from './houses';
+import { Villages } from './village';
 import { Life } from './life';
 import { Trees } from './trees';
 import { warmLamps } from './lamps';
@@ -74,6 +75,7 @@ export class World {
   readonly tunnels: Tunnels;
   readonly arches: Arches;
   readonly towns: Towns;
+  readonly villages: Villages;
   private track: Track;
   private terrain: Terrain;
   private pieces = new Map<number, Piece>();
@@ -108,6 +110,15 @@ export class World {
       trees: (list) => this.trees.addSpots(list),
       plate: (g, i, x, h, text, sub, w, posts) => this.arches.plate(g, i, x, h, text, sub, w, posts),
     });
+    this.villages = new Villages({
+      track: p.track, terrain: p.terrain, houses: this.houses, trees: this.trees,
+      roadDist: (x, z) => this.roadDistAll(x, z),
+      ground: (s, sg, dx) => this.corridor.groundAt(s, sg, dx),
+      plate: (g, i, x, h, text, sub, w, posts) => this.arches.plate(g, i, x, h, text, sub, w, posts),
+      mat: this.towns.mats.plain,
+    });
+    // Dörfer früh kennen: das Gelände dort wird flacher, bevor die ersten Kacheln entstehen
+    this.villages.ahead(6000);
     if (p.adsMap) {
       const m = cheapMaterial({ col: select(frontFacing, texture(p.adsMap, uv()).rgb, vec3(0.3, 0.2, 0.11)), nWorld: normalWorldGeometry, params: { side: THREE.DoubleSide } });
       m.name = 'signs';
@@ -153,6 +164,7 @@ export class World {
     this.trees.splats(x0, z0, x1, z1, shadow);
     this.houses.splats(x0, z0, x1, z1, shadow);
     this.towns.splats(x0, z0, x1, z1, shadow, light);
+    this.villages.splats(x0, z0, x1, z1, light);
   };
 
   /** Streckenpunkte eines Bereichs (alle 8 m) */
@@ -254,9 +266,13 @@ export class World {
     // Häuser (Abstand zur Straße über alle Stellen der Strecke – auch über die, die erst später gebaut werden: nach
     // einer Kehre liegt der nächste Schenkel oft gleich daneben, früher stand dort dann ein Haus auf der Fahrbahn)
     this.roadIndex(z1 + 1600);
+    // Dörfer: Häuserzeilen, Kirche, Dorfplatz, Laternen
+    this.lbl = 'dorf';
+    const village = yield* this.villages.buildRange(k, z0, z1, this.late);
+    if (village) piece.group.add(village);
     const roadDist = (x: number, z: number) => this.roadDistAll(x, z);
     this.lbl = 'haeuser';
-    yield* this.houses.addRange({ track: this.track, terrain: this.terrain, trees: this.trees, roadDist, occ: this.towns.occ }, z0, z1, 6, this.late);
+    yield* this.houses.addRange({ track: this.track, terrain: this.terrain, trees: this.trees, roadDist, occ: [...this.towns.occ, ...this.villages.occ] }, z0, z1, 6, this.late);
     // Pflanzen und Tiere
     const [lx0, lz0, lx1, lz1] = this.bbox(z0 - 40, z1 + 40, 230);
     const trees = this.trees;
@@ -406,6 +422,7 @@ export class World {
       pc.group.removeFromParent();
       pc.group.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) m.geometry.dispose(); });
       this.towns.drop(k);
+      this.villages.drop(k);
       this.pieces.delete(k);
       this.stats.dropped++;
       dropped = true;

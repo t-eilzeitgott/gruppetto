@@ -8,6 +8,7 @@ import type { Terrain } from '../abfahrt/terrain3d';
 import type { Track } from '../abfahrt/track';
 import type { Surface, SurfaceId } from './bake';
 import { buildHouse, houseMaterials, HMATS, type HMat } from './house';
+import { buildBarn, buildChurch } from './buildings';
 import { commit, disposeGroup, instGroup, STRIDE, type InstGroup } from './inst';
 import type { Trees } from './trees';
 import { tsl } from './nodes';
@@ -29,11 +30,20 @@ const SHUTTERS: [number, number, number][] = [[0.025, 0.1, 0.04], [0.2, 0.028, 0
 const FOOT: [number, number][] = [[-5.95, -6.1], [5.95, -6.1], [5.95, 8.7], [-5.95, 8.7], [0, 1.3]];
 
 /** Stufenwechsel (Mitte, halbe Breite des Überblendbands, m): voll → mittel, mittel → fern */
-const B0: [number, number] = [42, 7];
+const B0: [number, number] = [30, 5];
 const B1: [number, number] = [115, 14];
 const MARGIN = 7;
+/** große Bauten (Kirche): Stufenwechsel so viel weiter weg */
+const BIG = 1.6;
 
-interface Spot { x: number; y: number; z: number; rot: number; tone: number; shut: number; /** Strecke (m), für das Abbauen */ at: number }
+/** Bauart: Wohnhaus, Stadel, Kirche */
+export const KIND = { house: 0, barn: 1, church: 2 } as const;
+const KINDS = 3;
+
+export interface Spot {
+  x: number; y: number; z: number; rot: number; tone: number; shut: number; /** Strecke (m), für das Abbauen */ at: number;
+  kind?: number; sx?: number; sy?: number; sz?: number;
+}
 
 /** was die Platzsuche braucht */
 export interface HouseCtx {
@@ -49,9 +59,11 @@ export interface HouseCtx {
 export class Houses {
   readonly group = new THREE.Group();
   private mats: Record<HMat, THREE.Material>;
-  private geos: Record<HMat, THREE.BufferGeometry>[];
-  private groups: InstGroup[][] = [[], [], []];
-  private spots: Spot[] = [];
+  /** Geometrie je Bauart und Stufe */
+  private geos: Record<HMat, THREE.BufferGeometry>[][];
+  /** Gruppen je Bauart, Stufe, Material */
+  private groups: InstGroup[][][] = [];
+  spots: Spot[] = [];
   private cap = 0;
   private at = new THREE.Vector3(1e9, 0, 0);
 
@@ -59,30 +71,47 @@ export class Houses {
     // Stufe je Gruppe in iC.w (0 nah, 1 mittel, 2 fern); Abstand im Shader
     // Raster-Überblendung (nodes.ditherVis): die Stufen teilen sich die Bildpunkte, nie dieselben – kein Flackern
     this.mats = houseMaterials(S, (I) => {
-      const d = varying(I.at.xz.sub(cameraPosition.xz).length(), 'vHouseD');
+      // iC.w: Stufe, + 4 bei großen Bauten (Kirche: Stufenwechsel 1,6-mal so weit weg)
+      const raw = attribute('iC', 'vec4').w;
+      const big = raw.greaterThan(3.5);
+      const code = select(big, raw.sub(4), raw);
+      const d = varying(I.at.xz.sub(cameraPosition.xz).length().div(select(big, float(BIG), float(1))), 'vHouseD');
       const a = smoothstep(B0[0] - B0[1], B0[0] + B0[1], d);
       const b = smoothstep(B1[0] - B1[1], B1[0] + B1[1], d);
-      const code = attribute('iC', 'vec4').w;
       const one = float(1);
       const lo = select(code.lessThan(0.5), float(0), select(code.lessThan(1.5), one.sub(a), one.sub(b)));
       const hi = select(code.lessThan(0.5), one.sub(a), select(code.lessThan(1.5), one.sub(b), float(2)));
       return [lo, hi];
     });
-    this.geos = [buildHouse(0), buildHouse(1), buildHouse(2)];
+    this.geos = [
+      [buildHouse(0), buildHouse(1), buildHouse(2)],
+      [buildBarn(0), buildBarn(1), buildBarn(2)],
+      [buildChurch(0), buildChurch(1), buildChurch(2)],
+    ];
   }
 
   get count() { return this.spots.length; }
 
   /** Schatten der Häuser für die Bodenkarte (sunmap.ts) */
   splats(x0: number, z0: number, x1: number, z1: number, shadow: (x: number, z: number, h: number, r: number, kind: number) => void) {
-    for (const s of this.spots) if (s.x >= x0 && s.x <= x1 && s.z >= z0 && s.z <= z1) shadow(s.x, s.z, 9.5, 5.5, 1);
+    for (const s of this.spots) {
+      if (s.x < x0 || s.x > x1 || s.z < z0 || s.z > z1) continue;
+      const k = s.kind ?? 0;
+      const sc = Math.max(s.sx ?? 1, s.sz ?? 1);
+      if (k === KIND.church) {
+        // Langhaus und Turm (hinten rechts, lokal x ≈ 7, z ≈ −6)
+        shadow(s.x, s.z, 12, 8.5, 1);
+        const c = Math.cos(s.rot), sn = Math.sin(s.rot);
+        shadow(s.x + 7.2 * c - 6.5 * sn, s.z - 7.2 * sn - 6.5 * c, 30, 3.2, 1);
+      } else shadow(s.x, s.z, (k === KIND.barn ? 8.5 : 9.5) * (s.sy ?? 1), 5.5 * sc, 1);
+    }
   }
   /** Plätze (für Tiere und Pflanzen ringsum) */
   get positions(): { x: number; z: number }[] { return this.spots.map((s) => ({ x: s.x, z: s.z })); }
 
   /** Dreiecke eines Hauses je Stufe (Prüfhilfe) */
   get tris(): number[] {
-    return this.geos.map((g) => HMATS.reduce((n, m) => n + g[m].getAttribute('position').count / 3, 0));
+    return this.geos.map((k) => k.map((g) => HMATS.reduce((n, m) => n + g[m].getAttribute('position').count / 3, 0))).flat();
   }
 
   /**
@@ -190,7 +219,15 @@ export class Houses {
         }
       }
     }
-    if (this.spots.length > this.cap) this.buildGroups();
+    this.refit();
+  }
+
+  /** nach dem Hinzufügen von außen (Dörfer): Gruppen groß genug, Stufen neu verteilen */
+  refit() {
+    const n = [0, 0, 0];
+    for (const s of this.spots) n[s.kind ?? 0]++;
+    const cap = this.groups[0]?.[0]?.[0] ? this.groups.map((k) => k[0][0].data.length / STRIDE) : [0, 0, 0];
+    if (n.some((c, k) => c > cap[k])) this.buildGroups();
     this.at.set(1e9, 0, 0);
   }
 
@@ -204,22 +241,27 @@ export class Houses {
   private buildGroups(force = false) {
     const n = this.spots.length;
     if (!n && !force) return;
-    for (const l of this.groups) for (const g of l) disposeGroup(g);
-    this.groups = [[], [], []];
+    for (const k of this.groups) for (const l of k) for (const g of l) disposeGroup(g);
+    this.groups = [];
     this.cap = Math.max(16, Math.ceil(n * 1.5));
+    const cnt = [0, 0, 0];
+    for (const s of this.spots) cnt[s.kind ?? 0]++;
+    const capK = [this.cap, Math.max(8, Math.ceil(cnt[1] * 1.5)), Math.max(4, Math.ceil(cnt[2] * 1.5))];
     // die Gruppen enthalten alle Häuser der gebauten Strecke: kein Wegschneiden als Ganzes
     const sphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
-    for (let lod = 0; lod < 3; lod++) {
-      for (const m of HMATS) {
-        const g = instGroup(this.geos[lod][m], this.mats[m], this.cap, sphere);
-        // Schatten nur von der nahen Stufe: die Gruppen werden nicht weggeschnitten, sonst zeichnete der
-        // Schattendurchgang jedes Haus der gebauten Strecke (der Schattenausschnitt reicht ~55 m, Stufe 0 bis 56 m)
-        g.mesh.castShadow = lod === 0;
-        g.mesh.receiveShadow = true;
-        g.mesh.frustumCulled = false;
-        this.group.add(g.mesh);
-        this.groups[lod].push(g);
+    for (let kind = 0; kind < KINDS; kind++) {
+      const lv: InstGroup[][] = [[], [], []];
+      // Kirchen und Stadel sind selten: kleinere Gruppen
+      const cap = capK[kind];
+      for (let lod = 0; lod < 3; lod++) {
+        for (const m of HMATS) {
+          const g = instGroup(this.geos[kind][lod][m], this.mats[m], cap, sphere);
+          g.mesh.frustumCulled = false;
+          this.group.add(g.mesh);
+          lv[lod].push(g);
+        }
       }
+      this.groups.push(lv);
     }
   }
 
@@ -227,39 +269,44 @@ export class Houses {
   update(cam: THREE.Vector3, force = false) {
     if (!this.spots.length || (!force && this.at.distanceToSquared(cam) < 36)) return;
     this.at.copy(cam);
-    const cnt = [0, 0, 0];
+    const cnt = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
     const put = (lod: number, s: Spot) => {
       // während addRange noch baut (es gibt zwischendurch ab), kann es mehr Häuser als Platz geben – die neuen,
       // fernen kommen dann erst mit den größeren Gruppen am Ende dazu
-      const i = cnt[lod];
-      if (i >= this.cap) return;
-      cnt[lod] = i + 1;
+      const k = s.kind ?? 0;
+      const gs = this.groups[k][lod];
+      const i = cnt[k][lod];
+      if (i * STRIDE >= gs[0].data.length) return;
+      cnt[k][lod] = i + 1;
       const sh = SHUTTERS[s.shut];
-      for (const g of this.groups[lod]) g.data.set([s.x, s.y, s.z, s.rot, 1, 1, 1, s.tone, sh[0], sh[1], sh[2], lod], i * STRIDE);
+      const big = s.kind === KIND.church ? 4 : 0;
+      for (const g of gs) g.data.set([s.x, s.y, s.z, s.rot, s.sx ?? 1, s.sy ?? 1, s.sz ?? 1, s.tone, sh[0], sh[1], sh[2], lod + big], i * STRIDE);
     };
     for (const s of this.spots) {
       const d = Math.hypot(s.x - cam.x, s.z - cam.z);
+      // Kirchen (groß, hoch) erst später in die gröbere Stufe
+      const f = s.kind === KIND.church ? BIG : 1;
       // im Überblendband in beide Stufen
-      if (d < B0[0] + B0[1] + MARGIN) put(0, s);
-      if (d > B0[0] - B0[1] - MARGIN && d < B1[0] + B1[1] + MARGIN) put(1, s);
-      if (d > B1[0] - B1[1] - MARGIN) put(2, s);
+      if (d < (B0[0] + B0[1]) * f + MARGIN) put(0, s);
+      if (d > (B0[0] - B0[1]) * f - MARGIN && d < (B1[0] + B1[1]) * f + MARGIN) put(1, s);
+      if (d > (B1[0] - B1[1]) * f - MARGIN) put(2, s);
     }
-    for (let lod = 0; lod < 3; lod++) for (const g of this.groups[lod]) commit(g, cnt[lod]);
+    for (let k = 0; k < KINDS; k++) for (let lod = 0; lod < 3; lod++) for (const g of this.groups[k][lod]) commit(g, cnt[k][lod]);
   }
 
   /** Vorwärmen: beide Stufen einmal zeichnen lassen */
   warm(on: boolean) {
     // noch keine Häuser (Start ohne Dorf): Gruppen trotzdem anlegen, damit ihre Shader jetzt übersetzt werden
     if (on && !this.groups[0]?.length) this.buildGroups(true);
-    for (const l of this.groups) for (const g of l) {
+    for (const k of this.groups) for (const l of k) for (const g of l) {
       if (on) { g.geo.instanceCount = Math.max(1, g.geo.instanceCount); g.mesh.visible = true; }
     }
     if (!on) this.at.set(1e9, 0, 0);
   }
 
   dispose() {
-    for (const l of this.groups) for (const g of l) disposeGroup(g);
-    for (const geo of this.geos) for (const m of HMATS) geo[m].dispose();
+    for (const k of this.groups) for (const l of k) for (const g of l) disposeGroup(g);
+    for (const k of this.geos) for (const geo of k) for (const m of HMATS) geo[m].dispose();
     for (const m of HMATS) this.mats[m].dispose();
   }
 }

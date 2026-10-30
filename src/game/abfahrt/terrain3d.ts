@@ -415,13 +415,21 @@ export class Terrain {
     }
   }
 
+  /** schmalerer Korridor je Straßenstück (Dörfer: die Häuser stehen gleich hinter dem Bankett) */
+  private limCaps = new Map<number, number>();
+  capLim(i0: number, i1: number, v: number) {
+    for (let i = i0; i <= i1; i++) this.limCaps.set(i, v);
+    for (let i = i0 - 8; i <= i1 + 8; i++) { this.rawLimCache.delete(i); this.limCache.delete(i); }
+  }
+
   private rawLim(i: number): [number, number] {
     const t = this.track;
     i = Math.max(t.first, i);
     const hit = this.rawLimCache.get(i);
     if (hit) return hit;
-    let l = LIM_MAX;
-    let rr = LIM_MAX;
+    const cap = this.limCaps.get(i) ?? LIM_MAX;
+    let l = cap;
+    let rr = cap;
     let kmax = 0;
     let ksum = 0;
     for (let d = -16; d <= 16; d += 2) {
@@ -728,6 +736,15 @@ export class Terrain {
     if (wb > 0) o.h += (o.lakeY - 6 - Math.min(20, dr * 0.05) - o.h) * wb;
     // Welt-Editor: Hügel und Mulden (vor den Klemmen – die Straße bleibt frei)
     { const bumps = this.track.bumps; if (bumps.length) o.h += bumpAt(bumps, x, z); }
+    // Dörfer (WebGPU-Welt): das Gelände beiderseits der Dorfstraße flacher (Terrassen statt Steilhang)
+    for (const f of this.flats) {
+      if (x < f.box[0] || x > f.box[2] || z < f.box[1] || z > f.box[3]) continue;
+      const p = f.pts;
+      let bd = Infinity, by = 0, bk = 0;
+      for (let i = 0; i < p.length; i += 4) { const d = (p[i] - x) ** 2 + (p[i + 2] - z) ** 2; if (d < bd) { bd = d; by = p[i + 1]; bk = p[i + 3]; } }
+      const wv = sstep(f.L, f.L * 0.5, Math.sqrt(bd)) * bk;
+      if (wv > 0) o.h -= (o.h - by) * f.k * wv;
+    }
     if (!sg || sg.n === 0) return o;
     const CR = clampR(cell);
     if (dr > CR + 30) return o;
@@ -814,6 +831,15 @@ export class Terrain {
 
   private heightAt(x: number, z: number, cand: Int32Array, sg: SegGrid | null, cell = 4): HPoint {
     return this.finish(x, z, this.base(x, z, cand), sg, cell);
+  }
+
+  /** Dorfebenen: Straßenpunkte (x, y, z, Gewicht an den Enden), Reichweite L (m), Stärke k (0 … 1) */
+  readonly flats: { pts: Float32Array; L: number; k: number; box: [number, number, number, number] }[] = [];
+  /** Dorfebene anlegen (vor dem Bau der Kacheln dort) */
+  addFlat(pts: number[], L: number, k: number) {
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+    for (let i = 0; i < pts.length; i += 4) { x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]); z0 = Math.min(z0, pts[i + 2]); z1 = Math.max(z1, pts[i + 2]); }
+    this.flats.push({ pts: new Float32Array(pts), L, k, box: [x0 - L, z0 - L, x1 + L, z1 + L] });
   }
 
   /** Abstand (Draufsicht) zum nächsten Straßenstück im Rechenbereich – für Bäume und Requisiten */

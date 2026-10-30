@@ -19,15 +19,15 @@ import { MOOD_U } from './mood';
 
 const { attribute, float, mix, normalize, positionGeometry, select, smoothstep, texture, uv, varying, vec3, vertexColor } = tsl;
 
-type V3 = [number, number, number];
+export type V3 = [number, number, number];
 export type HMat = 'plaster' | 'wood' | 'roof' | 'stone' | 'detail';
 export const HMATS: HMat[] = ['plaster', 'wood', 'roof', 'stone', 'detail'];
 
-const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+export const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+export const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const norm = (a: V3): V3 => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
-const rnd = (n: number) => {
+export const norm = (a: V3): V3 => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+export const rnd = (n: number) => {
   let x = Math.imul(n ^ 0x3c6ef372, 0x9e3779b1);
   x ^= x >>> 15;
   x = Math.imul(x, 0x85ebca77);
@@ -46,7 +46,7 @@ class Geo {
 }
 
 /** Geometrie-Baukasten: Flächen mit Normale, Texturkoordinaten in Metern, Tangenten, Farbe, Material-Extras */
-class Builder {
+export class Builder {
   private g: Record<HMat, Geo> = { plaster: new Geo(), wood: new Geo(), roof: new Geo(), stone: new Geo(), detail: new Geo() };
   mat: HMat = 'plaster';
   col: V3 = [1, 1, 1];
@@ -195,7 +195,7 @@ const BLOB1 = ico(1);
 // ——— Wandflächen ———
 
 /** Hausseite: Ebene (Normale nach außen), Richtung „rechts“ von außen gesehen; Punkt aus (s, t, Tiefe nach innen) */
-class Face {
+export class Face {
   readonly R: V3;
   constructor(readonly N: V3, readonly plane: number) {
     this.R = cross([0, 1, 0], N);
@@ -206,10 +206,10 @@ class Face {
   }
 }
 
-interface Hole { s0: number; s1: number; t0: number; t1: number }
+export interface Hole { s0: number; s1: number; t0: number; t1: number }
 
 /** Wand mit Öffnungen: Bänder zwischen den Kanten der Öffnungen; hw(t): halbe Breite (Giebel: schräg) */
-function wall(b: Builder, F: Face, hw: (t: number) => number, t0: number, t1: number, holes: Hole[], knees: number[] = []) {
+export function wall(b: Builder, F: Face, hw: (t: number) => number, t0: number, t1: number, holes: Hole[], knees: number[] = []) {
   const ts = [...new Set([t0, t1, ...knees, ...holes.flatMap((h) => [h.t0, h.t1])])].filter((t) => t >= t0 && t <= t1).sort((a, c) => a - c);
   for (let k = 0; k + 1 < ts.length; k++) {
     const ta = ts[k], tb = ts[k + 1];
@@ -230,7 +230,7 @@ function wall(b: Builder, F: Face, hw: (t: number) => number, t0: number, t1: nu
 }
 
 /** Laibung einer Öffnung (Tiefe D) */
-function reveal(b: Builder, F: Face, h: Hole, D: number) {
+export function reveal(b: Builder, F: Face, h: Hole, D: number) {
   const U: V3 = [0, 1, 0];
   const R = F.R;
   b.quadF(F.p(h.s0, h.t0), F.p(h.s1, h.t0), F.p(h.s1, h.t0, D), F.p(h.s0, h.t0, D), U);
@@ -240,26 +240,26 @@ function reveal(b: Builder, F: Face, h: Hole, D: number) {
 }
 
 /** Quader in Wandkoordinaten (d < 0: vor der Wand) */
-function fbox(b: Builder, F: Face, s0: number, s1: number, t0: number, t1: number, d0: number, d1: number) {
+export function fbox(b: Builder, F: Face, s0: number, s1: number, t0: number, t1: number, d0: number, d1: number) {
   b.hexa([F.p(s0, t0, d0), F.p(s1, t0, d0), F.p(s1, t1, d0), F.p(s0, t1, d0), F.p(s0, t0, d1), F.p(s1, t0, d1), F.p(s1, t1, d1), F.p(s0, t1, d1)]);
 }
 
 // Farben (linear)
-const WHITE_PAINT: V3 = [0.62, 0.61, 0.58];
+export const WHITE_PAINT: V3 = [0.62, 0.61, 0.58];
 const CURTAIN: V3 = [0.56, 0.55, 0.5];
-const GLASS: V3 = [0.01, 0.012, 0.015];
-const SILL: V3 = [0.36, 0.35, 0.32];
-const FASCHE: V3 = [0.5, 0.42, 0.28];
-const QUOIN: V3 = [0.42, 0.4, 0.36];
-const DOOR: V3 = [0.12, 0.07, 0.035];
-const IRON: V3 = [0.05, 0.05, 0.05];
+export const GLASS: V3 = [0.01, 0.012, 0.015];
+export const SILL: V3 = [0.36, 0.35, 0.32];
+export const FASCHE: V3 = [0.5, 0.42, 0.28];
+export const QUOIN: V3 = [0.42, 0.4, 0.36];
+export const DOOR: V3 = [0.12, 0.07, 0.035];
+export const IRON: V3 = [0.05, 0.05, 0.05];
 const ZINC: V3 = [0.5, 0.51, 0.52];
 const BOXWOOD: V3 = [0.75, 0.75, 0.75];
-const LEAF: V3 = [0.035, 0.1, 0.025];
-const REDS: V3[] = [[0.62, 0.02, 0.025], [0.7, 0.04, 0.05], [0.55, 0.015, 0.03], [0.75, 0.16, 0.28], [0.68, 0.06, 0.02]];
+export const LEAF: V3 = [0.035, 0.1, 0.025];
+export const REDS: V3[] = [[0.62, 0.02, 0.025], [0.7, 0.04, 0.05], [0.55, 0.015, 0.03], [0.75, 0.16, 0.28], [0.68, 0.06, 0.02]];
 
 /** Blumenkasten mit Geranien: Kasten entlang a→b (Höhe y), außen nach out; hängende Ranken nach unten */
-function flowerBox(b: Builder, a: V3, c: V3, out: V3, seed: number, hang = 0.45, fine = true) {
+export function flowerBox(b: Builder, a: V3, c: V3, out: V3, seed: number, hang = 0.45, fine = true) {
   const len = Math.hypot(c[0] - a[0], c[2] - a[2]);
   const dir: V3 = [(c[0] - a[0]) / len, 0, (c[2] - a[2]) / len];
   const p = (s: number, h: number, o: number): V3 => [a[0] + dir[0] * s + out[0] * o, a[1] + h, a[2] + dir[2] * s + out[2] * o];
@@ -267,7 +267,19 @@ function flowerBox(b: Builder, a: V3, c: V3, out: V3, seed: number, hang = 0.45,
   b.set({ mat: 'wood', kind: 0, swap: false, col: BOXWOOD });
   b.hexa([p(0, -0.22, 0), p(len, -0.22, 0), p(len, 0, 0), p(0, 0, 0), p(0, -0.22, 0.22), p(len, -0.22, 0.22), p(len, 0, 0.22), p(0, 0, 0.22)]);
   b.set({ mat: 'detail', rough: 0.7, metal: 0, shut: 0 });
-  const n = Math.max(2, Math.round(len / (fine ? 0.19 : 0.26)));
+  if (!fine) {
+    // mittlere Stufe: Blattwerk als Wulst, Blüten als Band darauf, hängende Ranken als Schürze (24 statt ~300 Dreiecke)
+    b.set({ col: LEAF });
+    b.hexa([p(-0.03, -0.02, -0.02), p(len + 0.03, -0.02, -0.02), p(len + 0.03, 0.16, 0.02), p(-0.03, 0.16, 0.02), p(-0.03, -0.02, 0.27), p(len + 0.03, -0.02, 0.27), p(len + 0.03, 0.16, 0.2), p(-0.03, 0.16, 0.2)]);
+    b.set({ col: REDS[Math.floor(rnd(seed) * REDS.length)] });
+    b.hexa([p(0.02, 0.14, 0.03), p(len - 0.02, 0.14, 0.03), p(len - 0.02, 0.26, 0.06), p(0.02, 0.26, 0.06), p(0.02, 0.14, 0.2), p(len - 0.02, 0.14, 0.2), p(len - 0.02, 0.24, 0.17), p(0.02, 0.24, 0.17)]);
+    if (hang > 0) {
+      b.set({ col: [LEAF[0] * 1.1, LEAF[1] * 1.1, LEAF[2] * 1.1] });
+      b.quadF(p(0.05, -0.02, 0.26), p(len - 0.05, -0.02, 0.26), p(len - 0.1, -hang * 0.7, 0.28), p(0.1, -hang * 0.7, 0.28), out);
+    }
+    return;
+  }
+  const n = Math.max(2, Math.round(len / 0.19));
   const leafCol = (k: number): V3 => { const v = 0.75 + rnd(seed * 3 + k) * 0.5; return [LEAF[0] * v, LEAF[1] * v * (0.9 + rnd(k) * 0.2), LEAF[2] * v]; };
   for (let k = 0; k < n; k++) {
     const s = (k + 0.5) * (len / n);
@@ -312,7 +324,7 @@ interface WinOpt {
 }
 
 /** Fenster mit Laibung, Rahmen und Sprossen, Glas mit Vorhängen, Sims, Läden, gemalter Fasche, Blumenkasten */
-function windowAt(b: Builder, F: Face, h: Hole, o: WinOpt, seed: number) {
+export function windowAt(b: Builder, F: Face, h: Hole, o: WinOpt, seed: number) {
   const w = h.s1 - h.s0;
   const hh = h.t1 - h.t0;
   b.set({ mat: o.wallMat, kind: o.wallKind ?? 0, swap: false, col: [1, 1, 1] });
@@ -506,8 +518,10 @@ function balcony(b: Builder, y: number, hx: number, z0: number, zf: number, H: n
     b.box(xs - 0.09, y + H - 0.08, z0, xs + 0.09, y + H + 0.04, zr);
     b.box(xs - 0.045, y, z0, xs + 0.045, y + 0.09, zr);
   }
-  if (lod > 1) {
+  if (lod > 0) {
+    // mittlere und ferne Stufe: Brüstung als Brett (mit Schlitzen wie Baluster: dunkle Striche)
     b.box(-hx + 0.1, y + 0.09, zr - 0.02, hx - 0.1, y + H - 0.08, zr + 0.02);
+    for (const sd of [-1, 1]) b.box(sd * (hx - 0.06) - 0.02, y + 0.09, z0 + 0.1, sd * (hx - 0.06) + 0.02, y + H - 0.08, zr);
   } else {
     // Baluster (Brettbaluster, senkrechte Maserung)
     b.set({ swap: true, col: [1.05, 1.05, 1.05] });
@@ -775,12 +789,16 @@ export function buildHouse(lod: 0 | 1 | 2): Record<HMat, THREE.BufferGeometry> {
   balcony(b, 6.15, 2.15, UD, 6.9, 0.85, 800, lod);
 
   if (full) {
-    // ——— Holzstoß unter der Traufe (links): Scheite mit hellen Schnittflächen und dunkler Rinde ———
+    // ——— Holzstoß unter der Traufe (links): Scheite mit hellen Schnittflächen und dunkler Rinde (mittlere Stufe: Fläche) ———
     b.set({ mat: 'wood', kind: 0, swap: false, col: [0.35, 0.35, 0.35] });
     b.box(-5.82, 0.66, -4.9, -5.06, 2.6, 2.5);
     b.set({ mat: 'detail', rough: 0.9, shut: 0 });
     let q = 0;
-    for (let row = 0; row < 10; row++) {
+    if (!fine) {
+      b.set({ col: [0.3, 0.21, 0.12] });
+      b.quadF([-5.84, 0.7, -4.85], [-5.84, 0.7, 2.45], [-5.84, 2.6, 2.45], [-5.84, 2.6, -4.85], [-1, 0, 0]);
+    }
+    for (let row = 0; row < (fine ? 10 : 0); row++) {
       const y = 0.76 + row * 0.19;
       for (let z = -4.8 + (row % 2) * 0.1; z < 2.4; z += 0.2) {
         q++;
@@ -808,7 +826,7 @@ export function buildHouse(lod: 0 | 1 | 2): Record<HMat, THREE.BufferGeometry> {
     for (const x of [-3.75, -2.9]) b.box(x - 0.04, 0.62, 7.05, x + 0.04, 1.38, 7.6);
     b.box(-3.75, 0.85, 7.29, -2.9, 0.92, 7.36);
     b.set({ mat: 'detail', col: [0.42, 0.14, 0.06], rough: 0.8, shut: 0 });
-    for (const x of [1.6, 2.7, 3.8]) {
+    for (const x of fine ? [1.6, 2.7, 3.8] : []) {
       b.tube([x, 0.62, 8.35], [x, 0.94, 8.35], 0.15, 0.19, 8, true);
       b.set({ col: LEAF });
       b.blob([x, 1.05, 8.35], 0.2, 0.55, LEAF, Math.round(x * 10));

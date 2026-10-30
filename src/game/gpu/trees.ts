@@ -285,8 +285,29 @@ export class Trees {
     return m;
   }
 
+  /** Sperrflächen (Dörfer): dort kommen auch mit späteren Kacheln keine Bäume hin – je Zelle (x, z, r) */
+  private blocks = new Map<string, number[]>();
+  block(x: number, z: number, r: number) {
+    for (let i = Math.floor((x - r) / CELL); i <= Math.floor((x + r) / CELL); i++) {
+      for (let j = Math.floor((z - r) / CELL); j <= Math.floor((z + r) / CELL); j++) {
+        const k = `${i},${j}`;
+        let l = this.blocks.get(k);
+        if (!l) { l = []; this.blocks.set(k, l); }
+        l.push(x, z, r);
+      }
+    }
+  }
+  private blocked(x: number, z: number): boolean {
+    const l = this.blocks.get(`${Math.floor(x / CELL)},${Math.floor(z / CELL)}`);
+    if (!l) return false;
+    for (let i = 0; i < l.length; i += 3) if ((l[i] - x) ** 2 + (l[i + 1] - z) ** 2 < l[i + 2] * l[i + 2]) return true;
+    return false;
+  }
+
   /** Bäume einer Landschaftskachel übernehmen (gebaut wird beim nächsten update) */
   addTile(trees: TreeSpot[], cx: number, cz: number) {
+    if (this.blocks.size) trees = trees.filter((t) => !this.blocked(t.x, t.z));
+    if (!trees.length) return;
     const key = `${Math.floor(cx / CELL)},${Math.floor(cz / CELL)}`;
     let c = this.cells.get(key);
     if (!c) {
