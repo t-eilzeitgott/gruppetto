@@ -25,6 +25,8 @@ import { RiderModel, riderKitKey, type RiderPose } from './rider3d';
 import { JOINTS, Ragdoll, type Ground } from './ragdoll';
 import { wreckPose, type Wreck } from './wreck';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
+import { Houses3D } from './houses3d';
+import { Villages3D } from './village3d';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
@@ -1426,6 +1428,7 @@ export class Renderer3D {
         this.terrain?.setTrack(g.track);
         this.cam.init = false; this.runners = []; this.runNext = 0;
         this.camReg = null;
+        this.villages?.patch(g.track);
         // neue Fahrt: vom Kran am Start aus weiterfliegen, sonst neu ansetzen (nach einem Sturz nicht quer übers Land)
         this.resetDirector(this.lastPhase === 'ready');
         // neues Rennen: neue Sprüche auf Schildern und Spruchbändern (nur die Bilder im Atlas – kein Neuaufbau)
@@ -1478,9 +1481,14 @@ export class Renderer3D {
         }
       }
     }
+    // Dörfer weit voraus festlegen (Dorfebene und Dorfstraße, bevor dort Landschaft und Straße entstehen)
+    this.villages?.ahead(p.z + 6500);
+    if (this.idleBuild && !this.houses.ready) this.houses.buildStep();
     const w0 = performance.now();
     this.updateChunks(g, dt);
     this.updateCamera(g, dt);
+    this.houses.prune(p.z - 450);
+    this.houses.update(this.camera.position);
     if (this.debugCam) {
       const d = this.debugCam;
       this.camera.position.set(d[0], d[1], d[2]);
@@ -1536,6 +1544,26 @@ export class Renderer3D {
     // Bestände mit klarem Waldrand statt verstreuter Einzelbäume)
     if (track.kind === 'descent') { this.terrain.rugged = true; this.terrain.woods = true; }
     this.woodsU.value = this.terrain.woods ? 1 : 0;
+    // Dörfer und Höfe wie in der WebGPU-Abfahrt (Lage und Dorfebene stehen fest, bevor dort Landschaft entsteht)
+    this.houses.spots = [];
+    this.houses.touch();
+    this.treeBlocks = [];
+    this.rdReg = null;
+    this.villages = null;
+    if (track.kind === 'descent') {
+      const T = this.terrain;
+      this.villages = new Villages3D({
+        track, terrain: T, houses: this.houses,
+        roadDist: (x, z) => this.roadDistAt(x, z),
+        ground: (sg0, sg, dx) => {
+          const side = sg < 0 ? sg0.L : sg0.R;
+          return this.groundAt(side, sg0, sg, dx, T.lim(sg0.i)[sg < 0 ? 0 : 1] - track.extra(sg0.i));
+        },
+        clearTrees: (x, z, r) => this.clearTrees(x, z, r),
+        invalidate: (x0, z0, x1, z1) => this.invalidateTerrain(x0, z0, x1, z1),
+      });
+      this.villages.ahead(6500);
+    }
     this.camReg = null;
     this.newSigns(track.names);
     this.clearChunks();
@@ -2058,9 +2086,12 @@ export class Renderer3D {
         rec[o + 5] = tr; rec[o + 6] = tg; rec[o + 7] = tb;
         rec[o + 8] = treeVariant(t.kind, (t.rot * 13.17) % 1);
         rec[o + 9] = t.dy ?? 0;
+        // wo ein Haus steht (Dorf, Hof): kein Baum
+        if (this.treeBlocked(t.x, t.z)) rec[o + 3] = 0;
       });
       tsrc = { box: [tx * size, tz * size, (tx + 1) * size, (tz + 1) * size], rec, n: d.trees.length, on: true };
       const bg = treeBillboards(tsrc, this.treeAtlas);
+      this.bbOf.set(tsrc, bg);
       const bm = new THREE.Mesh(bg, this.bbMat);
       bm.userData.bb = true;
       objs.push(bm);
@@ -2254,6 +2285,7 @@ export class Renderer3D {
     u.uCover.value = M.cover; u.uCirrus.value = M.cirrus; u.uStorm.value = M.storm; u.uOvercast.value = M.overcast; u.uTowers.value = M.towers;
     u.uStars.value = L.stars; u.uWarm.value = Math.max(0, Math.min(1, (L.t - 0.3) / 0.4));
     this.mats.facade.emissiveIntensity = L.lights * 1.25;
+    this.houses.lights.value = L.lights;
     this.mats.sign.emissiveIntensity = L.lights * 0.75;
     const dusk = Math.max(0, Math.min(1, (L.lights - 0.08) / 0.4));
     this.mats.bulb.opacity = dusk;
@@ -2883,6 +2915,9 @@ export class Renderer3D {
     }
     // Fahrer als Bilder (ihr Shader wird gebraucht, sobald der Vorrat fertig ist – auch mitten im Rennen)
     g.add(new THREE.Mesh(this.rs.mesh.geometry, this.rs.mesh.material));
+    // Alpenhäuser (Dörfer, Höfe)
+    for (const o of this.houses.warmObjects()) g.add(o);
+    if (!this.houses.group.parent) this.scene.add(this.houses.group);
     // Berge am Horizont: beide Spielarten am Leben halten (Landschaftswechsel tauscht ihr Material)
     this.peakU.uNoise.value ??= this.noiseMap;
     for (const m of peakKeepers(this.peakU)) g.add(new THREE.Mesh(geo, m));
@@ -3349,6 +3384,32 @@ export class Renderer3D {
     }
     yield;
     resume();
+    // Dörfer (Häuserzeilen, Kirche, Dorfplatz, Laternen) und Höfe am Hang – nur in der Abfahrt
+    let vgb: GB | null = null;
+    if (this.villages) {
+      const z0 = i0 * SEG, z1 = (i0 + CH) * SEG;
+      const vp = yield* this.villages.buildRange(z0, z1, () => this.late());
+      resume();
+      if (vp) {
+        if (!vp.gb.empty) vgb = vp.gb;
+        glows.push(...vp.lights);
+        for (const tr of vp.trees) {
+          const [cr, cg, cb] = treeTint(1, hash(Math.round(tr.x)), hash(Math.round(tr.z)));
+          cTrees.push(tr.x, tr.y - 0.05, tr.z, tr.s, tr.rot, cr, cg, cb, treeVariant(tr.kind, hash(Math.round(tr.x * 3))), 0);
+        }
+        if (vp.sign) {
+          const ri = Math.min(CH - 1, Math.max(0, Math.floor(vp.sign.at / SEG) - i0));
+          // Ortsschild rechts am Eingang (Querlage wie bei Normalbreite – prop rückt es mit der Breite nach außen)
+          const sp = { k: 'townSign', x: EDGE + 1.7, h: 0, s: 1, v: 0, text: vp.sign.text, f: false } as Sprite;
+          this.prop(group, disp, inst, bill, anim, glows, rows[ri], sp, rows[ri].seg, lim.R[ri]);
+        }
+      }
+      yield* this.houses.addFarms({
+        track: t, terrain: this.terrain!, roadDist: (x, z) => this.roadDistAt(x, z), occ: this.villages.occ,
+        countTrees: (x, z, r) => this.countTrees(x, z, r), clearTrees: (x, z, r) => this.clearTrees(x, z, r),
+      }, z0, z1, () => this.late());
+      resume();
+    }
 
     const add = (gb: GB, m: THREE.Material, order = 0, cast = false) => {
       if (gb.empty) return;
@@ -3416,6 +3477,7 @@ export class Renderer3D {
         detail = { mesh, c: bs.center.clone(), r: bs.radius };
       },
       () => add(signGB, this.mats.sign, 0),
+      () => { if (vgb) add(vgb, this.mats.roof, 0, true); },
       () => add(ads, this.mats.ads, 0, true),
       () => { if (this.fanMat) add(fans, this.fanMat, 0, true); },
     ];
@@ -3442,7 +3504,10 @@ export class Renderer3D {
       let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
       for (let k = 0; k < n; k++) { x0 = Math.min(x0, ct[k * TREC]); x1 = Math.max(x1, ct[k * TREC]); z0 = Math.min(z0, ct[k * TREC + 2]); z1 = Math.max(z1, ct[k * TREC + 2]); }
       csrc = { box: [x0, z0, x1, z1], rec: new Float32Array(ct), n, on: true };
-      cbm = new THREE.Mesh(treeBillboards(csrc, this.treeAtlas), this.bbMat);
+      for (let k = 0; k < n; k++) if (this.treeBlocked(csrc.rec[k * TREC], csrc.rec[k * TREC + 2])) csrc.rec[k * TREC + 3] = 0;
+      const cbg = treeBillboards(csrc, this.treeAtlas);
+      this.bbOf.set(csrc, cbg);
+      cbm = new THREE.Mesh(cbg, this.bbMat);
       group.add(cbm);
       this.treeSrc.add(csrc);
     }
@@ -4646,6 +4711,8 @@ export class Renderer3D {
       const sc = sp.s * (kind === 'rock' && sp.h > 0.05 ? 1 : 1);
       const m = new THREE.Matrix4().compose(new THREE.Vector3(px, py - 0.05, pz), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rot, 0)), new THREE.Vector3(sc, sc * (0.9 + hash(s.i + sp.v) * 0.25), sc));
       const v = 0.85 + hash(s.i * 3 + sp.v) * 0.3;
+      // im Dorf stehen keine Bäume am Straßenrand (dort sind Gärten und Häuser)
+      if (TREES.has(kind) && this.villages?.inside(s.i * SEG)) return;
       if (TREES.has(kind) && this.cTrees) {
         const [tr, tg, tb] = treeTint(v, hash(s.i * 7 + sp.v), hash(s.i * 11 + sp.v * 3));
         this.cTrees.push(px, py - 0.05, pz, sc, rot, tr, tg, tb, treeVariant(kind, hash(s.i * 13 + sp.v * 7)), 0);
@@ -5470,6 +5537,66 @@ export class Renderer3D {
     let list = this.riderPool.get(m.kitKey);
     if (!list) { list = []; this.riderPool.set(m.kitKey, list); }
     list.push(m);
+  }
+
+  // ------------------------------------------------------------------ Häuser, Dörfer, Bäume weg
+
+  /** Alpenhäuser (Höfe, Dorfhäuser, Stadel, Kirchen) als Instanzen */
+  private houses = new Houses3D();
+  /** Dörfer an der Strecke (nur Abfahrt) */
+  private villages: Villages3D | null = null;
+  /** Stellen ohne Bäume (x, z, Radius) – für Kacheln, die erst noch entstehen */
+  private treeBlocks: number[] = [];
+  /** Bild-Geometrie der Bäume je Quelle (zum Entfernen einzelner Bäume) */
+  private bbOf = new WeakMap<TreeSource, THREE.InstancedBufferGeometry>();
+
+  private treeBlocked(x: number, z: number): boolean {
+    const b = this.treeBlocks;
+    for (let k = 0; k < b.length; k += 3) if ((b[k] - x) ** 2 + (b[k + 1] - z) ** 2 < b[k + 2] * b[k + 2]) return true;
+    return false;
+  }
+
+  /** Bäume im Umkreis entfernen: in gebauten Kacheln (Bild auf Größe 0) und in künftigen */
+  private clearTrees(x: number, z: number, r: number) {
+    this.treeBlocks.push(x, z, r);
+    if (this.treeBlocks.length > 3 * 4000) this.treeBlocks.splice(0, 3 * 1000);
+    for (const s of this.treeSrc) {
+      const b = s.box;
+      if (b[2] < x - r - 20 || b[0] > x + r + 20 || b[3] < z - r - 20 || b[1] > z + r + 20) continue;
+      const bg = this.bbOf.get(s);
+      const buf = bg ? (bg.getAttribute('aT0') as THREE.InterleavedBufferAttribute).data : null;
+      let hit = false;
+      for (let k = 0; k < s.n; k++) {
+        const o = k * TREC;
+        if ((s.rec[o] - x) ** 2 + (s.rec[o + 2] - z) ** 2 >= r * r || s.rec[o + 3] === 0) continue;
+        s.rec[o + 3] = 0;
+        if (buf) { (buf.array as Float32Array)[k * buf.stride + 3] = 0; hit = true; }
+      }
+      if (hit && buf) buf.needsUpdate = true;
+    }
+  }
+
+  /** Bäume im Umkreis (gebaute Landschaft) */
+  private countTrees(x: number, z: number, r: number): number {
+    let n = 0;
+    for (const s of this.treeSrc) {
+      const b = s.box;
+      if (b[2] < x - r || b[0] > x + r || b[3] < z - r || b[1] > z + r) continue;
+      for (let k = 0; k < s.n; k++) {
+        const o = k * TREC;
+        if (s.rec[o + 3] > 0 && (s.rec[o] - x) ** 2 + (s.rec[o + 2] - z) ** 2 < r * r) n++;
+      }
+    }
+    return n;
+  }
+
+  /** Abstand zur Straße (alle Schenkel) an einem Weltpunkt – Rechenbereich in der Nähe wiederverwendet */
+  private rdReg: { r: Region; x: number; z: number } | null = null;
+  private roadDistAt(x: number, z: number): number {
+    const T = this.terrain;
+    if (!T) return Infinity;
+    if (!this.rdReg || Math.abs(x - this.rdReg.x) > 150 || Math.abs(z - this.rdReg.z) > 150) this.rdReg = { r: T.region(x - 200, z - 200, x + 200, z + 200), x, z };
+    return T.roadDist(this.rdReg.r, x, z);
   }
 
   /** Bergwald in der Landschaft (Shader: Waldboden genau nach der Maske der Bäume) */
