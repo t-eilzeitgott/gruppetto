@@ -166,7 +166,7 @@ export class Perf3D {
       if (this.probe) { r.drain[i] = this.probe.drain; r.submit[i] = this.probe.submit; r.gpu[i] = this.probe.gpu; }
       // (das Bild nach einem Probebild läuft spät an: beide zählen nicht als Ruckler)
       const prevProbe = i > 0 && (r.ev[i - 1] & EV.probe) !== 0;
-      if (f.dt > f.period * 1.5 + 1 && !(this.evBits & EV.probe) && !prevProbe) this.hitches++;
+      if (f.dt > hitchLimit(f.period) && !(this.evBits & EV.probe) && !prevProbe) this.hitches++;
     }
     this.evBits = 0;
   }
@@ -194,6 +194,9 @@ export interface Report {
   /** vollständig (Datei) */
   full: string;
 }
+
+/** Ruckler: mindestens ein verpasstes Bild bei 60 Hz (auf 120-Hz-Bildschirmen zählt ein 60-Hz-Bild nicht als Ruckler) */
+const hitchLimit = (period: number) => Math.max(period, 1000 / 60) * 1.5 + 1;
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
 const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -226,8 +229,8 @@ function makeReport(r: Rec): Report {
   for (const x of worst1) w += x;
   const low1 = 1000 / (w / Math.max(1, worst1.length));
   const fps = n / dur;
-  // Ruckler: deutlich länger als der Takt (mindestens ein verpasstes Bild)
-  const hitchMs = period * 1.5 + 1;
+  // Ruckler: deutlich länger als der Takt (mindestens ein verpasstes Bild bei 60 Hz)
+  const hitchMs = hitchLimit(period);
   const hist: Record<string, number> = { '<9': 0, '9-13': 0, '13-18': 0, '18-25': 0, '25-34': 0, '34-50': 0, '50-100': 0, '>100': 0 };
   const edges: [number, string][] = [[9, '<9'], [13, '9-13'], [18, '13-18'], [25, '18-25'], [34, '25-34'], [50, '34-50'], [100, '50-100'], [Infinity, '>100']];
   let hitches = 0, missed = 0, cpuBound = 0, lateBound = 0;
@@ -267,8 +270,8 @@ function makeReport(r: Rec): Report {
   const places = PLACES.map((name, p) => {
     const list = keep.filter((i) => r.place[i] === p && r.phase[i] === playing);
     if (!list.length) return null;
-    let secs = 0, calls = 0, tris = 0, q = 0, px = 0, c = 0;
-    for (const i of list) { secs += dt[i] / 1000; calls += r.calls[i]; tris += r.tris[i]; q += r.quality[i]; px += r.px[i]; c += cpu[i]; }
+    let secs = 0, calls = 0, tris = 0, q = 0, px = 0, c = 0, rd = 0;
+    for (const i of list) { secs += dt[i] / 1000; calls += r.calls[i]; tris += r.tris[i]; q += r.quality[i]; px += r.px[i]; c += cpu[i]; rd += r.riders[i]; }
     const m = list.length;
     const d = stats(list.map((i) => dt[i]));
     const pr = probes.filter((i) => r.place[i] === p && r.phase[i] === playing);
@@ -276,7 +279,7 @@ function makeReport(r: Rec): Report {
     return {
       name, sekunden: r1(secs), bilder: m, fps: r1(m / Math.max(0.001, secs)), bildzeit_p60_ms: d.p60, bildzeit_p90_ms: d.p90, bildzeit_max_ms: d.max,
       cpu_mittel_ms: r2(c / m), groesste_bausteine_ms: Object.fromEntries(top), aufrufe: Math.round(calls / m), dreiecke_k: Math.round(tris / m / 1000),
-      aufloesung_stufe: r2(q / m), pixel_je_punkt: r2(px / m), grafik_probe: probeStats(pr),
+      aufloesung_stufe: r2(q / m), pixel_je_punkt: r2(px / m), fahrer_als_modell: r1(rd / m), grafik_probe: probeStats(pr),
     };
   }).filter((x) => x !== null);
   const evText = (bits: number) => EV_NAMES.filter(([b]) => bits & b).map(([, k]) => k).join('+');
@@ -286,7 +289,7 @@ function makeReport(r: Rec): Report {
     let bits = 0;
     for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 1); j++) bits |= r.ev[j];
     const secs = SECTIONS.map((s, k) => [s, r.sec[i * NS + k]] as const).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([s, v]) => `${s}:${r1(v)}`).join(' ');
-    return [r1(r.t[i]), r1(dt[i]), r1(cpu[i]), r1(late[i]), secs, r.calls[i], Math.round(r.tris[i] / 1000), r2(r.quality[i]), Math.round(r.z[i]), Math.round(r.v[i] * 3.6), PLACES[r.place[i]], PHASES[r.phase[i]], evText(bits)];
+    return [r1(r.t[i]), r1(dt[i]), r1(cpu[i]), r1(late[i]), secs, r.calls[i], Math.round(r.tris[i] / 1000), r2(r.quality[i]), Math.round(r.z[i]), Math.round(r.v[i] * 3.6), PLACES[r.place[i]], PHASES[r.phase[i]], r.riders[i], evText(bits)];
   });
   // Verlauf je 2 s
   const timeline: (number | string)[][] = [];
@@ -304,7 +307,7 @@ function makeReport(r: Rec): Report {
     const m = i1 - i0;
     const mid = i0 + (m >> 1);
     dts.sort((a, b) => a - b);
-    timeline.push([r1(r.t[i0]), Math.round(r.z[mid]), Math.round(r.v[mid] * 3.6), r1(1000 / (s / m)), r1(pct(dts, 0.6)), r1(mx), r1(c / m), r1(cm), r1(lt), r1(g), r1(dr), h, r.calls[mid], Math.round(r.tris[mid] / 1000), r2(r.quality[mid]), r.range[mid], PLACES[r.place[mid]], PHASES[r.phase[mid]]]);
+    timeline.push([r1(r.t[i0]), Math.round(r.z[mid]), Math.round(r.v[mid] * 3.6), r1(1000 / (s / m)), r1(pct(dts, 0.6)), r1(mx), r1(c / m), r1(cm), r1(lt), r1(g), r1(dr), h, r.calls[mid], Math.round(r.tris[mid] / 1000), r2(r.quality[mid]), r.range[mid], PLACES[r.place[mid]], PHASES[r.phase[mid]], r.riders[mid]]);
     i0 = i1;
   }
   const probeAll = probeStats(probes.filter((i) => r.phase[i] === playing));
@@ -324,9 +327,9 @@ function makeReport(r: Rec): Report {
     grafik_probe: probeAll ?? 'keine Probebilder',
     bildzeit_ms: stats(dtK), cpu_ms: stats(cpu), verspaetung_ms: stats(late),
     verteilung_ms: hist, bausteine_ms: secStats,
-    ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung', 'z_m', 'kmh', 'ort', 'phase', 'ereignisse'],
+    ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse'],
     ruckler_liste: hitchRows,
-    verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung', 'sichtweite_minus', 'ort', 'phase'],
+    verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung', 'sichtweite_minus', 'ort', 'phase', 'fahrer_modelle'],
     verlauf_2s: timeline,
     ereignisse: r.events.slice(0, 250).map((e) => [r1(e.t), e.kind, e.text]),
   };

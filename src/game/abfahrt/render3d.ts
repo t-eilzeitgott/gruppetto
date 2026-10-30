@@ -1707,10 +1707,9 @@ export class Renderer3D {
     if (weather) steps.push(['ohne Wetter-Nachbearbeitung', () => { usePost = false; }]);
     steps.push(['nur Himmel', () => { for (const set of cats.values()) if (!set.has(this.skyMat)) hideMats(set); for (const l of objs.values()) hideObjs(l); this.sunset.mesh.visible = false; }]);
     for (const q of [0.5, 0.75, 1]) if (Math.abs(q - q0) > 0.01) steps.push([`Auflösung ${Math.round(q * 100)} % (statt ${Math.round(q0 * 100)} %)`, () => setQ(q)]);
-    // (nur für Tests im Emulator: wenige Varianten, kurz)
-    if (quick) steps.splice(3, steps.length - 5);
+    // (quick: nur für Tests im Emulator – je Variante ein Bild, ohne Wiederholung)
     // Messen: K-mal zeichnen, dann auf die Grafik warten (Zeit je Bild: CPU und Grafik); vorher den Rückstau abwarten
-    const K = 2;
+    const K = quick ? 1 : 2;
     let calls = 0, tris = 0;
     const render = () => {
       if (usePost && this.post) this.post(() => { gl.render(this.scene, this.camera); this.takeCounts(); }, g);
@@ -2325,10 +2324,13 @@ export class Renderer3D {
     const geos: THREE.BufferGeometry[] = [d.geo];
     const mesh = new THREE.Mesh(d.geo, this.terrMats[lv]);
     mesh.receiveShadow = lv === 0;
+    // gröbere Stufen werfen keine Sonnenschatten: im Schattenkasten liegt ohnehin die feinste Stufe darüber
+    mesh.userData.noShadow = lv > 0;
     objs.push(mesh);
     if (d.water) {
       geos.push(d.water);
       const w = new THREE.Mesh(d.water, this.waterMats[lv]);
+      w.userData.noShadow = true;
       w.renderOrder = 2;
       objs.push(w);
     }

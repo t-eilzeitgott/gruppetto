@@ -289,6 +289,8 @@ export class Houses3D {
       m.frustumCulled = false;
       m.receiveShadow = true;
       m.castShadow = lod === 0;
+      // ferne Stufe: kein Schatten (ohne Sichtprüfung zeichnete der Schattendurchgang sonst jedes Haus bis 2,6 km)
+      m.userData.noShadow = lod > 0;
       m.matrixAutoUpdate = false;
       this.group.add(m);
       meshes.push(m);

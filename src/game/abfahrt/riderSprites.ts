@@ -38,10 +38,11 @@ const CPX = 64;
 const SS = 2;
 /** Blick leicht von oben (wie die Kamera auf die Fahrer vor ihr schaut) */
 const ELEV = 0.12;
-/** ab hier Bild statt 3D (Abstand zur Kamera, m): dazwischen weich überblendet – weit genug, dass man den Wechsel
- * im Fahren kaum sieht (die 64-px-Bilder sind erst ab ~45 m so klein wie die 3D-Fahrer) */
-export const SPRITE_NEAR = 44;
-export const SPRITE_FAR = 54;
+/** ab hier Bild statt 3D (Abstand zur Kamera, m): dazwischen weich überblendet. Mit den Gruppen sind oft viele Fahrer
+ * in 30–50 m – als 3D-Modelle (Haut mit Knochen, Rad, Schatten) kosten sie die Grafik viel; die Auflösung liegt
+ * meist unter dem Höchstwert, dort sind die 64-px-Bilder ab ~35 m so groß wie die 3D-Fahrer */
+export const SPRITE_NEAR = 34;
+export const SPRITE_FAR = 42;
 /** höchstens so viele Bildfahrer */
 const MAX = 96;
 const STRIDE = 32;
