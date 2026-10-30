@@ -850,44 +850,46 @@ export class Abfahrt {
     return { ...k, skin: pick(r, SKINS), number: String(Math.floor(between(r, 11, 199))) };
   }
 
-  /** Massenstart: das ganze Feld vor dir in Reihen über die (am Start breite) Straße */
+  /** Start im Feld: eine kleine Gruppe um dich herum (ein paar vor, ein paar neben dir) */
   private spawnField(n: number) {
+    void n;
     const r = this.rng;
-    let k = 0;
-    for (let row = 0; k < n; row++) {
-      const z = 10 + row * 2.25;
-      const half = ROAD_HALF + this.track.extraAt(z) - 0.55;
-      const cnt = Math.min(Math.max(3, Math.floor((half * 2) / 1.15)), n - k);
-      for (let c = 0; c < cnt; c++, k++) {
-        const x = -half + ((c + 0.5) * (half * 2)) / cnt + (r() - 0.5) * 0.25;
-        this.opps.push({
-          id: this.oppId++, z: z + r() * 0.7, x, vx: 0, v: 0, tx: x, f: between(r, 0.72, 1.0), kit: this.kit(r), pedal: r() * 6,
-          lean: 0, tuck: 0, brake: 0, passed: false, group: -2, bump: 0, attacker: false,
-        });
-      }
+    const spots: [number, number][] = [[10, -1.2], [10.4, 1.3], [12.6, 0], [15, -0.9], [15.3, 1.0], [6.4, -1.5], [3.2, 0.4], [3.6, 1.6]];
+    for (const [z, x] of spots) {
+      this.opps.push({
+        id: this.oppId++, z: z + r() * 0.5, x, vx: 0, v: 0, tx: x, f: between(r, 0.74, 0.98), kit: this.kit(r), pedal: r() * 6,
+        lean: 0, tuck: 0, brake: 0, passed: z < 6, group: -2, bump: 0, attacker: false,
+      });
     }
-    this.nextSpawn = 400;
+    this.nextSpawn = 60;
   }
 
-  /** Fahrerfeld unterwegs: weit voraus neue Gruppen (Gruppetto, Ausreißer), ab und zu Schnelle von hinten */
+  /**
+   * Fahrerfeld unterwegs: laufend neue Gruppen vor dir (Gruppetto, Verfolger, Ausreißer – meist langsamer, man
+   * fährt auf sie auf und muss durch), so dass immer mehrere Gruppen im Bild sind; ab und zu Schnelle von hinten.
+   * n: so viele Fahrer höchstens voraus (bis 700 m)
+   */
   private spawnMass(n: number) {
     const p = this.p;
     if (p.z < this.nextSpawn) return;
     const r = this.rng;
-    this.nextSpawn = p.z + between(r, 60, 120);
+    this.nextSpawn = p.z + between(r, 35, 70);
     this.opps = this.opps.filter((o) => o.z > p.z - 160 && o.z < p.z + 1100);
-    const ahead = this.opps.filter((o) => o.z > p.z).length;
-    if (ahead < n * 0.75) {
-      const z0 = p.z + between(r, 650, 850);
-      const m = Math.round(between(r, 4, Math.min(22, n * 0.25)));
+    const ahead = this.opps.filter((o) => o.z > p.z && o.z < p.z + 700).length;
+    if (ahead < n) {
+      // im Bild, aber noch nicht nah: 230–420 m voraus
+      const z0 = p.z + between(r, 170, 380);
+      const m = Math.round(between(r, 3, 12));
       const group = this.oppId;
-      const f = between(r, 0.66, 0.92);
+      // meist langsamer als du (aufholen, durchfahren), manchmal fast gleich schnell
+      const f = chance(r, 0.7) ? between(r, 0.6, 0.78) : between(r, 0.8, 0.9);
+      const abreast = chance(r, 0.4);
       for (let i = 0; i < m; i++) {
-        const z = z0 - i * between(r, 1.6, 3.2);
+        const z = z0 - i * (abreast ? between(r, 0.9, 1.6) : between(r, 1.8, 3.0));
         const half = ROAD_HALF + this.track.extraAt(z) - 0.5;
-        const x = clamp((r() - 0.5) * 2 * half, -half, half);
+        const x = clamp(abreast ? (i % 2 ? -0.8 : 0.8) + (r() - 0.5) * 0.6 : (r() - 0.5) * 2 * half, -half, half);
         this.opps.push({
-          id: this.oppId++, z, x, vx: 0, v: p.v * 0.8, tx: x, f: f * between(r, 0.96, 1.04), kit: this.kit(r), pedal: r() * 6,
+          id: this.oppId++, z, x, vx: 0, v: p.v * 0.75, tx: x, f: f * between(r, 0.97, 1.03), kit: this.kit(r), pedal: r() * 6,
           lean: 0, tuck: 1, brake: 0, passed: false, group, bump: 0, attacker: false,
         });
       }

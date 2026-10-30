@@ -94,8 +94,8 @@ export type RaceCam = 'chase' | 'low' | 'side' | 'drone';
 
 /** Vorrat an Gegner-Modellen (beim Laden gebaut und vorgewärmt) */
 const POOL = 16;
-/** Fahrerfeld der Abfahrt (Massenabfahrt): so viele Gegner; ?field=N zum Ausprobieren */
-const FIELD = Number(/[?&]field=(\d+)/.exec(typeof location !== 'undefined' ? location.search : '')?.[1] ?? 110);
+/** Fahrerfeld der Abfahrt: so viele Gegner höchstens voraus (in Gruppen); ?field=N zum Ausprobieren */
+const FIELD = Number(/[?&]field=(\d+)/.exec(typeof location !== 'undefined' ? location.search : '')?.[1] ?? 60);
 /** Kamera hinter dem Fahrer wie im Spiel */
 const CAM_BACK = 6.2;
 const CAM_UP = 2.75;
@@ -201,7 +201,8 @@ export class Race {
   constructor(private host: HTMLElement, private opts: RaceOptions) {
     // immer Sonnenuntergang, ohne Wetterwechsel und ohne Schattenkarte: die Schatten sind vorberechnet (die Sonne
     // steht fest) – gespeicherte ältere Einstellungen ändern daran nichts
-    this.settings = { ...loadSettings(opts.settingsKey ?? RACE_KEY, opts.defaults ?? RACE_DEFAULTS), mood: 'abend', cycle: false, shadows: false };
+    // Leuchten (Bloom) aus: kostete auf dem iPhone ~6 ms je Bild (Lichthöfe der Laternen und Fenster leuchten selbst)
+    this.settings = { ...loadSettings(opts.settingsKey ?? RACE_KEY, opts.defaults ?? RACE_DEFAULTS), mood: 'abend', cycle: false, shadows: false, bloom: false };
     this.renderer = new THREE.WebGPURenderer({ antialias: false, powerPreference: 'high-performance', reversedDepthBuffer: true, trackTimestamp: true } as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
   }
 
@@ -591,10 +592,11 @@ export class Race {
     const e = this.eng!;
     const t = e.track;
     const p = e.p;
-    const max = Math.min(POOL, Math.round(this.settings.oppMax));
+    // mit Fahrerfeld: alle in der Nähe als volles Modell (das einfache sieht nur von weitem gut aus)
+    const max = Math.min(POOL, Math.round(this.peloton ? Math.max(this.settings.oppMax, 14) : this.settings.oppMax));
     // Geister (Zeitfahren) erst, wenn sie eingeblendet sind (vor dem Start steht der Fahrer allein auf der Rampe)
     // mit Fahrerfeld (Instanzen für die übrigen): volles Modell nur für die Nächsten in ~25 m (dort sieht man Details)
-    const near = this.peloton ? 26 : 300;
+    const near = this.peloton ? 34 : 300;
     const list = e.opps.filter((o) => o.z > p.z - Math.min(40, near) && o.z < p.z + near && !('ghost' in o && (o as { ghost: number }).ghost <= 0)).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, max);
     const keep = new Set(list.map((o) => o.id));
     for (const [id, i] of this.poolOf) {
