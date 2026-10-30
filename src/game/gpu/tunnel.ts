@@ -1,123 +1,184 @@
 /**
- * Tunnel für die WebGPU-Abfahrt: Röhre mit Hufeisen-Gewölbe in den Maßen des Spiels (tunnel3d.ts), Fahrbahn mit
- * Markierung, Rinne und Gehwegkante, Wandpaneele über dunklem Sockel, Spritzbeton im Gewölbe, Leuchtenreihen
- * links und rechts, gemauerte Portale.
+ * Tunnel für die WebGPU-Abfahrt, nach dem Vorbild des Spiels (tunnel3d.ts) und mit mehr Details: Röhre mit
+ * Hufeisen-Gewölbe, Rinne und Gehwegkante mit Rückstrahlern, helle Wandpaneele über dunklem Sockel, Spritzbeton
+ * mit Wasserfahnen und Kalkflecken, Kabeltrassen, Leuchtenreihen mit Gehäuse und Lichthof, Strahlventilatoren,
+ * SOS-Nischen mit Tür und Schildern, Notausgangs- und Entfernungsschilder, nasse Fahrspuren. Portale als
+ * gemauerte Bögen (Bruchstein, Bogensteine mit Schlussstein, Eckquader, Kämpfer, Gesims) mit Marmortafel
+ * (Name und Länge).
  *
- * Unbeleuchtetes Material, das Licht entsteht pro Bildpunkt aus der Lage in der Röhre (Attribut aT: seitlich,
- * Höhe, Strecke, Abstand zum Portal): Lichtinseln unter den Leuchten, Tageslicht an den Portalen, das nach
- * innen abnimmt. So dringt keine Sonne durch die Röhre, und es kostet kaum mehr als eine Farbe.
+ * Licht pro Bildpunkt aus der Lage in der Röhre (aT: seitlich, Höhe, Strecke, Abstand zum Portal; aN:
+ * Flächenrichtung in der Röhre): Lichtinseln unter den Leuchten, Tageslicht an den Portalen, das nach innen
+ * abnimmt. Keine Sonne in der Röhre, kaum mehr Kosten als eine Farbe.
  */
 import * as THREE from 'three/webgpu';
-import { ROAD_HALF, SEG, type Track } from '../abfahrt/track';
-import { Boxes } from './corridor';
-import { tsl, type N } from './nodes';
+import { SEG, type Track } from '../abfahrt/track';
+import { GB } from '../abfahrt/models3d';
+import { plaqueTex, TSIGN, tunnelSignTex } from '../abfahrt/tex3d';
+import { LAMP_EVERY, LAMP_H, LAMP_X, T_WALL, TB, portalFacade, tunnelName, tunnelRing, type TRow } from '../abfahrt/tunnel3d';
+import type { Surface, SurfaceId } from './bake';
+import { cheapMaterial } from './light';
+import { lampHalos } from './lamps';
+import { decodeAlbedo, grain, tsl, unTile, type N } from './nodes';
 
-const { attribute, exp, float, floor, max, mix, uniform, vec3, vertexColor } = tsl;
+const { abs, attribute, clamp, dot, exp, float, floor, max, mix, normalize, normalWorldGeometry, positionWorld, select, smoothstep, texture, uniform, uv, vec2, vec3, vertexColor } = tsl;
 
-/** Wandfläche (seitlich ab Mitte), Kämpfer (Beginn des Gewölbes), Scheitel – wie im Spiel */
-export const T_WALL = 3.45;
-export const T_SPRING = 3.2;
-export const T_TOP = 6.15;
-const KERB = 3.12;
-const KERB_H = 0.17;
-/** Leuchten: alle 12 m, links und rechts im Gewölbe */
-export const LAMP_EVERY = 12;
-const LAMP_X = 1.9;
-const LAMP_H = 5.45;
-/** Portalfassade: halbe Breite, Höhe */
-const FAC_W = 7.6;
-const FAC_H = 9.6;
+export { LAMP_EVERY, T_WALL };
 
-interface Row { x: number; y: number; z: number; rx: number; rz: number; fx: number; fz: number }
+type Surfaces = Record<SurfaceId, Surface>;
 
-/** Baukasten: Lage, Farbe, Lage in der Röhre (aT), Leuchten (aE) */
-class TB {
-  p: number[] = [];
-  c: number[] = [];
-  t: number[] = [];
-  e: number[] = [];
-  idx: number[] = [];
-  v(p: number[], c: number[], t: number[], e = 0) {
-    this.p.push(p[0], p[1], p[2]);
-    this.c.push(c[0], c[1], c[2]);
-    this.t.push(t[0], t[1], t[2], t[3]);
-    this.e.push(e);
-    return this.p.length / 3 - 1;
-  }
-  quad(a: number, b: number, c: number, d: number) { this.idx.push(a, b, c, a, c, d); }
-  build(): THREE.BufferGeometry | null {
-    if (!this.idx.length) return null;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
-    g.setAttribute('aT', new THREE.Float32BufferAttribute(this.t, 4));
-    g.setAttribute('aE', new THREE.Float32BufferAttribute(this.e, 1));
-    g.setIndex(this.idx);
-    g.computeVertexNormals();
-    g.computeBoundingSphere();
-    return g;
-  }
-}
-
-/** Querschnitt (rechts nach links): seitlich, Höhe, Farbe */
-function profile(): { x: number; h: number; c: number[] }[] {
-  const out: { x: number; h: number; c: number[] }[] = [];
-  const asph = [0.05, 0.05, 0.052];
-  const kerb = [0.42, 0.41, 0.39];
-  const plinth = [0.12, 0.12, 0.13];
-  const panel = [0.62, 0.63, 0.62];
-  const shot = [0.3, 0.29, 0.27];
-  // rechte Seite: Rinne, Gehwegkante, Wand mit Sockel und Paneelen
-  out.push({ x: ROAD_HALF, h: 0, c: asph });
-  out.push({ x: KERB, h: -0.04, c: plinth });
-  out.push({ x: KERB, h: KERB_H, c: kerb });
-  out.push({ x: T_WALL, h: KERB_H, c: kerb });
-  out.push({ x: T_WALL, h: 0.95, c: plinth });
-  out.push({ x: T_WALL, h: 1.0, c: panel });
-  out.push({ x: T_WALL, h: T_SPRING - 0.1, c: panel });
-  out.push({ x: T_WALL, h: T_SPRING, c: shot });
-  // Gewölbe
-  const N = 12;
-  for (let k = 1; k < N; k++) {
-    const t = (k / N) * Math.PI;
-    out.push({ x: T_WALL * Math.cos(t), h: T_SPRING + (T_TOP - T_SPRING) * Math.sin(t), c: shot });
-  }
-  // linke Seite gespiegelt
-  const right = out.slice(0, 8);
-  for (let k = right.length - 1; k >= 0; k--) out.push({ x: -right[k].x, h: right[k].h, c: right[k].c });
-  return out;
-}
+/** Mittel einer gebackenen Textur (zum Normieren: die Ecke trägt die Farbe, die Textur nur die Struktur) */
+const meanOf = (s: Surface): N => vec3(s.mean.r, s.mean.g, s.mean.b);
 
 export class Tunnels {
+  /** Wände, Gewölbe, Einbauten */
   readonly mat: THREE.MeshBasicNodeMaterial;
+  private roadMat: THREE.MeshBasicNodeMaterial;
+  private marksMat: THREE.MeshBasicNodeMaterial;
+  private signMat: THREE.MeshBasicNodeMaterial;
+  private masMat: THREE.MeshBasicNodeMaterial;
+  private trimMat: THREE.MeshBasicNodeMaterial;
+  /** Tafeln (Name, Länge) in einem Atlas mit vier Plätzen – ein Material für alle Portale (kein neuer Shader unterwegs) */
+  private plaqueCv: HTMLCanvasElement;
+  private plaqueTex: THREE.CanvasTexture;
+  private plaqueMat: THREE.MeshBasicNodeMaterial;
+  private plaqueSlots = new Map<string, number>();
+  private plaqueNext = 0;
+  /** Vorplätze der zuletzt gebauten Portale (x, z): dort keine Bäume vor der Fassade */
+  portals: number[] = [];
   /** Tageslicht an den Portalen (Farbe × Stärke, von der Stimmung) */
   readonly day = uniform(new THREE.Color(1, 0.95, 0.88));
   /** Leuchtenfarbe */
   readonly lamp = uniform(new THREE.Color(1, 0.88, 0.7));
-  private prof = profile();
 
-  constructor(private track: Track, private stoneMat: THREE.Material) {
+  constructor(private track: Track, _stone: THREE.Material, private S: Surfaces) {
+    this.mat = this.tubeMat('wall');
+    this.roadMat = this.tubeMat('road');
+    this.marksMat = this.tubeMat('marks');
+    const sm = new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide });
+    const st = new THREE.CanvasTexture(tunnelSignTex());
+    st.colorSpace = THREE.SRGBColorSpace;
+    st.anisotropy = 4;
+    // Schilder sind hinterleuchtet (Notruf, Ausgang): leuchten selbst
+    sm.colorNode = texture(st, uv()).rgb.mul(1.15);
+    sm.polygonOffset = true;
+    sm.polygonOffsetFactor = -2;
+    sm.polygonOffsetUnits = -2;
+    sm.name = 'tunnel-signs';
+    this.signMat = sm;
+    // Portal: Bruchstein (Textur in Metern / 1,8) und Werkstein, im Licht der Welt
+    const mp = unTile(S.noise.albedo, uv(), 0.25);
+    const masCol = vertexColor().xyz.mul(decodeAlbedo(texture(S.masonry.albedo, mp).rgb).div(meanOf(S.masonry))).mul(grain(positionWorld.xz.add(positionWorld.y), 0.4, 0.08));
+    this.masMat = cheapMaterial({ col: masCol, nWorld: normalWorldGeometry, ao: texture(S.masonry.nra, mp).w, params: { side: THREE.DoubleSide } });
+    this.masMat.name = 'tunnel-portal';
+    this.trimMat = cheapMaterial({ col: vertexColor().xyz.mul(grain(positionWorld.xz.add(positionWorld.y.mul(1.3)), 0.21, 0.06)), nWorld: normalWorldGeometry, params: { side: THREE.DoubleSide } });
+    this.trimMat.name = 'tunnel-trim';
+    const cv = (this.plaqueCv = document.createElement('canvas'));
+    cv.width = 512;
+    cv.height = 120 * 4;
+    const ptx = (this.plaqueTex = new THREE.CanvasTexture(cv));
+    ptx.colorSpace = THREE.SRGBColorSpace;
+    ptx.anisotropy = 4;
+    this.plaqueMat = cheapMaterial({ col: texture(ptx, uv()).rgb, nWorld: normalWorldGeometry, params: { side: THREE.DoubleSide } });
+    this.plaqueMat.name = 'tunnel-plaque';
+  }
+
+  /** Platz im Tafel-Atlas für diese Inschrift (neu gemalt, wenn noch nicht da) */
+  private plaqueSlot(name: string, len: string): number {
+    const key = `${name}|${len}`;
+    let k = this.plaqueSlots.get(key);
+    if (k !== undefined) return k;
+    k = this.plaqueNext;
+    this.plaqueNext = (this.plaqueNext + 1) % 4;
+    for (const [kk, v] of this.plaqueSlots) if (v === k) this.plaqueSlots.delete(kk);
+    this.plaqueSlots.set(key, k);
+    const ctx = this.plaqueCv.getContext('2d');
+    if (ctx) { ctx.clearRect(0, k * 120, 512, 120); ctx.drawImage(plaqueTex(name, len), 0, k * 120, 512, 120); }
+    this.plaqueTex.needsUpdate = true;
+    return k;
+  }
+
+  /**
+   * Material der Röhre: Grundfarbe (Ecke) × Struktur (Textur, Anteil aK) × Röhrenlicht. aK > 1,5: leuchtet selbst
+   * (Leuchten, Rückstrahler). kind: Wand (Putz/Spritzbeton), Fahrbahn (Asphalt, nasse Spuren), Markierung
+   */
+  private tubeMat(kind: 'wall' | 'road' | 'marks'): THREE.MeshBasicNodeMaterial {
+    const S = this.S;
     const m = new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide });
     const T = attribute('aT', 'vec4');
-    const E = attribute('aE', 'float');
-    const lat = T.x, h = T.y, zl = T.z, dp = T.w;
-    // nächste Leuchtenreihe (alle 12 m) – Abstand längs
-    const dz = zl.sub(floor(zl.div(LAMP_EVERY).add(0.5)).mul(LAMP_EVERY));
-    const lampAt = (side: number): N => {
-      const dx = lat.sub(side * LAMP_X);
-      const dy = h.sub(LAMP_H);
-      const d2 = dx.mul(dx).add(dy.mul(dy)).add(dz.mul(dz).mul(0.7));
-      return float(5.5).div(d2.add(2.2));
-    };
-    const lampL = lampAt(1).add(lampAt(-1)).add(0.16);
-    // Tageslicht fällt an den Portalen hinein und nimmt nach innen ab
-    const dayK = exp(dp.mul(-0.09)).mul(1.4).add(exp(dp.mul(-0.025)).mul(0.25));
-    const base = vertexColor().xyz;
-    const lit = base.mul(this.lamp.mul(lampL).add(vec3(this.day.x, this.day.y, this.day.z).mul(dayK)));
-    // Leuchten selbst: hell (für das Leuchten)
-    m.colorNode = mix(lit, vec3(this.lamp.x, this.lamp.y, this.lamp.z).mul(6), max(E, float(0)));
-    m.name = 'tunnel';
-    this.mat = m;
+    const Nn = attribute('aN', 'vec3');
+    const K = attribute('aK', 'float');
+    const P = vec3(T.x, T.y, T.z);
+    const Nr = normalize(Nn);
+    // Leuchten: die nächsten drei Reihen links und rechts (wie im Spiel)
+    const n = floor(P.z.div(LAMP_EVERY).add(0.5)).mul(LAMP_EVERY);
+    let s: N = float(0);
+    for (const i of [-1, 0, 1]) {
+      for (const lx of [-LAMP_X, LAMP_X]) {
+        const d = vec3(lx, LAMP_H, n.add(i * LAMP_EVERY)).sub(P);
+        const d2 = dot(d, d).add(0.6);
+        const l = d.div(d2.sqrt());
+        const cone = clamp(l.y, 0, 1).mul(0.78).add(0.22);
+        s = s.add(abs(dot(Nr, l)).mul(cone).div(d2));
+      }
+    }
+    const dp = max(T.w, float(0));
+    const dayK = exp(dp.negate().div(clamp(float(1).sub(P.y.div(6)), 0, 1).mul(3).add(8)));
+    const light = vec3(0.12, 0.12, 0.13).add(vec3(this.lamp.x, this.lamp.y, this.lamp.z).mul(s)).add(vec3(this.day.x, this.day.y, this.day.z).mul(dayK));
+    let base: N = vertexColor().xyz;
+    if (kind === 'wall') {
+      // Struktur: Putz/Beton (Textur in 3,2-m-Kacheln, verbogen), dazu Wasserfahnen und Kalk im Gewölbe
+      const tp = unTile(S.noise.albedo, uv(), 0.3);
+      const tx = decodeAlbedo(texture(S.plaster.albedo, tp).rgb).div(meanOf(S.plaster));
+      base = base.mul(mix(vec3(1, 1, 1), tx, clamp(K, 0, 1)));
+      // senkrechte Fahnen (Sickerwasser): dunkel, unten breiter; Kalkränder heller – nur auf Beton (über dem Sockel)
+      const col = floor(P.z.mul(0.9).add(P.x.mul(0.31)));
+      const hz = (k: number) => tsl.fract(tsl.sin(col.mul(12.9898).add(k * 78.233)).mul(43758.5453));
+      const on = hz(1).greaterThan(0.72);
+      const fz = tsl.fract(P.z.mul(0.9).add(P.x.mul(0.31)));
+      const w = hz(2).mul(0.25).add(0.12).mul(smoothstep(6.2, 1.0, P.y).mul(0.6).add(0.4));
+      const band = smoothstep(w, w.mul(0.3), abs(fz.sub(0.5))).mul(smoothstep(0.4, 1.2, P.y));
+      const wet = select(on, band, float(0)).mul(clamp(K, 0, 1));
+      base = base.mul(float(1).sub(wet.mul(0.42)));
+      // Schmutz unten an den Wänden (Spritzwasser der Reifen)
+      base = base.mul(mix(float(0.7), float(1), smoothstep(0.15, 1.1, P.y)));
+    } else if (kind === 'road') {
+      const rp = unTile(S.noise.albedo, uv(), 0.3);
+      const tx = decodeAlbedo(texture(S.asphalt.albedo, rp).rgb).div(meanOf(S.asphalt));
+      base = base.mul(tx).mul(vec3(0.075, 0.075, 0.078));
+      // Fahrspuren dunkler und glänzend (feucht): Lampen spiegeln sich als helle Flecken darin
+      const lane = abs(abs(P.x).sub(1.35));
+      const track = smoothstep(0.55, 0.15, lane);
+      base = base.mul(float(1).sub(track.mul(0.25)));
+      const view = normalize(positionWorld.sub(tsl.cameraPosition));
+      void view;
+      let gl: N = float(0);
+      for (const i of [-1, 0, 1]) {
+        const dz = P.z.sub(n.add(i * LAMP_EVERY));
+        for (const lx of [-LAMP_X, LAMP_X]) {
+          const dx = P.x.sub(lx);
+          gl = gl.add(exp(dx.mul(dx).mul(-0.9).sub(dz.mul(dz).mul(0.05))));
+        }
+      }
+      const glint = vec3(this.lamp.x, this.lamp.y, this.lamp.z).mul(gl).mul(track.mul(0.06).add(0.015));
+      m.colorNode = select(K.greaterThan(1.5), vertexColor().xyz, base.mul(light).add(glint));
+      m.name = 'tunnel-road';
+      return m;
+    } else {
+      m.polygonOffset = true;
+      m.polygonOffsetFactor = -2;
+      m.polygonOffsetUnits = -2;
+    }
+    m.colorNode = select(K.greaterThan(1.5), vertexColor().xyz, base.mul(light));
+    m.name = kind === 'wall' ? 'tunnel' : 'tunnel-marks';
+    void vec2;
+    return m;
+  }
+
+  private P = (r: TRow, x: number, h: number) => [r.x + r.rx * x, r.y + h, r.z + r.rz * x];
+
+  private row(i: number): TRow {
+    const w = this.track.world(i * SEG, 0, 0, { x: 0, y: 0, z: 0, th: 0 });
+    return { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), th: w.th };
   }
 
   /**
@@ -129,123 +190,90 @@ export class Tunnels {
     let any = false;
     for (let i = i0; i < i1; i++) if (t.seg(i).tunnel) { any = true; break; }
     if (!any) return null;
-    const B = new TB();
-    const stone = new Boxes();
-    stone.stone = true;
+    this.portals = [];
+    const wall = new TB(), road = new TB(), marks = new TB();
+    wall.base = road.base = marks.base = Math.floor((i0 * SEG) / 60) * 60;
+    const signs = new GB(); signs.uv = true;
+    const mas = new GB(); mas.uv = true;
+    const trim = new GB();
+    const lights: number[] = [];
+    const out = new THREE.Group();
     let i = i0;
     while (i < i1) {
       while (i < i1 && !t.seg(i).tunnel) i++;
       if (i >= i1) break;
       let j = i;
       while (j < i1 && t.seg(j).tunnel) j++;
-      // Lage des ganzen Tunnels (für Portalabstand und Leuchtenraster)
+      // Lage des ganzen Tunnels (Portalabstand, Länge)
       let a = i;
       while (a > 0 && t.seg(a - 1).tunnel) a--;
       let b = j;
       while (t.seg(b).tunnel) b++;
-      this.tube(B, i, j, a * SEG, b * SEG);
-      if (t.seg(i).portal === 1 || i === a) this.portal(stone, i, -1);
-      if (j === b) this.portal(stone, j, 1);
+      const zs = a * SEG, ze = b * SEG, len = ze - zs;
+      for (let k = i; k < j; k++) {
+        const A = this.row(k), B = this.row(k + 1);
+        const za = k * SEG, zb = za + SEG;
+        const s = t.seg(k);
+        tunnelRing(wall, road, marks, signs, A, B, this.P, { za, zb, dpa: Math.min(za - zs, ze - za), dpb: Math.min(zb - zs, ze - zb), lamp: s.lamp, len });
+        // Leuchten: Lichthof unter dem Gehäuse
+        if (s.lamp) for (const sg of [-1, 1]) lights.push(...this.P(A, sg * LAMP_X, LAMP_H - 0.02));
+        // Entfernungsschild zum Ausgang (alle ~100 m, links)
+        if (k % 50 === 25 && Math.min(za - zs, ze - za) > 40 && len > 160) this.distSign(signs, A, za);
+      }
+      if (i === a) this.portal(out, mas, trim, a, 1, a, b - 1, len);
+      if (j === b) this.portal(out, mas, trim, b, -1, a, b - 1, len);
       i = j;
       yield;
     }
-    const out = new THREE.Group();
-    const g = B.build();
-    if (g) {
-      const mesh = new THREE.Mesh(g, this.mat);
-      // die Röhre hält die Sonne vom Fahrer ab (Schattenkarte)
-      mesh.castShadow = true;
-      mesh.receiveShadow = false;
+    const add = (geo: THREE.BufferGeometry | null, mat: THREE.Material, order = 0) => {
+      if (!geo) return;
+      const mesh = new THREE.Mesh(geo, mat);
       mesh.matrixAutoUpdate = false;
+      mesh.renderOrder = order;
       out.add(mesh);
-    }
-    const sg = stone.build();
-    if (sg) {
-      const mesh = new THREE.Mesh(sg, this.stoneMat);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.matrixAutoUpdate = false;
-      out.add(mesh);
-    }
+    };
+    if (!wall.empty) add(wall.build(), this.mat);
+    if (!road.empty) add(road.build(), this.roadMat);
+    if (!marks.empty) add(marks.build(), this.marksMat, 1);
+    yield;
+    if (!signs.empty) add(signs.build(false), this.signMat, 1);
+    if (!mas.empty) add(mas.build(), this.masMat);
+    if (!trim.empty) add(trim.build(), this.trimMat);
+    if (lights.length) { const h = lampHalos(lights, 0.85, 0.5); if (h) out.add(h); }
     return out;
   }
 
-  private row(z: number): Row {
-    const w = this.track.world(z, 0, 0, { x: 0, y: 0, z: 0, th: 0 });
-    return { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), fx: Math.sin(w.th), fz: -Math.cos(w.th) };
+  /** Entfernungsschild an der linken Wand (Atlaszelle „Entfernung“) */
+  private distSign(gb: GB, a: TRow, za: number) {
+    void za;
+    const fx = Math.sin(a.th), fz = -Math.cos(a.th);
+    const lat = -(T_WALL - 0.05);
+    const at = (h: number, dz: number) => { const q = this.P(a, lat, h); return [q[0] + fx * dz, q[1], q[2] + fz * dz]; };
+    const s = 0.36;
+    const u0 = TSIGN.dist / 4 + 0.004, u1 = (TSIGN.dist + 1) / 4 - 0.004;
+    gb.quad(at(2.95 - s / 2, s / 2), at(2.95 - s / 2, -s / 2), at(2.95 + s / 2, -s / 2), at(2.95 + s / 2, s / 2), [1, 1, 1], [[u0, 0.02], [u1, 0.02], [u1, 0.98], [u0, 0.98]]);
   }
 
-  /** Röhre der Segmente i … j (Strecke za … zb: ganzer Tunnel) */
-  private tube(B: TB, i: number, j: number, za: number, zb: number) {
-    const P = this.prof;
-    // Leuchtenraster ab einem Vielfachen von 60 m vor dem Tunnel (kleine Zahlen bleiben auf Handys genau)
-    const base = Math.floor(za / 60) * 60;
-    let prev: number[] | null = null;
-    let prevRoad: number[] | null = null;
-    for (let k = i; k <= j; k++) {
-      const z = k * SEG;
-      const r = this.row(z);
-      const zl = z - base;
-      const dp = Math.max(0, Math.min(z - za, zb - z));
-      const ids = P.map((q) => B.v([r.x + r.rx * q.x, r.y + q.h, r.z + r.rz * q.x], q.c, [q.x, q.h, zl, dp]));
-      // Fahrbahn mit Mittellinie (gestrichelt)
-      const dash = (k & 3) < 2;
-      const road = [-ROAD_HALF, -0.07, 0.07, ROAD_HALF].map((x, q) => B.v([r.x + r.rx * x, r.y + 0.002, r.z + r.rz * x],
-        q === 1 || q === 2 ? (dash ? [0.7, 0.7, 0.68] : [0.05, 0.05, 0.052]) : [0.05, 0.05, 0.052], [x, 0, zl, dp]));
-      if (prev && prevRoad) {
-        for (let q = 0; q < ids.length - 1; q++) B.quad(prev[q], ids[q], ids[q + 1], prev[q + 1]);
-        for (let q = 0; q < 3; q++) B.quad(prevRoad[q], prevRoad[q + 1], road[q + 1], road[q]);
-      }
-      prev = ids;
-      prevRoad = road;
-      // Leuchten: alle 12 m links und rechts eine Lichtleiste im Gewölbe
-      if (Math.abs(((zl % LAMP_EVERY) + LAMP_EVERY) % LAMP_EVERY) < SEG - 1e-6) {
-        for (const sg of [-1, 1]) {
-          const lx = sg * LAMP_X;
-          const w = 0.12;
-          const a0 = this.row(z - 0.6), a1 = this.row(z + 0.6);
-          const pts = [
-            [a0.x + a0.rx * (lx - w), a0.y + LAMP_H - 0.06, a0.z + a0.rz * (lx - w)],
-            [a0.x + a0.rx * (lx + w), a0.y + LAMP_H - 0.06, a0.z + a0.rz * (lx + w)],
-            [a1.x + a1.rx * (lx + w), a1.y + LAMP_H - 0.06, a1.z + a1.rz * (lx + w)],
-            [a1.x + a1.rx * (lx - w), a1.y + LAMP_H - 0.06, a1.z + a1.rz * (lx - w)],
-          ];
-          const v = pts.map((p) => B.v(p, [1, 1, 1], [lx, LAMP_H, zl, dp], 1));
-          B.quad(v[0], v[1], v[2], v[3]);
-        }
-      }
-    }
+  /** gemauertes Portal an Segment i (dir 1: Einfahrt, −1: Ausfahrt) mit Tafel (Name, Länge) */
+  private portal(out: THREE.Group, mas: GB, trim: GB, i: number, dir: 1 | -1, t0: number, t1: number, len: number) {
+    const a = this.row(i);
+    const { plaque } = portalFacade(mas, trim, a, this.P, dir);
+    // Vorplatz: ein Stück vor der Fassade
+    this.portals.push(a.x - Math.sin(a.th) * 9 * dir, a.z + Math.cos(a.th) * 9 * dir);
+    const t = this.track;
+    const name = tunnelName(t.lang, t0 * 7 + t1 * 13 + t.seed);
+    const k = this.plaqueSlot(name, `m ${Math.round(len / 2) * 2}`);
+    // Platz k: Zeilen von oben (die Leinwand steht im Bild auf dem Kopf: v von unten)
+    const v0 = 1 - (k + 1) / 4 + 0.004, v1 = 1 - k / 4 - 0.004;
+    const pg = new GB(); pg.uv = true;
+    pg.quad(plaque[0], plaque[1], plaque[2], plaque[3], [1, 1, 1], [[0, v0], [1, v0], [1, v1], [0, v1]]);
+    const mesh = new THREE.Mesh(pg.build(), this.plaqueMat);
+    mesh.matrixAutoUpdate = false;
+    out.add(mesh);
   }
 
-  /** gemauertes Portal am Segment i (dir −1: Einfahrt, Fassade zeigt der Strecke entgegen; +1: Ausfahrt) */
-  private portal(S: Boxes, i: number, dir: number) {
-    const r = this.row(i * SEG);
-    const back = dir * 0.02;
-    const at = (x: number, h: number, d = 0) => [r.x + r.rx * x + r.fx * (back + d), r.y + h, r.z + r.rz * x + r.fz * (back + d)];
-    // innen: Gewölbeumriss (rechts unten → Scheitel → links unten), außen: Rechteck in gleich vielen Schritten
-    const inner: number[][] = [];
-    const N = 16;
-    inner.push([T_WALL, 0]);
-    inner.push([T_WALL, T_SPRING]);
-    for (let k = 1; k < N; k++) { const t = (k / N) * Math.PI; inner.push([T_WALL * Math.cos(t), T_SPRING + (T_TOP - T_SPRING) * Math.sin(t)]); }
-    inner.push([-T_WALL, T_SPRING]);
-    inner.push([-T_WALL, 0]);
-    const outer: number[][] = inner.map(([x, h]) => {
-      // Strahl von der Mitte (0, 3) nach außen bis zum Rechteck
-      const dx = x, dy = h - 3;
-      const k = Math.min(Math.abs(dx) > 1e-6 ? FAC_W / Math.abs(dx) : Infinity, dy > 1e-6 ? (FAC_H - 3) / dy : dy < -1e-6 ? 3 / -dy : Infinity);
-      return [dx * k, 3 + dy * k];
-    });
-    const v = 0.9 + ((i * 7) % 5) * 0.04;
-    const col = [0.4 * v, 0.38 * v, 0.35 * v];
-    for (let k = 0; k < inner.length - 1; k++) {
-      const a = at(inner[k][0], inner[k][1]), b = at(inner[k + 1][0], inner[k + 1][1]);
-      const c = at(outer[k + 1][0], outer[k + 1][1]), d = at(outer[k][0], outer[k][1]);
-      if (dir < 0) S.quad(a, d, c, b, col); else S.quad(a, b, c, d, col);
-    }
-    // Gesims oben
-    const top = [0.46 * v, 0.44 * v, 0.41 * v];
-    const g0 = at(-FAC_W - 0.2, FAC_H, -dir * 0.4), g1 = at(FAC_W + 0.2, FAC_H, -dir * 0.4), g2 = at(FAC_W + 0.2, FAC_H, dir * 0.6), g3 = at(-FAC_W - 0.2, FAC_H, dir * 0.6);
-    if (dir < 0) S.quad(g0, g1, g2, g3, top); else S.quad(g0, g3, g2, g1, top);
+  dispose() {
+    for (const m of [this.mat, this.roadMat, this.marksMat, this.signMat, this.masMat, this.trimMat, this.plaqueMat]) m.dispose();
+    this.plaqueTex.dispose();
   }
 }

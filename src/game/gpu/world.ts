@@ -102,7 +102,7 @@ export class World {
     this.houses = new Houses(p.surfaces, p.msaa);
     this.life = new Life(p.msaa);
     this.forest = new ForestEdge(p.track, p.terrain, 0, 0);
-    this.tunnels = new Tunnels(p.track, p.corridorMats.sides);
+    this.tunnels = new Tunnels(p.track, p.corridorMats.sides, p.surfaces);
     this.arches = new Arches(p.track, p.accent ?? '#ff5fa2');
     this.towns = new Towns({
       track: p.track, terrain: p.terrain,
@@ -239,6 +239,9 @@ export class World {
     this.lbl = 'tunnel';
     const tun = yield* this.tunnels.buildRange(i0, i1);
     if (tun) piece.group.add(tun);
+    // vor den Portalen keine Bäume (die Fassade steht frei)
+    const pt = this.tunnels.portals;
+    for (let q = 0; q < pt.length; q += 2) { this.trees.block(pt[q], pt[q + 1], 13); this.trees.clear(pt[q], pt[q + 1], 13); }
     // Torbögen (Start, Zwischenzeiten, Gipfel, Ziel)
     this.lbl = 'boegen';
     this.arches.addRange(piece.group, i0, i1);
@@ -526,7 +529,7 @@ export class World {
     this.houses.dispose();
     this.life.dispose();
     this.crowd?.dispose();
-    (this.tunnels.mat as THREE.Material).dispose();
+    this.tunnels.dispose();
     this.arches.dispose();
     this.towns.dispose();
     this.signMat?.dispose();
