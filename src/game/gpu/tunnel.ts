@@ -272,6 +272,28 @@ export class Tunnels {
     out.add(mesh);
   }
 
+  /** Vorwärmen: jedes Material der Tunnel einmal (ein Viereck je Material, weit unten) */
+  warm(): THREE.Group {
+    const g = new THREE.Group();
+    const c = (x: number, h: number) => ({ p: [x, -500 + h, 0], u: 0, v: 0, lat: x, h, z: 0, dp: 0 });
+    for (const [mat, k] of [[this.mat, 1], [this.roadMat, 1], [this.marksMat, 0]] as const) {
+      const tb = new TB();
+      tb.quad(c(0, 0), c(1, 0), c(1, 1), c(0, 1), [1, 1, 1], k);
+      g.add(new THREE.Mesh(tb.build(), mat));
+    }
+    const q = [[0, -500, 0], [1, -500, 0], [1, -499, 0], [0, -499, 0]];
+    const uvq = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    const gs = new GB(); gs.uv = true; gs.quad(q[0], q[1], q[2], q[3], [1, 1, 1], uvq);
+    g.add(new THREE.Mesh(gs.build(false), this.signMat));
+    const gm = new GB(); gm.uv = true; gm.quad(q[0], q[1], q[2], q[3], [1, 1, 1], uvq);
+    g.add(new THREE.Mesh(gm.build(), this.masMat));
+    const gp = new GB(); gp.uv = true; gp.quad(q[0], q[1], q[2], q[3], [1, 1, 1], uvq);
+    g.add(new THREE.Mesh(gp.build(), this.plaqueMat));
+    const gt = new GB(); gt.quad(q[0], q[1], q[2], q[3], [1, 1, 1]);
+    g.add(new THREE.Mesh(gt.build(), this.trimMat));
+    return g;
+  }
+
   dispose() {
     for (const m of [this.mat, this.roadMat, this.marksMat, this.signMat, this.masMat, this.trimMat, this.plaqueMat]) m.dispose();
     this.plaqueTex.dispose();

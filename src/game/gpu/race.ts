@@ -1035,13 +1035,24 @@ export class Race {
     // Nachfolgenden fahren an der Kamera vorbei hinein; langsam näher heran (hinten ist die Welt schon abgebaut)
     if (!this.crashCam) {
       const at = (e instanceof Abfahrt ? e.pileAt : null) ?? { z: e.p.z, x: e.p.x };
-      const side = at.x > 0 ? -1 : 1;
-      const cz = Math.max(0, at.z - 9);
-      t.world(cz, side * (EDGE + t.extraAt(cz) + 1.8), 0, this.tvV);
-      const y = Math.max(t.heightAt(cz) + 2.3, this.groundY(this.tvV.x, this.tvV.z) + 1.6);
-      this.crashCam = new THREE.Vector3(this.tvV.x, y, this.tvV.z);
+      const pref = at.x > 0 ? -1 : 1;
+      // Standort am Rand hinter dem Sturz: nicht in einem Baum oder Haus und mit freier Sicht auf den Haufen
+      t.world(at.z, at.x, 0, this.tvV);
+      const tx = this.tvV.x, ty = this.tvV.y + 0.5, tz = this.tvV.z;
+      const obs = this.obstacles(tx - 30, tz - 30, tx + 30, tz + 30);
+      let best: THREE.Vector3 | null = null;
+      for (const [side, back, up] of [[pref, 9, 2.3], [-pref, 9, 2.3], [pref, 14, 3.2], [-pref, 14, 3.2], [pref, 6, 4.5]] as const) {
+        const cz = Math.max(0, at.z - back);
+        t.world(cz, side * (EDGE + t.extraAt(cz) + 1.8), 0, this.tvV);
+        const y = Math.max(t.heightAt(cz) + up, this.hAt(this.tvV.x, this.tvV.z) + 1.6);
+        const inTree = obs.some((o) => (o.x - this.tvV.x) ** 2 + (o.z - this.tvV.z) ** 2 < (o.r + 0.8) ** 2 && y < o.top + 1);
+        const cand = new THREE.Vector3(this.tvV.x, y, this.tvV.z);
+        best ??= cand;
+        if (!inTree && this.needLift(cand.x, cand.y, cand.z, tx, ty, tz, 0, 8, obs) < 0.3) { best = cand; break; }
+      }
+      this.crashCam = best;
     }
-    out.pos.copy(this.crashCam);
+    out.pos.copy(this.crashCam!);
     const L = this.riderAt(new THREE.Vector3(), 0.45);
     out.look.copy(this.follow(L, dt));
     const d = out.pos.distanceTo(L);

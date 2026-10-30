@@ -492,6 +492,7 @@ export class World {
       if (tun) group.add(tun);
     }
     group.add(this.arches.warm());
+    group.add(this.tunnels.warm());
     group.add(this.towns.warm());
     group.add(warmLamps());
     this.arches.plate(group, 2, 0, 0, 'GRUPPETTO', '');
