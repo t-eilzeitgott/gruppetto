@@ -267,8 +267,8 @@ function crowdColor(c: N, i1: N, i2: N, i3: N, pal: THREE.DataTexture): N {
 }
 
 /** 3D-Modell ab hier (m, zum Fahrer oder zur Kamera, je nachdem was näher ist), zurück zum Bild erst über R_OUT */
-export const R_IN = 10;
-const R_OUT = 22;
+export const R_IN = 7;
+const R_OUT = 18;
 /** Überblenden beim Wechsel (s) */
 const FADE = 0.4;
 /** Bilder (2D) bis hier (m), am Ende weich ausgeblendet */
@@ -290,7 +290,7 @@ const share3d = (f: N, clock: N): N => {
  * 3D-Menschen: günstiges Licht (light.ts), eckig schattiert (Flächennormale aus den Ableitungen), vorberechnetes
  * Sonnenlicht, Himmelslicht, Laternen. Nur nah, eine Stufe (fein).
  */
-function crowdMaterial(rider: N, clock: N): THREE.MeshBasicNodeMaterial {
+function crowdMaterial(rider: N, clock: N, fade: boolean): THREE.MeshBasicNodeMaterial {
   const m = new THREE.MeshBasicNodeMaterial();
   const c = attribute('color', 'vec3');
   const i0 = attribute('aI0', 'vec4');
@@ -305,7 +305,8 @@ function crowdMaterial(rider: N, clock: N): THREE.MeshBasicNodeMaterial {
   const nW = fn.mul(sign(dot(fn, cameraPosition.sub(pw))));
   const g = groundMap(pw.xz);
   m.colorNode = lit({ col: vc, nWorld: nW, vis: terrainSun(pw.xz).mul(g.x), wrap: 0.25, ao: float(1.15), extra: lampLit(vc, g.w) });
-  useDither(m, float(0), varying(share3d(i4, clock), 'vCrowd3'));
+  // nur beim Wechsel ausstanzen (Raster) – ganz deckend lässt Apples Grafik verdeckte Bildpunkte weg
+  if (fade) useDither(m, float(0), varying(share3d(i4, clock), 'vCrowd3'));
   m.name = 'crowd';
   return m;
 }
@@ -502,8 +503,11 @@ export class Crowd {
   private people: PV[] = [];
   private src = new Float32Array(0);
   private mat3: THREE.MeshBasicNodeMaterial;
+  private mat3s: THREE.MeshBasicNodeMaterial;
   private base3: THREE.BufferGeometry;
+  /** Modelle beim Wechsel (Raster) und ganz deckend */
   private model: Buf | null = null;
+  private solid: Buf | null = null;
   /** Vorlagen (Kleidung, Haltung) – ihre Bilder liegen im Atlas */
   private variants = makeVariants();
   private byAct = new Map<number, number[]>();
@@ -519,7 +523,8 @@ export class Crowd {
   signs: { pos: number[]; uv: number[] } = { pos: [], uv: [] };
 
   constructor() {
-    this.mat3 = crowdMaterial(this.rider, this.clock);
+    this.mat3 = crowdMaterial(this.rider, this.clock, true);
+    this.mat3s = crowdMaterial(this.rider, this.clock, false);
     this.base3 = mergedPerson();
     this.variants.forEach((V, i) => {
       if (V.kid) { this.kids.push(i); return; }
@@ -671,13 +676,17 @@ export class Crowd {
     return { geo, buf, data, mesh, cap };
   }
 
-  /** 3D-Netz (wächst bei Bedarf) */
+  /** 3D-Netze (wachsen bei Bedarf) */
   private buildModel(cap: number) {
-    if (this.model) { this.model.mesh.removeFromParent(); this.model.geo.dispose(); }
-    const geo = new THREE.InstancedBufferGeometry();
-    geo.setIndex(this.base3.index);
-    for (const k of ['position', 'color', 'normal']) geo.setAttribute(k, this.base3.getAttribute(k));
-    this.model = this.buffer(geo, this.mat3, PS3, cap, ['aI0', 'aI1', 'aI2', 'aI3', 'aI4']);
+    for (const b of [this.model, this.solid]) if (b) { b.mesh.removeFromParent(); b.geo.dispose(); }
+    const make = (mat: THREE.Material) => {
+      const geo = new THREE.InstancedBufferGeometry();
+      geo.setIndex(this.base3.index);
+      for (const k of ['position', 'color', 'normal']) geo.setAttribute(k, this.base3.getAttribute(k));
+      return this.buffer(geo, mat, PS3, cap, ['aI0', 'aI1', 'aI2', 'aI3', 'aI4']);
+    };
+    this.model = make(this.mat3);
+    this.solid = make(this.mat3s);
   }
 
   get count() { return this.people.length; }
@@ -920,8 +929,9 @@ export class Crowd {
     const n = this.people.length;
     if (this.imp && n > this.imp.cap) this.buildImpostors(Math.ceil(n * 1.4));
     const M = this.model;
+    const MS = this.solid!;
     const I = this.imp;
-    let n3 = 0, ni = 0, grow = false;
+    let n3 = 0, ns = 0, ni = 0, grow = false;
     for (let k = 0; k < n; k++) {
       const p = this.people[k];
       const ox = p.x - cam.x, oz = p.z - cam.z;
@@ -944,11 +954,14 @@ export class Crowd {
       const fading = now - p.t3 < FADE;
       const dirK = p.s3 ? 1 : -1;
       if (p.s3 === 1 || fading) {
-        if (n3 < M.cap) {
-          const o = n3 * PS3;
-          M.data.set(this.src.subarray(k * PS, k * PS + PS), o);
-          M.data[o + PS] = p.t3; M.data[o + PS + 1] = dirK; M.data[o + PS + 2] = 0; M.data[o + PS + 3] = 0;
-          n3++;
+        // ganz da: deckendes Netz; beim Wechsel: Raster-Netz
+        const B = fading ? M : MS;
+        const i = fading ? n3 : ns;
+        if (i < B.cap) {
+          const o = i * PS3;
+          B.data.set(this.src.subarray(k * PS, k * PS + PS), o);
+          B.data[o + PS] = p.t3; B.data[o + PS + 1] = dirK; B.data[o + PS + 2] = 0; B.data[o + PS + 3] = 0;
+          if (fading) n3++; else ns++;
         } else grow = true;
       }
       if (I && (p.s3 === 0 || fading)) {
@@ -968,6 +981,9 @@ export class Crowd {
     M.geo.instanceCount = n3;
     M.mesh.visible = n3 > 0;
     M.buf.needsUpdate = true;
+    MS.geo.instanceCount = ns;
+    MS.mesh.visible = ns > 0;
+    MS.buf.needsUpdate = true;
     if (I) {
       I.geo.instanceCount = ni;
       I.mesh.visible = ni > 0;
@@ -979,7 +995,7 @@ export class Crowd {
   warm(on: boolean) {
     // noch keine Zuschauer: Netze trotzdem anlegen (Shader jetzt übersetzen, nicht beim ersten Fan)
     if (on && !this.model) this.buildModel(768);
-    for (const b of [this.model, this.imp]) {
+    for (const b of [this.model, this.solid, this.imp]) {
       if (!b) continue;
       if (on) { b.geo.instanceCount = Math.max(1, b.geo.instanceCount); b.mesh.visible = true; }
     }
@@ -987,9 +1003,10 @@ export class Crowd {
   }
 
   dispose() {
-    for (const b of [this.model, this.imp]) if (b) { b.mesh.removeFromParent(); b.geo.dispose(); }
+    for (const b of [this.model, this.solid, this.imp]) if (b) { b.mesh.removeFromParent(); b.geo.dispose(); }
     this.base3.dispose();
     this.mat3.dispose();
+    this.mat3s.dispose();
     this.impMat?.dispose();
     this.atlasTex?.dispose();
   }

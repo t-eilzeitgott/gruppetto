@@ -42,6 +42,11 @@ const FAR: [number, number] = [1550, 1850];
 const MARGIN = 7;
 const N0 = B0[0] + B0[1] + MARGIN;
 const M0 = B0[0] - B0[1] - MARGIN;
+/**
+ * bis hier steht ein Baum sicher ganz als Modell (bis zur nächsten Verteilung): ohne Raster-Material. Ausstanzen
+ * (discard) schaltet auf Apples Grafik das Weglassen verdeckter Bildpunkte ab – im dichten Wald zahlt sich das aus
+ */
+const S0 = M0;
 
 const CELL = 256;
 
@@ -186,9 +191,12 @@ export class Trees {
   private impMat: THREE.MeshBasicNodeMaterial;
   private atlas: Atlas;
   private cells = new Map<string, Cell>();
-  /** Modelle um die Kamera: je Variante eine Gruppe */
+  /** Modelle um die Kamera: je Variante eine Gruppe im Überblendband (Raster) und eine ganz deckende */
   private near: (InstGroup | null)[] = new Array(NV).fill(null);
   private nearN: number[] = new Array(NV).fill(0);
+  private solid: (InstGroup | null)[] = new Array(NV).fill(null);
+  private solidN: number[] = new Array(NV).fill(0);
+  private matSolid: THREE.MeshBasicNodeMaterial;
   private nearAt = new THREE.Vector3(1e9, 0, 0);
   private nearDirty = true;
   private nearSphere = new THREE.Sphere(new THREE.Vector3(), N0 + 40);
@@ -212,15 +220,16 @@ export class Trees {
   constructor(renderer: THREE.WebGPURenderer, private msaa: boolean, low = false) {
     this.atlas = bakeAtlas(renderer, low ? 96 : 160);
     this.geos = Array.from({ length: NV }, (_, i) => baseGeo(i));
-    this.mat = this.model();
+    this.mat = this.model(true);
+    this.matSolid = this.model(false);
     this.impMat = this.impostorMaterial();
   }
 
   /** Abstand des Baums zur Kamera (je Baum gleich, im Vertex-Shader) */
   private dist(at: N, name: string): N { return varying(at.xz.sub(cameraPosition.xz).length(), name); }
 
-  /** Modell (nah): deckend, Farbe aus den Ecken mal Baumfarbe, Wind, etwas Durchscheinen im Gegenlicht */
-  private model(): THREE.MeshBasicNodeMaterial {
+  /** Modell (nah): deckend, Farbe aus den Ecken mal Baumfarbe, Wind, etwas Durchscheinen im Gegenlicht; dither: im Überblendband */
+  private model(dither: boolean): THREE.MeshBasicNodeMaterial {
     const m = new THREE.MeshBasicNodeMaterial();
     const I = instNodes();
     // Wind: jeder Baum mit eigener Phase (aus dem Ort), oben mehr als unten
@@ -233,8 +242,10 @@ export class Trees {
     const nW = normalize(varying(I.rot(softNormal()), 'vTreeN'));
     const col: N = vertexColor().xyz.mul(I.color);
     m.colorNode = this.foliageLight(col, nW, varying(terrainSun(I.at.xz, true), 'vTreeSun'), clamp(y.mul(1 / 9), 0, 1));
-    const d = this.dist(I.at, 'vTreeD');
-    useDither(m, float(0), float(1).sub(smoothstep(B0[0] - B0[1], B0[0] + B0[1], d)));
+    if (dither) {
+      const d = this.dist(I.at, 'vTreeD');
+      useDither(m, float(0), float(1).sub(smoothstep(B0[0] - B0[1], B0[0] + B0[1], d)));
+    }
     m.name = 'trees-near';
     return m;
   }
@@ -462,17 +473,18 @@ export class Trees {
     commit(g, m);
   }
 
-  /** Gruppe einer Variante mit Platz für need Bäume */
-  private grow(v: number, need: number): InstGroup {
-    const old = this.near[v];
+  /** Gruppe einer Variante mit Platz für need Bäume (solid: ganz deckend, sonst im Überblendband) */
+  private grow(v: number, need: number, solid = false): InstGroup {
+    const list = solid ? this.solid : this.near;
+    const old = list[v];
     const cap = Math.max(32, Math.ceil(need * 1.5));
-    const g = instGroup(this.geos[v], this.mat, cap, this.nearSphere);
+    const g = instGroup(this.geos[v], solid ? this.matSolid : this.mat, cap, this.nearSphere);
     // Schatten nur von den Modellen (der Schattenausschnitt reicht ohnehin nur ~55 m weit)
     g.mesh.castShadow = true;
     g.mesh.receiveShadow = true;
     if (old) { g.data.set(old.data.subarray(0, Math.min(old.data.length, g.data.length))); disposeGroup(old); }
     this.group.add(g.mesh);
-    this.near[v] = g;
+    list[v] = g;
     return g;
   }
 
@@ -483,7 +495,9 @@ export class Trees {
     this.nearSphere.center.copy(cam);
     const N = this.nearN;
     N.fill(0);
-    const n0 = N0 * N0, m0 = M0 * M0;
+    const S = this.solidN;
+    S.fill(0);
+    const n0 = N0 * N0, m0 = M0 * M0, s0 = S0 * S0;
     for (const c of cells) {
       c.far = 0;
       c.at.copy(cam);
@@ -493,7 +507,14 @@ export class Trees {
       for (let k = 0; k < c.n; k++) {
         const dx = c.xz[k * 2] - cam.x, dz = c.xz[k * 2 + 1] - cam.z;
         const d2 = dx * dx + dz * dz;
-        if (d2 < n0) {
+        if (d2 < s0) {
+          const v = c.vi[k];
+          let q = this.solid[v];
+          const n = S[v];
+          if (!q || (n + 1) * STRIDE > q.data.length) q = this.grow(v, n + 1, true);
+          copy1(c.src, k, q.data, n);
+          S[v] = n + 1;
+        } else if (d2 < n0) {
           const v = c.vi[k];
           let q = this.near[v];
           const n = N[v];
@@ -505,7 +526,12 @@ export class Trees {
       }
       commit(g, ni);
     }
-    for (let v = 0; v < NV; v++) { const g = this.near[v]; if (g) commit(g, N[v]); }
+    for (let v = 0; v < NV; v++) {
+      const g = this.near[v];
+      if (g) commit(g, N[v]);
+      const h = this.solid[v];
+      if (h) commit(h, S[v]);
+    }
   }
 
   /** neue Bäume einbauen und Stufen nachführen (je Bild höchstens eine neue Zelle; all: alles sofort) */
@@ -538,7 +564,7 @@ export class Trees {
   /** Prüfhilfe: sichtbare Bäume je Stufe (Modell, Bild) */
   lodStats(): number[] {
     const n = [0, 0];
-    for (const g of this.near) if (g?.mesh.visible) n[0] += g.geo.instanceCount;
+    for (const g of [...this.near, ...this.solid]) if (g?.mesh.visible) n[0] += g.geo.instanceCount;
     for (const c of this.cells.values()) if (c.imp?.mesh.visible) n[1] += c.imp.geo.instanceCount;
     return n;
   }
@@ -559,7 +585,7 @@ export class Trees {
         this.group.add(g.mesh);
         this.warmGroups.push(g);
       };
-      for (let v = 0; v < NV; v++) add(this.geos[v], this.mat, true, v);
+      for (let v = 0; v < NV; v++) { add(this.geos[v], this.mat, true, v); add(this.geos[v], this.matSolid, true, v); }
       add(this.quad, this.impMat, false, 0);
     } else if (!on && this.warmGroups.length) {
       for (const g of this.warmGroups) disposeGroup(g);
@@ -567,7 +593,7 @@ export class Trees {
     }
     if (on) {
       for (const c of this.cells.values()) if (c.imp) { c.imp.geo.instanceCount = Math.max(1, c.imp.geo.instanceCount); c.imp.mesh.visible = true; }
-      for (const g of this.near) if (g) { g.geo.instanceCount = Math.max(1, g.geo.instanceCount); g.mesh.visible = true; }
+      for (const g of [...this.near, ...this.solid]) if (g) { g.geo.instanceCount = Math.max(1, g.geo.instanceCount); g.mesh.visible = true; }
     } else {
       for (const c of this.cells.values()) c.far = null;
       this.nearDirty = true;
@@ -576,11 +602,12 @@ export class Trees {
 
   dispose() {
     for (const c of this.cells.values()) if (c.imp) disposeGroup(c.imp);
-    for (const g of this.near) if (g) disposeGroup(g);
+    for (const g of [...this.near, ...this.solid]) if (g) disposeGroup(g);
     for (const g of this.warmGroups) disposeGroup(g);
     for (const g of this.geos) g.dispose();
     this.quad.dispose();
     this.mat.dispose();
+    this.matSolid.dispose();
     this.impMat.dispose();
     for (const rt of this.atlas.rts) rt.dispose();
   }

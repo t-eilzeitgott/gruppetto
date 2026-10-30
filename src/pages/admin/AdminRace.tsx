@@ -503,7 +503,7 @@ export function RaceGpuPage({ mode = 'abfahrt' }: { mode?: 'abfahrt' | 'tt' }) {
 
       {showFps && stats && ui !== 'loading' ? (
         <div className="race-fps">
-          <b>{Math.round(stats.fps)} fps</b> {stats.ms.toFixed(1)} ms · CPU {stats.cpu.toFixed(1)}{stats.gpu > 0 ? ` · GPU ${stats.gpu.toFixed(1)}` : ''} · Szene ×{stats.dpr.toFixed(2)} · {stats.calls} Aufrufe
+          <b>{Math.round(stats.fps)} fps</b> {stats.ms.toFixed(1)} ms · CPU {stats.cpu.toFixed(1)} ms{stats.gpu > 0 ? ` · GPU ${stats.gpu.toFixed(1)} ms (${Math.min(100, Math.round((100 * stats.gpu) / Math.max(1, stats.ms)))} % des Bilds)` : ''} · Szene ×{stats.dpr.toFixed(2)} · {stats.calls} Aufrufe
           <br />Welt bis {km(stats.built)} (+{Math.round(stats.built - stats.z)} m) · Nachladen {stats.buildMs.toFixed(2)} ms/Bild · {settings.cycle ? raceRef.current?.moodName : MOODS[settings.mood].name}
         </div>
       ) : null}

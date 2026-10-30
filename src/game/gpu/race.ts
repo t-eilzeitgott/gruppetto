@@ -100,6 +100,8 @@ const POOL = 16;
  * und blendet dabei PEL_T Sekunden über (früher: ständig halb/halb, solange einer in 26–36 m mitfuhr)
  */
 const PEL_FADE: [number, number] = [28, 38];
+/** Kostenanalyse: so oft je Bild zeichnen (Grafik ausgelastet, voller Takt) */
+const REPEAT = 3;
 const PEL_T = 0.4;
 /** Fahrerfeld der Abfahrt: so viele Gegner höchstens voraus (in Gruppen); ?field=N zum Ausprobieren */
 const FIELD = Number(/[?&]field=(\d+)/.exec(typeof location !== 'undefined' ? location.search : '')?.[1] ?? 60);
@@ -372,6 +374,7 @@ export class Race {
     this.updateMaps(true);
     await this.warmup((f) => { this.loadFrac = 0.74 + 0.25 * f; });
     if (this.disposed) return;
+    this.orderPunch();
     log('vorgewärmt');
     this.loadFrac = 1;
     this.ready = true;
@@ -401,7 +404,7 @@ export class Race {
     this.peloton?.warm(true);
     this.objects?.warm(true);
     this.particles?.warm(true);
-    for (const R of this.pool) { R.far(0); R.lamp(true); }
+    this.pool.forEach((R) => { R.far(0); R.lamp(true); R.ghost(0); });
     this.rider?.lamp(true);
     const rt = this.scenePass?.renderTarget ?? null;
     const prev = r.getRenderTarget();
@@ -411,11 +414,18 @@ export class Race {
     } catch { /* dann beim ersten Bild */ }
     r.setRenderTarget(prev);
     if (this.disposed) return;
-    // zwei echte Bilder (Schattendurchgang, beide Ketten); Gegner einmal nah, einmal fern
-    for (let k = 0; k < 3; k++) {
-      if (k === 2) for (const R of this.pool) { R.far(1e4); R.lamp(false); }
-      this.draw(k === 1 ? this.pipeFlat : this.pipeBloom);
-      progress(0.85 + k * 0.05);
+    // echte Bilder (beide Ketten); Gegner nah und fern, jeweils deckend und mit Raster (beide Materialien je Kit)
+    const passes: [() => void, THREE.RenderPipeline | null][] = [
+      [() => undefined, this.pipeBloom],
+      [() => undefined, this.pipeFlat],
+      [() => { for (const R of this.pool) R.ghost(0.5); }, this.pipeFlat],
+      [() => { for (const R of this.pool) { R.far(1e4); R.lamp(false); } }, this.pipeFlat],
+      [() => { for (const R of this.pool) R.ghost(0); }, this.pipeFlat],
+    ];
+    for (const [k, [set, pl]] of passes.entries()) {
+      set();
+      this.draw(pl);
+      progress(0.85 + (k * 0.14) / passes.length);
       await new Promise((res) => setTimeout(res, 0));
       if (this.disposed) return;
     }
@@ -1409,7 +1419,7 @@ export class Race {
       for (let k = 0; k < 10; k++) {
         await this.nextFrame();
         if (m) {
-          m.draw.push(this.perf.sec[8]);
+          m.draw.push(this.perf.sec[8] / REPEAT);
           const last = (this.perf.ringAt + 179) % 180;
           m.frame.push(this.perf.ring[last * 2]);
           m.cpu.push(this.perf.ring[last * 2 + 1]);
@@ -1458,7 +1468,7 @@ export class Race {
       `gruppetto Abfahrt-WebGPU Kostenanalyse · ${new Date().toISOString()} · ${this.backendName} · GPU-Zeitstempel ${this.gpuTiming ? 'ja' : 'nein'}`,
       `Gerät: ${navigator.userAgent}`,
       `Ort z=${Math.round(e?.p.z ?? 0)} m, Kamera ${this._cam}, Stimmung ${this.moodName}, Takt ${(1000 / this.period).toFixed(0)} Hz, MSAA ${S0.msaa}, Einstellungen ${JSON.stringify(Object.fromEntries(Object.entries(S0).filter(([k, v]) => ((this.opts.defaults ?? RACE_DEFAULTS) as unknown as Record<string, unknown>)[k] !== v)))}`,
-      'Variante | GPU ms (Median, Ersparnis zur Basis im Wechsel gemessen) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms | Aufrufe | Dreiecke k | Szene in Bild (Bildpunkte)',
+      `Variante | GPU ms je Bild (Median; gemessen bei ${REPEAT}× Zeichnen je Bild, damit die Grafik voll taktet; Ersparnis zur Basis im Wechsel gemessen) | GPU 90 % | CPU zeichnen ms | CPU gesamt ms | Bildzeit ms (beim Messen) | Aufrufe | Dreiecke k | Szene in Bild (Bildpunkte)`,
       ...rows.map((r) => `${r.name} | ${f(r.gpu)}${r === b ? '' : d(r.gpu, r.base)} | ${f(r.gpu90)} | ${f(r.draw)}${r === b ? '' : d(r.draw, b.draw)} | ${f(r.cpu)} | ${f(r.frame)} | ${r.calls} | ${Math.round(r.tris / 1000)} | ${r.px}`),
     ];
     return lines.join('\n');
@@ -1523,10 +1533,13 @@ export class Race {
       world.villages.patch(e.track);
       if (front !== this.lastBuilt) { if (front > this.lastBuilt) P.event(EV.piece, `Welt bis ${Math.round(front)} m`); this.lastBuilt = front; }
       this.updateMaps(false);
+      if (++this.punchAt >= 30) { this.punchAt = 0; this.orderPunch(); }
       P.mark(9);
     }
     this.adapt(dtMs, t);
-    if (this.ready && !this.offscreen) this.draw();
+    // Kostenanalyse: die Grafik mehrfach je Bild arbeiten lassen – nur ausgelastet läuft Apples Grafik mit vollem
+    // Takt, sonst messen die Zeitstempel ihr Heruntertakten mit
+    if (this.ready && !this.offscreen) for (let k = 0; k < (this.analysing ? REPEAT : 1); k++) this.draw();
     P.mark(8);
     // 2D-Ebene (Hinweise, Tempo-Linien)
     if (this.ready && e && this.rider) {
@@ -1543,8 +1556,10 @@ export class Race {
       this.gpuPending = true;
       const nf = Math.max(1, this.gpuFrames);
       this.gpuFrames = 0;
+      const rep = this.analysing ? REPEAT : 1;
       this.renderer.resolveTimestampsAsync('render').then((v) => {
         if (typeof v !== 'number' || !(v > 0)) return;
+        if (rep > 1) { this.gpuSamples?.push(v / nf / rep); return; }
         P.gpu = v / nf;
         this.gpuMs = v / nf;
         this.avgGpu = this.avgGpu ? this.avgGpu + (v / nf - this.avgGpu) * 0.08 : v / nf;
@@ -1572,6 +1587,22 @@ export class Race {
       fps: 1000 / this.avgMs, ms: this.avgMs, period: this.period, dpr: this.dpr, cpu: this.avgCpu, gpu: this.gpuMs,
       tris: info.triangles, calls: info.drawCalls, loading: this.ready ? 1 : this.loadFrac, stage: this.stage,
       built: world && e ? world.builtFrom(e.p.z) : 0, z: e?.p.z ?? 0, buildMs: world?.stats.ms ?? 0, backend: this.backendName,
+    });
+  }
+
+  private punchAt = 0;
+  /**
+   * Zeichenfolge für die Kachel-Grafik (Apple): erst alles Deckende, dann alles, was Bildpunkte ausstanzt (Raster
+   * der Stufenwechsel, Alphatest der Bilder). Ausstanzen schaltet dort das Weglassen verdeckter Bildpunkte ab; danach
+   * gezeichnet, prüft es nur noch gegen die fertige Tiefe der deckenden Dinge.
+   */
+  private orderPunch() {
+    this.scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || o.renderOrder !== 0) return;
+      const m = mesh.material as THREE.Material & { alphaTestNode?: unknown };
+      if (!m || Array.isArray(m) || m.transparent) return;
+      if (m.alphaTestNode || m.alphaTest > 0 || m.alphaToCoverage) o.renderOrder = 1;
     });
   }
 

@@ -14,8 +14,11 @@ import { bayer4, tsl } from './nodes';
 
 const { attribute, clamp, float, mix, select, userData } = tsl;
 
-/** Ursprungsmaterial (uuid, mit/ohne Glanz) → Knotenmaterial; gemeinsam für alle Fahrer */
-const MATS = new Map<string, THREE.Material>();
+/**
+ * Ursprungsmaterial (uuid, mit/ohne Glanz) → Knotenmaterial, je einmal deckend und einmal mit Raster (nur beim
+ * Überblenden: Ausstanzen kostet auf Apples Grafik das Weglassen verdeckter Bildpunkte); gemeinsam für alle Fahrer
+ */
+const MATS = new Map<string, [THREE.Material, THREE.Material]>();
 function convert(root: THREE.Object3D) {
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
@@ -27,8 +30,8 @@ function convert(root: THREE.Object3D) {
     if (src.isMeshBasicMaterial) return;
     const gloss = !!mesh.geometry.getAttribute('gloss');
     const key = `${src.uuid}|${gloss}`;
-    let m = MATS.get(key);
-    if (!m) {
+    let pair = MATS.get(key);
+    const make = (fade: boolean) => {
       const nm = gloss ? new THREE.MeshPhysicalNodeMaterial() : new THREE.MeshStandardNodeMaterial();
       nm.vertexColors = !!src.vertexColors;
       if (src.color) nm.color.copy(src.color);
@@ -42,7 +45,7 @@ function convert(root: THREE.Object3D) {
       // Geister (Zeitfahren): halbdurchsichtig als Gitter (Bayer 4 × 4, je Objekt aus userData) – das Material bleibt
       // undurchsichtig (keine Sortierung, ein Shader für alle Fahrer); die Alpha-Abdeckung der Kantenglättung wäre
       // auf mancher Grafik nur ein harter Schwellwert
-      if (!src.transparent) {
+      if (!src.transparent && fade) {
         const ghost = userData('ghost', 'float');
         nm.opacityNode = select(ghost.lessThan(float(1).sub(bayer4())), float(1), float(0));
         nm.alphaTestNode = float(0.5);
@@ -61,10 +64,14 @@ function convert(root: THREE.Object3D) {
         nm.roughness = 0.62;
         nm.metalness = 0;
       }
-      m = nm;
-      MATS.set(key, m);
+      return nm;
+    };
+    if (!pair) {
+      pair = [make(false), make(true)];
+      MATS.set(key, pair);
     }
-    mesh.material = m;
+    mesh.material = pair[0];
+    mesh.userData.mats = pair;
     mesh.userData.ghost = 0;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -114,11 +121,18 @@ export class Rider {
   private small: THREE.Object3D[] = [];
   private ghostK = 0;
 
-  /** Geist: k = wie durchsichtig (0 = fest, 1 = unsichtbar) */
+  /** Geist: k = wie durchsichtig (0 = fest, 1 = unsichtbar); fest mit dem deckenden Material (ohne Raster) */
   ghost(k: number) {
-    if (Math.abs(k - this.ghostK) < 0.01) return;
+    if (k < 0.004) k = 0;
+    if (Math.abs(k - this.ghostK) < 0.01 && (k === 0) === (this.ghostK === 0)) return;
     this.ghostK = k;
-    this.model.group.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.userData.ghost = k; });
+    this.model.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      o.userData.ghost = k;
+      const pair = o.userData.mats as [THREE.Material, THREE.Material] | undefined;
+      if (pair) mesh.material = pair[k > 0 ? 1 : 0];
+    });
     // Geister ohne Schlagschatten
     this.model.shadow.visible = k < 0.05;
   }

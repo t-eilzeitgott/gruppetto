@@ -59,9 +59,11 @@ export interface HouseCtx {
 export class Houses {
   readonly group = new THREE.Group();
   private mats: Record<HMat, THREE.Material>;
+  /** dieselben ohne Raster: für Häuser, die sicher ganz in einer Stufe stehen (Apples Grafik lässt dann Verdecktes weg) */
+  private matsSolid: Record<HMat, THREE.Material>;
   /** Geometrie je Bauart und Stufe */
   private geos: Record<HMat, THREE.BufferGeometry>[][];
-  /** Gruppen je Bauart, Stufe, Material */
+  /** Gruppen je Bauart, Platz (Stufe 0–2 mit Raster, 3–5 dieselben Stufen deckend), Material */
   private groups: InstGroup[][][] = [];
   spots: Spot[] = [];
   private cap = 0;
@@ -83,6 +85,7 @@ export class Houses {
       const hi = select(code.lessThan(0.5), one.sub(a), select(code.lessThan(1.5), one.sub(b), float(2)));
       return [lo, hi];
     });
+    this.matsSolid = houseMaterials(S, null);
     this.geos = [
       [buildHouse(0), buildHouse(1), buildHouse(2)],
       [buildBarn(0), buildBarn(1), buildBarn(2)],
@@ -250,15 +253,16 @@ export class Houses {
     // die Gruppen enthalten alle Häuser der gebauten Strecke: kein Wegschneiden als Ganzes
     const sphere = new THREE.Sphere(new THREE.Vector3(), 1e7);
     for (let kind = 0; kind < KINDS; kind++) {
-      const lv: InstGroup[][] = [[], [], []];
+      const lv: InstGroup[][] = [[], [], [], [], [], []];
       // Kirchen und Stadel sind selten: kleinere Gruppen
       const cap = capK[kind];
-      for (let lod = 0; lod < 3; lod++) {
+      for (let slot = 0; slot < 6; slot++) {
+        const lod = slot % 3;
         for (const m of HMATS) {
-          const g = instGroup(this.geos[kind][lod][m], this.mats[m], cap, sphere);
+          const g = instGroup(this.geos[kind][lod][m], slot < 3 ? this.mats[m] : this.matsSolid[m], cap, sphere);
           g.mesh.frustumCulled = false;
           this.group.add(g.mesh);
-          lv[lod].push(g);
+          lv[slot].push(g);
         }
       }
       this.groups.push(lv);
@@ -279,18 +283,18 @@ export class Houses {
     this.at.copy(cam);
     this.dirAt.set(dx, dz);
     const view = camera ? viewTest(camera, 1.35) : null;
-    const cnt = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-    const put = (lod: number, s: Spot) => {
+    const cnt = [[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]];
+    const put = (slot: number, s: Spot) => {
       // während addRange noch baut (es gibt zwischendurch ab), kann es mehr Häuser als Platz geben – die neuen,
       // fernen kommen dann erst mit den größeren Gruppen am Ende dazu
       const k = s.kind ?? 0;
-      const gs = this.groups[k][lod];
-      const i = cnt[k][lod];
+      const gs = this.groups[k][slot];
+      const i = cnt[k][slot];
       if (i * STRIDE >= gs[0].data.length) return;
-      cnt[k][lod] = i + 1;
+      cnt[k][slot] = i + 1;
       const sh = SHUTTERS[s.shut];
       const big = s.kind === KIND.church ? 4 : 0;
-      for (const g of gs) g.data.set([s.x, s.y, s.z, s.rot, s.sx ?? 1, s.sy ?? 1, s.sz ?? 1, s.tone, sh[0], sh[1], sh[2], lod + big], i * STRIDE);
+      for (const g of gs) g.data.set([s.x, s.y, s.z, s.rot, s.sx ?? 1, s.sy ?? 1, s.sz ?? 1, s.tone, sh[0], sh[1], sh[2], (slot % 3) + big], i * STRIDE);
     };
     for (const s of this.spots) {
       const d = Math.hypot(s.x - cam.x, s.z - cam.z);
@@ -300,12 +304,16 @@ export class Houses {
       if (view && !view(s.x, s.y + 6, s.z, s.kind === KIND.church ? 24 : 13)) continue;
       // Kirchen (groß, hoch) erst später in die gröbere Stufe
       const f = s.kind === KIND.church ? BIG : 1;
-      // im Überblendband in beide Stufen
-      if (d < (B0[0] + B0[1]) * f + MARGIN) put(0, s);
-      if (d > (B0[0] - B0[1]) * f - MARGIN && d < (B1[0] + B1[1]) * f + MARGIN) put(1, s);
-      if (d > (B1[0] - B1[1]) * f - MARGIN) put(2, s);
+      // im Überblendband in beide Stufen (Raster), sonst ganz in einer Stufe (deckend, ohne Raster)
+      const a0 = (B0[0] - B0[1]) * f - MARGIN, a1 = (B0[0] + B0[1]) * f + MARGIN;
+      const b0 = (B1[0] - B1[1]) * f - MARGIN, b1 = (B1[0] + B1[1]) * f + MARGIN;
+      if (d < a0) put(3, s);
+      else if (d < a1) { put(0, s); put(1, s); }
+      else if (d < b0) put(4, s);
+      else if (d < b1) { put(1, s); put(2, s); }
+      else put(5, s);
     }
-    for (let k = 0; k < KINDS; k++) for (let lod = 0; lod < 3; lod++) for (const g of this.groups[k][lod]) commit(g, cnt[k][lod]);
+    for (let k = 0; k < KINDS; k++) for (let slot = 0; slot < 6; slot++) for (const g of this.groups[k][slot]) commit(g, cnt[k][slot]);
   }
 
   /** Vorwärmen: beide Stufen einmal zeichnen lassen */
@@ -321,6 +329,6 @@ export class Houses {
   dispose() {
     for (const k of this.groups) for (const l of k) for (const g of l) disposeGroup(g);
     for (const k of this.geos) for (const geo of k) for (const m of HMATS) geo[m].dispose();
-    for (const m of HMATS) this.mats[m].dispose();
+    for (const m of HMATS) { this.mats[m].dispose(); this.matsSolid[m].dispose(); }
   }
 }
