@@ -99,6 +99,7 @@ const FIELD_FAR = 650;
 const LOOKS: Kit[] = Array.from({ length: 16 }, (_, i) => ({ ...TEAM_KITS[i % TEAM_KITS.length], skin: SKINS[(i * 3 + 1) % SKINS.length], number: String(11 + ((i * 37) % 180)) }));
 const LOOK_KEYS = new Set(LOOKS.map(riderKitKey));
 const smoothstep = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 /** Fan-Bögen: Masten knapp hinter der Absperrung, Spruchband hoch genug für die hohe Finalkamera */
 const FAN_SPAN = 2 * (EDGE + 0.12);
 const FAN_POLE = 6.1;
@@ -1261,6 +1262,9 @@ export class Renderer3D {
         this.track = g.track;
         this.terrain?.setTrack(g.track);
         this.cam.init = false; this.runners = []; this.runNext = 0;
+        this.camReg = null;
+        // neue Fahrt: vom Kran am Start aus weiterfliegen, sonst neu ansetzen (nach einem Sturz nicht quer übers Land)
+        this.resetDirector(this.lastPhase === 'ready');
         // neues Rennen: neue Sprüche auf Schildern und Spruchbändern (nur die Bilder im Atlas – kein Neuaufbau)
         this.newSigns(g.track.names);
         if (old.names.join('|') !== g.track.names.join('|')) this.clearChunks();
@@ -1365,9 +1369,11 @@ export class Renderer3D {
     this.routeEnd = 0;
     this.pre = null;
     this.terrain = new Terrain(track);
+    this.camReg = null;
     this.newSigns(track.names);
     this.clearChunks();
     this.cam.init = false;
+    this.resetDirector(false);
     this.runners = [];
     this.runNext = 0;
   }
@@ -2145,37 +2151,347 @@ export class Renderer3D {
     // Rennfinale: höher und weiter hinten (Motorradkamera), damit man über das Feld schaut –
     // im Bergfinale bergab wieder die nahe Abfahrtskamera (weich überblendet); Zeitfahren: dazwischen (Geister voraus)
     const wantPack = track.kind === 'sprint' || (track.kind === 'mountain' && p.z < MOUNTAIN_TOP + 25) ? 1 : track.kind === 'tt' ? 0.4 : 0;
-    if (!cam.init || g.phase === 'ready' || g.phase === 'countdown') cam.pack = wantPack;
+    const still = !cam.init || g.phase === 'ready' || g.phase === 'countdown';
+    if (still) cam.pack = wantPack;
     else cam.pack += (wantPack - cam.pack) * Math.min(1, dt * 1.2);
     const back = CAM_BACK + (SPRINT_BACK - CAM_BACK) * cam.pack;
     const behindY = track.heightAt(Math.max(0, p.z - back));
     const ty = Math.max(behindY, roadY) + CAM_UP + (SPRINT_UP - CAM_UP) * cam.pack + air * 0.35;
-    if (!cam.init || g.phase === 'ready' || g.phase === 'countdown') {
+    if (still) {
       cam.th = yaw;
       cam.y = ty;
       cam.init = true;
     }
     let d = yaw - cam.th;
     d = Math.atan2(Math.sin(d), Math.cos(d));
-    cam.th += d * Math.min(1, dt * 6);
+    const turn = d * Math.min(1, dt * 6);
+    cam.th += turn;
     cam.y += (ty - cam.y) * Math.min(1, dt * 7);
     // nie unter die Straße sinken (z. B. nach einem Sprung nach vorn oder steil bergauf)
     cam.y = Math.max(cam.y, roadY + 1.2);
+    const descent = track.kind === 'descent';
+    this.hNear = p.z;
+    // Abfahrt: in Kurven schwingt die Kamera nach außen (wie ein Motorrad mit Kameramann), auf Geraden zurück
+    // hinters Rad – aus der Drehgeschwindigkeit der Fahrtrichtung (rechts herum → Kamera nach links)
+    const omega = dt > 0 ? turn / dt : 0;
+    const swingT = !descent || still || g.phase !== 'playing' ? 0 : clamp(-omega * Math.min(1, p.v / 14) * 2.4, -1.7, 1.7);
+    this.swing += (swingT - this.swing) * Math.min(1, dt * 1.6);
+    const sw = this.swing;
     const fx = Math.sin(cam.th);
     const fz = -Math.cos(cam.th);
+    const sx = Math.cos(cam.th);
+    const sz = Math.sin(cam.th);
     const shake = g.shake * 0.04;
-    this.camera.position.set(rx - fx * back + (Math.random() - 0.5) * shake, cam.y + (Math.random() - 0.5) * shake, rz - fz * back);
+    const A = this.camA;
+    A.pos.set(rx - fx * back + sx * sw + (Math.random() - 0.5) * shake, cam.y + (Math.random() - 0.5) * shake, rz - fz * back + sz * sw);
+    if (descent) {
+      // nie im Hang: über dem Gelände bleiben und den Fahrer frei sehen (weich anheben, langsam wieder senken);
+      // nicht im Tunnel und an seinen Portalen (dort liegt der Berg über der Straße)
+      if (!this.nearTunnel(track, p.z)) {
+        const need = this.needLift(A.pos.x, A.pos.y, A.pos.z, rx, ry + 1.1, rz, 1.1, 6);
+        if (dt > 0) this.chaseLift += (need - this.chaseLift) * Math.min(1, dt * (need > this.chaseLift ? 9 : 1.4));
+        const floor = Math.max(0, this.hAt(A.pos.x, A.pos.z) + 0.9 - A.pos.y);
+        A.pos.y += Math.max(this.chaseLift, floor);
+      } else if (dt > 0) this.chaseLift *= Math.max(0, 1 - dt * 3);
+    }
     const look = 15 + 2 * cam.pack;
     const aheadY = track.heightAt(p.z + look);
-    this.camera.lookAt(rx + fx * look, roadY + (aheadY - roadY) * 0.55 + 0.9 + air * 0.4, rz + fz * look);
+    A.look.set(rx + fx * look, roadY + (aheadY - roadY) * 0.55 + 0.9 + air * 0.4, rz + fz * look);
     cam.x = rx; cam.z = rz;
     // Sichtfeld: hochkant mehr Höhe, bei Tempo etwas weiter (Geschwindigkeitsgefühl)
     const aspect = this.W / this.H;
     const base = aspect < 1 ? 72 - (aspect - 0.45) * 22 : 56;
-    const want = base + Math.min(9, Math.max(0, (p.v - 14) * 0.38));
-    cam.fov += (want - cam.fov) * Math.min(1, dt * 2);
+    A.fov = base + Math.min(9, Math.max(0, (p.v - 14) * 0.38));
+    // Regie der Abfahrt: TV-Kran vor dem Start, Sturz aus der Fernsehperspektive – Wechsel weich geflogen
+    if (descent) this.direct(g, A, dt);
+    this.camera.position.copy(A.pos);
+    this.camera.lookAt(A.look);
+    // leicht in die Kurve legen (Motorradkamera)
+    if (descent && this.dirKind === 'chase') this.camera.rotateZ(clamp(p.lean, -0.7, 0.7) * 0.07 * (this.dirT < 1 ? this.dirT : 1));
+    // Sichtfeld weich (Tempo); bei Regiewechseln folgt es direkt der Überblendung
+    const direct = descent && (this.dirKind !== 'chase' || this.dirT < 1);
+    cam.fov += (A.fov - cam.fov) * (direct ? 1 : Math.min(1, dt * 2));
     if (Math.abs(this.camera.fov - cam.fov) > 0.01) { this.camera.fov = cam.fov; this.camera.updateProjectionMatrix(); }
-    void ry;
+    this.lastPhase = g.phase;
+  }
+
+  // ------------------------------------------------------------------ Regie (Abfahrt)
+
+  private camA = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
+  private lastPhase = '';
+  private dirKind: 'intro' | 'chase' | 'crash' = 'intro';
+  private dirFrom = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
+  private dirLast = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60, ok: false };
+  private dirT = 1;
+  private dirDur = 1;
+  private dirPose = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
+  private lookS = new THREE.Vector3();
+  private lookOk = false;
+  private swing = 0;
+  private chaseLift = 0;
+  /** Zusatzbogen des laufenden Kameraflugs (m), damit er nicht durch Hang oder Bäume geht */
+  private flyArc = 0;
+  private flyLift = 0;
+  private crashCam: THREE.Vector3 | null = null;
+  private tvV = { x: 0, y: 0, z: 0, th: 0 };
+  private tvR = new THREE.Vector3();
+
+  /** Regie zurück: keep = vom Startbild (Kran) aus weiterfliegen */
+  private resetDirector(keep: boolean) {
+    this.crashCam = null;
+    this.swing = 0;
+    this.chaseLift = 0;
+    if (!keep) { this.dirLast.ok = false; this.dirKind = 'intro'; this.dirT = 1; }
+  }
+
+  /** Regie: welche Einstellung jetzt – und weich (geflogen) von der letzten hinüber */
+  private direct(g: RaceView, A: { pos: THREE.Vector3; look: THREE.Vector3; fov: number }, dt: number) {
+    let want: 'intro' | 'chase' | 'crash' = 'chase';
+    if (g.phase === 'ready') want = 'intro';
+    else if (g.wreck) want = 'crash';
+    if (!this.dirLast.ok) { this.dirKind = want; this.dirT = 1; }
+    if (want !== this.dirKind) {
+      // vom aktuellen Bild aus hinüberfliegen
+      this.dirFrom.pos.copy(this.dirLast.pos);
+      this.dirFrom.look.copy(this.dirLast.look);
+      this.dirFrom.fov = this.dirLast.fov;
+      this.dirDur = this.dirKind === 'intro' ? 2.7 : want === 'crash' ? 0.9 : 0.95;
+      this.dirKind = want;
+      this.dirT = 0;
+      this.flyArc = -1;
+      this.flyLift = 0;
+      this.lookOk = false;
+      if (want !== 'crash') this.crashCam = null;
+    }
+    const D = this.dirPose;
+    if (this.dirKind === 'chase') { D.pos.copy(A.pos); D.look.copy(A.look); D.fov = A.fov; } else this.shotPose(g, this.dirKind, D, dt);
+    if (this.dirT < 1) {
+      const F = this.dirFrom;
+      const span = F.pos.distanceTo(D.pos);
+      const base = Math.min(6, span * 0.18);
+      const tun = this.nearTunnel(g.track, g.p.z);
+      if (this.flyArc < 0 && tun) this.flyArc = 0;
+      if (this.flyArc < 0) {
+        // Bogen so hoch, dass der Flug über Hang und Bäume geht (Gelände entlang der Bahn geprüft)
+        let arc = 0;
+        for (let i = 1; i < 12; i++) {
+          const k = i / 12;
+          const s = Math.sin(Math.PI * k);
+          const x = F.pos.x + (D.pos.x - F.pos.x) * k, z = F.pos.z + (D.pos.z - F.pos.z) * k;
+          const y = F.pos.y + (D.pos.y - F.pos.y) * k + s * base;
+          const h = this.hAt(x, z) + 2.2;
+          if (h > y) arc = Math.max(arc, (h - y) / Math.max(0.3, s));
+        }
+        this.flyArc = Math.min(arc, 30);
+      }
+      this.dirT = Math.min(1, this.dirT + (dt > 0 ? dt : 0) / this.dirDur);
+      const u = this.dirT;
+      const k = u * u * u * (u * (u * 6 - 15) + 10);
+      A.pos.lerpVectors(F.pos, D.pos, k);
+      // im Bogen fliegen (nicht durch den Hang)
+      A.pos.y += Math.sin(Math.PI * k) * (base + this.flyArc);
+      if (!tun) {
+        // freie Sicht auf den Fahrer auch unterwegs (der Bogen hebt sich weich, wenn ein Grat dazwischen kommt)
+        const R = this.riderAt(g, this.tvR, 1.0);
+        const need = this.needLift(A.pos.x, A.pos.y, A.pos.z, R.x, R.y, R.z, 1.0, 8) * Math.sin(Math.PI * Math.min(1, k * 1.15));
+        this.flyLift += (need - this.flyLift) * Math.min(1, (dt > 0 ? dt : 0) * (need > this.flyLift ? 5 : 2));
+        A.pos.y += this.flyLift;
+      }
+      A.look.lerpVectors(F.look, D.look, k);
+      // unterwegs den Fahrer im Bild behalten (sonst schaut die Kamera in der Mitte des Flugs auf den Asphalt)
+      if (this.dirKind !== 'intro') A.look.lerp(this.riderAt(g, this.tvR, 1.0), Math.sin(Math.PI * k) * 0.85);
+      A.fov = F.fov + (D.fov - F.fov) * k;
+    } else {
+      A.pos.copy(D.pos);
+      A.look.copy(D.look);
+      A.fov = D.fov;
+    }
+    this.dirLast.pos.copy(A.pos);
+    this.dirLast.look.copy(A.look);
+    this.dirLast.fov = A.fov;
+    this.dirLast.ok = true;
+  }
+
+  /** Ort des Fahrers in der Welt (Körpermitte) */
+  private riderAt(g: RaceView, out: THREE.Vector3, up = 1.0): THREE.Vector3 {
+    g.track.world(g.p.z, g.p.x, 0, this.tvV);
+    return out.set(this.tvV.x, this.tvV.y + up, this.tvV.z);
+  }
+
+  /** Blick weich auf den Fahrer (die TV-Kamera schwenkt mit wie ein Kameramann) */
+  private follow(target: THREE.Vector3, dt: number): THREE.Vector3 {
+    if (!this.lookOk) { this.lookS.copy(target); this.lookOk = true; }
+    this.lookS.lerp(target, dt > 0 ? Math.min(1, dt * 5) : 1);
+    return this.lookS;
+  }
+
+  /** Tunnel im Bereich hinter bis kurz vor dem Fahrer (dort keine Geländeprüfung der Kamera) */
+  private nearTunnel(t: Track, z: number): boolean {
+    const i0 = Math.max(t.first, Math.floor((z - CAM_BACK - 14) / SEG)), i1 = Math.floor((z + 16) / SEG);
+    for (let i = i0; i <= i1; i++) if (t.seg(i).tunnel) return true;
+    return false;
+  }
+
+  /** Geländehöhe für die Kamera (Rechenbereich um die Kamera, neu erst nach einem Stück Weg) */
+  private camReg: { r: Region; x: number; z: number } | null = null;
+  private camH(x: number, z: number): number {
+    const T = this.terrain;
+    if (!T) return -Infinity;
+    let c = this.camReg;
+    if (!c || Math.abs(x - c.x) > 70 || Math.abs(z - c.z) > 70) c = this.camReg = { r: T.region(x - 100, z - 100, x + 100, z + 100), x, z };
+    return T.heightIn(c.r, x, z);
+  }
+
+  /** Strecke, um die herum die Kamera Höhen sucht (Fahrer oder Sturz) */
+  private hNear = 0;
+  private hW = { x: 0, y: 0, z: 0, th: 0 };
+  private hT = { z: 0, x: 0 };
+  /** Weltpunkt → Strecke z und Querlage x (nächster Punkt der Straße bis 26 m um hNear) */
+  private toTrack(t: Track, x: number, z: number): { z: number; x: number } {
+    const w = this.hW;
+    let best = Infinity, bz = this.hNear;
+    for (let d = -26; d <= 26; d += 2) {
+      const zz = Math.max(0, this.hNear + d);
+      t.world(zz, 0, 0, w);
+      const q = (w.x - x) ** 2 + (w.z - z) ** 2;
+      if (q < best) { best = q; bz = zz; }
+    }
+    for (let d = -1; d <= 1; d += 0.25) {
+      const zz = Math.max(0, bz + d);
+      t.world(zz, 0, 0, w);
+      const q = (w.x - x) ** 2 + (w.z - z) ** 2;
+      if (q < best) { best = q; this.hT.z = zz; }
+    }
+    if (best === Infinity) this.hT.z = bz;
+    t.world(this.hT.z, 0, 0, w);
+    this.hT.x = (x - w.x) * Math.cos(w.th) + (z - w.z) * Math.sin(w.th);
+    return this.hT;
+  }
+
+  /** Höhe der sichtbaren Oberfläche an Strecke z, Querlage x: Fahrbahn, Querprofil (Böschung, Mauer), dahinter Gelände */
+  private surfAt(t: Track, z: number, x: number): number {
+    const i = Math.max(t.first, Math.floor(z / SEG));
+    const s = t.seg(i);
+    const e = t.extra(i);
+    const dx = Math.abs(x) - e - EDGE;
+    if (dx <= 0 || s.tunnel || s.bridge > 0) return t.heightAt(z);
+    const sg = x < 0 ? -1 : 1;
+    const side = sg < 0 ? s.L : s.R;
+    const lim = this.terrain ? this.terrain.lim(i)[sg < 0 ? 0 : 1] - e : LIM_MAX;
+    const gh = this.groundAt(side, s, sg, dx, lim);
+    if (gh !== null) return t.heightAt(i * SEG) + gh;
+    t.world(z, x, 0, this.hW);
+    return this.camH(this.hW.x, this.hW.z);
+  }
+
+  /** Höhe der sichtbaren Oberfläche an einem Weltpunkt nahe der Straße (um hNear) */
+  private hAt(x: number, z: number): number {
+    const t = this.track;
+    if (!t) return -Infinity;
+    const q = this.toTrack(t, x, z);
+    return this.surfAt(t, q.z, q.x);
+  }
+
+  /**
+   * Wie viel muss die Kamera höher, damit sie über dem Gelände steht (mind. up) und das Ziel frei sieht?
+   * Gelände entlang der Sichtlinie (n Proben); obs: zusätzlich Bäume als Zylinder.
+   */
+  private needLift(px: number, py: number, pz: number, tx: number, ty: number, tz: number, up: number, n = 10, obs: { x: number; z: number; r: number; top: number }[] | null = null): number {
+    let need = Math.max(0, this.hAt(px, pz) + up - py);
+    for (let i = 1; i < n; i++) {
+      const k = i / n;
+      const x = px + (tx - px) * k, z = pz + (tz - pz) * k;
+      const y = py + need + (ty - py - need) * k;
+      const h = this.hAt(x, z) + 0.6;
+      // Lift wirkt am Ziel nicht, an der Kamera voll: (1 - k)
+      if (h > y) need += (h - y) / (1 - k);
+    }
+    if (obs) for (const o of obs) {
+      // nächster Punkt der Sichtlinie (Draufsicht) zum Stamm
+      const dx = tx - px, dz = tz - pz;
+      const L2 = dx * dx + dz * dz || 1;
+      const k = clamp(((o.x - px) * dx + (o.z - pz) * dz) / L2, 0, 1);
+      if (k > 0.97) continue;
+      const qx = px + dx * k - o.x, qz = pz + dz * k - o.z;
+      if (qx * qx + qz * qz > o.r * o.r) continue;
+      const y = py + need + (ty - py - need) * k;
+      if (o.top > y) need += (o.top - y + 0.5) / (1 - k);
+    }
+    return Math.min(need, 40);
+  }
+
+  /** Bäume in einem Rechteck als Hindernisse (Zylinder) für die Sturzkamera */
+  private obstacles(x0: number, z0: number, x1: number, z1: number): { x: number; z: number; r: number; top: number }[] {
+    const out: { x: number; z: number; r: number; top: number }[] = [];
+    for (const s of this.treeSrc) {
+      if (!s.on) continue;
+      const b = s.box;
+      if (b[2] < x0 || b[0] > x1 || b[3] < z0 || b[1] > z1) continue;
+      for (let k = 0; k < s.n; k++) {
+        const o = k * TREC;
+        const x = s.rec[o], z = s.rec[o + 2];
+        if (x < x0 || x > x1 || z < z0 || z > z1) continue;
+        const sc = s.rec[o + 3];
+        out.push({ x, z, r: 1.6 * sc, top: s.rec[o + 1] + 12 * sc });
+      }
+    }
+    return out;
+  }
+
+  private shotPose(g: RaceView, kind: 'intro' | 'crash', out: { pos: THREE.Vector3; look: THREE.Vector3; fov: number }, dt: number) {
+    const t = g.track;
+    const p = g.p;
+    const R = this.riderAt(g, new THREE.Vector3(), 1.0);
+    const portrait = this.W < this.H;
+    const time = this.time.value;
+    if (kind === 'intro') {
+      // TV-Kran vor dem Start: vor dem Feld, leicht seitlich (über der Straße), schwenkt langsam hin und her;
+      // Blick zurück auf dich
+      t.world(p.z, 0, 0, this.tvV);
+      const th = this.tvV.th;
+      const ang = (p.x > 0 ? -1 : 1) * (0.3 + 0.22 * Math.sin(time * 0.17));
+      const fx = Math.sin(th + ang), fz = -Math.cos(th + ang);
+      const r = 9.5;
+      const x = R.x + fx * r, z = R.z + fz * r;
+      const y = Math.max(R.y + 2.6 + 0.4 * Math.sin(time * 0.11), this.hAt(x, z) + 1.8);
+      out.pos.set(x, y, z);
+      out.look.set(R.x - Math.sin(th) * 3, R.y - 0.2, R.z + Math.cos(th) * 3);
+      out.fov = portrait ? 50 : 38;
+      return;
+    }
+    // Sturz: Fernsehbild vom Straßenrand hinter dem Sturz, Blick die Straße hinunter auf den Haufen – die
+    // Nachfolgenden fahren an der Kamera vorbei hinein; langsam näher heran
+    if (!this.crashCam) {
+      const at = g.pileAt ?? { z: p.z, x: p.x };
+      const pref = at.x > 0 ? -1 : 1;
+      this.hNear = at.z;
+      // Standort am Rand hinter dem Sturz: nicht unter einem Baum, nicht hinter Hang oder Mauer und mit freier Sicht
+      // auf den Haufen; im Tunnel an der Wand der Röhre
+      t.world(at.z, at.x, 0, this.tvV);
+      const tx = this.tvV.x, ty = this.tvV.y + 0.5, tz = this.tvV.z;
+      const tun = t.segAt(at.z).tunnel || t.segAt(Math.max(0, at.z - 9)).tunnel;
+      const obs = tun ? [] : this.obstacles(tx - 30, tz - 30, tx + 30, tz + 30);
+      let best: THREE.Vector3 | null = null;
+      for (const [side, back, up] of [[pref, 9, 2.3], [-pref, 9, 2.3], [pref, 14, 3.2], [-pref, 14, 3.2], [pref, 6, 4.5]] as const) {
+        const cz = Math.max(0, at.z - back);
+        // auf dem Bankett, gleich neben der Randlinie (dahinter stehen Felsen, Büsche, Pfosten im Bild)
+        const cx = side * (tun ? ROAD_HALF + 0.3 : ROAD_HALF + t.extraAt(cz) + 0.55);
+        t.world(cz, cx, 0, this.tvV);
+        const y = tun ? t.heightAt(cz) + 2.2 : Math.max(t.heightAt(cz) + up, this.surfAt(t, cz, cx) + 1.6);
+        const cand = new THREE.Vector3(this.tvV.x, y, this.tvV.z);
+        best ??= cand;
+        if (tun) break;
+        const inTree = obs.some((o) => (o.x - cand.x) ** 2 + (o.z - cand.z) ** 2 < (o.r + 0.8) ** 2 && y < o.top + 1);
+        if (!inTree && this.needLift(cand.x, cand.y, cand.z, tx, ty, tz, 0, 8, obs) < 0.3) { best = cand; break; }
+      }
+      this.crashCam = best;
+    }
+    out.pos.copy(this.crashCam!);
+    const L = this.riderAt(g, new THREE.Vector3(), 0.45);
+    out.look.copy(this.follow(L, dt));
+    const d = out.pos.distanceTo(L);
+    const push = clamp(g.phaseT / 4, 0, 1);
+    out.fov = clamp((2 * Math.atan(((portrait ? 9 : 6.5) - 2 * push) / d) * 180) / Math.PI, 16, 60);
   }
 
   private updateEnvironment(biome: BiomeId, dt: number) {
