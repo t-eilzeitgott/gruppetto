@@ -1109,6 +1109,8 @@ export class Abfahrt {
 
   /** zu schnell aufs Hinterrad: du und der Vordermann geht zu Boden – der Anfang eines Massensturzes */
   private pileup(o: Opp, closing: number) {
+    // Testfahrt: kein Sturz (sonst bliebe der Sturz ohne Sturzphase stehen)
+    if (this.opts.cruise) return;
     const p = this.p;
     const side = o.x >= p.x ? -1 : 1;
     this.pileAt = { z: o.z, x: (o.x + p.x) / 2 };
