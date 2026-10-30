@@ -856,18 +856,48 @@ export class Abfahrt {
     return { ...k, skin: pick(r, SKINS), number: String(Math.floor(between(r, 11, 199))) };
   }
 
-  /** Start im Feld: eine kleine Gruppe um dich herum (ein paar vor, ein paar neben dir) */
+  /** Start im Feld: eine kleine Gruppe um dich herum (ein paar vor, ein paar neben dir) – sie fährt zusammen weiter */
   private spawnField(n: number) {
     void n;
     const r = this.rng;
     const spots: [number, number][] = [[10, -1.2], [10.4, 1.3], [12.6, 0], [15, -0.9], [15.3, 1.0], [6.4, -1.5], [3.2, 0.4], [3.6, 1.6]];
+    const group = this.oppId;
+    const f = between(r, 0.84, 0.9);
     for (const [z, x] of spots) {
       this.opps.push({
-        id: this.oppId++, z: z + r() * 0.5, x, vx: 0, v: 0, tx: x, f: between(r, 0.74, 0.98), kit: this.kit(r), pedal: r() * 6,
-        lean: 0, tuck: 0, brake: 0, passed: z < 6, group: -2, bump: 0, attacker: false,
+        id: this.oppId++, z: z + r() * 0.5, x, vx: 0, v: 0, tx: x, f: f * between(r, 0.995, 1.005), kit: this.kit(r), pedal: r() * 6,
+        lean: 0, tuck: 0, brake: 0, passed: z < 6, group, bump: 0, attacker: false,
       });
     }
     this.nextSpawn = 60;
+  }
+
+  /**
+   * Gruppe als Pulk: Reihen zu zweit oder zu dritt (auf breiter Straße), Lücke von Reihe zu Reihe gut 2 m, seitlich um
+   * eine Linie nahe der Mitte – oder in einer Reihe hintereinander (Windschatten). Alle im selben Tempo (f), damit sie
+   * zusammenbleiben (stepOpps hält sie zusammen).
+   */
+  private addGroup(z0: number, m: number, f: number, v: number, opts: { attacker?: boolean; passed?: boolean } = {}) {
+    const r = this.rng;
+    const group = this.oppId;
+    const line = chance(r, 0.25);
+    const half0 = ROAD_HALF + this.track.extraAt(z0) - 0.5;
+    const wide = half0 > 2.9 && chance(r, 0.5) ? 3 : 2;
+    const per = line ? 1 : wide;
+    const cx = clamp((r() - 0.5) * 1.2, -half0 + 0.9, half0 - 0.9);
+    let z = z0;
+    for (let i = 0; i < m; i++) {
+      const row = Math.floor(i / per), col = i % per;
+      if (col === 0 && i > 0) z -= line ? between(r, 1.85, 2.3) : between(r, 1.9, 2.4);
+      const half = ROAD_HALF + this.track.extraAt(z) - 0.5;
+      // versetzt: jede zweite Reihe ein wenig zur Seite (Räder nicht genau hintereinander)
+      const off = per === 1 ? (row % 2 ? 0.25 : -0.25) : (col - (per - 1) / 2) * 0.86 + (row % 2 ? 0.2 : -0.2);
+      const x = clamp(cx + off + (r() - 0.5) * 0.18, -half, half);
+      this.opps.push({
+        id: this.oppId++, z: z - col * between(r, 0, 0.5), x, vx: 0, v, tx: x, f: f * between(r, 0.995, 1.005), kit: this.kit(r), pedal: r() * 6,
+        lean: 0, tuck: opts.attacker ? 0.6 : 1, brake: 0, passed: !!opts.passed, group, bump: 0, attacker: !!opts.attacker,
+      });
+    }
   }
 
   /**
@@ -883,30 +913,17 @@ export class Abfahrt {
     this.opps = this.opps.filter((o) => o.z > p.z - 160 && o.z < p.z + 1100);
     const ahead = this.opps.filter((o) => o.z > p.z && o.z < p.z + 700).length;
     if (ahead < n) {
-      // im Bild, aber noch nicht nah: 230–420 m voraus
+      // im Bild, aber noch nicht nah: 170–380 m voraus – als Pulk, ab und zu ein großer
       const z0 = p.z + between(r, 170, 380);
-      const m = Math.round(between(r, 3, 12));
-      const group = this.oppId;
+      const m = chance(r, 0.25) ? Math.round(between(r, 12, 20)) : Math.round(between(r, 4, 11));
       // meist langsamer als du (aufholen, durchfahren), manchmal fast gleich schnell
       const f = chance(r, 0.7) ? between(r, 0.6, 0.78) : between(r, 0.8, 0.9);
-      const abreast = chance(r, 0.4);
-      for (let i = 0; i < m; i++) {
-        const z = z0 - i * (abreast ? between(r, 0.9, 1.6) : between(r, 1.8, 3.0));
-        const half = ROAD_HALF + this.track.extraAt(z) - 0.5;
-        const x = clamp(abreast ? (i % 2 ? -0.8 : 0.8) + (r() - 0.5) * 0.6 : (r() - 0.5) * 2 * half, -half, half);
-        this.opps.push({
-          id: this.oppId++, z, x, vx: 0, v: p.v * 0.75, tx: x, f: f * between(r, 0.97, 1.03), kit: this.kit(r), pedal: r() * 6,
-          lean: 0, tuck: 1, brake: 0, passed: false, group, bump: 0, attacker: false,
-        });
-      }
+      this.addGroup(z0, m, f, p.v * 0.75);
     }
-    // Schnelle von hinten (selten): an dir vorbei
-    if (chance(r, 0.18) && this.opps.filter((o) => o.attacker).length < 3) {
-      const lane = chance(r, 0.5) ? -1 : 1;
-      this.opps.push({
-        id: this.oppId++, z: p.z - 45, x: lane * 1.4, vx: 0, v: p.v + 2, tx: lane * 1.4, f: between(r, 1.06, 1.12), kit: this.kit(r),
-        pedal: 0, lean: 0, tuck: 0.6, brake: 0, passed: true, group: this.oppId, bump: 0, attacker: true,
-      });
+    // Schnelle von hinten (selten): an dir vorbei – meist zu zweit bis viert
+    if (chance(r, 0.18) && this.opps.filter((o) => o.attacker).length < 4) {
+      const m = chance(r, 0.65) ? Math.round(between(r, 2, 4)) : 1;
+      this.addGroup(p.z - 45, m, between(r, 1.06, 1.12), p.v + 2, { attacker: true, passed: true });
     }
   }
 
@@ -946,6 +963,8 @@ export class Abfahrt {
   }
 
   private subN = 0;
+  /** Gruppen: Summe der Lagen und Anzahl je Gruppe (je Schritt neu) */
+  private groupZ = new Map<number, [number, number]>();
   private stepOpps(dt0: number) {
     const live = this.phase === 'playing' || this.phase === 'crash';
     // nach Lage sortiert (fast schon sortiert: Einfügen kostet kaum etwas) – Nachbarn sind dann die nächsten im Feld
@@ -958,6 +977,14 @@ export class Abfahrt {
     }
     this.subN++;
     const pz = this.p.z;
+    // Gruppen: Mitte (mittlere Lage) je Gruppe – wer zurückfällt, legt zu, wer vorn ist, wartet (sie bleiben ein Pulk)
+    const gz = this.groupZ;
+    gz.clear();
+    for (const o of os) {
+      if (o.group < 0 || o.wreck) continue;
+      const e = gz.get(o.group);
+      if (e) { e[0] += o.z; e[1]++; } else gz.set(o.group, [o.z, 1]);
+    }
     for (let oi = 0; oi < os.length; oi++) {
       const o = os[oi];
       // weit weg (Feld voraus, Abgehängte): nur jeden dritten Schritt rechnen (dann dreifach), dazwischen rollen
@@ -993,6 +1020,8 @@ export class Abfahrt {
         if (k > 0.002) vC = Math.min(vC, Math.sqrt((0.82 * G) / k) + d * 0.18);
       }
       let target = Math.min(vEq, vC, VMAX - 2);
+      const grp = o.group >= 0 ? gz.get(o.group) : undefined;
+      if (grp && grp[1] > 1) target *= 1 + clamp((grp[0] / grp[1] - o.z) * 0.03, -0.07, 0.07);
       // Vordermann: langsamer und in der Spur → überholen, wo Platz ist; geht das (noch) nicht, dahinter bleiben
       let pass: number | null = null;
       for (let qi = oi + 1; qi < os.length; qi++) {
@@ -1002,6 +1031,11 @@ export class Abfahrt {
         if (q.wreck) continue;
         const dx = q.x - o.x;
         if (dz <= 0 || Math.abs(dx) > 0.85) continue;
+        // in der eigenen Gruppe nicht überholen: im Pulk hinter dem Vordermann bleiben
+        if (q.group === o.group && o.group >= 0 && !o.attacker) {
+          if (Math.abs(dx) < 0.7 && dz < 4) target = Math.min(target, q.v + Math.max(-2, (dz - 1.9) * 1.2));
+          continue;
+        }
         if (o.v > q.v + 0.2 || dz < 3) {
           const left = q.x - 0.95, right = q.x + 0.95;
           const okL = left > -half + 0.45, okR = right < half - 0.45;
