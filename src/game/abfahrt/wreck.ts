@@ -37,10 +37,11 @@ export interface WreckPose {
   tuck: number;
 }
 
-/** Flug über den Lenker (s) */
-const FLIGHT = 0.5;
+/** Flug über den Lenker (s) – Flug und Rutschen passen zur Ragdoll der Darstellung (ragdoll.ts: Reibung und Aufprall
+ * bremsen den Körper nach gut 10 m bei 50 km/h), so liegt der Körper dort, wo die Spiellogik ihn führt */
+const FLIGHT = 0.4;
 /** Bremsen beim Rutschen auf Asphalt (m/s²): Körper, Rad */
-const SLIDE = 5.2;
+const SLIDE = 12;
 const BIKE_SLIDE = 8.5;
 
 const sat = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -48,7 +49,7 @@ const ease = (x: number) => { const u = sat(x); return u * u * (3 - 2 * u); };
 
 /** Weg des Körpers seit dem Aufprall (m) und sein Tempo (m/s) */
 export function wreckTravel(w: Pick<Wreck, 't' | 'v0'>): { s: number; v: number } {
-  const v1 = w.v0 * 0.9;
+  const v1 = w.v0 * 0.85;
   if (w.t <= FLIGHT) return { s: v1 * w.t, v: v1 };
   const tt = w.t - FLIGHT;
   const stop = v1 / SLIDE;

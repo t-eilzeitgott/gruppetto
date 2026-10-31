@@ -167,7 +167,7 @@ export class DescentStart3D {
   private time = 0;
   private clockMin = -1;
   private readonly W0 = { x: 0, y: 0, z: 0, th: 0 };
-  private readonly track: Track;
+  readonly track: Track;
   private readonly d: DescentStartDeps;
   private readonly y0: number;
   /** Startplatz des Fahrers (Streckenmeter) */

@@ -15,6 +15,8 @@ import type { StageRef } from './stageRef';
 import { pedalStep } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import type { GhostRider } from '../tt';
+import type { Wreck } from './wreck';
+import { canRise, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
 
 export type RiderType = 'sprinter' | 'puncheur' | 'allround' | 'rouleur' | 'climber';
 
@@ -134,6 +136,13 @@ export class SprintRace {
   friends: Friend[] = [];
   shake = 0;
   crashSpin = 0;
+  /** eigener Sturz (liegt, rutscht – dann wieder auf), Ort des ersten Aufpralls (Fernsehkamera) */
+  wreck: Wreck | null = null;
+  pileAt: { z: number; x: number } | null = null;
+  crashes = 0;
+  /** Massensturz im Feld (nicht an jedem Tag): bei dieser Restdistanz (m), −1 = keiner */
+  private crashAt = -1;
+  private downs: Down[] = [];
   tags: RiderTag[] = [];
   /** Geister in der Darstellung (siehe ghosts.ts) */
   ghosts: Opp[] = [];
@@ -196,6 +205,13 @@ export class SprintRace {
     this.topV = 0;
     this.launchAt = 0;
     this.flags.clear();
+    this.wreck = null;
+    this.pileAt = null;
+    this.crashes = 0;
+    {
+      const rc = mulberry32((this.track.seed ^ 0x5c4a) >>> 0);
+      this.crashAt = rc() < 0.6 ? between(rc, 650, 1500) : -1;
+    }
     this.spawnField();
     this.placePlayer();
     this.p.y = this.track.heightAt(this.p.z);
@@ -367,13 +383,13 @@ export class SprintRace {
     let best: { z: number; x: number; v: number; name?: string } | null = null;
     let bd = dist;
     for (const o of this.opps) {
-      if (o === self) continue;
+      if (o === self || o.wreck) continue;
       const dz = o.z - z;
       if (dz <= 0.05 || dz >= bd || Math.abs(o.x - x) > 0.6) continue;
       bd = dz;
       best = o;
     }
-    if (self) {
+    if (self && !this.wreck) {
       const dz = this.p.z - z;
       if (dz > 0.05 && dz < bd && Math.abs(this.p.x - x) <= 0.6) best = this.p;
     }
@@ -385,7 +401,7 @@ export class SprintRace {
     const n = this.opps.length;
     for (let i = 0; i <= n; i++) {
       const o = i < n ? this.opps[i] : self ? this.p : null;
-      if (!o || o === self) continue;
+      if (!o || o === self || (i < n ? !!this.opps[i].wreck : !!this.wreck)) continue;
       const dz = o.z - z;
       if (dz < 0.9 || dz > 9) continue;
       const dx = Math.abs(o.x - x);
@@ -403,6 +419,7 @@ export class SprintRace {
 
   private stepPlayer(dt: number) {
     const p = this.p;
+    if (this.wreck) { this.stepDown(dt); return; }
     const d = SPRINT_FINISH - p.z;
     const s = this.stats;
     const racing = this.phase === 'playing' && this.finT < 0;
@@ -439,6 +456,11 @@ export class SprintRace {
     if (this.blockedT > 0.35 && !this.flags.has('box')) { this.flags.add('box'); this.pop('Eingeklemmt!', 'muted', 'Seitlich raus', false, true); }
     p.z += p.v * dt;
     p.y = this.track.heightAt(p.z);
+    // in den Sturz hineingefahren
+    if (racing && this.downs.length) {
+      const hit = hitDown(p.z, p.x, this.downs);
+      if (hit) { this.crash(p.x >= hit.x ? 1 : -1, p.x); return; }
+    }
     // Kraft: im Wind teuer, im Windschatten Erholung, Antreten kostet viel
     if (racing) {
       const cost = 0.018 * Math.pow(p.v / 16, 3) * (1 - 0.6 * this.draft) + (go ? 0.064 : 0);
@@ -452,7 +474,7 @@ export class SprintRace {
     const want = clamp((this.tx - p.x) * 5, -2.4, 2.4);
     let nx = p.x + want * dt;
     for (const o of this.opps) {
-      if (Math.abs(o.z - p.z) > 1.5) continue;
+      if (o.wreck || Math.abs(o.z - p.z) > 1.5) continue;
       const before = p.x - o.x;
       const after = nx - o.x;
       if (Math.abs(after) < 0.58 && Math.abs(after) < Math.abs(before)) {
@@ -509,7 +531,11 @@ export class SprintRace {
 
   private stepRacers(dt: number) {
     const roll = this.phase === 'countdown';
+    const racing = this.phase === 'playing';
+    this.listDowns();
+    if (racing && this.crashAt > 0) this.massCrash();
     for (const o of this.opps) {
+      if (o.wreck) { slideOn(o, o.wreck, dt); continue; }
       const d = SPRINT_FINISH - o.z;
       const V = roll ? 9 : packSpeed(d);
       o.driftT -= dt;
@@ -546,7 +572,7 @@ export class SprintRace {
       }
       if (!roll && inTrain && d < 1350 && d > 0) {
         // Zug: vorn fährt der erste noch nicht abgefallene, die anderen bleiben dicht dran
-        const mates = this.opps.filter((m) => m.team === o.team && !m.peeled).sort((a, b) => a.order - b.order);
+        const mates = this.opps.filter((m) => m.team === o.team && !m.peeled && !m.wreck).sort((a, b) => a.order - b.order);
         const lead = mates[0];
         if (lead === o && !o.sprinter) {
           const front = this.opps.some((m) => m.team !== o.team && m.z > o.z && m.z - o.z < 30) || this.p.z > o.z && this.p.z - o.z < 30;
@@ -579,17 +605,27 @@ export class SprintRace {
       // nicht auffahren: hinter dem Vordermann bleiben, zu dicht → etwas zurückfallen
       const front = this.wheelAhead(o.z, o.x, 1.7, o);
       if (front) o.v = Math.min(o.v, front.v - Math.max(0, 1.5 - (front.z - o.z)) * 2);
+      // Sturz voraus: zur Seite und bremsen – wer zu dicht dran ist, fährt hinein
+      if (racing && this.downs.length && !o.done) {
+        const dg = dodge(o.z, o.x, this.downs, XMAX + 0.2, 26);
+        if (dg) { o.tx = clamp(dg.tx, -XMAX, XMAX); if (o.v > dg.vmax) o.v = Math.max(dg.vmax, o.v - 7 * dt); o.brake = 1; }
+        else o.brake = Math.max(0, o.brake - dt * 3);
+      }
       const z0 = o.z;
       o.z += o.v * dt;
+      if (racing && this.downs.length && !o.done && o.v > 1.5) {
+        const hit = hitDown(o.z, o.x, this.downs);
+        if (hit) { this.down(o, o.x >= hit.x ? 1 : -1); continue; }
+      }
       if (!o.done && z0 < SPRINT_FINISH && o.z >= SPRINT_FINISH) { o.done = true; o.finT = this.time - (o.z - SPRINT_FINISH) / Math.max(1, o.v); }
       // seitlich, ohne in andere hinein
       const want = clamp((o.tx - o.x) * 2.5, -1.3, 1.3);
       let nx = o.x + want * dt;
       for (const m of this.opps) {
-        if (m === o || Math.abs(m.z - o.z) > 1.5) continue;
+        if (m === o || m.wreck || Math.abs(m.z - o.z) > 1.5) continue;
         if (Math.abs(nx - m.x) < 0.58 && Math.abs(nx - m.x) < Math.abs(o.x - m.x)) nx = o.x;
       }
-      if (Math.abs(this.p.z - o.z) < 1.5 && Math.abs(nx - this.p.x) < 0.58 && Math.abs(nx - this.p.x) < Math.abs(o.x - this.p.x)) nx = o.x;
+      if (!this.wreck && Math.abs(this.p.z - o.z) < 1.5 && Math.abs(nx - this.p.x) < 0.58 && Math.abs(nx - this.p.x) < Math.abs(o.x - this.p.x)) nx = o.x;
       o.vx = (nx - o.x) / dt;
       o.x = clamp(nx, -XMAX, XMAX);
       o.lean += (clamp(-o.vx * 0.12, -0.25, 0.25) - o.lean) * Math.min(1, dt * 8);
@@ -599,10 +635,75 @@ export class SprintRace {
     }
   }
 
+  /** Massensturz: zwei vor dir berühren sich (in Sichtweite, gut voraus), beide gehen zu Boden */
+  private massCrash() {
+    const p = this.p;
+    const d = SPRINT_FINISH - p.z;
+    if (d > this.crashAt) return;
+    if (d < this.crashAt - 380) { this.crashAt = -1; return; }
+    for (const a of this.opps) {
+      if (a.wreck || a.done || a.team === MATE) continue;
+      const gapA = a.z - p.z;
+      if (gapA < 9 || gapA > 45) continue;
+      const b = this.opps.find((o) => o !== a && !o.wreck && o.team !== MATE && a.z - o.z > 1.0 && a.z - o.z < 2.8 && Math.abs(o.x - a.x) < 0.55);
+      if (!b) continue;
+      const side = b.x >= a.x ? 1 : -1;
+      this.down(a, -side);
+      this.down(b, side);
+      this.pileAt = { z: a.z, x: (a.x + b.x) / 2 };
+      this.crashAt = -1;
+      this.pop('Sturz im Feld!', 'red', 'Weich aus!', true);
+      this.opts.onEvent?.({ type: 'banner', title: `${lastName(b.name)} hakt bei ${lastName(a.name)} ein`, sub: 'Massensturz – vorbei, aber vorsichtig!', tone: 'red' });
+      this.listDowns();
+      return;
+    }
+  }
+
+  /** Gegner zu Boden (bleibt bis zum Ende liegen) */
+  private down(o: Racer, side: number) {
+    o.wreck = makeWreck(Math.max(o.v, 9), side, o.id * 1.37 + this.rng(), o.z, o.x);
+    o.going = false;
+    this.shake = Math.max(this.shake, 0.5);
+    this.listDowns();
+  }
+
+  /** eigener Sturz: liegen, dann wieder aufsteigen (das Feld ist weg) */
+  private crash(side: number, x: number) {
+    const p = this.p;
+    this.wreck = makeWreck(p.v, side, this.rng() * 100, p.z, clamp(x, -ROAD_HALF + 0.3, ROAD_HALF - 0.3));
+    this.pileAt ??= { z: p.z, x: this.wreck.x0 };
+    this.crashes += 1;
+    this.shake = 1;
+    this.pop('Sturz!', 'red', 'In den Massensturz gefahren', true);
+    try { navigator.vibrate?.(140); } catch { /* egal */ }
+  }
+
+  private stepDown(dt: number) {
+    const p = this.p;
+    const w = this.wreck!;
+    slideOn(p, w, dt);
+    p.y = this.track.heightAt(p.z);
+    p.tuck = 0; p.brake = 0; p.lean = 0;
+    if (!canRise(w)) return;
+    this.wreck = null;
+    p.x = clamp(w.x0, -XMAX, XMAX);
+    p.v = 1.5;
+    p.wobble = 0.6;
+    this.tx = p.x;
+    this.pop('Wieder im Sattel', 'white', 'Weiter ins Ziel', true);
+  }
+
+  private listDowns() {
+    this.downs.length = 0;
+    if (this.wreck) this.downs.push(downOf(this.wreck, this.p.z));
+    for (const o of this.opps) if (o.wreck) this.downs.push(downOf(o.wreck, o.z));
+  }
+
   /** Hinterrad des Spielers (bis 6 m, gleiche Spur) */
   private wheelOf(): Racer | null {
     let best: Racer | null = null;
     for (const o of this.opps) {
+      if (o.wreck) continue;
       const dz = o.z - this.p.z;
       if (dz > 0.3 && dz < 6 && Math.abs(o.x - this.p.x) < 0.6 && (!best || dz < best.z - this.p.z)) best = o;
     }

@@ -20,6 +20,8 @@ import { SKINS, type Kit } from './rider';
 import { pedalStep } from './motion';
 import type { StageRef } from './stageRef';
 import { TRACE_DT, firstName, ghostAt, ghostName, ghostTimeAt, type GhostRider } from '../tt';
+import type { Wreck } from './wreck';
+import { canRise, makeWreck, slideOn } from './crash';
 
 export interface TtOptions {
   dayKey: string;
@@ -123,6 +125,9 @@ const SUB = 1 / 60;
 const WARP = 1.45;       // Zeitraffer; in der Abfahrt
 const WARP_DOWN = 1.15;
 const GRIP_G = 0.72;     // Haftgrenze in Kurven (g)
+/** Sturz statt nur abgerutscht: so weit über dem Kurventempo der Haftgrenze (und mindestens so schnell, m/s) */
+const CRASH_K = 1.2;
+const CRASH_V = 14;
 const ASSIST_G = 0.66;   // bis hierhin bremst die Hilfe vor Kurven
 const XMAX = ROAD_HALF - 0.45;
 /** Deckkraft der Geister */
@@ -170,6 +175,10 @@ export class TimeTrial {
   energy = 1;
   mode: 'sit' | 'go' | 'ease' = 'sit';
   slides = 0;
+  /** eigener Sturz (liegt, rutscht – dann wieder auf), Ort des Aufpralls (Fernsehkamera) */
+  wreck: Wreck | null = null;
+  pileAt: { z: number; x: number } | null = null;
+  crashes = 0;
   private txs = 0;
   private rng: Rng;
   private steer = { active: false, sx: 0, sy: 0, tx0: 0 };
@@ -228,6 +237,9 @@ export class TimeTrial {
     this.finT = -1;
     this.topV = 0;
     this.slides = 0;
+    this.wreck = null;
+    this.pileAt = null;
+    this.crashes = 0;
     this.stand = 0;
     this.down = 0;
     this.warp = WARP;
@@ -404,6 +416,7 @@ export class TimeTrial {
 
   private stepPlayer(dt: number) {
     const p = this.p;
+    if (this.wreck) { this.stepDown(dt); return; }
     const seg = this.track.segAt(p.z);
     const grade = seg.grade;
     const racing = this.phase === 'playing' && this.finT < 0;
@@ -528,6 +541,13 @@ export class TimeTrial {
       p.vx = 0;
       this.tx = nx;
       this.txs = nx;
+      // viel zu schnell in die Kurve: Sturz (liegen, dann weiter); sonst nur abgerutscht
+      if (racing && p.v > Math.max(CRASH_V, CRASH_K * Math.sqrt(grip / Math.max(0.004, Math.abs(seg.curve))))) {
+        this.slides += 1;
+        this.crash(sg, nx);
+        p.x = nx;
+        return;
+      }
       if (this.slideCool <= 0 && racing) {
         this.slideCool = 2;
         this.slides += 1;
@@ -540,6 +560,40 @@ export class TimeTrial {
     } else if (!racing) nx = clamp(nx, -XMAX, XMAX);
     p.x = nx;
     p.wobble = Math.max(0, p.wobble - dt * 1.5);
+  }
+
+  /** Sturz: über den Lenker, liegen bleiben (wreck.ts) – nach ein paar Sekunden weiter, die Uhr läuft */
+  private crash(side: number, x: number) {
+    const p = this.p;
+    this.wreck = makeWreck(p.v, side, this.rng() * 100, p.z, clamp(x, -ROAD_HALF + 0.3, ROAD_HALF - 0.3));
+    this.pileAt = { z: p.z, x: this.wreck.x0 };
+    this.crashes += 1;
+    this.shake = 1;
+    this.pop('Sturz!', 'red', 'Viel zu schnell in die Kurve', true);
+    for (let i = 0; i < 14; i++) this.dust(p.z, x);
+    try { navigator.vibrate?.(140); } catch { /* egal */ }
+  }
+
+  /** am Boden: rutscht aus, dann aus dem Stand weiter (die Spur für den Geist läuft mit) */
+  private stepDown(dt: number) {
+    const p = this.p;
+    const w = this.wreck!;
+    slideOn(p, w, dt);
+    p.y = this.track.heightAt(p.z);
+    p.tuck = 0; p.brake = 0; p.lean = 0;
+    if (this.phase === 'playing' && this.finT < 0) {
+      this.traceT += dt;
+      while (this.traceT >= TRACE_DT) { this.traceT -= TRACE_DT; this.sample(p.z - p.v * this.traceT); }
+    }
+    if (!canRise(w)) return;
+    this.wreck = null;
+    this.pileAt = null;
+    p.x = clamp(w.x0, -XMAX, XMAX);
+    p.v = 1.5;
+    p.wobble = 0.6;
+    this.tx = p.x;
+    this.txs = p.x;
+    this.pop('Wieder im Sattel', 'white', 'Die Uhr läuft weiter', true);
   }
 
   /** Tempomacher: am Berg und auf den letzten 400 m drücken, sonst Dauerleistung; die Innenseite der Kurven suchen */

@@ -23,7 +23,7 @@ import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, TINTABLE, WALL_PAL, 
 import { GB, alphaTex, lin, lin255, propGeometries, type Prop3D, type RGBf } from './models3d';
 import { RiderModel, riderKitKey, type RiderPose } from './rider3d';
 import { JOINTS, Ragdoll, type Ground } from './ragdoll';
-import { wreckPose, type Wreck } from './wreck';
+import { wreckPose, wreckTravel, type Wreck } from './wreck';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import { Houses3D } from './houses3d';
 import { Villages3D } from './village3d';
@@ -1859,7 +1859,8 @@ export class Renderer3D {
     }
     // Abfahrt wie in der WebGPU-Welt: zerklüftete Berge (Grate, Rinnen, Felsbänder) und Bergwald (geschlossene
     // Bestände mit klarem Waldrand statt verstreuter Einzelbäume)
-    if (track.kind === 'descent') { this.terrain.rugged = true; this.terrain.woods = true; }
+    // (Bergfinale: dieselben Dolomiten – zerklüftete Berge und Bergwald auch dort)
+    if (track.kind === 'descent' || track.kind === 'mountain') { this.terrain.rugged = true; this.terrain.woods = true; }
     this.woodsU.value = this.terrain.woods ? 1 : 0;
     // Dörfer und Höfe wie in der WebGPU-Abfahrt (Lage und Dorfebene stehen fest, bevor dort Landschaft entsteht)
     this.houses.spots = [];
@@ -1922,6 +1923,8 @@ export class Renderer3D {
   private updateDescStart(g: RaceView, dt: number) {
     const t = g.track;
     if (t.kind !== 'descent' || t.startZ <= 0) return;
+    // neue Fahrt (neue Strecke derselben Tagesstrecke): frisch aufbauen (Tauben, Leute wieder am Platz)
+    if (this.descStart && this.descStart.track !== t && (g.phase === 'ready' || g.phase === 'countdown')) { this.descStart.dispose(); this.descStart = null; }
     if (this.descStart && g.phase === 'playing' && g.p.z > t.startZ + 280) { this.descStart.dispose(); this.descStart = null; return; }
     if (!this.descStart && (g.phase === 'ready' || g.phase === 'countdown') && g.p.z < t.startZ + 20) this.makeDescStart(t);
     this.descStart?.update(g, dt, this.camera);
@@ -2769,14 +2772,15 @@ export class Renderer3D {
     const aspect = this.W / this.H;
     const base = aspect < 1 ? 72 - (aspect - 0.45) * 22 : 56;
     A.fov = base + Math.min(9, Math.max(0, (p.v - 14) * 0.38)) + 9 * rk;
-    // Regie der Abfahrt: TV-Kran vor dem Start, Sturz aus der Fernsehperspektive – Wechsel weich geflogen
-    if (descent) this.direct(g, A, dt);
+    // Regie: in der Abfahrt TV-Kran vor dem Start; in allen Spielen der Sturz aus der Fernsehperspektive – Wechsel
+    // weich geflogen
+    this.direct(g, A, dt, descent);
     this.camera.position.copy(A.pos);
     this.camera.lookAt(A.look);
     // leicht in die Kurve legen (Motorradkamera)
     if (descent && this.dirKind === 'chase') this.camera.rotateZ(clamp(p.lean, -0.7, 0.7) * 0.07 * (this.dirT < 1 ? this.dirT : 1));
     // Sichtfeld weich (Tempo); bei Regiewechseln folgt es direkt der Überblendung
-    const direct = descent && (this.dirKind !== 'chase' || this.dirT < 1);
+    const direct = this.dirKind !== 'chase' || this.dirT < 1;
     cam.fov += (A.fov - cam.fov) * (direct ? 1 : Math.min(1, dt * 2));
     if (Math.abs(this.camera.fov - cam.fov) > 0.01) { this.camera.fov = cam.fov; this.camera.updateProjectionMatrix(); }
     this.lastPhase = g.phase;
@@ -2820,9 +2824,9 @@ export class Renderer3D {
   }
 
   /** Regie: welche Einstellung jetzt – und weich (geflogen) von der letzten hinüber */
-  private direct(g: RaceView, A: { pos: THREE.Vector3; look: THREE.Vector3; fov: number }, dt: number) {
+  private direct(g: RaceView, A: { pos: THREE.Vector3; look: THREE.Vector3; fov: number }, dt: number, intro = true) {
     let want: 'intro' | 'chase' | 'crash' = 'chase';
-    if (g.phase === 'ready') want = 'intro';
+    if (g.phase === 'ready' && intro) want = 'intro';
     else if (g.wreck) want = 'crash';
     if (!this.dirLast.ok) { this.dirKind = want; this.dirT = 1; }
     if (want !== this.dirKind) {
@@ -3037,7 +3041,10 @@ export class Renderer3D {
     // Sturz: Fernsehbild vom Straßenrand hinter dem Sturz, Blick die Straße hinunter auf den Haufen – die
     // Nachfolgenden fahren an der Kamera vorbei hinein; langsam näher heran
     if (!this.crashCam) {
-      const at = g.pileAt ?? { z: p.z, x: p.x };
+      const at0 = g.pileAt ?? { z: p.z, x: p.x };
+      // Finals (ein einzelner Sturz): dort hinschauen, wo der Fahrer liegen bleiben wird – er fliegt und rutscht an
+      // der Kamera vorbei; in der Abfahrt auf den Haufen (die Nachfolgenden fahren hinein)
+      const at = t.kind !== 'descent' && g.wreck ? { z: g.wreck.z0 + wreckTravel({ t: 30, v0: g.wreck.v0 }).s * 0.85, x: g.wreck.x0 } : at0;
       const pref = at.x > 0 ? -1 : 1;
       this.hNear = at.z;
       // Standort am Rand hinter dem Sturz: nicht unter einem Baum, nicht hinter Hang oder Mauer und mit freier Sicht
@@ -3062,11 +3069,17 @@ export class Renderer3D {
       this.crashCam = best;
     }
     out.pos.copy(this.crashCam!);
-    const L = this.riderAt(g, new THREE.Vector3(), 0.45);
+    // Blick auf den Körper (die Ragdoll liegt nicht immer genau dort, wo die Spiellogik den Fahrer führt)
+    const doll = this.dolls.get(-1);
+    const L = doll && g.wreck && doll.w === g.wreck
+      ? this.tvR.set(doll.d.p[0], doll.d.p[1] + 0.15, doll.d.p[2])
+      : this.riderAt(g, new THREE.Vector3(), 0.45);
     out.look.copy(this.follow(L, dt));
     const d = out.pos.distanceTo(L);
-    const push = clamp(g.phaseT / 4, 0, 1);
-    out.fov = clamp((2 * Math.atan(((portrait ? 9 : 6.5) - 2 * push) / d) * 180) / Math.PI, 16, 60);
+    const push = clamp((g.wreck ? g.wreck.t : g.phaseT) / 4, 0, 1);
+    // Bildhöhe am Ziel: in der Abfahrt der ganze Haufen, in den Finals näher an den einen Gestürzten
+    const half = t.kind === 'descent' ? (portrait ? 9 : 6.5) - 2 * push : (portrait ? 6.5 : 5) - 1.6 * push;
+    out.fov = clamp((2 * Math.atan(half / d) * 180) / Math.PI, 12, 60);
   }
 
   private updateEnvironment(biome: BiomeId, dt: number) {

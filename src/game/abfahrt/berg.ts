@@ -24,6 +24,8 @@ import type { StageRef } from './stageRef';
 import { pedalStep } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import type { GhostRider } from '../tt';
+import type { Wreck } from './wreck';
+import { canRise, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
 
 /** Fahrertypen im Bergfinale: Dauerleistung (W/kg), Antritt (W/kg darüber), Abfahrtskönnen, Punktebonus */
 export const BERG_STATS: Record<RiderType, { label: string; cp: number; kick: number; desc: number; bonus: number }> = {
@@ -154,6 +156,9 @@ const WARP = 1.5;        // Zeitraffer bergauf
 const PUSH_COST = 1.9;   // Spieler: Kraftverbrauch über der Dauerleistung bergauf
 const GRIP_G = 0.8;      // Haftgrenze in Kurven (in g)
 const ASSIST_G = 0.72;   // bis hierhin bremst die Hilfe vor Kurven
+/** Sturz statt nur abgerutscht: so weit über dem Kurventempo der Haftgrenze (und mindestens so schnell, m/s) */
+const CRASH_K = 1.18;
+const CRASH_V = 14;
 const XMAX = ROAD_HALF - 0.45;
 const PLACE_PTS = [1000, 760, 600, 480, 400, 340, 290, 250, 220, 200];
 const GPM_PTS = [250, 150, 80];
@@ -194,6 +199,12 @@ export class BergRace {
   energy = 1;
   mode: 'sit' | 'go' | 'ease' = 'sit';
   slides = 0;
+  /** eigener Sturz (liegt, rutscht – dann wieder auf), Ort des ersten Aufpralls (Fernsehkamera) */
+  wreck: Wreck | null = null;
+  pileAt: { z: number; x: number } | null = null;
+  crashes = 0;
+  /** ein Sturz vor dir in der Abfahrt (nicht an jedem Tag): an dieser Kehre (Streckenmeter) */
+  private aiCrashAt = -1;
   private txs = 0;
   private stats = BERG_STATS.climber;
   private rng: Rng;
@@ -255,6 +266,10 @@ export class BergRace {
     this.topT = -1;
     this.topV = 0;
     this.slides = 0;
+    this.wreck = null;
+    this.pileAt = null;
+    this.crashes = 0;
+    this.aiCrashAt = this.pickCrashHairpin();
     this.attacks = 0;
     this.lastAttack = -99;
     this.limitCues = 0;
@@ -481,13 +496,13 @@ export class BergRace {
     let best: { z: number; x: number; v: number; name?: string } | null = null;
     let bd = dist;
     for (const o of this.opps) {
-      if (o === self) continue;
+      if (o === self || o.wreck) continue;
       const dz = o.z - z;
       if (dz <= 0.05 || dz >= bd || Math.abs(o.x - x) > 0.6) continue;
       bd = dz;
       best = o;
     }
-    if (self) {
+    if (self && !this.wreck) {
       const dz = this.p.z - z;
       if (dz > 0.05 && dz < bd && Math.abs(this.p.x - x) <= 0.6) best = this.p;
     }
@@ -499,7 +514,7 @@ export class BergRace {
     const n = this.opps.length;
     for (let i = 0; i <= n; i++) {
       const o = i < n ? this.opps[i] : self ? this.p : null;
-      if (!o || o === self) continue;
+      if (!o || o === self || (i < n ? !!this.opps[i].wreck : !!this.wreck)) continue;
       const dz = o.z - z;
       if (dz < 0.9 || dz > 9) continue;
       const dx = Math.abs(o.x - x);
@@ -523,6 +538,7 @@ export class BergRace {
 
   private stepPlayer(dt: number) {
     const p = this.p;
+    if (this.wreck) { this.stepDown(dt); return; }
     const s = this.stats;
     const seg = this.track.segAt(p.z);
     const grade = seg.grade;
@@ -581,6 +597,11 @@ export class BergRace {
     const z0 = p.z;
     p.z += p.v * dt;
     p.y = this.track.heightAt(p.z);
+    // in einen Liegenden hineingefahren
+    if (racing && this.downs.length) {
+      const hit = hitDown(p.z, p.x, this.downs);
+      if (hit) { this.crash(p.x >= hit.x ? 1 : -1, p.x, 'In den Sturz gefahren'); return; }
+    }
     // Kraft: über der Dauerleistung leert sich der Vorrat, darunter füllt er sich wieder
     if (racing) {
       // bergauf kostet alles über der Dauerleistung den Spieler deutlich mehr (Kraft einteilen!), Erholung ist langsam
@@ -661,6 +682,13 @@ export class BergRace {
       p.vx = 0;
       this.tx = nx;
       this.txs = nx;
+      // viel zu schnell: Sturz an der Kehre (liegen, dann wieder auf); sonst nur abgerutscht
+      if (physical && p.v > Math.max(CRASH_V, CRASH_K * Math.sqrt((GRIP_G * G * this.stats.desc) / Math.max(0.004, Math.abs(seg.curve))))) {
+        this.slides += 1;
+        this.crash(sg, nx, 'Zu schnell in die Kehre');
+        p.x = nx;
+        return;
+      }
       if (this.slideCool <= 0) {
         this.slideCool = 2;
         this.slides += 1;
@@ -673,6 +701,58 @@ export class BergRace {
     } else if (!physical) nx = clamp(nx, -XMAX, XMAX);
     p.x = nx;
     p.wobble = Math.max(0, p.wobble - dt * 1.5);
+  }
+
+  /** Sturz: über den Lenker, liegen bleiben (wreck.ts) – nach ein paar Sekunden geht es weiter */
+  private crash(side: number, x: number, why: string) {
+    const p = this.p;
+    this.wreck = makeWreck(p.v, side, this.rng() * 100, p.z, clamp(x, -ROAD_HALF + 0.3, ROAD_HALF - 0.3));
+    this.pileAt = { z: p.z, x: this.wreck.x0 };
+    this.crashes += 1;
+    this.shake = 1;
+    p.vx = 0;
+    this.pop('Sturz!', 'red', why, true);
+    for (let i = 0; i < 14; i++) this.dust(p.z, x);
+    try { navigator.vibrate?.(140); } catch { /* egal */ }
+  }
+
+  /** am Boden: Körper rutscht aus, dann wieder in den Sattel (am Rand, aus dem Stand) */
+  private stepDown(dt: number) {
+    const p = this.p;
+    const w = this.wreck!;
+    slideOn(p, w, dt);
+    p.y = this.track.heightAt(p.z);
+    p.tuck = 0; p.brake = 0; p.lean = 0;
+    if (!canRise(w)) return;
+    this.wreck = null;
+    if (!this.opps.some((o) => o.wreck)) this.pileAt = null;
+    p.x = clamp(w.x0, -XMAX, XMAX);
+    p.v = 1.5;
+    p.wobble = 0.6;
+    this.tx = p.x;
+    this.txs = p.x;
+    this.pop('Wieder im Sattel', 'white', 'Weiter geht’s', true);
+  }
+
+  /** wer gerade liegt (Spieler und Gegner) – je Schritt neu */
+  private downs: Down[] = [];
+  private listDowns() {
+    this.downs.length = 0;
+    if (this.wreck) this.downs.push(downOf(this.wreck, this.p.z));
+    for (const o of this.opps) if (o.wreck) this.downs.push(downOf(o.wreck, o.z));
+  }
+
+  /** Kehre für den Sturz vor dir (nicht an jedem Tag): eine der ersten in der Abfahrt */
+  private pickCrashHairpin(): number {
+    const r = mulberry32((this.track.seed ^ 0xc4a5) >>> 0);
+    if (r() > 0.45) return -1;
+    const pins: number[] = [];
+    for (let i = Math.ceil((MOUNTAIN_TOP + 120) / SEG); i < (MOUNTAIN_FINISH - 300) / SEG; i++) {
+      const s = this.track.seg(i);
+      if (s.hairpin && !this.track.seg(i - 1).hairpin) pins.push(i * SEG);
+    }
+    if (!pins.length) return -1;
+    return pins[Math.floor(r() * Math.min(3, pins.length))] + 10;
   }
 
   private summit() {
@@ -726,7 +806,29 @@ export class BergRace {
 
   private stepRacers(dt: number) {
     const roll = this.phase === 'countdown';
+    this.listDowns();
+    const racing = this.phase === 'playing';
+    // Sturz vor dir: wer als Erster (in Sichtweite vor dir) die Kehre zu schnell nimmt, geht zu Boden
+    if (racing && this.aiCrashAt > 0) {
+      if (this.p.z > this.aiCrashAt + 5) this.aiCrashAt = -1;
+      else {
+        for (const o of this.opps) {
+          if (o.wreck || o.done || o.z < this.aiCrashAt || o.z > this.aiCrashAt + 4) continue;
+          const gap = o.z - this.p.z;
+          if (gap < 12 || gap > 90) continue;
+          const out = -Math.sign(this.track.segAt(o.z).curve) || 1;
+          o.wreck = makeWreck(Math.max(o.v, 9), out, o.id * 1.37 + this.rng(), o.z, o.x);
+          this.pileAt ??= { z: o.z, x: o.x };
+          this.aiCrashAt = -1;
+          this.pop(`${lastName(o.name)} stürzt!`, 'red', 'Vorsicht in der Kehre', true);
+          for (let i = 0; i < 10; i++) this.dust(o.z, o.x);
+          this.listDowns();
+          break;
+        }
+      }
+    }
     for (const o of this.opps) {
+      if (o.wreck) { slideOn(o, o.wreck, dt); continue; }
       const seg = this.track.segAt(o.z);
       const grade = seg.grade;
       const stage = BergRace.stageAt(o.z);
@@ -857,9 +959,23 @@ export class BergRace {
       // nicht auffahren
       const front = this.wheelAhead(o.z, o.x, 1.7, o);
       if (front) o.v = Math.min(o.v, front.v - Math.max(0, 1.5 - (front.z - o.z)) * 2);
+      // liegt jemand voraus: ausweichen und bremsen; wer zu nah dran ist, fährt hinein
+      if (racing && this.downs.length && !o.done) {
+        const dg = dodge(o.z, o.x, this.downs, XMAX + 0.2);
+        if (dg) { o.tx = clamp(dg.tx, -XMAX, XMAX); if (o.v > dg.vmax) o.v = Math.max(dg.vmax, o.v - 7.5 * dt); o.brake = 1; }
+      }
       o.v = Math.max(0, o.v);
       const z0 = o.z;
       o.z += o.v * dt;
+      if (racing && this.downs.length && !o.done && o.v > 1.5) {
+        const hit = hitDown(o.z, o.x, this.downs);
+        if (hit) {
+          o.wreck = makeWreck(o.v, o.x >= hit.x ? 1 : -1, o.id * 1.37 + this.rng(), o.z, o.x);
+          for (let i = 0; i < 6; i++) this.dust(o.z, o.x);
+          this.listDowns();
+          continue;
+        }
+      }
       if (o.topT < 0 && z0 < MOUNTAIN_TOP && o.z >= MOUNTAIN_TOP) {
         o.topT = this.time;
         if (this.topT < 0 && !this.flags.has('gpm')) {

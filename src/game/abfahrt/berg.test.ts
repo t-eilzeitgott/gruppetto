@@ -39,7 +39,8 @@ test('Bergfinale: Rennen endet, Punkte stimmen, Gruppe zerfällt am Berg', () =>
       g.update(1 / 30);
       t += 1 / 30;
       if (g.p.z >= MOUNTAIN_TOP && !spread) spread = Math.max(...g.opps.map((o) => o.z)) - Math.min(...g.opps.map((o) => o.z));
-      if (g.phase === 'playing' && g.p.z < MOUNTAIN_FINISH) assert.ok(g.p.v > 2, 'Spieler fährt');
+      // (nach einem Sturz liegt man kurz und fährt aus dem Stand wieder an)
+      if (g.phase === 'playing' && g.p.z < MOUNTAIN_FINISH && !g.wreck && g.crashes === 0) assert.ok(g.p.v > 2, 'Spieler fährt');
     }
     assert.ok(over, `Rennen am ${day} beendet`);
     const r = over as BergResult;

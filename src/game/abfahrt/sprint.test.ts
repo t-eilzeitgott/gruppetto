@@ -35,9 +35,10 @@ test('Sprint: Rennen endet, Platz und Punkte sind plausibel, niemand bleibt steh
       g.key('up', SPRINT_FINISH - g.p.z < 230);
       g.update(1 / 30);
       t += 1 / 30;
+      // (wer im Massensturz liegt, steht natürlich – der Spieler steigt danach wieder auf)
       if (t > 5 && g.phase === 'playing' && SPRINT_FINISH - g.p.z > 0) {
-        assert.ok(g.p.v > 9, `Spieler fährt (${g.p.v.toFixed(1)} m/s)`);
-        for (const o of g.opps) assert.ok(o.v > 8, `${(o as unknown as { name: string }).name} fährt`);
+        if (!g.wreck && !g.pileAt) assert.ok(g.p.v > 9 || g.crashes > 0, `Spieler fährt (${g.p.v.toFixed(1)} m/s)`);
+        for (const o of g.opps) if (!o.wreck && !g.pileAt) assert.ok(o.v > 8, `${(o as unknown as { name: string }).name} fährt`);
       }
     }
     assert.ok(over, `Rennen am ${day} beendet`);
