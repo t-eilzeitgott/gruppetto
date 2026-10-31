@@ -78,7 +78,7 @@ export const halloween: Variant = (c) => {
     return { ping: false, leave: (dur) => { pk.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dur * 0.5, fill: 'forwards' }); showDot(c, dur * 0.5); } };
   }
 
-  const { land } = rollOut(c, { clip: true, squash: null, spin, turns: 2 });
+  const { land } = rollOut(c, { clip: true, squash: null, spin, turns: 2, edge: c.geo.pc.x + s * 0.1 });
   // weich aufsetzen (der Kürbis ist schwerer als ein Punkt)
   c.A(squash, [
     { transform: 'scale(1)' }, { transform: 'scale(1.16,.84)' }, { transform: 'scale(.95,1.06)' }, { transform: 'scale(1)' },

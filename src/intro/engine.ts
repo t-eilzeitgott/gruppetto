@@ -121,6 +121,8 @@ export interface RollOpts {
   turns?: number;
   /** Dauer des Rollens (ms, gewohnt 650) */
   dur?: number;
+  /** clip: Kante des Aufdeckens so weit rechts vom Anfang des Punkts (px) – unter die Mitte eines größeren Punkts */
+  edge?: number;
 }
 
 /** die gewohnte Bewegung: „g." erscheint mittig, der Punkt rollt das Wort aus und setzt auf */
@@ -137,7 +139,8 @@ export function rollOut(c: Ctx, o: RollOpts = {}): { land: number } {
   c.A(c.roll, [{ transform: `translateX(${-hidden}px)` }, { transform: 'translateX(0)' }], { duration: dur, delay: 300, easing: ROLL, fill: 'both' });
   if (o.clip) {
     c.cover.style.display = 'none';
-    c.A(c.word, [{ clipPath: `inset(-40% ${hidden}px -50% -30%)` }, { clipPath: 'inset(-40% 0px -50% -30%)' }], { duration: dur, delay: 300, easing: ROLL, fill: 'both' });
+    const e = o.edge ?? 0;
+    c.A(c.word, [{ clipPath: `inset(-40% ${hidden - e}px -50% -30%)` }, { clipPath: `inset(-40% ${-e}px -50% -30%)` }], { duration: dur, delay: 300, easing: ROLL, fill: 'both' });
   } else {
     c.A(c.cover, [{ opacity: 1 }, { opacity: 0 }], { duration: 120, delay: end, fill: 'both' });
   }
@@ -162,3 +165,68 @@ export function rollOut(c: Ctx, o: RollOpts = {}): { land: number } {
 
 /** Zufall (für Teilchen) */
 export const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+
+/** Kubische Bézier-Kurve (wie CSS cubic-bezier): Fortschritt zu Zeitanteil und umgekehrt (für Kurven ohne Überschwingen) */
+export function bezier(x1: number, y1: number, x2: number, y2: number) {
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+  const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const sx = (t: number) => ((ax * t + bx) * t + cx) * t;
+  const sy = (t: number) => ((ay * t + by) * t + cy) * t;
+  const tOf = (x: number) => {
+    let lo = 0, hi = 1, t = x;
+    for (let i = 0; i < 40; i++) {
+      const v = sx(t);
+      if (Math.abs(v - x) < 1e-6) break;
+      if (v < x) lo = t; else hi = t;
+      t = (lo + hi) / 2;
+    }
+    return t;
+  };
+  const y = (x: number) => sy(tOf(Math.max(0, Math.min(1, x))));
+  return {
+    css: `cubic-bezier(${x1},${y1},${x2},${y2})`,
+    y,
+    /** Zeitanteil, bei dem der Fortschritt p erreicht ist */
+    inv(p: number) {
+      let lo = 0, hi = 1;
+      for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (y(m) < p) lo = m; else hi = m; }
+      return (lo + hi) / 2;
+    },
+  };
+}
+
+export interface Letter {
+  /** äußere Hülle (Fahrt), innere (Hüpfen, Strecken) */
+  el: HTMLElement;
+  inner: HTMLElement;
+  /** Mitte und Breite am Ende (Bildschirm) */
+  x: number;
+  w: number;
+}
+
+/** Wort in einzelne Buchstaben zerlegen (je zwei Hüllen, inline-block) und ihre Lage am Ende messen */
+export function letters(c: Ctx): Letter[] {
+  const text = c.word.textContent ?? '';
+  c.word.textContent = '';
+  const out: Letter[] = [];
+  for (const ch of text) {
+    const el = h('span', 'ix-l', 'display:inline-block');
+    const inner = h('span', '', 'display:inline-block');
+    inner.textContent = ch;
+    el.appendChild(inner);
+    c.word.appendChild(el);
+    out.push({ el, inner, x: 0, w: 0 });
+  }
+  for (const l of out) {
+    const r = l.el.getBoundingClientRect();
+    l.x = r.left + r.width / 2;
+    l.w = r.width;
+  }
+  // ohne Unterschneidung zwischen den Buchstaben ändert sich die Breite minimal: Punkt und Wort neu messen
+  const dr = c.dot.getBoundingClientRect();
+  const wr = c.word.getBoundingClientRect();
+  const { pc } = c.geo;
+  c.geo.dot = { x: dr.left + pc.x, y: dr.top + pc.y, base: dr.top + pc.base };
+  c.geo.word = { left: wr.left, right: wr.right, top: wr.top, bottom: wr.bottom };
+  return out;
+}
