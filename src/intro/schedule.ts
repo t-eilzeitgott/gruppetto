@@ -58,7 +58,7 @@ export const INTRO_IDS: IntroId[] = [
 const isId = (s: string): s is IntroId => (INTRO_IDS as string[]).includes(s);
 
 /** schon gebaute Varianten (die übrigen zeigen bis dahin das gewohnte Intro) */
-export const BUILT: IntroId[] = ['base', 'halloween', 'sprint', 'windschatten', 'zielfoto', 'laufrad', 'trikots', 'laub', 'laterne', 'nebel', 'frost', 'advent', 'weihnachten', 'winter', 'silvester', 'neujahr'];
+export const BUILT: IntroId[] = INTRO_IDS;
 
 // ---------------------------------------------------------------- Kalender
 

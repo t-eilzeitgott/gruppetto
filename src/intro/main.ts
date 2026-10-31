@@ -196,7 +196,8 @@ function start(el: HTMLElement, pick: IntroPick) {
   if (seq.length) requestAnimationFrame(step);
   else { clock = Infinity; fire(); }
   // Sequenz zu Ende spielen: was noch fehlt, läuft in höchstens MAXREST ms (schneller, aber vollständig)
-  const MAXREST = 420;
+  // (Themen-Varianten dürfen etwas länger ausspielen – man soll sie ja sehen)
+  const MAXREST = pick.id === 'base' ? 420 : 900;
   const playOut = (then: () => void) => {
     const rest = (END - clock) / rate;
     if (!seq.length || rest <= 0) { then(); return; }

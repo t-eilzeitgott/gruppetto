@@ -4,6 +4,8 @@ import { base } from './base';
 import { halloween } from './halloween';
 import { laufrad, sprint, trikots, windschatten, zielfoto } from './alts';
 import { advent, frost, laterne, laub, nebel, neujahr, silvester, weihnachten, winter } from './season';
+import { karneval, ostern, valentin } from './holiday';
+import { renntag } from './race';
 
 /** alle Varianten (noch nicht gebaute zeigen das gewohnte Intro) */
 export const VARIANTS: Record<IntroId, Variant> = {
@@ -11,5 +13,5 @@ export const VARIANTS: Record<IntroId, Variant> = {
   sprint, windschatten, zielfoto, laufrad, trikots,
   halloween,
   laub, laterne, nebel, frost, advent, weihnachten, winter, silvester, neujahr,
-  valentin: base, karneval: base, ostern: base, renntag: base,
+  valentin, karneval, ostern, renntag,
 };
