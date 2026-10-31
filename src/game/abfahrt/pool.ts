@@ -7,6 +7,7 @@
 import { Renderer3D } from './render3d';
 import { attachWeather, type WeatherFx } from './weather';
 import type { RaceView } from './engine';
+import { uiBusy } from '../uiBusy';
 
 export interface Stage {
   renderer: Renderer3D; canvas: HTMLCanvasElement; overlay: HTMLCanvasElement; weather: WeatherFx | null;
@@ -132,6 +133,11 @@ export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: b
       if (held && spare !== s) {
         // ein Spiel hat die Bühne mitten im Umbau genommen (die Leinwand hängt schon dort) – fertig
         resolve();
+        return;
+      }
+      // während jemand wischt oder die Oberfläche sich bewegt: dieses Bild auslassen
+      if (uiBusy()) {
+        requestAnimationFrame(step);
         return;
       }
       if (s.renderer.lost || (!held && (inUse > 0 || spare))) {

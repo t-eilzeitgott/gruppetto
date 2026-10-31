@@ -24,6 +24,7 @@ declare module 'react' {
   export function useRef<T>(initial: T): RefObject<T>;
   export function useRef<T>(initial: T | null): RefObject<T | null>;
   export function useId(): string;
+  export function memo<P>(component: (props: P) => ReactElement | null, equal?: (a: P, b: P) => boolean): (props: P) => ReactElement | null;
   export function useContext<T>(ctx: Context<T>): T;
   export function createContext<T>(value: T): Context<T>;
   export function useSyncExternalStore<T>(subscribe: (cb: () => void) => () => void, get: () => T, getServer?: () => T): T;

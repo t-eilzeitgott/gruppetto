@@ -119,8 +119,8 @@ export function GamesCardSkeleton() {
         <span className="arena__ind" />
         {['Zeitfahren', 'Abfahrt', 'Sprint', 'Berg'].map((n, i) => <span key={n} className={cx('arena__tab', i === 0 && 'is-on')}>{n}</span>)}
       </div>
-      <div className="arena__body">
-        <div className="arena__pane" style={{ animation: 'none' }}>
+      <div className="arena__scroller">
+        <div className="arena__pane">
           <div className="ghead">
             <Skel w={44} h={44} r={13} />
             <div className="ghead__text">

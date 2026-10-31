@@ -4,16 +4,16 @@
  * Europareise und Passbuch als Kacheln. Wechseln geht per Tipp oder Wischen (die Inhalte gleiten nach), der
  * Vorrat der 3D-Bühne folgt der Wahl (warm.ts) und der Kopf der Karte fliegt beim Start ins Spiel (handoff.ts).
  */
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { useApp } from '../app/context';
 import { useMembers } from '../app/hooks';
-import { useQuery } from '../app/query';
+import { invalidate, useQuery } from '../app/query';
 import { source } from '../app/config';
 import { warmGame } from '../app/warm';
 import { beginHandoff } from '../app/handoff';
-import { markUiBusy } from '../game/uiBusy';
+import { markUiBusy, uiBusy } from '../game/uiBusy';
 import type { GameBest, GameRun } from '../data/source';
-import type { Stage, StageKind } from '../lib/types';
+import type { Profile, Stage, StageKind } from '../lib/types';
 import { GAMES, fmtBest, gameOrder, isNewGame, type GameInfo } from '../game/games';
 import type { GameId } from '../data/source';
 import { overtaken, type Seen } from '../lib/overtaken';
@@ -63,15 +63,23 @@ function useBoard(game: GameId) {
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>(`game:${game}:season`, () => source.gameLeaderboard(game));
   const today = useQuery<GameBest[]>(`game:${game}:day:${day}`, () => source.gameLeaderboard(game, since));
-  const useToday = (today.data?.length ?? 0) > 0;
-  return { loaded: !!season.data && !!today.data, error: !!(season.error || today.error), rows: (useToday ? today.data : season.data) ?? [], today: useToday, day, season: season.data };
+  const err = !!(season.error || today.error);
+  // gleiches Objekt, solange sich die Daten nicht ändern (die Spielkarte zeichnet dann nichts neu)
+  return useMemo<Board>(() => {
+    const useToday = (today.data?.length ?? 0) > 0;
+    return { loaded: !!season.data && !!today.data, error: err, rows: (useToday ? today.data : season.data) ?? NONE, today: useToday, day, season: season.data };
+  }, [season.data, today.data, err, day]);
 }
+const NONE: GameBest[] = [];
+interface Board { loaded: boolean; error: boolean; rows: GameBest[]; today: boolean; day: string; season: GameBest[] | undefined }
 
 /** Zahl der gestempelten Pässe – aus den eigenen Läufen, in einer ruhigen Minute gerechnet (baut Strecken nach) */
 function usePassCount(tourName: string | null, stages: Stage[] | null): number | null {
   const runs = useQuery<GameRun[]>('game:runs:me', () => source.myRuns(GARAGE_START));
   const [n, setN] = useState<number | null>(null);
   const data = runs.data;
+  // nur neu rechnen, wenn ein Lauf dazugekommen ist (nicht bei jedem Neuladen alle 30 s)
+  const sig = data ? `${data.length}|${data.length ? data[data.length - 1].created_at : ''}|${tourName ?? ''}|${stages?.length ?? 0}` : '';
   useEffect(() => {
     if (!data) return undefined;
     if (data.length === 0) { setN(0); return undefined; }
@@ -80,86 +88,120 @@ function usePassCount(tourName: string | null, stages: Stage[] | null): number |
     const go = () => { if (!on) return; try { setN(passStamps(data, tourName, stages).length); } catch { setN(0); } };
     const h = idle ? idle(go, { timeout: 2500 }) : window.setTimeout(go, 600);
     return () => { on = false; if (!idle) window.clearTimeout(h); };
-  }, [data, tourName, stages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig]);
   return n;
+}
+
+/** alle 30 s neu laden (Bestenlisten, eigene Läufe, Garage, Geister) – solange die Seite zu sehen ist */
+const REFRESH_MS = 30_000;
+function refresh() {
+  invalidate('game:');
+  invalidate('ghosts:');
+  invalidate('tt:ghosts:');
 }
 
 export function GamesCard({ stageKind = null, tourName = null, stages = null }: { stageKind?: StageKind | null; tourName?: string | null; stages?: Stage[] | null }) {
   const { me } = useApp();
-  const members = useMembers().data ?? [];
+  const members = useMembers().data ?? EMPTY;
   // Spielwahl: zuletzt gewählt, sonst das Spiel zur Etappe des Tages
-  const [sel, setSel] = useState<GameId>(() => {
-    try { const v = localStorage.getItem(LS_SEL) as GameId | null; if (v && GAMES.some((g) => g.id === v)) return v; } catch { /* egal */ }
-    return gameOrder(stageKind)[0]?.id ?? 'zeitfahren';
+  const [idx, setIdx] = useState<number>(() => {
+    let id: GameId | null = null;
+    try { const v = localStorage.getItem(LS_SEL) as GameId | null; if (v && GAMES.some((g) => g.id === v)) id = v; } catch { /* egal */ }
+    id ??= gameOrder(stageKind)[0]?.id ?? 'zeitfahren';
+    return Math.max(0, GAMES.findIndex((g) => g.id === id));
   });
-  const [dir, setDir] = useState(1);
-  const idx = Math.max(0, GAMES.findIndex((g) => g.id === sel));
-  const game = GAMES[idx];
-  const choose = (id: GameId) => {
-    if (id === sel) return;
-    // der Inhalt gleitet – ein laufender Umbau der 3D-Bühne tritt so lange zurück
-    markUiBusy(450);
-    setDir(GAMES.findIndex((g) => g.id === id) > idx ? 1 : -1);
-    setSel(id);
-    try { localStorage.setItem(LS_SEL, id); } catch { /* egal */ }
-  };
-  // die 3D-Bühne im Vorrat folgt der Wahl
-  useEffect(() => { warmGame(sel); }, [sel]);
+  const idxRef = useRef(idx);
+  idxRef.current = idx;
 
-  // Bestenlisten aller Spiele (für Hinweise auf den Reitern und die eigenen Läufe)
+  // Bestenlisten aller Spiele (alle vorab geladen – Wechseln zeigt sofort Inhalt)
   const boards = GAMES.map((g) => useBoard(g.id)); // eslint-disable-line react-hooks/rules-of-hooks
   const runs = useMemo(() => {
     if (!boards.every((b) => b.season)) return null;
     return Object.fromEntries(GAMES.map((g, i) => [g.id, boards[i].season!.find((b) => b.user_id === me.id)?.runs ?? 0])) as Partial<Record<GameId, number>>;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boards.map((b) => b.season).join('|'), me.id]);
+  }, [...boards.map((b) => b.season), me.id]);
   const alerts = GAMES.map((g, i) => useOvertaken(g.id, boards[i].today ? `day:${boards[i].day}` : 'season', boards[i].rows, me.id)); // eslint-disable-line react-hooks/rules-of-hooks
+  // Untertitel aller Spiele einmal (baut die Tagesstrecken) – nicht bei jedem Wechsel
+  const day = boards[0].day;
+  const subs = useMemo(() => GAMES.map((g) => gameSub(g.id, day, tourName, stages)), [day, tourName, stages]);
 
-  // Wischen zwischen den Spielen
-  const headRef = useRef<HTMLDivElement | null>(null);
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  const swipe = useRef<{ id: number; x: number; y: number; on: boolean | null; moved: boolean } | null>(null);
-  const skipClick = useRef(false);
-  const onDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    swipe.current = { id: e.pointerId, x: e.clientX, y: e.clientY, on: null, moved: false };
-    skipClick.current = false;
+  // auch die Geister der Spiele schon laden: das Startblatt steht dann sofort vollständig
+  useQuery<unknown>('ghosts:abfahrt', () => source.gameGhosts('abfahrt'));
+  useQuery<unknown>('ghosts:sprint', () => source.gameGhosts('sprint'));
+  useQuery<unknown>('ghosts:berg', () => source.gameGhosts('berg'));
+  useQuery<unknown>(`tt:ghosts:${day}`, () => source.ttGhosts(day));
+
+  // alle 30 s neu laden (nicht, während jemand wischt – dann kurz danach)
+  useEffect(() => {
+    let t = 0;
+    const tick = () => {
+      if (document.hidden) { t = window.setTimeout(tick, REFRESH_MS); return; }
+      if (uiBusy()) { t = window.setTimeout(tick, 1500); return; }
+      refresh();
+      t = window.setTimeout(tick, REFRESH_MS);
+    };
+    t = window.setTimeout(tick, REFRESH_MS);
+    const onShow = () => { if (!document.hidden) refresh(); };
+    document.addEventListener('visibilitychange', onShow);
+    return () => { window.clearTimeout(t); document.removeEventListener('visibilitychange', onShow); };
+  }, []);
+
+  // Wischen: echtes Scrollen mit Einrasten (läuft auf dem Grafikprozessor, auch wenn die Seite gerade rechnet);
+  // die Markierung der Reiter folgt dem Finger Bild für Bild, ohne React
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const tabs = useRef<HTMLDivElement | null>(null);
+  const heads = useRef<(HTMLDivElement | null)[]>([]);
+  const raf = useRef(0);
+  const settle = useRef(0);
+  const width = () => scroller.current?.clientWidth || 1;
+  // Startlage: das gewählte Spiel (ohne Bewegung)
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollLeft = idxRef.current * width();
+    tabs.current?.style.setProperty('--i', String(idxRef.current));
+    warmGame(GAMES[idxRef.current].id);
+  }, []);
+  const onScroll = () => {
+    // ein laufender Umbau der 3D-Bühne tritt zurück, solange gewischt wird
+    markUiBusy(500);
+    if (!raf.current) {
+      raf.current = requestAnimationFrame(() => {
+        raf.current = 0;
+        const el = scroller.current;
+        if (!el) return;
+        const x = Math.max(0, Math.min(GAMES.length - 1, el.scrollLeft / width()));
+        tabs.current?.style.setProperty('--i', x.toFixed(4));
+        const i = Math.round(x);
+        if (i !== idxRef.current) { idxRef.current = i; setIdx(i); }
+      });
+    }
+    // zur Ruhe gekommen: Wahl merken, 3D-Bühne dafür umbauen
+    window.clearTimeout(settle.current);
+    settle.current = window.setTimeout(() => {
+      const id = GAMES[idxRef.current].id;
+      try { localStorage.setItem(LS_SEL, id); } catch { /* egal */ }
+      warmGame(id);
+    }, 700);
   };
-  const onMove = (e: RPointerEvent<HTMLDivElement>) => {
-    const s = swipe.current;
-    if (!s || s.id !== e.pointerId) return;
-    const dx = e.clientX - s.x, dy = e.clientY - s.y;
-    if (s.on === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) s.on = Math.abs(dx) > Math.abs(dy) * 1.2;
-    if (!s.on) return;
-    s.moved = true;
-    skipClick.current = true;
-    const el = paneRef.current;
-    if (el) el.style.transform = `translateX(${dx * 0.3}px)`;
-  };
-  const onUp = (e: RPointerEvent<HTMLDivElement>) => {
-    const s = swipe.current;
-    if (!s || s.id !== e.pointerId) return;
-    swipe.current = null;
-    const el = paneRef.current;
-    if (el) { el.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1)'; el.style.transform = ''; window.setTimeout(() => { if (el) el.style.transition = ''; }, 320); }
-    if (!s.on) return;
-    const dx = e.clientX - s.x;
-    if (Math.abs(dx) < 42) return;
-    const next = GAMES[idx + (dx < 0 ? 1 : -1)];
-    if (next) choose(next.id);
+  useEffect(() => () => { cancelAnimationFrame(raf.current); window.clearTimeout(settle.current); }, []);
+  const go = (i: number) => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollTo({ left: i * width(), behavior: 'smooth' });
   };
 
-  const open = () => {
-    if (skipClick.current) { skipClick.current = false; return; }
-    alerts[idx].ack();
-    const head = headRef.current;
-    if (head) beginHandoff(head, game.path);
-    else beginHandoff(document.createElement('div'), game.path);
-  };
+  const ackRef = useRef(alerts.map((a) => a.ack));
+  ackRef.current = alerts.map((a) => a.ack);
+  const open = useCallback((i: number) => {
+    ackRef.current[i]?.();
+    const head = heads.current[i];
+    beginHandoff(head ?? document.createElement('div'), GAMES[i].path);
+  }, []);
 
   return (
     <section className="card arena" aria-label="Minispiele">
-      <div className="arena__tabs" role="tablist" aria-label="Spiel wählen" style={{ '--i': idx } as CSSProperties}>
+      <div className="arena__tabs" role="tablist" aria-label="Spiel wählen" ref={tabs}>
         <span className="arena__ind" aria-hidden="true" />
         {GAMES.map((g, i) => (
           <button
@@ -168,35 +210,38 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
             role="tab"
             aria-selected={i === idx}
             className={cx('arena__tab', i === idx && 'is-on', (alerts[i].alert || isNewGame(g, runs)) && i !== idx && 'is-dot')}
-            onClick={() => choose(g.id)}
+            onClick={() => go(i)}
           >
             {SHORT[g.id]}
           </button>
         ))}
       </div>
-      <div className="arena__body" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
-        <div key={game.id} ref={paneRef} className="arena__pane" style={{ '--dir': dir } as CSSProperties}>
-          <GamePane game={game} board={boards[idx]} alert={alerts[idx].alert} fresh={isNewGame(game, runs)} tourName={tourName} stages={stages} members={members} meId={me.id} headRef={headRef} onOpen={open} />
-        </div>
+      <div className="arena__scroller" ref={scroller} onScroll={onScroll}>
+        {GAMES.map((g, i) => (
+          <div key={g.id} className="arena__pane" aria-hidden={i !== idx}>
+            <GamePane
+              index={i} game={g} board={boards[i]} alert={alerts[i].alert} fresh={isNewGame(g, runs)} sub={subs[i]}
+              members={members} meId={me.id} heads={heads} onOpen={open}
+            />
+          </div>
+        ))}
       </div>
-      <button type="button" className="btn btn--primary btn--full arena__go" onClick={open}><span>Spielen</span></button>
+      <button type="button" className="btn btn--primary btn--full arena__go" onClick={() => open(idx)}><span>Spielen</span></button>
       <Tiles tourName={tourName} stages={stages} />
     </section>
   );
 }
 
-function GamePane({ game, board, alert, fresh, tourName, stages, members, meId, headRef, onOpen }: {
-  game: GameInfo; board: ReturnType<typeof useBoard>; alert: ReturnType<typeof overtaken>; fresh: boolean;
-  tourName: string | null; stages: Stage[] | null; members: { id: string; display_name: string | null; avatar_color: string | null }[]; meId: string;
-  headRef: RefObject<HTMLDivElement | null>; onOpen: () => void;
+const EMPTY: Profile[] = [];
+
+/** ein Spiel in der Karte – neu gezeichnet nur, wenn sich seine Daten ändern (nicht beim Wischen) */
+const GamePane = memo(function GamePane({ index, game, board, alert, fresh, sub, members, meId, heads, onOpen }: {
+  index: number; game: GameInfo; board: Board; alert: ReturnType<typeof overtaken>; fresh: boolean; sub: string;
+  members: Profile[]; meId: string; heads: RefObject<(HTMLDivElement | null)[]>; onOpen: (i: number) => void;
 }) {
-  const day = board.day;
   const sprint = game.id === 'sprint';
   const berg = game.id === 'berg';
   const tt = game.id === 'zeitfahren';
-  // echte Vorlage: Ziel der nächsten Flachetappe, Schlussanstieg der nächsten Bergetappe, nächstes Einzelzeitfahren
-  // (derselbe Text wie im Startblatt des Spiels)
-  const sub = useMemo(() => gameSub(game.id, day, tourName, stages), [game.id, day, tourName, stages]);
   const rows = board.rows;
   const myIdx = rows.findIndex((b) => b.user_id === meId);
   const shown = rows.slice(0, 3).map((r, i) => ({ r, i }));
@@ -208,8 +253,8 @@ function GamePane({ game, board, alert, fresh, tourName, stages, members, meId, 
       : `${byNames.slice(0, -1).join(', ')} und ${byNames[byNames.length - 1]} haben dich überholt`;
   return (
     <>
-      <a href={`#${game.path}`} className="arena__hero" aria-label={`${game.name} spielen${fresh ? ' – neu' : ''}`} onClick={(e) => { e.preventDefault(); onOpen(); }}>
-        <GameHead ref={headRef} game={game.id} title={game.name} sub={sub} tag={fresh ? <span className="game-new">Neu</span> : null} />
+      <a href={`#${game.path}`} className="arena__hero" aria-label={`${game.name} spielen${fresh ? ' – neu' : ''}`} onClick={(e) => { e.preventDefault(); onOpen(index); }}>
+        <GameHead ref={(el: HTMLDivElement | null) => { heads.current[index] = el; }} game={game.id} title={game.name} sub={sub} tag={fresh ? <span className="game-new">Neu</span> : null} />
       </a>
       {!board.loaded ? (
         board.error ? <p className="arena__empty">Bestenliste gerade nicht erreichbar</p> : <BoardSkeleton />
@@ -240,7 +285,8 @@ function GamePane({ game, board, alert, fresh, tourName, stages, members, meId, 
       ) : null}
     </>
   );
-}
+}, (a, b) => a.board === b.board && a.sub === b.sub && a.fresh === b.fresh && a.members === b.members && a.meId === b.meId
+  && JSON.stringify(a.alert) === JSON.stringify(b.alert));
 
 /** Radgarage, Europareise und Passbuch als Kacheln mit Stand */
 function Tiles({ tourName, stages }: { tourName: string | null; stages: Stage[] | null }) {

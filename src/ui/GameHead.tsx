@@ -17,7 +17,7 @@ export function GameHead({ game, title, sub, tag, extra, className, as = 'strong
   extra?: ReactNode;
   className?: string;
   as?: 'h1' | 'strong';
-  ref?: RefObject<HTMLDivElement | null>;
+  ref?: RefObject<HTMLDivElement | null> | ((el: HTMLDivElement | null) => void);
 }) {
   const Title = as;
   return (

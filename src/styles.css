@@ -1906,21 +1906,24 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .arena__ind {
   position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 4); border-radius: 10px; background: var(--bg);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18), inset 0 0 0 1px var(--line); transform: translateX(calc(var(--i, 0) * 100%));
-  transition: transform 0.42s cubic-bezier(0.2, 0.9, 0.25, 1);
+  will-change: transform;
 }
 [data-theme="light"] .arena__ind { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); }
 .arena__tab {
   position: relative; z-index: 1; min-height: 34px; border: 0; padding: 0 4px; background: none; border-radius: 10px;
-  font: 600 13.5px/1 var(--font); color: var(--muted); letter-spacing: -0.01em; transition: color 0.25s; -webkit-tap-highlight-color: transparent;
+  font: 600 13.5px/1 var(--font); color: var(--muted); letter-spacing: -0.01em; transition: color 0.2s; -webkit-tap-highlight-color: transparent;
 }
 .arena__tab.is-on { color: var(--text); }
 .arena__tab:active { color: var(--text); }
 .arena__tab.is-dot::after { content: ""; position: absolute; top: 7px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-/* Inhalt des gewählten Spiels: gleitet beim Wechsel nach (Richtung aus der Wahl), wischbar */
-.arena__body { position: relative; touch-action: pan-y; min-height: 150px; }
-.arena__pane { display: flex; flex-direction: column; gap: 12px; animation: arena-pane 0.32s cubic-bezier(0.2, 0.9, 0.25, 1) both; will-change: transform; }
-@keyframes arena-pane { from { opacity: 0; transform: translateX(calc(var(--dir, 1) * 22px)); } }
-@media (prefers-reduced-motion: reduce) { .arena__pane { animation: none; } .arena__ind { transition: none; } }
+/* die vier Spiele nebeneinander: echtes Scrollen mit Einrasten (flüssig auch, wenn die Seite gerade rechnet);
+   die Karte ist so hoch wie das höchste Spiel – beim Wischen springt nichts */
+.arena__scroller {
+  display: flex; margin: 0 -16px; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none; touch-action: pan-x pan-y;
+}
+.arena__scroller::-webkit-scrollbar { display: none; }
+.arena__pane { flex: 0 0 100%; min-width: 0; padding: 0 16px; display: flex; flex-direction: column; gap: 12px; scroll-snap-align: start; scroll-snap-stop: always; contain: layout paint; }
 .arena__hero { display: block; color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent; }
 /* Kopf eines Spiels (GameHead.tsx): hier und im Startblatt des Spiels gleich, damit er hinüberfliegen kann */
 .ghead { display: flex; align-items: center; gap: 13px; min-width: 0; transition: transform 0.15s cubic-bezier(0.2, 0.9, 0.3, 1); }
