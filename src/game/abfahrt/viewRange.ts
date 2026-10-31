@@ -3,7 +3,7 @@
  * Bäume und Strecke reichen, wie viel Rechenzeit je Bild ins Nachladen gehen darf und wie dicht der Dunst ist.
  * Der Renderer liest die Stufe in jedem Bild und stellt sich bei einer Änderung um (ohne Neuaufbau).
  */
-import { gfxOn } from './gfxOpts';
+import { gfxOn, onGfxChange } from './gfxOpts';
 export type RangeId = 'eco' | 'normal' | 'far' | 'max' | 'ultra' | 'extreme';
 
 export interface ViewRange {
@@ -65,8 +65,11 @@ export function setGfxScope(id: string) {
 }
 export function gfxScope(): string { return scope; }
 
-/** wirksame Sichtweite: die gewählte, bei knapper Leistung automatisch kürzer */
-export function viewRange(): ViewRange { return RANGES[Math.max(0, RANGES.indexOf(cur) - drop)]; }
+// einfache Grafik (gfxOpts): immer die kürzeste Sichtweite – der Renderer stellt sich bei der Änderung um
+onGfxChange((k) => { if (k === 'lite') ver += 1; });
+
+/** wirksame Sichtweite: die gewählte, bei knapper Leistung automatisch kürzer; mit einfacher Grafik die kürzeste */
+export function viewRange(): ViewRange { return gfxOn('lite') ? RANGES[0] : RANGES[Math.max(0, RANGES.indexOf(cur) - drop)]; }
 /** die im Pausenmenü gewählte Sichtweite */
 export function userRange(): ViewRange { return cur; }
 /** zählt bei jeder Änderung hoch (der Renderer vergleicht) */
@@ -90,4 +93,4 @@ export function setRangeDrop(n: number) {
   try { localStorage.setItem(dropKey(), String(d)); } catch { /* egal */ }
 }
 /** kann die Sichtweite noch kürzer werden? */
-export function canDropRange(): boolean { return RANGES.indexOf(cur) - drop > 0; }
+export function canDropRange(): boolean { return !gfxOn('lite') && RANGES.indexOf(cur) - drop > 0; }

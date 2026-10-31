@@ -495,9 +495,15 @@ export class Renderer3D {
   private anims = new Map<number, RiderAnim>();
   /** Fahrer in der Ferne als 2D-Bilder (ein Zeichenaufruf für alle) */
   private rs!: RiderSprites;
-  /** ab wo Bilder statt 3D-Fahrer (m; zum Prüfen änderbar) – PC-Grafik: 3D-Fahrer bis gut 80 m */
+  /**
+   * ab wo Bilder statt 3D-Fahrer (m; zum Prüfen änderbar) – PC-Grafik: 3D-Fahrer bis gut 80 m; einfache Grafik:
+   * schon ab gut 20 m Bilder (bei ihrer geringeren Auflösung sind die Bilder dort kaum gröber)
+   */
   spriteNear = this.pc ? 82 : SPRITE_NEAR;
   spriteFar = this.pc ? 98 : SPRITE_FAR;
+  private get spriteFrom(): [number, number] { return this.lite ? [22, 28] : [this.spriteNear, this.spriteFar]; }
+  /** einfache Grafik (gfxOpts): je Bild gelesen, damit das Umschalten im Pausenmenü sofort wirkt */
+  private get lite(): boolean { return gfxOn('lite'); }
   private player: RiderModel | null = null;
   private playerAnim = new RiderAnim(1, true);
   private playerKit = '';
@@ -649,8 +655,9 @@ export class Renderer3D {
   private w = { x: 0, y: 0, z: 0, th: 0 };
 
   constructor(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement) {
-    // Kantenglättung immer an (MSAA): auf Handy-GPUs günstig, Kanten und Linien werden weich
-    this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false });
+    // Kantenglättung an (MSAA): auf Handy-GPUs günstig, Kanten und Linien werden weich – außer mit einfacher Grafik
+    // (für langsame Geräte; gilt für die nächste Bühne, also ab dem nächsten Start)
+    this.gl = new THREE.WebGLRenderer({ canvas, antialias: !gfxOn('lite'), powerPreference: 'high-performance', alpha: false, stencil: false });
     { const c = this.gl.getContext(); this.msaa = (c.getParameter(c.SAMPLES) as number) >= 2; }
     // Shader, die nicht übersetzen, bleiben unsichtbar (ganze Landschaftsstufen!): zählen und in der
     // Bildraten-Anzeige zeigen, dazu wie üblich in der Konsole melden
@@ -741,6 +748,8 @@ export class Renderer3D {
     // im Pausenmenü umgeschaltet (gfxOpts): feine Landschafts-Shader oder Sonnenschatten – die betroffenen Shader
     // gleich neu übersetzen (ein kurzer Halt im Menü statt Ruckler beim ersten Dorf oder Tunnel)
     this.offGfx = onGfxChange((k) => {
+      // einfache Grafik: weniger Bildpunkte (wirkt direkt vor dem nächsten Bild)
+      if (k === 'lite') this.requestResize();
       if (k === 'details') {
         const { asphalt, fresh, cobble, gravel, verge, terrain, portal } = this.mats;
         for (const m of [asphalt, fresh, cobble, gravel, verge, terrain, portal, ...this.terrMats]) m.needsUpdate = true;
@@ -1417,9 +1426,11 @@ export class Renderer3D {
     // Kantenglättung gestochen scharf) – die Auflösungsregelung nimmt bei Bedarf zurück
     const dev = window.devicePixelRatio || 1;
     // (PC-Grafik höchstens ~4,5 Millionen Bildpunkte: auf großen Bildschirmen bliebe sonst kaum Rechenzeit fürs Bild)
-    const dpr = this.pc
+    // Einfache Grafik: höchstens einfache Dichte (ein Bildpunkt je Punkt), am Start 1,4-fach
+    const lite = this.lite;
+    const dpr = this.pc && !lite
       ? Math.min(2, Math.max(1.25, dev), Math.sqrt(4.5e6 / (W * H))) * (this.sharp ? 1 : this.quality)
-      : this.sharp ? Math.min(2, dev) : Math.min(1.4, dev) * this.quality;
+      : this.sharp ? Math.min(lite ? 1.4 : 2, dev) : Math.min(lite ? 1 : 1.4, dev) * this.quality;
     const cv = this.gl.domElement;
     // unverändert: nichts anfassen (jedes Setzen der Größe leert die Leinwand)
     if (W !== this.W || H !== this.H || dpr !== this.gl.getPixelRatio() || cv.width !== Math.floor(W * dpr) || cv.height !== Math.floor(H * dpr)) {
@@ -1428,7 +1439,7 @@ export class Renderer3D {
       this.gl.setPixelRatio(dpr);
       this.gl.setSize(W, H, false);
     }
-    const odpr = Math.min(1.5, window.devicePixelRatio || 1);
+    const odpr = Math.min(lite ? 1 : 1.5, window.devicePixelRatio || 1);
     this.overlayDirty = true;
     const ow = Math.round(W * odpr);
     const oh = Math.round(H * odpr);
@@ -5988,7 +5999,10 @@ export class Renderer3D {
     // in den Rennfinals das ganze Feld; Fahrer zwischen Kamera und Spieler werden durchsichtig
     const sprint = track.kind !== 'descent';
     const field = g.ghosts?.length ? [...g.opps, ...g.ghosts] : g.opps;
-    const list = field.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, (sprint ? 32 : 14) * (this.pc ? 2 : 1));
+    // (einfache Grafik: weniger Fahrer als Modell – im Finale die übrigen als Bild, siehe unten)
+    const lite = this.lite;
+    const cap = lite ? (sprint ? 14 : 8) : (sprint ? 32 : 14) * (this.pc ? 2 : 1);
+    const list = field.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, cap);
     const cp = this.camera.position;
     const rsOn = this.rs.ready;
     this.rs.begin();
@@ -6009,7 +6023,8 @@ export class Renderer3D {
       // Geister bleiben immer das 3D-Modell (halbdurchsichtig) – kein Bild in der Ferne; Gestürzte auch (das Bild
       // kennt kein Liegen)
       if (rsOn && !o.ghost && !o.wreck && spriteable(o.kit)) {
-        const t = Math.max(0, Math.min(1, (dc - this.spriteNear) / (this.spriteFar - this.spriteNear)));
+        const [sn, sf] = this.spriteFrom;
+        const t = Math.max(0, Math.min(1, (dc - sn) / (sf - sn)));
         sa = apQ(t * t * (3 - 2 * t));
       }
       const rp = this.placeOpp(m, o, track, sa < 1 && !o.wreck);
@@ -6061,7 +6076,8 @@ export class Renderer3D {
     }
     // Fahrerfeld: alle übrigen (voraus und knapp hinter dir) nur als Bild – alle zusammen ein Zeichenaufruf; neu
     // Aufgetauchte blenden ein, am Ende der Sichtweite blenden sie aus. Gestürzte liegen (seitlich gekippt)
-    if (rsOn && !sprint) {
+    // (Finale mit einfacher Grafik: wer nicht unter den nächsten Modellen ist, ebenso als Bild)
+    if (rsOn && (!sprint || lite)) {
       for (const o of g.opps) {
         if (seen.has(o.id) || !spriteable(o.kit)) continue;
         const dz = o.z - p.z;
@@ -6071,7 +6087,7 @@ export class Renderer3D {
         track.world(o.z, o.x, 0, this.w);
         const down = !!o.wreck;
         const tk = down ? 0 : Math.max(0, Math.min(1, o.tuck - o.brake * 0.6));
-        this.rs.add(this.w.x, this.w.y, this.w.z, -this.w.th, down ? (o.x > 0 ? 1.45 : -1.45) : o.lean, o.pedal, tk, down ? 0 : o.stand ?? 0, a, this.kitOf(o, false));
+        this.rs.add(this.w.x, this.w.y, this.w.z, -this.w.th, down ? (o.x > 0 ? 1.45 : -1.45) : o.lean, o.pedal, tk, down ? 0 : o.stand ?? 0, a, this.kitOf(o, sprint));
       }
     }
     this.rs.end();

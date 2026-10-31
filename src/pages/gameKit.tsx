@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
 import { RANGES, setViewRange, userRange, type RangeId } from '../game/abfahrt/viewRange';
-import { GFX_OPTS, gfxOwn, setGfx, type GfxOpt } from '../game/abfahrt/gfxOpts';
+import { GFX_OPTS, gfxOn, gfxOwn, isEffect, onGfxChange, setGfx, type GfxOpt } from '../game/abfahrt/gfxOpts';
 import { Segmented } from '../ui/kit';
 
 export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -74,6 +74,7 @@ export function useCountUp(target: number) {
 /** Sichtweite im Pausenmenü: wie weit und wie schnell Details geladen werden */
 export function RangePicker() {
   const [v, setV] = useState<RangeId>(() => userRange().id);
+  const lite = useGfx('lite');
   const hint: Record<RangeId, string> = {
     eco: 'Kurze Sicht, schont Akku und ältere Geräte',
     normal: 'Ausgewogen',
@@ -86,9 +87,16 @@ export function RangePicker() {
     <div className="abf-range">
       <span className="abf-range__label">Sichtweite</span>
       <Segmented label="Sichtweite" value={v} options={RANGES.map((r) => ({ value: r.id, label: r.label }))} onChange={(id) => { setViewRange(id); setV(id); }} />
-      <span className="abf-range__hint">{hint[v]}</span>
+      <span className="abf-range__hint">{lite ? 'Mit einfacher Grafik immer „Kurz“ – deine Wahl gilt wieder, wenn sie aus ist' : hint[v]}</span>
     </div>
   );
+}
+
+/** Schalter der Grafik (gfxOpts) – folgt Änderungen von anderswo (Pausenmenü, Profil) */
+export function useGfx(k: GfxOpt): boolean {
+  const [on, setOn] = useState(() => gfxOn(k));
+  useEffect(() => onGfxChange((x, v) => { if (x === k) setOn(v); }), [k]);
+  return on;
 }
 
 /** Schalter im Pausenmenü: Bildrate unten links anzeigen */
@@ -103,8 +111,9 @@ export function FpsSwitch() {
 }
 
 /**
- * Aufwendige Grafik im Pausenmenü (anfangs nur die Sonnenschatten an): Lichtfilter & Wetter, Sonnenschatten, Landschaftsdetails.
- * Umschalten übersetzt Shader neu – ein kurzer Halt hier im Menü.
+ * Grafik im Pausenmenü (anfangs nur die Sonnenschatten an): PC-Grafik, einfache Grafik für langsame Geräte, dann die
+ * Effekte Lichtfilter & Wetter, Sonnenschatten, Landschaftsdetails. Umschalten übersetzt Shader neu – ein kurzer Halt
+ * hier im Menü.
  */
 export function GfxSwitches() {
   const read = () => Object.fromEntries(GFX_OPTS.map((o) => [o.id, gfxOwn(o.id)])) as Record<GfxOpt, boolean>;
@@ -113,14 +122,15 @@ export function GfxSwitches() {
     <div className="abf-gfx">
       <span className="abf-range__label">Grafik</span>
       {GFX_OPTS.map((o) => {
-        // mit PC-Grafik ist alles andere mit an (die eigene Wahl bleibt gespeichert)
-        const forced = o.id !== 'pc' && on.pc;
-        const v = on[o.id] || forced;
+        // mit PC-Grafik sind die Effekte mit an, mit einfacher Grafik aus (die eigene Wahl bleibt gespeichert)
+        const forcedOff = isEffect(o.id) && on.lite;
+        const forced = (isEffect(o.id) && on.pc) || forcedOff;
+        const v = !forcedOff && (on[o.id] || forced);
         return (
           <button key={o.id} type="button" role="switch" aria-checked={v} aria-disabled={forced} disabled={forced}
             className={`abf-switch abf-switch--sub${v ? ' is-on' : ''}${forced ? ' is-forced' : ''}`}
             onClick={() => { setGfx(o.id, !on[o.id]); setOn(read()); }}>
-            <span className="abf-switch__text"><span>{o.label}</span><small>{forced ? 'mit PC-Grafik immer an' : o.hint}</small></span>
+            <span className="abf-switch__text"><span>{o.label}</span><small>{forcedOff ? 'mit einfacher Grafik aus' : forced ? 'mit PC-Grafik immer an' : o.hint}</small></span>
             <span className="abf-switch__track" aria-hidden="true"><span className="abf-switch__knob" /></span>
           </button>
         );

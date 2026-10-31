@@ -33,3 +33,29 @@ test('PC-Grafik schaltet alles andere mit ein und meldet das', () => {
   assert.equal(gfxOn('licht'), false);
   assert.deepEqual(seen, ['pc=true', 'licht=true', 'details=true', 'pc=false', 'licht=false', 'details=false']);
 });
+
+test('Einfache Grafik schaltet die Effekte und die PC-Grafik ab und meldet das', () => {
+  setGfx('pc', false);
+  setGfx('schatten', true);
+  setGfx('details', true);
+  const seen: string[] = [];
+  const off = onGfxChange((k, on) => seen.push(`${k}=${on}`));
+  setGfx('lite', true);
+  assert.equal(gfxOn('lite'), true);
+  assert.equal(gfxOn('schatten'), false);
+  assert.equal(gfxOn('details'), false);
+  assert.equal(gfxOwn('details'), true, 'die eigene Wahl bleibt');
+  assert.deepEqual(seen, ['lite=true', 'schatten=false', 'details=false']);
+  // PC-Grafik schließt die einfache aus
+  setGfx('pc', true);
+  assert.equal(gfxOn('lite'), false);
+  assert.equal(gfxOn('licht'), true);
+  setGfx('lite', true);
+  assert.equal(gfxOn('pc'), false);
+  assert.equal(gfxOn('licht'), false);
+  setGfx('lite', false);
+  off();
+  assert.equal(gfxOn('schatten'), true);
+  assert.equal(gfxOn('details'), true);
+  setGfx('details', false);
+});

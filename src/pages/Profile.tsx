@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useApp } from '../app/context';
 import { useTourData } from '../app/hooks';
 import { source, BUILD_ID } from '../app/config';
@@ -11,6 +11,25 @@ import { Icon } from '../ui/Icon';
 import { lastName } from '../ui/bits';
 import { InstallSteps } from '../ui/InstallSteps';
 import { useInstall } from '../lib/install';
+import { gfxOn, onGfxChange, setGfx } from '../game/abfahrt/gfxOpts';
+
+/** Spielgrafik für alle 3D-Spiele: normal oder einfach (für langsame Geräte) – dieselbe Wahl wie im Pausenmenü */
+function GameGfx() {
+  const [lite, setLite] = useState(() => gfxOn('lite'));
+  useEffect(() => onGfxChange((k, on) => { if (k === 'lite') setLite(on); }), []);
+  return (
+    <div className="setting">
+      <span className="setting__label">Spielgrafik</span>
+      <Segmented<'normal' | 'lite'>
+        label="Spielgrafik wählen"
+        value={lite ? 'lite' : 'normal'}
+        onChange={(v) => setGfx('lite', v === 'lite')}
+        options={[{ value: 'normal', label: 'Normal' }, { value: 'lite', label: 'Einfach' }]}
+      />
+      <p className="hint">Einfach: für langsame Geräte – kurze Sicht, weniger Bildpunkte, Fahrer früher als Bild, ohne Schatten und Lichteffekte. Gilt für alle Spiele.</p>
+    </div>
+  );
+}
 
 const COLORS = ['#6A3FB5', '#1F6F8B', '#B23A6B', '#2E7D4F', '#A0522D', '#3D5AFE', '#8E44AD', '#00796B', '#C0392B', '#455A64', '#6D4C41', '#5C6BC0'];
 
@@ -68,6 +87,7 @@ export function Profile() {
               options={[{ value: 'system', label: 'System' }, { value: 'light', label: 'Hell' }, { value: 'dark', label: 'Dunkel' }]}
             />
           </div>
+          <GameGfx />
           <InstallHint />
         </section>
 

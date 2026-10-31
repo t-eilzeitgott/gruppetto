@@ -2,6 +2,10 @@
  * Aufwendige Grafik zum Zuschalten im Pausenmenü – anfangs nur die Sonnenschatten an, der Rest kostet auf vielen
  * Geräten zu viel Bildrate. Das Gerät merkt sich die Wahl. Ohne three.js (die leichten Spiele laden das Menü auch).
  *
+ *  - lite: einfache Grafik für langsame Geräte (auch im Profil schaltbar) – schaltet Licht, Schatten und Details
+ *    ab und spart darüber hinaus: kürzeste Sichtweite, weniger Bildpunkte, Fahrer früher als Bild statt 3D-Modell,
+ *    ohne Kantenglättung (ab dem nächsten Start) und ohne Weichzeichner unter Namensschildern. Schließt PC-Grafik aus.
+ *
  *  - licht: Wetter und Licht der Spielwelten (Goldene Stunde, Wetterumschwung, Nebel am Pass) mit der
  *    Nachbearbeitung (Leuchten, Lichtstrahlen, Wolken, Farbfilter, Vignette, Korn) und dem leichten
  *    Kamerafilter über dem Bild (siehe weather.ts)
@@ -16,10 +20,15 @@
  * (für Vergleiche; wird nicht gespeichert).
  */
 
-export type GfxOpt = 'pc' | 'licht' | 'schatten' | 'details';
+export type GfxOpt = 'pc' | 'lite' | 'licht' | 'schatten' | 'details';
+
+/** einzeln schaltbare Effekte (Einfache Grafik schaltet sie ab, PC-Grafik ein) */
+const EFFECTS: GfxOpt[] = ['licht', 'schatten', 'details'];
+export const isEffect = (k: GfxOpt) => EFFECTS.includes(k);
 
 export const GFX_OPTS: { id: GfxOpt; label: string; hint: string }[] = [
   { id: 'pc', label: 'PC-Grafik', hint: 'Höchste Details für starke Rechner – ab dem nächsten Start' },
+  { id: 'lite', label: 'Einfache Grafik', hint: 'Für langsame Geräte: kurze Sicht, schlichter, ohne Schatten und Effekte' },
   { id: 'licht', label: 'Lichtfilter & Wetter', hint: 'Goldene Stunde, Nebel, Leuchten, Lichtstrahlen' },
   { id: 'schatten', label: 'Sonnenschatten', hint: 'Schatten von Fahrern, Bäumen und Häusern' },
   { id: 'details', label: 'Landschaftsdetails', hint: 'Relief, Baumkronen, Felsstruktur, Wolkenschatten' },
@@ -27,10 +36,10 @@ export const GFX_OPTS: { id: GfxOpt; label: string; hint: string }[] = [
 
 const KEY = (k: GfxOpt) => `gruppetto.gfx.${k}`;
 
-function urlAll(): 'alle' | 'aus' | 'pc' | null {
+function urlAll(): 'alle' | 'aus' | 'pc' | 'einfach' | null {
   try {
-    const m = /[?&]gfx=(alle|aus|pc)\b/.exec(window.location.search);
-    return m ? (m[1] as 'alle' | 'aus' | 'pc') : null;
+    const m = /[?&]gfx=(alle|aus|pc|einfach)\b/.exec(window.location.search);
+    return m ? (m[1] as 'alle' | 'aus' | 'pc' | 'einfach') : null;
   } catch { return null; }
 }
 
@@ -69,10 +78,11 @@ function gpuName(): string {
 }
 
 /** anfangs an (solange auf dem Gerät nichts gewählt ist): die Sonnenschatten – und am Rechner die PC-Grafik */
-const DEFAULT: Record<GfxOpt, boolean> = { pc: false, licht: false, schatten: true, details: false };
+const DEFAULT: Record<GfxOpt, boolean> = { pc: false, lite: false, licht: false, schatten: true, details: false };
 
 function load(k: GfxOpt): boolean {
-  if (fixed !== null) return fixed === 'pc' || (fixed === 'alle' && k !== 'pc');
+  if (fixed === 'einfach') return k === 'lite';
+  if (fixed !== null) return k !== 'lite' && (fixed === 'pc' || (fixed === 'alle' && k !== 'pc'));
   try {
     const v = localStorage.getItem(KEY(k));
     if (v === null) return k === 'pc' ? looksLikePc() : DEFAULT[k];
@@ -80,21 +90,28 @@ function load(k: GfxOpt): boolean {
   } catch { return DEFAULT[k]; }
 }
 
-const cur: Record<GfxOpt, boolean> = { pc: load('pc'), licht: load('licht'), schatten: load('schatten'), details: load('details') };
+const cur: Record<GfxOpt, boolean> = { pc: load('pc'), lite: load('lite'), licht: load('licht'), schatten: load('schatten'), details: load('details') };
+// beides zugleich geht nicht: die einfache Grafik gewinnt (sie wählt man nur, wenn es nicht flüssig läuft)
+if (cur.lite) cur.pc = false;
 const subs = new Set<(k: GfxOpt, on: boolean) => void>();
 
-/** Kamerafilter (CSS über dem Bild) gehört zum Lichtfilter */
+/** Kamerafilter (CSS über dem Bild) gehört zum Lichtfilter; einfache Grafik: ohne Weichzeichner über dem Bild */
 function applyCss() {
-  try { document.documentElement.classList.toggle('gfx-licht', gfxOn('licht')); } catch { /* kein DOM (Tests) */ }
+  try {
+    document.documentElement.classList.toggle('gfx-licht', gfxOn('licht'));
+    document.documentElement.classList.toggle('gfx-lite', gfxOn('lite'));
+  } catch { /* kein DOM (Tests) */ }
 }
 applyCss();
 
-/** an? (mit PC-Grafik ist alles andere auch an) */
+/** an? (mit PC-Grafik sind alle Effekte an, mit einfacher Grafik alle aus) */
 export function gfxOn(k: GfxOpt): boolean {
-  return cur[k] || (k !== 'pc' && cur.pc);
+  if (!isEffect(k)) return cur[k];
+  if (cur.lite) return false;
+  return cur[k] || cur.pc;
 }
 
-/** die eigene Wahl des Schalters (ohne die PC-Grafik, die alles andere mit einschaltet) */
+/** die eigene Wahl des Schalters (ohne PC- oder einfache Grafik, die die Effekte mit schalten) */
 export function gfxOwn(k: GfxOpt): boolean {
   return cur[k];
 }
@@ -102,10 +119,16 @@ export function gfxOwn(k: GfxOpt): boolean {
 export function setGfx(k: GfxOpt, on: boolean) {
   if (cur[k] === on) return;
   const before = GFX_OPTS.map((o) => gfxOn(o.id));
-  cur[k] = on;
-  try { localStorage.setItem(KEY(k), on ? '1' : '0'); } catch { /* egal */ }
+  const put = (x: GfxOpt, v: boolean) => {
+    cur[x] = v;
+    try { localStorage.setItem(KEY(x), v ? '1' : '0'); } catch { /* egal */ }
+  };
+  put(k, on);
+  // PC-Grafik und einfache Grafik schließen sich aus
+  if (on && k === 'lite' && cur.pc) put('pc', false);
+  if (on && k === 'pc' && cur.lite) put('lite', false);
   applyCss();
-  // gemeldet wird jede wirksame Änderung (die PC-Grafik schaltet die anderen mit)
+  // gemeldet wird jede wirksame Änderung (PC- und einfache Grafik schalten die Effekte mit)
   GFX_OPTS.forEach((o, i) => {
     const now = gfxOn(o.id);
     if (now === before[i]) return;
