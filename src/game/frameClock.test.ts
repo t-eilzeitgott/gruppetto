@@ -164,3 +164,28 @@ test('einfache Grafik (mindestens 30 Bilder je Sekunde): ein langsames Gerät l�
   clock.minFps = 60;
   assert.equal(clock.div, 1);
 });
+
+test('120-Hz-iPhone unter Last (Aufrufe auch nach 12,5 und 21 ms): bleibt bei 120 Hz, nie 240', () => {
+  // erst ruhig jeder Takt, dann unter Last mal 1, 2, 1,5, 2,5 Takte – nie ein Abstand von 4 ms
+  const stamps: number[] = [];
+  let t = 0;
+  for (let i = 0; i < 120; i++) { t += P120; stamps.push(Math.floor(t)); }
+  const pat = [2, 1.5, 2, 2.5, 2, 3, 1.5, 2];
+  for (let i = 0; i < 1500; i++) { t += pat[i % pat.length] * P120; stamps.push(Math.floor(t)); }
+  const clock = new FrameClock(0);
+  clock.minFps = 30;
+  let p240 = false;
+  for (const x of stamps) { if (clock.ready(x)) clock.tick(x); if (clock.period < 5) p240 = true; }
+  assert.ok(!p240, '240 Hz erkannt');
+  assert.ok(Math.abs(clock.period - P120) < 0.1, `Takt ${clock.period.toFixed(2)}`);
+});
+
+test('einfache Grafik: einzelne verpasste Takte (jedes zehnte Bild) senken nicht unter 60', () => {
+  const stamps: number[] = [];
+  let t = 0;
+  for (let i = 0; i < 1500; i++) { t += i % 10 === 9 ? 2 * P60 : P60; stamps.push(t); }
+  const clock = new FrameClock(0);
+  clock.minFps = 30;
+  for (const x of stamps) if (clock.ready(x)) clock.tick(x);
+  assert.equal(clock.div, 1);
+});

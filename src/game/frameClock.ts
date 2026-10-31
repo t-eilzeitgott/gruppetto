@@ -52,6 +52,12 @@ export class FrameClock {
   }
   private floor = 60;
 
+  /** neue Fahrt: ein langsamerer Takt als 60 je Sekunde aus der letzten Fahrt (Nachladen, warmes Telefon) gilt nicht weiter */
+  resetSlow() {
+    const m = maxDiv(this.period, 60);
+    if (this.div > m) { this.div = m; this.fn = 0; this.fk = 0; this.changes += 1; }
+  }
+
   constructor(start = performance.now()) {
     this.prev = start;
     this.lastCall = start;
@@ -105,7 +111,9 @@ export class FrameClock {
 
   /**
    * fester Bildtakt: verpasst mehr als jedes achte Bild seinen Takt, ein Takt mehr je Bild; zurückgenommen wird
-   * das nicht – ein Wechsel hin und her wäre selbst ein Ruckler.
+   * das nicht – ein Wechsel hin und her wäre selbst ein Ruckler. Unter 60 Bilder je Sekunde (nur mit einfacher
+   * Grafik erlaubt) erst, wenn mehr als jedes vierte Bild zu spät kommt: ein paar verpasste Takte bei 60 sind besser
+   * als gleichmäßige 40 oder 30.
    */
   private learnPace(raw: number) {
     if (raw >= 100) return;
@@ -118,7 +126,8 @@ export class FrameClock {
     for (let i = 0; i < this.fn; i++) if (this.frames[i] > T * 1.25 + 1) late += 1;
     // nie seltener als 60 Bilder je Sekunde (auf 120 Hz also höchstens jeder zweite Takt) – reicht das nicht, ist es
     // Sache der Auflösungsregelung
-    if (late > this.fn / 8 && this.div + 1 <= maxDiv(this.period, this.minFps)) {
+    const slower = this.period * (this.div + 1) > 1000 / 60 + 1;
+    if (late > this.fn / (slower ? 4 : 8) && this.div + 1 <= maxDiv(this.period, this.minFps)) {
       this.div += 1;
       this.changes += 1;
       this.fn = 0;
@@ -137,18 +146,23 @@ export class FrameClock {
     // Stempel ist kleiner, ein falscher Takt liegt um einen halben daneben)
     const errs: number[] = [];
     const outs: number[] = [];
+    // Anteil einfacher Takte: ein Takt muss sich selbst zeigen – unter Last ruft Safari auf dem 120-Hz-iPhone auch
+    // nach 12,5 oder 21 ms auf; das passt zu 240 Hz (3 und 5 Takte), aber kein Aufruf kommt je nach 4 ms
+    const ones: number[] = [];
     for (const P of RATES) {
       let err = 0;
       let out = 0;
-      for (const x of a) { const e = Math.abs(x - Math.max(1, Math.round(x / P)) * P); err += e; if (e > 4) out += 1; }
+      let one = 0;
+      for (const x of a) { const e = Math.abs(x - Math.max(1, Math.round(x / P)) * P); err += e; if (e > 4) out += 1; if (x < P * 1.5) one += 1; }
       errs.push(err / a.length);
       outs.push(out / a.length);
+      ones.push(one / a.length);
     }
     // der längste, der zu fast allen Abständen passt, fast so gut wie der beste – und ein ganzes Vielfaches von ihm
     // ist (60 Hz zu 240 Hz ja; 72 Hz zu 75 Hz nicht)
     const emin = Math.min(...errs);
     const Pb = RATES[errs.indexOf(emin)];
-    const i = errs.findIndex((e, k) => { const r = RATES[k] / Pb; return outs[k] < 0.06 && e < emin + 0.6 && Math.abs(r - Math.round(r)) < 0.03; });
+    const i = errs.findIndex((e, k) => { const r = RATES[k] / Pb; return outs[k] < 0.06 && e < emin + 0.6 && Math.abs(r - Math.round(r)) < 0.03 && ones[k] >= 0.15; });
     if (i < 0) return;
     const best = RATES[i];
     // anderer Takt erkannt: beim ersten Mal (statt der angenommenen 60 Hz) erst einmal jeden Takt versuchen; später

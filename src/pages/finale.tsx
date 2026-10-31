@@ -124,6 +124,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       let lastPhase = '';
       let lastRange = rangeDrop();
       let lastPace = -1;
+      let clockPhase = '';
       const loop = (now: number) => {
         // fester Bildtakt (frameClock.ts): zu frühe Aufrufe auslassen – jedes Bild kommt im gleichen Abstand
         if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
@@ -141,6 +142,9 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           return;
         }
         lostT = 0;
+        // einfache Grafik: notfalls gleichmäßig 30 statt 60; neue Fahrt (bereit, Countdown): wieder mit 60 beginnen
+        clock.minFps = gfxOn('lite') ? 30 : 60;
+        if (eng.phase !== clockPhase) { clockPhase = eng.phase; if (clockPhase === 'ready' || clockPhase === 'countdown') clock.resetSlow(); }
         if (uiRef.current !== 'paused') eng.update(dt);
         if (rec) P!.mark(SEC.spiel);
         renderer.prof = rec ? P : null;
@@ -165,7 +169,6 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         acc += dt;
         frames += 1;
         // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
-        clock.minFps = gfxOn('lite') ? 30 : 60;
         if (uiRef.current === 'playing' && !low && !gfxOn('lite')) {
           const nq = gov.frame(raw, renderer.quality, clock.target);
           if (nq !== null) {

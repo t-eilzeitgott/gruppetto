@@ -500,6 +500,8 @@ export class Renderer3D {
   spriteFar = this.pc ? 98 : SPRITE_FAR;
   /** einfache Grafik (gfxOpts): je Bild gelesen, damit das Umschalten im Pausenmenü sofort wirkt */
   private get lite(): boolean { return gfxOn('lite'); }
+  /** Kostenanalyse mit einfacher Grafik: diese Auflösungsstufe trotzdem (sonst null) */
+  private qMeasure: number | null = null;
   /** wirksame Auflösungsstufe (Anzeige, Messung): mit einfacher Grafik immer voll */
   get effQuality(): number { return this.lite ? 1 : this.quality; }
   private player: RiderModel | null = null;
@@ -1427,7 +1429,7 @@ export class Renderer3D {
     // Einfache Grafik: volle Auflösung – doppelte Dichte (auf dem Handy kaum von der vollen des Bildschirms zu
     // unterscheiden), nie abgesenkt; gespart wird an allem anderen
     const lite = this.lite;
-    const dpr = lite ? Math.min(2, dev)
+    const dpr = lite ? Math.min(2, dev) * (this.qMeasure ?? 1)
       : this.pc
         ? Math.min(2, Math.max(1.25, dev), Math.sqrt(4.5e6 / (W * H))) * (this.sharp ? 1 : this.quality)
         : this.sharp ? Math.min(2, dev) : Math.min(1.4, dev) * this.quality;
@@ -1768,7 +1770,13 @@ export class Renderer3D {
     let usePost = true;
     const hideMats = (set: Set<THREE.Material> | undefined) => { for (const m of set ?? []) { if (!matVis.has(m)) matVis.set(m, m.visible); m.visible = false; } };
     const hideObjs = (list: THREE.Object3D[] | undefined) => { for (const o of list ?? []) { if (!objVis.has(o)) objVis.set(o, o.visible); o.visible = false; } };
-    const setQ = (q: number) => { if (this.quality !== q) { this.quality = q; this.resize(); } };
+    // (einfache Grafik: volle Auflösung ist die Basis; die Stufen gelten dort nur für die Messung)
+    const lite0 = this.lite;
+    const qBase = lite0 ? 1 : q0;
+    const setQ = (q: number) => {
+      if (lite0) { const m = q >= 0.999 ? null : q; if (this.qMeasure !== m) { this.qMeasure = m; this.resize(); } }
+      else if (this.quality !== q) { this.quality = q; this.resize(); }
+    };
     const restore = () => {
       for (const [m, v] of matVis) m.visible = v;
       matVis.clear();
@@ -1779,7 +1787,7 @@ export class Renderer3D {
       this.sunset.mesh.visible = sunVis0;
       gl.shadowMap.autoUpdate = shadowAuto0;
       usePost = true;
-      setQ(q0);
+      setQ(qBase);
     };
     const weather = !!this.post && this.debugTod !== null;
     const steps: [string, () => void][] = [['Basis', () => undefined]];
@@ -1793,7 +1801,7 @@ export class Renderer3D {
     if (gl.shadowMap.enabled) steps.push(['ohne Schattenkarte (Durchgang je Bild)', () => { gl.shadowMap.autoUpdate = false; gl.shadowMap.needsUpdate = false; }]);
     if (weather) steps.push(['ohne Wetter-Nachbearbeitung', () => { usePost = false; }]);
     steps.push(['nur Himmel', () => { for (const set of cats.values()) if (!set.has(this.skyMat)) hideMats(set); for (const l of objs.values()) hideObjs(l); this.sunset.mesh.visible = false; }]);
-    for (const q of [0.5, 0.75, 1]) if (Math.abs(q - q0) > 0.01) steps.push([`Auflösung ${Math.round(q * 100)} % (statt ${Math.round(q0 * 100)} %)`, () => setQ(q)]);
+    for (const q of [0.5, 0.75, 1]) if (Math.abs(q - qBase) > 0.01) steps.push([`Auflösung ${Math.round(q * 100)} % (statt ${Math.round(qBase * 100)} %)`, () => setQ(q)]);
     // (quick: nur für Tests im Emulator – je Variante ein Bild, ohne Wiederholung)
     // Messen: K-mal zeichnen, dann auf die Grafik warten (Zeit je Bild: CPU und Grafik); vorher den Rückstau abwarten
     const K = quick ? 1 : 2;
@@ -5963,10 +5971,12 @@ export class Renderer3D {
     const track = g.track;
     const w = this.w;
     for (const t of this.tagView.values()) t.on = false;
-    const kitKey = riderKitKey(p.kit);
+    // eigener Fahrer in voller Detailstufe – mit einfacher Grafik in der schlichten (runde Rohre mit weniger Kanten)
+    const pq = this.lite ? 0 : 1;
+    const kitKey = `${riderKitKey(p.kit)}|${pq}`;
     if (!this.player || this.playerKit !== kitKey) {
       if (this.player) { this.scene.remove(this.player.group); this.player.dispose(); }
-      this.player = new RiderModel(p.kit, this.shadowTex, 1);
+      this.player = new RiderModel(p.kit, this.shadowTex, pq);
       this.playerKit = kitKey;
       this.player.group.userData.nopick = true;
       this.scene.add(this.player.group);
