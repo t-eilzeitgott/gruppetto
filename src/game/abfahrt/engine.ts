@@ -10,6 +10,7 @@ import type { Mission, MissionStat } from './missions';
 import { cadenceFor, pedalStep, smooth } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import { wreckSettled, wreckTravel, type Wreck } from './wreck';
+import { BOOST, CAR_HALF, CAR_LEN, carBlock, spawnCar, stepCar, type TeamCar } from './teamcar';
 import type { GhostRider } from '../tt';
 
 export const G = 9.81;
@@ -113,6 +114,8 @@ export interface RaceView {
   pileAt?: { z: number; x: number } | null;
   /** Zeitlupe beim Sturz: Spielzeit je echter Sekunde */
   timeScale?: number;
+  /** Teamwagen neben dem Fahrer (Abfahrt, teamcar.ts) */
+  car?: TeamCar | null;
 }
 
 export interface HudState {
@@ -218,6 +221,10 @@ export class Abfahrt {
   private overtakePop = -9;
   private curve = { active: false, sign: 0, hairpin: false, minV: 99, clean: true, maxK: 0 };
   private lastBarrier = 0;
+  /** Teamwagen an der breiten Stelle (teamcar.ts); Anfang der zuletzt besuchten Stelle; letzter Anstoß */
+  car: TeamCar | null = null;
+  private carZone0 = -1;
+  private carBump = -9;
   private lastBarrierZ = 0;
   private draftHeld = 0;
   private draftPopup = 0;
@@ -252,8 +259,11 @@ export class Abfahrt {
   reset() {
     this.track = new Track(this.opts.dayKey, this.opts.names);
     if (this.opts.cruise || this.opts.pileups) this.track.dropHazards();
-    // WebGPU-Abfahrt (Massenstürze): Straße mal breiter, mal enger
+    // WebGPU-Abfahrt (Massenstürze): Straße mal breiter, mal enger; sonst breiter nur dort, wo der Teamwagen kommt
     this.track.widthVar = !!this.opts.pileups;
+    this.track.carZones = true;
+    this.car = null;
+    this.carZone0 = -1;
     this.rng = mulberry32(this.track.seed ^ 0x5eed);
     this.wreck = null;
     this.pileCount = 0;
@@ -388,6 +398,7 @@ export class Abfahrt {
       const h = Math.min(SUB, left);
       if (this.phase === 'playing') this.stepPlayer(h);
       else if (this.phase === 'crash') this.stepCrash(h);
+      this.stepCar(h);
       this.stepOpps(h);
       left -= h;
     }
@@ -409,6 +420,53 @@ export class Abfahrt {
   }
 
   private countShown = 4;
+
+  /**
+   * Teamwagen: an einer breiten Stelle kommt er von hinten (nicht, wenn gerade andere Fahrer um dich sind), bietet
+   * die Flasche an, zieht dich beim Griff ein Stück mit (+5 km/h) und lässt sich dann zurückfallen. Wer rechts
+   * gegen ihn fährt, wird abgedrängt. Nach einem Sturz hält er an.
+   */
+  private stepCar(dt: number) {
+    const p = this.p;
+    if (this.phase === 'crash' || this.phase === 'over') {
+      const c = this.car;
+      if (c) { c.v = Math.max(0, c.v - 7 * dt); c.z += c.v * dt; c.dist += c.v * dt; c.reach = Math.max(0, c.reach - dt * 2); }
+      return;
+    }
+    if (this.phase !== 'playing') return;
+    if (!this.car) {
+      const zn = this.track.carZoneAt(p.z);
+      if (!zn || zn[0] === this.carZone0 || p.z < zn[0] + 12 || p.z > zn[1] - 150 || this.pileAt) return;
+      this.carZone0 = zn[0];
+      this.car = spawnCar(this.track, zn, p);
+      this.pop('Teamwagen!', 'blue', 'Rechts ran – Flasche holen');
+      return;
+    }
+    const c = this.car;
+    const r = stepCar(c, this.track, p, dt);
+    if (r === 'got') {
+      p.v += BOOST;
+      this.stats.bidons += 1;
+      this.award('bidons', 40, 'Klebrige Flasche!', 'blue', '+5 km/h', true);
+    } else if (r === 'missed') this.pop('Flasche verpasst', 'muted');
+    else if (r === 'gone') { this.car = null; return; }
+    // klebrige Flasche: kurz mitgezogen – nicht langsamer als der Wagen
+    if (c.tow > 0) p.v = Math.max(p.v, c.v);
+    // seitlich am Wagen: abgedrängt (kein Sturz), Gegner ebenso
+    const b = carBlock(c, p.z, p.x);
+    if (b !== null) {
+      p.x = b;
+      p.vx = Math.min(p.vx, -0.8);
+      this.tx = Math.min(this.tx, b - 0.15);
+      p.wobble = Math.max(p.wobble, 0.4);
+      if (this.time - this.carBump > 1.5) { this.carBump = this.time; this.shake = Math.max(this.shake, 0.3); this.pop('Vorsicht, Teamwagen!', 'red'); }
+    }
+    for (const o of this.opps) {
+      if (o.wreck) continue;
+      const ob = carBlock(c, o.z, o.x);
+      if (ob !== null) { o.x = ob; o.vx = Math.min(o.vx, 0); }
+    }
+  }
 
   hud(): HudState {
     const next = this.friends.find((f) => !f.passed && f.meters > this.p.z);
@@ -1098,6 +1156,9 @@ export class Abfahrt {
       if (pass !== null) tx = pass;
       if (dodge !== null) tx = dodge;
       tx = clamp(tx, -half + 0.45, half - 0.45);
+      // Teamwagen rechts: links an ihm vorbei (die Hand und der Platz daneben bleiben dem Spieler)
+      const car = this.car;
+      if (car && Math.abs(o.z - car.z) < CAR_LEN / 2 + 7) tx = Math.min(tx, car.x - CAR_HALF - (Math.abs(o.z - car.z) < CAR_LEN / 2 + 1 ? 1.75 : 0.8));
       o.vx += ((tx - o.x) * 3.2 - o.vx * 2.6) * dt;
       o.x = clamp(o.x + o.vx * dt, -half + 0.3, half - 0.3);
       const lean = Math.atan2(seg.curve * o.v * o.v, G) + o.vx * 0.06 + Math.sin(this.time * 14 + o.id) * o.bump * 0.15;

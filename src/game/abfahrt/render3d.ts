@@ -19,6 +19,7 @@ import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
 import { buildPeaks, buildPeaksSteps, isPcPeaks, peakKeepers, peakLight, peakSunUpdate, setPeakOpacity } from './peaks3d';
 import { Grass3D, grassMaterial, grassWarm } from './grass3d';
+import { TeamCar3D } from './teamcar3d';
 import { FAC_B, FAC_H, FAC_W, TB, portalFacade, tunnelMaterial, tunnelName, tunnelRing, tunnelUniforms, type TunnelUniforms } from './tunnel3d';
 import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, TINTABLE, WALL_PAL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
 import { GB, alphaTex, lin, lin255, propGeometries, type Prop3D, type RGBf } from './models3d';
@@ -396,6 +397,10 @@ export class Renderer3D {
   private mtnSunFade: THREE.Mesh | null = null;
   /** zum Prüfen: Rechenzeit je Bild für den Bau der Berge (ms; null = wie üblich) */
   debugPeakMs: number | null = null;
+  /** Teamwagen (teamcar3d.ts): einmal je Teamfarben gebaut (vor dem Start, unsichtbar vorgewärmt) */
+  private teamCar: TeamCar3D | null = null;
+  private carW = { x: 0, y: 0, z: 0, th: 0 };
+  private carLook = new THREE.Vector3();
   /** PC-Grafik: Schattenwurf der Bäume (Bild zur Sonne gedreht, Umriss aus dem Vorrat) */
   private bbDepth: THREE.ShaderMaterial | null = null;
   /** PC-Grafik: Gras am Wegrand (grass3d.ts) – ein Material für alle Strecken (bleibt übersetzt) */
@@ -1604,6 +1609,7 @@ export class Renderer3D {
     this.ttStart?.update(g, dt);
     this.updateDescStart(g, dt);
     this.updateGrass(g);
+    this.updateCar(g, dt);
     P?.mark(SEC.fahrer);
     this.updateSky(g, biome, dt);
     // Wasser strömt: eine Texturlänge je Sekunde (wie schnell das aussieht, legt die Dichte der Koordinaten fest)
@@ -1961,6 +1967,29 @@ export class Renderer3D {
     if (cz && isFinite(cz[0]) && z > cz[0] - 240 && z < cz[1]) ahead = Math.max(ahead, cz[1] + 100);
     // (vor dem Start, wenn niemand fährt, großzügiger)
     this.grass.update(z, ahead, this.debugPeakMs ?? (this.idleBuild ? 4 : 1));
+  }
+
+  /**
+   * Teamwagen: auf Strecken mit Teamwagen-Stellen schon vor dem Start gebaut und vorgewärmt (keine Shader mitten im
+   * Rennen), dann neben dem Fahrer gezeigt, solange das Spiel einen Wagen führt
+   */
+  private updateCar(g: RaceView, dt: number) {
+    const t = g.track;
+    if (!t.carZones) { if (this.teamCar) this.teamCar.group.visible = false; return; }
+    if (this.teamCar && !this.teamCar.fits(g.p.kit)) { this.teamCar.dispose(); this.teamCar = null; }
+    if (!this.teamCar) {
+      if (!this.idleBuild && !g.car) return;
+      this.teamCar = new TeamCar3D(g.p.kit, { props: this.mats.props, shadowTex: this.shadowTex, glow: this.mats.lampGlow.map! });
+      this.scene.add(this.teamCar.group);
+      this.warmUp(this.teamCar.group);
+      this.teamCar.group.visible = false;
+    }
+    const c = g.car;
+    this.teamCar.group.visible = !!c;
+    if (!c) return;
+    t.world(g.p.z, g.p.x, 1.35, this.carW);
+    this.carLook.set(this.carW.x, this.carW.y, this.carW.z);
+    this.teamCar.update(c, (z, x) => t.world(z, x, 0, this.carW), this.camera.position, this.carLook, dt);
   }
 
   /** Querprofil einer Straßenseite fürs Gras – null, wo keine Wiese ist (Tunnel, Brücke, Fels, Ort, Zuschauer) */

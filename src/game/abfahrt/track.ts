@@ -15,6 +15,10 @@ export const SEG = 2;            // Segmentlänge in m
 export const ROAD_HALF = 2.8;    // halbe Fahrbahnbreite in m
 export const VERGE = 1.0;        // Bankett neben der Randlinie
 export const EDGE = ROAD_HALF + VERGE;
+/** Teamwagen-Stellen: Länge (m), Abstand der Blöcke (m), zusätzliche halbe Breite (m) */
+export const CAR_ZONE = 340;
+export const CAR_BLOCK = 2200;
+export const CAR_EXTRA = 1.9;
 
 export type BiomeId = 'pass' | 'alpine' | 'forest' | 'village' | 'lake' | 'vineyard';
 export type Ground = 'snow' | 'rock' | 'meadow' | 'forest' | 'pavement' | 'field' | 'water' | 'vines' | 'sunflower';
@@ -424,6 +428,12 @@ export class Track {
    * breit; in Tunneln, auf Brücken und in Ortsdurchfahrten genau 0 (mit weichem Übergang davor und danach).
    */
   widthVar = false;
+  /**
+   * Teamwagen (Abfahrt): an einzelnen Stellen wird die Straße noch breiter (+1,9 m je Seite über gut 300 m, mit
+   * weichem Übergang – breiter als sonst je) – dort fährt der Teamwagen neben dich und reicht eine Flasche.
+   */
+  carZones = false;
+  private zoneC = new Map<number, [number, number] | null>();
   private exRawC = new Map<number, number>();
   private exC = new Map<number, number>();
   private exZero = new Map<number, boolean>();
@@ -438,10 +448,69 @@ export class Track {
     return v;
   }
 
+  /** Teamwagen-Stelle im Block k (je 2200 m eine, außer es findet sich kein ruhiges Stück): [Anfang, Ende] in m */
+  private zoneOf(k: number): [number, number] | null {
+    let v = this.zoneC.get(k);
+    if (v !== undefined) return v;
+    v = null;
+    const first = this.startZ + 1100;
+    const b0 = first + k * CAR_BLOCK;
+    if (k >= 0) {
+      let h = Math.imul((k + 17) ^ this.seed, 0x2c1b3c6d);
+      h ^= h >>> 12;
+      h = Math.imul(h, 0x297a2d39);
+      const r = ((h ^ (h >>> 15)) >>> 0) / 4294967296;
+      // Kandidat im ersten Drittel des Blocks, dann vorwärts bis zu einem Stück ohne Tunnel, Brücke, Ort und Kehre
+      let z = b0 + r * 500;
+      for (let tries = 0; tries < 40 && !v; tries++, z += 40) {
+        const i0 = Math.floor(z / SEG), i1 = Math.floor((z + CAR_ZONE) / SEG);
+        let ok = true;
+        for (let i = i0 - 16; i <= i1 + 16 && ok; i += 2) {
+          const sg = this.seg(Math.max(this.first, i));
+          if (sg.tunnel || sg.bridge > 0 || sg.bL || sg.bR) ok = false;
+          // Kehren und enge Kurven nur nicht im Teil, in dem der Wagen neben dir fährt
+          else if (i > i0 + 20 && i < i1 - 20 && (sg.hairpin > 0 || Math.abs(sg.curve) > 0.045)) ok = false;
+        }
+        if (ok) v = [z, z + CAR_ZONE];
+      }
+    }
+    this.zoneC.set(k, v);
+    return v;
+  }
+
+  /** Teamwagen-Stelle, in der z liegt (mit Übergängen), sonst null */
+  carZoneAt(z: number): [number, number] | null {
+    if (!this.carZones) return null;
+    const k = Math.floor((z - this.startZ - 1100) / CAR_BLOCK);
+    for (const q of [k, k - 1]) {
+      const zn = this.zoneOf(q);
+      if (zn && z >= zn[0] && z <= zn[1]) return zn;
+    }
+    return null;
+  }
+
+  /** nächste Teamwagen-Stelle, die nach z beginnt (höchstens zwei Blöcke voraus) */
+  nextCarZone(z: number): [number, number] | null {
+    if (!this.carZones) return null;
+    const k = Math.floor((z - this.startZ - 1100) / CAR_BLOCK);
+    for (let q = Math.max(0, k); q <= k + 2; q++) {
+      const zn = this.zoneOf(q);
+      if (zn && zn[0] > z) return zn;
+    }
+    return null;
+  }
+
   private exRaw(i: number): number {
     let v = this.exRawC.get(i);
     if (v !== undefined) return v;
     const z = i * SEG;
+    if (!this.widthVar) {
+      // nur Teamwagen-Stellen: dort breiter, sonst Normalbreite
+      v = this.carZoneAt(z) ? CAR_EXTRA : 0;
+      this.exRawC.set(i, v);
+      if (this.exRawC.size > 30000) this.exRawC.clear();
+      return v;
+    }
     const vn = (x: number, k: number) => {
       const a = Math.floor(x), f = x - a;
       const h = (q: number) => { let t = Math.imul((q + k * 7919) ^ this.seed, 0x9e3779b1); t ^= t >>> 15; t = Math.imul(t, 0x85ebca77); t ^= t >>> 13; return (t >>> 0) / 4294967296; };
@@ -454,13 +523,15 @@ export class Track {
     if (s.hairpin > 0) v = Math.max(v, 0.8);
     // Massenstart: breite Straße auf den ersten Metern
     if (z < 260) v = Math.max(v, 1.6 * Math.min(1, (300 - z) / 120));
+    // Teamwagen-Stelle: noch breiter
+    if (this.carZones && this.carZoneAt(z)) v = Math.max(v, CAR_EXTRA);
     this.exRawC.set(i, v);
     if (this.exRawC.size > 30000) this.exRawC.clear();
     return v;
   }
 
   extra(i: number): number {
-    if (!this.widthVar) return 0;
+    if (!this.widthVar && !this.carZones) return 0;
     i = Math.max(this.first, i);
     let v = this.exC.get(i);
     if (v !== undefined) return v;
@@ -482,7 +553,7 @@ export class Track {
 
   /** zusätzliche halbe Breite an der Stelle z (zwischen den Segmenten weich) */
   extraAt(z: number): number {
-    if (!this.widthVar) return 0;
+    if (!this.widthVar && !this.carZones) return 0;
     const f = Math.max(0, z / SEG);
     const i = Math.floor(f);
     const a = this.extra(i), b = this.extra(i + 1);

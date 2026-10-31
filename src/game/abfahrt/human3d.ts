@@ -498,7 +498,7 @@ function blendPose(cur: Pose, tgt: Pose, k: number, kFeet = k) {
 }
 
 /** Was ein Mensch gerade tut */
-export type Act = 'stand' | 'hands' | 'back' | 'cross' | 'hips' | 'hold' | 'photo' | 'kneel' | 'tv' | 'starter' | 'clap' | 'cheer' | 'wave' | 'walk' | 'sit' | 'drink' | 'watch' | 'point' | 'talk' | 'read' | 'speak';
+export type Act = 'stand' | 'hands' | 'back' | 'cross' | 'hips' | 'hold' | 'photo' | 'kneel' | 'tv' | 'starter' | 'clap' | 'cheer' | 'wave' | 'walk' | 'sit' | 'drink' | 'watch' | 'point' | 'talk' | 'read' | 'speak' | 'drive';
 
 /** Halter am Rad (Personal am Start): Hände um diesen Weltpunkt */
 const tmpV = new THREE.Vector3();
@@ -520,6 +520,8 @@ export class Human {
   tray = false;
   /** sitzt (Stuhl, Bank): Beine und Becken wie beim Sitzen, die Arme tun, was die Handlung sagt (reden, klatschen) */
   seated = false;
+  /** am Steuer (drive): wie weit die linke Hand zu holdAt hinausreicht (0 = am Lenkrad, 1 = ganz draußen) */
+  reach = 0;
   private torso: THREE.Bone;
   private head: THREE.Bone;
   private thighs: THREE.Bone[] = [];
@@ -539,7 +541,7 @@ export class Human {
   private first = true;
   /** Dinge in der Hand bzw. auf der Schulter (Kamera, Becher …): folgen den Händen */
   readonly props = new THREE.Group();
-  private propMode: 'none' | 'hands' | 'right' | 'shoulder' = 'none';
+  private propMode: 'none' | 'hands' | 'right' | 'left' | 'shoulder' = 'none';
   private v1 = new THREE.Vector3();
   private v2 = new THREE.Vector3();
   private v3 = new THREE.Vector3();
@@ -594,8 +596,8 @@ export class Human {
     this.props.visible = false;
   }
 
-  /** Ding in die Hände (zwischen beide), in die rechte Hand oder auf die rechte Schulter geben */
-  carry(obj: THREE.Object3D, mode: 'hands' | 'right' | 'shoulder') {
+  /** Ding in die Hände (zwischen beide), in eine Hand oder auf die rechte Schulter geben */
+  carry(obj: THREE.Object3D, mode: 'hands' | 'right' | 'left' | 'shoulder') {
     this.props.add(obj);
     this.propMode = mode;
     this.props.visible = true;
@@ -654,6 +656,25 @@ export class Human {
         P.hands[0].set(0.02, 1.2, -0.25); P.elbows[0].set(-1, -0.6, 0);
         P.hands[1].set(0.06, 1.15, -0.24); P.elbows[1].set(1, -0.6, 0.2);
         P.headPitch = -0.5;
+        break;
+      }
+      case 'drive': {
+        // am Steuer (Teamwagen): sitzt, rechte Hand am Lenkrad, die linke reicht zum Fenster hinaus (holdAt), der
+        // Oberkörper lehnt sich etwas zum Fenster
+        P.pelvis.set(0, 0.5, 0.06);
+        P.lean = 0.02;
+        P.feet[0].set(-0.13, ANKLE_Y, -0.42); P.feet[1].set(0.14, ANKLE_Y, -0.46);
+        P.footPitch[0] = 0.3; P.footPitch[1] = 0.3;
+        P.knees[0].set(-0.1, 0.6, -1); P.knees[1].set(0.1, 0.6, -1);
+        const wy = 0.5 + SPINE - 0.08;
+        P.hands[1].set(0.13, wy, -0.36);
+        P.elbows[1].set(1, -0.6, 0.2);
+        const k = Math.max(0, Math.min(1, this.reach));
+        const h = this.toBody(this.holdAt, this.v1);
+        P.hands[0].set(-0.13 + (h.x + 0.13) * k, wy + (h.y - wy) * k, -0.36 + (h.z + 0.36) * k);
+        P.elbows[0].set(-1, -0.25 + 0.25 * k, 0.15);
+        P.roll = 0.09 * k;
+        P.twist = -0.12 * k;
         break;
       }
       case 'hold': {
@@ -812,7 +833,7 @@ export class Human {
       }
     }
     // sitzend reden, klatschen, schauen: Becken und Beine vom Sitzen, Hände entsprechend tiefer
-    if (this.seated && this.act !== 'sit' && this.act !== 'drink' && this.act !== 'read') {
+    if (this.seated && this.act !== 'sit' && this.act !== 'drink' && this.act !== 'read' && this.act !== 'drive') {
       const drop = 0.5 - P.pelvis.y;
       P.pelvis.set(0, 0.5, 0.06);
       P.lean = -0.02;
@@ -912,7 +933,7 @@ export class Human {
         pr.position.set(0.17, SPINE + 0.02, -0.04).applyQuaternion(this.sq).add(pelvis);
         pr.quaternion.copy(this.sq);
       } else {
-        const a = this.propMode === 'hands' ? this.v1.copy(P.hands[0]).add(P.hands[1]).multiplyScalar(0.5) : this.v1.copy(P.hands[1]);
+        const a = this.propMode === 'hands' ? this.v1.copy(P.hands[0]).add(P.hands[1]).multiplyScalar(0.5) : this.v1.copy(P.hands[this.propMode === 'left' ? 0 : 1]);
         pr.position.copy(a);
         pr.rotation.set(0, -P.twist, 0);
       }
