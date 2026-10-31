@@ -1438,6 +1438,11 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .hud-ring.is-go { box-shadow: 0 0 0 2px var(--accent), 0 0 20px var(--accent-soft), 0 6px 18px rgba(0, 0, 0, 0.25); }
 .hud-ring.is-go .hud-ring__in b { color: var(--accent); }
 .hud-ring.is-ease .hud-ring__in b { color: #8ccaff; }
+/* Start: Pausenknopf, Punkte, Leiste und Ring kommen gestaffelt herein */
+.hud-top > .abf-round, .hud-score { animation: hud-in 0.45s 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.hud-top > .hud-bar { animation-delay: 0.06s; }
+.hud-ring { animation-delay: 0.14s; }
+.hud-bar--wide { animation-delay: 0.1s; }
 .hud-ring.is-low { animation: ring-low 0.6s ease-in-out infinite alternate; }
 @keyframes ring-low { to { box-shadow: 0 0 0 2px #ff5b5b, 0 0 18px rgba(255, 91, 91, 0.55); } }
 .hud-ring__wind {

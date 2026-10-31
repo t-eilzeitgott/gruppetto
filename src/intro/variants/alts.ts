@@ -1,10 +1,8 @@
 /**
- * Abwechslung bei jedem dritten Öffnen: fünf eigenständige Varianten, alle in der Farbe der Rundfahrt, alle
- * enden wie gewohnt mit dem Punkt hinter dem Wort.
+ * Abwechslung bei jedem dritten Öffnen: sechs ruhige Varianten, alle in der Farbe der Rundfahrt, alle enden wie
+ * gewohnt mit dem Punkt hinter dem Wort.
  */
-import { at, bezier, h, hideDot, letters, onDot, rollOut, showDot, type Ctx, type Variant } from '../engine';
-
-const css = (c: Ctx, id: string, s: string) => { if (!document.getElementById(id)) { c.css(s); } };
+import { at, bezier, h, letters, onDot, type Variant } from '../engine';
 
 // ---------------------------------------------------------------- Zielsprint
 
@@ -102,13 +100,11 @@ export const windschatten: Variant = (c) => {
 
 /**
  * Zielfoto: ein Schlitz wie bei der Zielkamera tastet das Wort von links nach rechts ab – was er erfasst, steht
- * erst gestreckt da und zieht sich zusammen. Darunter eine Zeitleiste mit laufender Zeit; zuletzt überquert der
- * Punkt die Linie, die Zeit steht.
+ * erst gestreckt da und zieht sich zusammen; zuletzt überquert der Punkt die Linie.
  */
 export const zielfoto: Variant = (c) => {
   const L = letters(c);
   const { fs, dot, word } = c.geo;
-  css(c, 'ix-zf', `.ix-zf-t{font:600 ${Math.round(fs * 0.25)}px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em;color:var(--muted);white-space:nowrap;text-align:right}`);
   if (c.calm) return {};
   c.cover.style.display = 'none';
   const x0 = word.left - fs * 0.15;
@@ -136,121 +132,7 @@ export const zielfoto: Variant = (c) => {
   // Punkt: erst, wenn der Schlitz ihn erreicht
   const td = delay + dur * ease.inv((dot.x - c.geo.pc.r - x0) / (x1 - x0));
   c.A(c.dotin, [{ opacity: 0, transform: 'scale(1.8,.6)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 260, delay: td, easing: 'cubic-bezier(.2,.9,.3,1.2)', fill: 'both' });
-  // Zeitleiste mit Strichen und Zeit
-  const rw = x1 - x0 + fs * 0.4;
-  const ruler = at(c.back, h('div', '', 'background:repeating-linear-gradient(90deg,var(--muted) 0 1px,transparent 1px 7px),repeating-linear-gradient(90deg,var(--muted) 0 1px,transparent 1px 35px);background-size:100% 40%,100% 100%;background-repeat:no-repeat;background-position:0 100%,0 0'), (x0 + x1) / 2, dot.base + fs * 0.42, rw, fs * 0.16);
-  c.A(ruler, [{ opacity: 0 }, { opacity: 0.45, offset: 0.2 }, { opacity: 0.45, offset: 0.8 }, { opacity: 0.2 }], { duration: dur + 500, delay: 40, easing: 'ease', fill: 'both' });
-  const time = at(c.back, h('div', 'ix-zf-t'), x1 - fs * 0.9, dot.base + fs * 0.85, fs * 2.6, fs * 0.4);
-  const fmt = (ms: number) => `0:0${Math.floor(ms / 1000)}.${String(Math.floor((ms % 1000) / 10)).padStart(2, '0')}`;
-  time.textContent = fmt(0);
-  c.A(time, [{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 60, fill: 'both' });
-  for (let t = 0; t <= dur; t += 40) c.at(delay + t, () => { time.textContent = fmt(Math.min(dur, t) * 1.12); });
-  c.at(delay + dur + 10, () => { time.textContent = fmt(dur * 1.12); time.style.color = 'var(--accent)'; });
   return { land: delay + dur + 60 };
-};
-
-// ---------------------------------------------------------------- Laufrad
-
-const WHEEL = (() => {
-  let spokes = '';
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * Math.PI * 2;
-    // tangential gekreuzt: Speichen setzen am Nabenrand versetzt an
-    const off = (i % 2 ? 1 : -1) * 0.5;
-    const hx = 50 + Math.cos(a + off) * 6, hy = 50 + Math.sin(a + off) * 6;
-    const rx = 50 + Math.cos(a) * 39, ry = 50 + Math.sin(a) * 39;
-    spokes += `M${hx.toFixed(1)} ${hy.toFixed(1)}L${rx.toFixed(1)} ${ry.toFixed(1)}`;
-  }
-  return `<svg viewBox="0 0 100 100" width="100%" height="100%" style="overflow:visible;display:block">
-<circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" stroke-width="8"/>
-<circle cx="50" cy="50" r="40" fill="none" stroke="var(--muted)" stroke-width="2"/>
-<path class="ix-sp" d="${spokes}" stroke="var(--text)" stroke-opacity=".75" stroke-width="1.6" fill="none"/>
-<circle class="ix-blur" cx="50" cy="50" r="39" fill="currentColor" opacity="0"/>
-<circle cx="50" cy="50" r="7" fill="currentColor"/><circle cx="50" cy="50" r="2.6" fill="var(--bg)"/>
-</svg>`;
-})();
-
-/**
- * Laufrad: der Punkt ist ein kleines Laufrad mit gekreuzten Speichen. Schnell gerollt verschwimmen die Speichen,
- * beim Ausrollen werden sie sichtbar; danach dreht es im Freilauf langsam aus. Beim Abflug wieder ein Punkt.
- */
-export const laufrad: Variant = (c) => {
-  const { fs, hidden } = c.geo;
-  const s = fs * 0.56;
-  const w = onDot(c, h('div', '', 'color:var(--accent)'), s, s, { ax: 0.42, ay: 1, dy: s * 0.02 });
-  const spin = h('div', '', 'width:100%;height:100%', WHEEL);
-  w.appendChild(spin);
-  hideDot(c);
-  const sp = spin.querySelector('.ix-sp') as SVGElement;
-  const blur = spin.querySelector('.ix-blur') as SVGElement;
-  const leave = (dur: number) => {
-    w.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.3)' }], { duration: dur * 0.55, easing: 'ease-in', fill: 'forwards' });
-    showDot(c, dur * 0.45, dur * 0.2);
-  };
-  if (c.calm) return { ping: false, leave };
-  const turns = Math.round((hidden / (Math.PI * s)) * 4) / 4;
-  const { land } = rollOut(c, { clip: true, squash: null, spin, turns, hop: 0.8, edge: c.geo.pc.x + s * 0.08 });
-  // schnell: Speichen verschwimmen zu einer Scheibe, beim Ausrollen werden sie scharf
-  c.A(blur, [{ opacity: 0.35 }, { opacity: 0.25, offset: 0.55 }, { opacity: 0 }], { duration: 650, delay: 300, easing: 'ease-in', fill: 'both' });
-  c.A(sp, [{ opacity: 0.2 }, { opacity: 0.35, offset: 0.55 }, { opacity: 1 }], { duration: 650, delay: 300, easing: 'ease-in', fill: 'both' });
-  return {
-    land,
-    ping: false,
-    // Freilauf: dreht langsam aus, ein kleines Nachwippen
-    idle() {
-      c.F(spin, [{ transform: 'rotate(0deg)' }, { transform: 'rotate(260deg)' }], { duration: 2600, easing: 'cubic-bezier(.1,.6,.3,1)', fill: 'forwards' });
-    },
-    leave,
-  };
-};
-
-// ---------------------------------------------------------------- Trikots
-
-const JERSEYS: { col: string; name: string; text?: string }[] = [
-  { col: '#ff4f9a', name: 'Maglia rosa' },
-  { col: '#f5c400', name: 'Maillot jaune' },
-  { col: '#1fae54', name: 'Maillot vert' },
-  { col: '#ffffff', name: 'Bergtrikot', text: '#e0262b' },
-];
-
-/**
- * Trikots: beim Ausrollen trägt der Punkt nacheinander die Farben der Wertungstrikots – Rosa, Gelb, Grün und
- * zuletzt Weiß mit roten Punkten (Bergtrikot); darunter steht kurz der Name. Beim Aufsetzen wieder die Farbe der
- * Rundfahrt.
- */
-export const trikots: Variant = (c) => {
-  const { fs, dot, word, pc } = c.geo;
-  css(c, 'ix-tk', `.ix-tk-l{font:700 ${Math.round(fs * 0.22)}px var(--font);letter-spacing:.14em;text-transform:uppercase;text-align:center;white-space:nowrap;opacity:0}`);
-  if (c.calm) return rollOut(c);
-  const { land } = rollOut(c, { clip: true, edge: pc.x });
-  // der Punkt wird beim Rollen größer (man soll die Farben sehen), beim Aufsetzen wieder klein
-  c.A(c.dotin, [{ transform: 'scale(1)' }, { transform: 'scale(1.7)', offset: 0.12 }, { transform: 'scale(1.7)', offset: 0.88 }, { transform: 'scale(1)' }], { duration: land - 250, delay: 250, easing: 'ease-in-out', fill: 'none' });
-  const step = (land - 300) / JERSEYS.length;
-  const kf: Keyframe[] = [];
-  JERSEYS.forEach((j, i) => {
-    kf.push({ offset: (i * step) / (land - 300), color: j.col });
-    kf.push({ offset: Math.min(1, ((i + 1) * step - 1) / (land - 300)), color: j.col });
-  });
-  c.A(c.dotin, kf, { duration: land - 300, delay: 300, easing: 'linear', fill: 'backwards' });
-  // Bergtrikot: rote Punkte auf dem weißen Punkt
-  const r = pc.r * 1.02;
-  const polka = h('div', '', `position:absolute;left:${pc.x - r}px;top:${pc.y - r}px;width:${2 * r}px;height:${2 * r}px;border-radius:50%;opacity:0;background:
-radial-gradient(circle at 30% 34%,#e0262b 0 13%,transparent 15%),radial-gradient(circle at 68% 30%,#e0262b 0 11%,transparent 13%),
-radial-gradient(circle at 52% 70%,#e0262b 0 12%,transparent 14%),radial-gradient(circle at 22% 72%,#e0262b 0 8%,transparent 10%),
-radial-gradient(circle at 82% 66%,#e0262b 0 8%,transparent 10%),#fff;box-shadow:0 0 0 .5px rgba(0,0,0,.3)`);
-  c.dotin.style.position = 'relative';
-  c.dotin.appendChild(polka);
-  const t4 = 300 + 3 * step;
-  c.A(polka, [{ opacity: 0 }, { opacity: 1, offset: 0.08 }, { opacity: 1, offset: 0.92 }, { opacity: 0 }], { duration: step, delay: t4, easing: 'linear', fill: 'both' });
-  // Namen darunter
-  const cx = (word.left + dot.x) / 2;
-  JERSEYS.forEach((j, i) => {
-    const l = at(c.back, h('div', 'ix-tk-l'), cx, dot.base + fs * 0.62, fs * 5, fs * 0.36);
-    l.textContent = j.name;
-    l.style.color = j.text ?? j.col;
-    c.A(l, [{ opacity: 0, transform: 'translateY(.3em)' }, { opacity: 1, transform: 'translateY(0)', offset: 0.22 }, { opacity: 1, transform: 'translateY(0)', offset: 0.78 }, { opacity: 0, transform: 'translateY(-.2em)' }], { duration: step + 60, delay: 300 + i * step, easing: 'ease-out', fill: 'both' });
-  });
-  return { land };
 };
 
 // ---------------------------------------------------------------- Fokus

@@ -11,7 +11,7 @@
  */
 
 export type IntroId =
-  | 'base' | 'sprint' | 'windschatten' | 'zielfoto' | 'laufrad' | 'trikots' | 'fokus' | 'welle' | 'fall'
+  | 'base' | 'sprint' | 'windschatten' | 'zielfoto' | 'fokus' | 'welle' | 'fall'
   | 'renntag';
 
 /** Etappe an einem Tag (von der App zwischengespeichert, siehe app/raceDays.ts) */
@@ -44,7 +44,7 @@ export interface IntroPick {
 }
 
 /** Abwechslung bei jedem dritten Öffnen (reihum) */
-export const ALTS: IntroId[] = ['sprint', 'fokus', 'windschatten', 'zielfoto', 'welle', 'laufrad', 'fall', 'trikots'];
+export const ALTS: IntroId[] = ['sprint', 'fokus', 'windschatten', 'zielfoto', 'welle', 'fall'];
 
 export const INTRO_IDS: IntroId[] = ['base', ...ALTS, 'renntag'];
 
@@ -101,9 +101,7 @@ export const INTRO_INFO: Record<IntroId, { name: string; desc: string }> = {
   base: { name: 'Gewohnt', desc: '„g." – der Punkt rollt das Wort aus' },
   sprint: { name: 'Zielsprint', desc: 'Der Punkt schießt von links herein, die Buchstaben springen in seinem Windschatten auf, kurzer Wurf auf den Zielstrich' },
   windschatten: { name: 'Windschatten', desc: 'Die Buchstaben rollen als enges Feld herein und ziehen sich hinter dem Punkt auseinander' },
-  zielfoto: { name: 'Zielfoto', desc: 'Ein Zielkamera-Schlitz tastet das Wort ab, dazu läuft die Zeit' },
-  laufrad: { name: 'Laufrad', desc: 'Der Punkt ist ein Laufrad mit Speichen, rollt aus und dreht sich still' },
-  trikots: { name: 'Trikots', desc: 'Beim Rollen trägt der Punkt nacheinander Rosa, Gelb, Grün und das Bergtrikot' },
+  zielfoto: { name: 'Zielfoto', desc: 'Ein Zielkamera-Schlitz tastet das Wort ab, zuletzt überquert der Punkt die Linie' },
   fokus: { name: 'Fokus', desc: 'Die Buchstaben werden nacheinander scharf, der Punkt fällt zuletzt von oben auf seinen Platz' },
   welle: { name: 'Welle', desc: 'Die Buchstaben wachsen als Welle aus der Grundlinie, wie ein Feld über eine Kuppe' },
   fall: { name: 'Aufprall', desc: 'Der Punkt fällt von oben, beim Aufprall fächert sich das Wort nach links auf' },
