@@ -252,3 +252,96 @@ radial-gradient(circle at 82% 66%,#e0262b 0 8%,transparent 10%),#fff;box-shadow:
   });
   return { land };
 };
+
+// ---------------------------------------------------------------- Fokus
+
+/**
+ * Fokus: die Buchstaben werden von links nach rechts nacheinander scharf (aus der Unschärfe, ein Hauch von unten),
+ * zuletzt fällt der Punkt von oben auf seinen Platz und federt kurz.
+ */
+export const fokus: Variant = (c) => {
+  const L = letters(c);
+  const { fs } = c.geo;
+  if (c.calm) return {};
+  c.cover.style.display = 'none';
+  L.forEach((l, i) => {
+    c.A(l.inner, [
+      { opacity: 0, filter: 'blur(8px)', transform: 'translateY(.12em) scale(1.06)' },
+      { opacity: 1, filter: 'blur(0px)', transform: 'translateY(0) scale(1)' },
+    ], { duration: 520, delay: 80 + i * 55, easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'both' });
+  });
+  const t = 80 + L.length * 55 + 180;
+  c.A(c.dot, [
+    { offset: 0, transform: `translateY(${-fs * 1.4}px)`, opacity: 0, easing: 'cubic-bezier(.5,0,.9,.5)' },
+    { offset: 0.55, transform: 'translateY(0)', opacity: 1, easing: 'cubic-bezier(.2,.7,.4,1)' },
+    { offset: 0.78, transform: `translateY(${-fs * 0.16}px)`, opacity: 1, easing: 'cubic-bezier(.5,0,.9,.5)' },
+    { offset: 1, transform: 'translateY(0)', opacity: 1 },
+  ], { duration: 560, delay: t, fill: 'both' });
+  c.A(c.dotin, [{ transform: 'scale(1)' }, { transform: 'scale(1.35,.7)' }, { transform: 'scale(.92,1.1)' }, { transform: 'scale(1)' }], { duration: 300, delay: t + 300, easing: 'ease-out', fill: 'both' });
+  return { land: t + 560 };
+};
+
+// ---------------------------------------------------------------- Welle
+
+/**
+ * Welle: die Buchstaben wachsen nacheinander aus der Grundlinie und federn nach – wie ein Feld, das über eine
+ * Kuppe kommt. Der Punkt kommt als Letzter oben drüber.
+ */
+export const welle: Variant = (c) => {
+  const L = letters(c);
+  if (c.calm) return {};
+  c.cover.style.display = 'none';
+  L.forEach((l, i) => {
+    l.inner.style.transformOrigin = '50% 85%';
+    c.A(l.inner, [
+      { opacity: 0, transform: 'translateY(.18em) scaleY(0)' },
+      { opacity: 1, transform: 'translateY(-.06em) scaleY(1.12)', offset: 0.55 },
+      { opacity: 1, transform: 'translateY(.01em) scaleY(.97)', offset: 0.8 },
+      { opacity: 1, transform: 'translateY(0) scaleY(1)' },
+    ], { duration: 560, delay: 60 + i * 62, easing: 'ease-out', fill: 'both' });
+  });
+  const t = 60 + L.length * 62;
+  c.A(c.dot, [
+    { transform: 'translate(-.5em,-.1em)', opacity: 0 },
+    { transform: 'translate(-.2em,-.45em)', opacity: 1, offset: 0.45 },
+    { transform: 'translate(0,0)', opacity: 1 },
+  ], { duration: 460, delay: t, easing: 'cubic-bezier(.3,.6,.4,1)', fill: 'both' });
+  c.A(c.dotin, [{ transform: 'scale(1)' }, { transform: 'scale(1.3,.74)' }, { transform: 'scale(.94,1.08)' }, { transform: 'scale(1)' }], { duration: 320, delay: t + 440, easing: 'ease-out', fill: 'both' });
+  return { land: t + 480 };
+};
+
+// ---------------------------------------------------------------- Aufprall
+
+/**
+ * Aufprall: der Punkt fällt von oben auf seinen Platz; beim Aufprall läuft eine feine Linie über die Grundlinie,
+ * und das Wort fächert sich vom Punkt aus nach links auf.
+ */
+export const fall: Variant = (c) => {
+  const L = letters(c);
+  const { fs, dot, word } = c.geo;
+  if (c.calm) return {};
+  c.cover.style.display = 'none';
+  const drop = 520;
+  c.A(c.dot, [
+    { offset: 0, transform: `translateY(${-c.geo.vh * 0.42}px)`, easing: 'cubic-bezier(.55,0,1,.45)' },
+    { offset: 0.72, transform: 'translateY(0)', easing: 'cubic-bezier(0,.55,.45,1)' },
+    { offset: 0.86, transform: `translateY(${-fs * 0.2}px)`, easing: 'cubic-bezier(.55,0,1,.45)' },
+    { offset: 1, transform: 'translateY(0)' },
+  ], { duration: drop / 0.72, delay: 60, fill: 'both' });
+  const hit = 60 + drop;
+  c.A(c.dotin, [{ transform: 'scale(1)' }, { transform: 'scale(1.5,.6)' }, { transform: 'scale(.9,1.12)' }, { transform: 'scale(1)' }], { duration: 320, delay: hit - 10, easing: 'ease-out', fill: 'both' });
+  // feine Linie entlang der Grundlinie, vom Punkt nach links
+  const w = dot.x - word.left + fs * 0.3;
+  const ln = at(c.back, h('div', '', 'color:var(--accent);background:linear-gradient(90deg,transparent,currentColor);transform-origin:100% 50%;opacity:0'), dot.x - w / 2, dot.base + fs * 0.12, w, Math.max(1, fs * 0.025));
+  c.A(ln, [{ opacity: 0.9, transform: 'scaleX(0)' }, { opacity: 0.6, transform: 'scaleX(1)', offset: 0.6 }, { opacity: 0, transform: 'scaleX(1)' }], { duration: 640, delay: hit, easing: 'cubic-bezier(.2,.7,.3,1)', fill: 'both' });
+  // Wort fächert sich vom Punkt aus auf (letzter Buchstabe zuerst)
+  const n = L.length;
+  L.forEach((l, i) => {
+    const k = n - 1 - i;
+    c.A(l.el, [
+      { opacity: 0, transform: `translateX(${dot.x - l.x}px) scale(.6)` },
+      { opacity: 1, transform: 'translateX(0) scale(1)' },
+    ], { duration: 480, delay: hit + 20 + k * 32, easing: 'cubic-bezier(.16,.9,.3,1.06)', fill: 'both' });
+  });
+  return { land: hit + 20 + n * 32 + 300 };
+};

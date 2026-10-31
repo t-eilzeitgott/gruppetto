@@ -1,17 +1,12 @@
 import type { IntroId } from '../schedule';
 import type { Variant } from '../engine';
 import { base } from './base';
-import { halloween } from './halloween';
-import { laufrad, sprint, trikots, windschatten, zielfoto } from './alts';
-import { advent, frost, laterne, laub, nebel, neujahr, silvester, weihnachten, winter } from './season';
-import { karneval, ostern, valentin } from './holiday';
+import { fall, fokus, laufrad, sprint, trikots, welle, windschatten, zielfoto } from './alts';
 import { renntag } from './race';
 
-/** alle Varianten (noch nicht gebaute zeigen das gewohnte Intro) */
+/** alle Varianten */
 export const VARIANTS: Record<IntroId, Variant> = {
   base,
-  sprint, windschatten, zielfoto, laufrad, trikots,
-  halloween,
-  laub, laterne, nebel, frost, advent, weihnachten, winter, silvester, neujahr,
-  valentin, karneval, ostern, renntag,
+  sprint, fokus, windschatten, zielfoto, welle, laufrad, fall, trikots,
+  renntag,
 };

@@ -231,12 +231,3 @@ export function letters(c: Ctx): Letter[] {
   return out;
 }
 
-/** Wortmarke seitlich verschieben (z. B. damit Wort und Schmuck zusammen mittig stehen) und neu messen */
-export function shiftMark(c: Ctx, dx: number) {
-  c.mark.style.marginLeft = `${2 * dx}px`;
-  const dr = c.dot.getBoundingClientRect();
-  const wr = c.word.getBoundingClientRect();
-  const { pc } = c.geo;
-  c.geo.dot = { x: dr.left + pc.x, y: dr.top + pc.y, base: dr.top + pc.base };
-  c.geo.word = { left: wr.left, right: wr.right, top: wr.top, bottom: wr.bottom };
-}
