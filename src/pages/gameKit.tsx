@@ -87,7 +87,7 @@ export function RangePicker() {
     <div className="abf-range">
       <span className="abf-range__label">Sichtweite</span>
       <Segmented label="Sichtweite" value={v} options={RANGES.map((r) => ({ value: r.id, label: r.label }))} onChange={(id) => { setViewRange(id); setV(id); }} />
-      <span className="abf-range__hint">{lite ? 'Mit einfacher Grafik immer „Kurz“ – deine Wahl gilt wieder, wenn sie aus ist' : hint[v]}</span>
+      <span className="abf-range__hint">{lite ? 'Mit einfacher Grafik immer kurz – deine Wahl gilt wieder, wenn sie aus ist' : hint[v]}</span>
     </div>
   );
 }

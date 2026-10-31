@@ -7,6 +7,7 @@ import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/ab
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock, paceText } from '../game/frameClock';
+import { gfxOn } from '../game/abfahrt/gfxOpts';
 import { EV, SEC, type Perf3D } from '../game/abfahrt/perf3d';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { rangeDrop, viewRange } from '../game/abfahrt/viewRange';
@@ -99,6 +100,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       if (low) { renderer.quality = 0.25; renderer.resize(); }
       // zuletzt gefundene Auflösungsstufe dieses Geräts
       else if (renderer.quality !== storedQuality()) { renderer.quality = storedQuality(); renderer.resize(); }
+      // (einfache Grafik: volle Auflösung, die Regelung bleibt aus – reicht es nicht, gleichmäßig 30 Bilder je Sekunde)
       const gov = new QualityGovernor(0.5);
       // beim Neuaufbau läuft das Rennen weiter
       if (!engineRef.current || (gen === 0 && uiRef.current === 'ready')) engineRef.current = cb.current.make();
@@ -157,13 +159,14 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         idleT = 0;
         cb.current.onFrame(eng, dt);
-        fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0, renderer.quality, renderer.shaderErrors);
+        fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0, renderer.effQuality, renderer.shaderErrors);
         lastDraw = now;
         if (idle) { frames += 1; raf = requestAnimationFrame(loop); return; }
         acc += dt;
         frames += 1;
         // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
-        if (uiRef.current === 'playing' && !low) {
+        clock.minFps = gfxOn('lite') ? 30 : 60;
+        if (uiRef.current === 'playing' && !low && !gfxOn('lite')) {
           const nq = gov.frame(raw, renderer.quality, clock.target);
           if (nq !== null) {
             if (rec) P!.event(EV.quality, `Auflösung ${Math.round(renderer.quality * 100)} % → ${Math.round(nq * 100)} %`);
@@ -179,7 +182,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           P!.mark(SEC.anzeige);
           P!.end({
             dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
-            quality: renderer.quality, px: renderer.gl.getPixelRatio(), range: rd, z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+            quality: renderer.effQuality, px: renderer.gl.getPixelRatio(), range: rd, z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
           });
         }
         raf = requestAnimationFrame(loop);

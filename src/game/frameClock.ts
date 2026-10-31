@@ -38,6 +38,19 @@ export class FrameClock {
   private measured = false;
   /** zählt bei jeder Änderung von Takt oder Takten je Bild hoch (für die Messfahrt) */
   changes = 0;
+  /**
+   * so viele Bilder je Sekunde mindestens im festen Takt (60). Einfache Grafik: 30 – schafft ein langsames Gerät 60
+   * nicht, kommt jedes Bild gleichmäßig nach 33 ms (auf 120 Hz erst nach 25), statt mal nach 17, mal nach 33
+   */
+  get minFps(): number { return this.floor; }
+  set minFps(v: number) {
+    if (v === this.floor) return;
+    this.floor = v;
+    // wieder schneller verlangt (einfache Grafik aus): nicht im langsameren Takt bleiben
+    const m = maxDiv(this.period, v);
+    if (this.div > m) { this.div = m; this.fn = 0; this.fk = 0; this.changes += 1; }
+  }
+  private floor = 60;
 
   constructor(start = performance.now()) {
     this.prev = start;
@@ -105,7 +118,7 @@ export class FrameClock {
     for (let i = 0; i < this.fn; i++) if (this.frames[i] > T * 1.25 + 1) late += 1;
     // nie seltener als 60 Bilder je Sekunde (auf 120 Hz also höchstens jeder zweite Takt) – reicht das nicht, ist es
     // Sache der Auflösungsregelung
-    if (late > this.fn / 8 && this.div + 1 <= maxDiv(this.period)) {
+    if (late > this.fn / 8 && this.div + 1 <= maxDiv(this.period, this.minFps)) {
       this.div += 1;
       this.changes += 1;
       this.fn = 0;
@@ -146,7 +159,7 @@ export class FrameClock {
       // nie seltener als 60 Bilder je Sekunde (wie in learnPace): eine Fehlerkennung (90 oder 240 statt 120 Hz)
       // ergab sonst einen Takt von 20–22 ms – auf dem 120-Hz-Schirm also 25 ms, 40 Bilder je Sekunde, und die
       // Auflösungsregelung senkte Auflösung und Sichtweite, obwohl das Gerät 60 schafft
-      this.div = this.measured ? Math.max(1, Math.min(maxDiv(best), Math.round(t / best))) : 1;
+      this.div = this.measured ? Math.max(1, Math.min(maxDiv(best, this.minFps), Math.round(t / best))) : 1;
       this.fn = 0;
       this.fk = 0;
       this.changes += 1;
@@ -160,8 +173,8 @@ export class FrameClock {
  * Springen zwischen 60 und 120 glätten – nie selbst bremsen: ein falsch erkannter Takt (90, 144 oder 240 statt
  * 120 Hz) mit einem Bildabstand zwischen 17 und 25 ms wird auf dem echten 120-Hz-Schirm zu 25 ms.
  */
-export function maxDiv(period: number): number {
-  return Math.max(1, Math.floor((1000 / 60 + 1) / period));
+export function maxDiv(period: number, minFps = 60): number {
+  return Math.max(1, Math.floor((1000 / minFps + 1) / period));
 }
 
 /** Takt in Worten (Messfahrt): „120 Hz, jeder 2. Takt → 16,7 ms“ */

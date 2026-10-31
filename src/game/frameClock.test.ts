@@ -145,3 +145,22 @@ test('falsch erkannter Takt (90, 100, 144, 240 Hz) und langsame Bilder: der fest
     assert.ok(clock.target <= P60 + 1, `${hz} Hz: Takt ${clock.target.toFixed(1)} ms (jeder ${clock.div}.)`);
   }
 });
+
+test('einfache Grafik (mindestens 30 Bilder je Sekunde): ein langsames Gerät läuft gleichmäßig im 30er-Takt', () => {
+  // 60-Hz-Schirm, Bilder brauchen 20 ms: ohne festen Takt mal 17, mal 33 ms
+  const clock = new FrameClock(0);
+  clock.minFps = 30;
+  const stamps: number[] = [];
+  let t = 0;
+  for (let i = 0; i < 900; i++) { t += (i % 3 === 0) ? P60 : 2 * P60; stamps.push(t); }
+  for (const x of stamps) if (clock.ready(x)) clock.tick(x);
+  assert.equal(clock.div, 2, 'jeder zweite Takt');
+  assert.ok(Math.abs(clock.target - 2 * P60) < 0.1);
+  // mit 60 als Grenze bleibt es beim vollen Takt
+  const c60 = new FrameClock(0);
+  for (const x of stamps) if (c60.ready(x)) c60.tick(x);
+  assert.equal(c60.div, 1);
+  // einfache Grafik wieder aus: zurück zum 60er-Takt
+  clock.minFps = 60;
+  assert.equal(clock.div, 1);
+});

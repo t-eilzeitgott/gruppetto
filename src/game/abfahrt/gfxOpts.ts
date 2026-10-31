@@ -2,9 +2,11 @@
  * Aufwendige Grafik zum Zuschalten im Pausenmenü – anfangs nur die Sonnenschatten an, der Rest kostet auf vielen
  * Geräten zu viel Bildrate. Das Gerät merkt sich die Wahl. Ohne three.js (die leichten Spiele laden das Menü auch).
  *
- *  - lite: einfache Grafik für langsame Geräte (auch im Profil schaltbar) – schaltet Licht, Schatten und Details
- *    ab und spart darüber hinaus: kürzeste Sichtweite, weniger Bildpunkte, Fahrer früher als Bild statt 3D-Modell,
- *    ohne Kantenglättung (ab dem nächsten Start) und ohne Weichzeichner unter Namensschildern. Schließt PC-Grafik aus.
+ *  - lite: einfache Grafik für langsame Geräte (auch im Profil schaltbar) – volle Auflösung (doppelte Pixeldichte,
+ *    nie abgesenkt), dafür alles andere schlicht: Licht, Schatten und Details aus, kürzeste Sichtweite mit näheren
+ *    Bäumen und dichterem Dunst, weniger Fahrer als 3D-Modell, ruhiger Himmel, ohne Kantenglättung (ab dem nächsten
+ *    Start) und ohne Weichzeichner unter Namensschildern. Reicht das nicht für 60 Bilder je Sekunde, läuft das Spiel
+ *    gleichmäßig mit 30 statt zu ruckeln. Schließt PC-Grafik aus.
  *
  *  - licht: Wetter und Licht der Spielwelten (Goldene Stunde, Wetterumschwung, Nebel am Pass) mit der
  *    Nachbearbeitung (Leuchten, Lichtstrahlen, Wolken, Farbfilter, Vignette, Korn) und dem leichten
@@ -28,7 +30,7 @@ export const isEffect = (k: GfxOpt) => EFFECTS.includes(k);
 
 export const GFX_OPTS: { id: GfxOpt; label: string; hint: string }[] = [
   { id: 'pc', label: 'PC-Grafik', hint: 'Höchste Details für starke Rechner – ab dem nächsten Start' },
-  { id: 'lite', label: 'Einfache Grafik', hint: 'Für langsame Geräte: kurze Sicht, schlichter, ohne Schatten und Effekte' },
+  { id: 'lite', label: 'Einfache Grafik', hint: 'Für langsame Geräte: volle Auflösung, dafür kurze Sicht, schlicht, ohne Schatten und Effekte' },
   { id: 'licht', label: 'Lichtfilter & Wetter', hint: 'Goldene Stunde, Nebel, Leuchten, Lichtstrahlen' },
   { id: 'schatten', label: 'Sonnenschatten', hint: 'Schatten von Fahrern, Bäumen und Häusern' },
   { id: 'details', label: 'Landschaftsdetails', hint: 'Relief, Baumkronen, Felsstruktur, Wolkenschatten' },

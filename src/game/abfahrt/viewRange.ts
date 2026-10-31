@@ -68,8 +68,14 @@ export function gfxScope(): string { return scope; }
 // einfache Grafik (gfxOpts): immer die kürzeste Sichtweite – der Renderer stellt sich bei der Änderung um
 onGfxChange((k) => { if (k === 'lite') ver += 1; });
 
-/** wirksame Sichtweite: die gewählte, bei knapper Leistung automatisch kürzer; mit einfacher Grafik die kürzeste */
-export function viewRange(): ViewRange { return gfxOn('lite') ? RANGES[0] : RANGES[Math.max(0, RANGES.indexOf(cur) - drop)]; }
+/**
+ * Einfache Grafik: Landschaft wie „Kurz“, Bäume enden näher (weniger durchsichtige Bilder übereinander), dichterer
+ * Dunst verbirgt das Ende, feine Muster nur nah, weniger Bauzeit je Bild
+ */
+const LITE: ViewRange = { ...RANGES[0], label: 'Einfach', fade: 160, gone: 210, canNear: 130, canFull: 280, budget: 1.5, chunkBudget: 1.2, ahead: 400, fog: 1.3, detail: 0.5 };
+
+/** wirksame Sichtweite: die gewählte, bei knapper Leistung automatisch kürzer; mit einfacher Grafik die eigene */
+export function viewRange(): ViewRange { return gfxOn('lite') ? LITE : RANGES[Math.max(0, RANGES.indexOf(cur) - drop)]; }
 /** die im Pausenmenü gewählte Sichtweite */
 export function userRange(): ViewRange { return cur; }
 /** zählt bei jeder Änderung hoch (der Renderer vergleicht) */

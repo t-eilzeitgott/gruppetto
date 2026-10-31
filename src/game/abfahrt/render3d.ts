@@ -495,15 +495,13 @@ export class Renderer3D {
   private anims = new Map<number, RiderAnim>();
   /** Fahrer in der Ferne als 2D-Bilder (ein Zeichenaufruf für alle) */
   private rs!: RiderSprites;
-  /**
-   * ab wo Bilder statt 3D-Fahrer (m; zum Prüfen änderbar) – PC-Grafik: 3D-Fahrer bis gut 80 m; einfache Grafik:
-   * schon ab gut 20 m Bilder (bei ihrer geringeren Auflösung sind die Bilder dort kaum gröber)
-   */
+  /** ab wo Bilder statt 3D-Fahrer (m; zum Prüfen änderbar) – PC-Grafik: 3D-Fahrer bis gut 80 m */
   spriteNear = this.pc ? 82 : SPRITE_NEAR;
   spriteFar = this.pc ? 98 : SPRITE_FAR;
-  private get spriteFrom(): [number, number] { return this.lite ? [22, 28] : [this.spriteNear, this.spriteFar]; }
   /** einfache Grafik (gfxOpts): je Bild gelesen, damit das Umschalten im Pausenmenü sofort wirkt */
   private get lite(): boolean { return gfxOn('lite'); }
+  /** wirksame Auflösungsstufe (Anzeige, Messung): mit einfacher Grafik immer voll */
+  get effQuality(): number { return this.lite ? 1 : this.quality; }
   private player: RiderModel | null = null;
   private playerAnim = new RiderAnim(1, true);
   private playerKit = '';
@@ -1426,11 +1424,13 @@ export class Renderer3D {
     // Kantenglättung gestochen scharf) – die Auflösungsregelung nimmt bei Bedarf zurück
     const dev = window.devicePixelRatio || 1;
     // (PC-Grafik höchstens ~4,5 Millionen Bildpunkte: auf großen Bildschirmen bliebe sonst kaum Rechenzeit fürs Bild)
-    // Einfache Grafik: höchstens einfache Dichte (ein Bildpunkt je Punkt), am Start 1,4-fach
+    // Einfache Grafik: volle Auflösung – doppelte Dichte (auf dem Handy kaum von der vollen des Bildschirms zu
+    // unterscheiden), nie abgesenkt; gespart wird an allem anderen
     const lite = this.lite;
-    const dpr = this.pc && !lite
-      ? Math.min(2, Math.max(1.25, dev), Math.sqrt(4.5e6 / (W * H))) * (this.sharp ? 1 : this.quality)
-      : this.sharp ? Math.min(lite ? 1.4 : 2, dev) : Math.min(lite ? 1 : 1.4, dev) * this.quality;
+    const dpr = lite ? Math.min(2, dev)
+      : this.pc
+        ? Math.min(2, Math.max(1.25, dev), Math.sqrt(4.5e6 / (W * H))) * (this.sharp ? 1 : this.quality)
+        : this.sharp ? Math.min(2, dev) : Math.min(1.4, dev) * this.quality;
     const cv = this.gl.domElement;
     // unverändert: nichts anfassen (jedes Setzen der Größe leert die Leinwand)
     if (W !== this.W || H !== this.H || dpr !== this.gl.getPixelRatio() || cv.width !== Math.floor(W * dpr) || cv.height !== Math.floor(H * dpr)) {
@@ -1439,7 +1439,7 @@ export class Renderer3D {
       this.gl.setPixelRatio(dpr);
       this.gl.setSize(W, H, false);
     }
-    const odpr = Math.min(lite ? 1 : 1.5, window.devicePixelRatio || 1);
+    const odpr = Math.min(1.5, window.devicePixelRatio || 1);
     this.overlayDirty = true;
     const ow = Math.round(W * odpr);
     const oh = Math.round(H * odpr);
@@ -1868,7 +1868,9 @@ export class Renderer3D {
       t.world(z, x, 0, this.w2);
       leader = this.leaderV.set(this.w2.x, this.w2.y, this.w2.z);
     }
-    this.skyLife.update(t, g.p.z, this.time.value, dt, biome, this.night, leader, this.camera.position);
+    // (einfache Grafik: ohne Vögel und Flieger am Himmel)
+    this.skyLife.group.visible = !this.lite;
+    if (!this.lite) this.skyLife.update(t, g.p.z, this.time.value, dt, biome, this.night, leader, this.camera.position);
   }
 
   private reset(track: Track) {
@@ -2762,7 +2764,8 @@ export class Renderer3D {
     u.uTime.value = this.time.value;
     u.uCover.value = M.cover; u.uCirrus.value = M.cirrus; u.uStorm.value = M.storm; u.uOvercast.value = M.overcast; u.uTowers.value = M.towers;
     u.uStars.value = L.stars; u.uWarm.value = Math.max(0, Math.min(1, (L.t - 0.3) / 0.4));
-    u.uDrama.value = this.track?.kind === 'descent' ? 1 : 0;
+    // (einfache Grafik: ruhiger Himmel ohne Wolkentürme und Strahlen)
+    u.uDrama.value = this.track?.kind === 'descent' && !this.lite ? 1 : 0;
     // Fenster, Laternen, Lichterketten: in der Abfahrt (Abend) überall an, sonst mit der Tageszeit
     const lampsOn = this.track?.kind === 'descent' && this.debugTod === null ? 1 : L.lights;
     this.mats.facade.emissiveIntensity = lampsOn * 1.25;
@@ -6001,7 +6004,7 @@ export class Renderer3D {
     const field = g.ghosts?.length ? [...g.opps, ...g.ghosts] : g.opps;
     // (einfache Grafik: weniger Fahrer als Modell – im Finale die übrigen als Bild, siehe unten)
     const lite = this.lite;
-    const cap = lite ? (sprint ? 14 : 8) : (sprint ? 32 : 14) * (this.pc ? 2 : 1);
+    const cap = lite ? (sprint ? 16 : 8) : (sprint ? 32 : 14) * (this.pc ? 2 : 1);
     const list = field.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, cap);
     const cp = this.camera.position;
     const rsOn = this.rs.ready;
@@ -6023,8 +6026,7 @@ export class Renderer3D {
       // Geister bleiben immer das 3D-Modell (halbdurchsichtig) – kein Bild in der Ferne; Gestürzte auch (das Bild
       // kennt kein Liegen)
       if (rsOn && !o.ghost && !o.wreck && spriteable(o.kit)) {
-        const [sn, sf] = this.spriteFrom;
-        const t = Math.max(0, Math.min(1, (dc - sn) / (sf - sn)));
+        const t = Math.max(0, Math.min(1, (dc - this.spriteNear) / (this.spriteFar - this.spriteNear)));
         sa = apQ(t * t * (3 - 2 * t));
       }
       const rp = this.placeOpp(m, o, track, sa < 1 && !o.wreck);

@@ -26,7 +26,7 @@ function GameGfx() {
         onChange={(v) => setGfx('lite', v === 'lite')}
         options={[{ value: 'normal', label: 'Normal' }, { value: 'lite', label: 'Einfach' }]}
       />
-      <p className="hint">Einfach: für langsame Geräte – kurze Sicht, weniger Bildpunkte, Fahrer früher als Bild, ohne Schatten und Lichteffekte. Gilt für alle Spiele.</p>
+      <p className="hint">Einfach: für langsame Geräte – volle Auflösung, dafür kurze Sicht und schlicht, ohne Schatten und Lichteffekte; reicht es nicht, gleichmäßige 30 Bilder je Sekunde. Gilt für alle Spiele.</p>
     </div>
   );
 }

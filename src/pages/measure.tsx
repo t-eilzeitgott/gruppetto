@@ -48,7 +48,7 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
       geraet: navigator.userAgent,
       bildschirm: `${window.innerWidth}×${window.innerHeight} ×${window.devicePixelRatio || 1}`,
       zeichenflaeche: cv ? `${cv.width}×${cv.height}` : '?',
-      aufloesung: r ? `${Math.round(r.quality * 100)} % (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
+      aufloesung: r ? `${Math.round(r.effQuality * 100)} % (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
       sichtweite: `${viewRange().label}${rd ? ` (vom Regler ${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`,
       grafik: `${gfxOn('lite') ? 'Einfache Grafik an, ' : ''}${r?.pc ? 'PC-Grafik an, ' : ''}Lichtfilter & Wetter ${gfxOn('licht') ? 'an' : 'aus'}, Sonnenschatten ${gfxOn('schatten') ? 'an' : 'aus'}, Landschaftsdetails ${gfxOn('details') ? 'an' : 'aus'}`,
     };

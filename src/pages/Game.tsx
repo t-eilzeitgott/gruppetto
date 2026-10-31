@@ -284,6 +284,7 @@ export function GamePage() {
       if (low) { renderer.quality = 0.25; renderer.resize(); }
       // zuletzt gefundene Auflösungsstufe dieses Geräts
       else if (renderer.quality !== storedQuality()) { renderer.quality = storedQuality(); renderer.resize(); }
+      // (einfache Grafik: volle Auflösung, die Regelung bleibt aus – reicht es nicht, gleichmäßig 30 Bilder je Sekunde)
       const gov = new QualityGovernor(0.5);
       // beim Neuaufbau läuft die Fahrt weiter
       if (!engineRef.current || (glGen === 0 && uiRef.current === 'ready')) engineRef.current = makeEngine(false);
@@ -331,12 +332,13 @@ export function GamePage() {
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt, raw);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         hudRef.current(eng, dt);
-        fps.frame(raw * 1000, performance.now() - c0, renderer.quality, renderer.shaderErrors);
+        fps.frame(raw * 1000, performance.now() - c0, renderer.effQuality, renderer.shaderErrors);
         // Bildrate beobachten und notfalls die Qualität senken
         acc += dt;
         frames += 1;
         // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
-        if (uiRef.current === 'playing' && !low) {
+        clock.minFps = gfxOn('lite') ? 30 : 60;
+        if (uiRef.current === 'playing' && !low && !gfxOn('lite')) {
           const nq = gov.frame(raw, renderer.quality, clock.target);
           if (nq !== null) {
             if (rec) P.event(EV.quality, `Auflösung ${Math.round(renderer.quality * 100)} % → ${Math.round(nq * 100)} %`);
@@ -352,7 +354,7 @@ export function GamePage() {
           P.mark(SEC.anzeige);
           P.end({
             dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
-            quality: renderer.quality, px: renderer.gl.getPixelRatio(), range: rd, z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+            quality: renderer.effQuality, px: renderer.gl.getPixelRatio(), range: rd, z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
           });
         }
         raf = requestAnimationFrame(loop);
@@ -587,9 +589,9 @@ export function GamePage() {
       geraet: navigator.userAgent,
       bildschirm: `${window.innerWidth}×${window.innerHeight} ×${window.devicePixelRatio || 1}`,
       zeichenflaeche: cv ? `${cv.width}×${cv.height}` : '?',
-      aufloesung: r ? `${Math.round(r.quality * 100)} % (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
+      aufloesung: r ? `${Math.round(r.effQuality * 100)} % (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
       sichtweite: `${viewRange().label}${rd ? ` (vom Regler ${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`,
-      grafik: `${r?.pc ? 'PC-Grafik an, ' : ''}Lichtfilter & Wetter ${gfxOn('licht') ? 'an' : 'aus'}, Sonnenschatten ${gfxOn('schatten') ? 'an' : 'aus'}, Landschaftsdetails ${gfxOn('details') ? 'an' : 'aus'}`,
+      grafik: `${gfxOn('lite') ? 'Einfache Grafik an, ' : ''}${r?.pc ? 'PC-Grafik an, ' : ''}Lichtfilter & Wetter ${gfxOn('licht') ? 'an' : 'aus'}, Sonnenschatten ${gfxOn('schatten') ? 'an' : 'aus'}, Landschaftsdetails ${gfxOn('details') ? 'an' : 'aus'}`,
     };
   };
   const startMeasure = () => {
