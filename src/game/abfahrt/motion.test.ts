@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cadenceFor, pedalStep, smooth, spring, springStep, type Pedaller } from './motion';
+import { cadenceFor, effortFor, pedalStep, smooth, spring, springStep, type Pedaller } from './motion';
 
 const DT = 1 / 120;
 const run = (o: Pedaller, want: number, secs: number) => { for (let t = 0; t < secs; t += DT) pedalStep(o, want, DT); };
@@ -72,4 +72,21 @@ test('weiche Stufe und Feder: kein Überschwingen, weicher Ansatz, Ziel erreicht
   const g = spring(0);
   for (let i = 0; i < 20; i++) springStep(g, 1, 20, 0.1);
   assert.ok(Math.abs(g.x - 1) < 1e-6 && Math.abs(g.v) < 1e-6);
+});
+
+test('Haltung nach Steigung: bergab ducken, in der Ebene kräftiger im Sitzen, steil aus dem Sattel', () => {
+  const at = (g: number, push = 1) => effortFor(g, push);
+  // bergab: ganz geduckt, nicht im Wiegetritt
+  assert.ok(at(-0.06).tuck > 0.98 && at(-0.06).stand === 0);
+  // Ebene und leichter Anstieg: sitzend, etwas tiefer, deutlich mehr Anstrengung als locker
+  for (const g of [0, 0.02, 0.035]) {
+    const e = at(g);
+    assert.ok(e.stand < 0.05 && e.tuck > 0.08 && e.tuck < 0.4, `${g}: ${JSON.stringify(e)}`);
+    assert.ok(e.effort > at(g, 0).effort + 0.25);
+  }
+  // Stufen: am leichten Anstieg kräftiger als in der Ebene, steil am meisten (und stehend)
+  assert.ok(at(0.035).effort > at(0).effort);
+  assert.ok(at(0.08).stand > 0.98 && at(0.08).effort > 0.98);
+  // ohne Druck: nie geduckt, nie im Wiegetritt
+  for (const g of [-0.08, 0, 0.09]) assert.ok(at(g, 0).tuck === 0 && at(g, 0).stand === 0);
 });

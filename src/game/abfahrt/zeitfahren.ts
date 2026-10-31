@@ -17,7 +17,7 @@ import { ROAD_HALF, SEG, TT_FINISH, TT_SPLITS, TT_TOP, Track } from './track';
 import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup, type RiderTag, type Standing } from './engine';
 import { between, hashStr, mulberry32, type Rng } from './rng';
 import { SKINS, type Kit } from './rider';
-import { pedalStep } from './motion';
+import { STEEP, pedalStep, smooth } from './motion';
 import type { StageRef } from './stageRef';
 import { TRACE_DT, firstName, ghostAt, ghostName, ghostTimeAt, type GhostRider } from '../tt';
 import type { Wreck } from './wreck';
@@ -456,7 +456,9 @@ export class TimeTrial {
     } else {
       // flach und bergauf: Dauerleistung auf dem Auflieger, Drücken (bergauf im Wiegetritt), Erholen
       const climbing = grade > 0.025;
-      if (go) { P = this.cp + KICK; posture = climbing ? STAND : PUSH; standTarget = climbing ? 1 : 0; }
+      // drücken: erst am steilen Stück aus dem Sattel, flacher auf dem Auflieger kräftiger treten (motion.ts)
+      const st = smooth(STEEP[0], STEEP[1], grade);
+      if (go) { P = this.cp + KICK; posture = st > 0.5 ? STAND : PUSH; standTarget = st; }
       else if (ease) { P = this.cp * 0.68; posture = climbing ? HOODS : AERO; }
       else { P = this.cp; posture = climbing ? HOODS : AERO; }
       if (empty) P = Math.min(P, this.cp * 0.88);
@@ -493,6 +495,7 @@ export class TimeTrial {
     p.tuck += (tuckTarget - p.tuck) * Math.min(1, dt * 5);
     p.brake += (clamp(B / 6.5, 0, 1) - p.brake) * Math.min(1, dt * 8);
     p.stand = this.stand;
+    p.effort = clamp((P / this.cp - 0.5) / ((this.cp + KICK) / this.cp - 0.5), 0, 1);
     if (racing) {
       this.traceT += dt;
       while (this.traceT >= TRACE_DT) { this.traceT -= TRACE_DT; this.sample(p.z - p.v * this.traceT); }
@@ -680,10 +683,12 @@ export class TimeTrial {
       const seg = this.track.segAt(o.z);
       const climbing = seg.grade > 0.025;
       const downhill = seg.grade < -0.03;
-      // Haltung aus der Spur: drücken bergauf im Wiegetritt, bergab geduckt, sonst auf dem Auflieger
-      const standT = o.m === 1 && climbing ? 1 : 0;
+      // Haltung aus der Spur: drücken am steilen Stück im Wiegetritt (flacher auf dem Auflieger), bergab geduckt,
+      // sonst auf dem Auflieger
+      const standT = o.m === 1 ? smooth(STEEP[0], STEEP[1], seg.grade) : 0;
       o.stand = (o.stand ?? 0) + (standT - (o.stand ?? 0)) * Math.min(1, dt * 6);
-      const tuckT = downhill ? (o.m === 1 ? 1 : 0.5) : o.m === 2 ? 0.3 : climbing ? 0.15 * (o.stand ?? 0) : 0.7;
+      const tuckT = downhill ? (o.m === 1 ? 1 : 0.5) : o.m === 2 ? 0.3 : o.m === 1 ? 0.62 * (1 - (o.stand ?? 0)) + 0.15 * (o.stand ?? 0) : climbing ? 0.35 : 0.7;
+      o.effort = downhill ? (o.m === 1 ? 0.55 : 0.2) : o.m === 1 ? 1 : o.m === 2 ? 0.3 : 0.55;
       o.tuck += (tuckT - o.tuck) * Math.min(1, dt * 5);
       o.lean += (clamp(-o.vx * 0.12 + Math.atan2(seg.curve * o.v * o.v, G) * 0.8, -0.55, 0.55) - o.lean) * Math.min(1, dt * 6);
       pedalStep(o, downhill && o.m !== 1 && o.v > 12 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / this.warp, dt);

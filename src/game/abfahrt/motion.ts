@@ -73,3 +73,26 @@ export function springSet(s: Spring, x: number) {
   s.x = x;
   s.v = 0;
 }
+
+/**
+ * Haltung nach der Steigung (für alle Spiele gleich): wer Druck macht, duckt sich bergab (rollen lassen, sobald
+ * Treten nichts mehr bringt), tritt in der Ebene und am leichten Anstieg stufenweise kräftiger im Sitzen und geht
+ * am steilen Stück aus dem Sattel. Ohne Druck: locker im Sitzen treten (bergab aufrecht rollen).
+ * grade: Steigung (+ bergauf), push: 0 … 1 (Daumen hoch, weich). Ergebnis: Zielwerte für tuck, stand und die
+ * Anstrengung (0 locker … 1 alles), die die Darstellung sieht (Oberkörper, Atmung).
+ */
+export interface Effort { tuck: number; stand: number; effort: number; down: number; steep: number }
+export const STEEP = [0.045, 0.07] as const;
+export function effortFor(grade: number, push: number, out: Effort = { tuck: 0, stand: 0, effort: 0, down: 0, steep: 0 }): Effort {
+  const down = smooth(-0.012, -0.035, grade);
+  const steep = smooth(STEEP[0], STEEP[1], grade) * (1 - down);
+  // Stufen im Sitzen: Ebene kräftig (Hände zum Unterlenker), leichter Anstieg noch kräftiger (Hände wieder oben)
+  const climb = smooth(-0.005, 0.04, grade);
+  const seated = 0.32 * (1 - climb) + 0.12 * climb;
+  out.down = down;
+  out.steep = steep;
+  out.tuck = push * (down + (1 - down) * seated * (1 - steep));
+  out.stand = push * steep;
+  out.effort = (0.28 + 0.12 * climb) * (1 - push) + push * (down > 0.5 ? 0.55 : 0.62 + 0.38 * Math.max(climb, steep));
+  return out;
+}

@@ -47,7 +47,7 @@ type Step = 'steer' | 'tuck' | 'brake';
 const STEPS: Step[] = ['steer', 'tuck', 'brake'];
 const COACH: Record<Step, { t: string; s: string }> = {
   steer: { t: 'Lenken', s: 'Daumen seitlich ziehen' },
-  tuck: { t: 'Ducken = schneller', s: 'Daumen nach oben schieben' },
+  tuck: { t: 'Druck machen = schneller', s: 'Daumen hoch: bergab ducken, sonst kräftiger treten' },
   brake: { t: 'Bremsen', s: 'Daumen nach unten ziehen' },
 };
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -648,7 +648,7 @@ export function GamePage() {
         ref={stageRef}
         className="abf__stage"
         role="application"
-        aria-label="Spielfeld: Daumen seitlich ziehen zum Lenken, nach oben zum Ducken, nach unten zum Bremsen"
+        aria-label="Spielfeld: Daumen seitlich ziehen zum Lenken, nach oben Druck machen (bergab ducken), nach unten zum Bremsen"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

@@ -621,7 +621,7 @@ export class Race {
       R.model.resetCrash();
       R.pose({
         lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, stand: p.stand ?? 0, sprint: 0,
-        v: p.v, air, surface: t.segAt(p.z).surface, wobble: p.wobble, light, roll: p.z / 0.34,
+        v: p.v, air, surface: t.segAt(p.z).surface, wobble: p.wobble, light, roll: p.z / 0.34, effort: p.effort,
       }, dt, this.time);
     }
     R.lamp(light > 0.05);
@@ -692,7 +692,7 @@ export class Race {
         R.model.resetCrash();
         R.pose({
           lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, stand: o.stand ?? 0, sprint: 0,
-          v: o.v, air: 0, surface: t.segAt(o.z).surface, wobble: o.bump, light, roll: o.z / 0.34,
+          v: o.v, air: 0, surface: t.segAt(o.z).surface, wobble: o.bump, light, roll: o.z / 0.34, effort: o.effort,
         }, dt, this.time);
       }
       R.lamp(light > 0.05);

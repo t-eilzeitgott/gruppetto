@@ -7,7 +7,7 @@ import { mulberry32, between, chance, pick, type Rng } from './rng';
 import { EDGE, ROAD_HALF, SEG, Track, difficulty, type Obj, type Seg, type Side, type BiomeId } from './track';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { Mission, MissionStat } from './missions';
-import { cadenceFor, pedalStep, smooth } from './motion';
+import { cadenceFor, effortFor, pedalStep, smooth, type Effort } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import { wreckSettled, wreckTravel, type Wreck } from './wreck';
 import { BOOST, CAR_HALF, CAR_LEN, carBlock, spawnCar, stepCar, type TeamCar } from './teamcar';
@@ -16,6 +16,10 @@ import type { GhostRider } from '../tt';
 export const G = 9.81;
 const CD = 0.00105;          // Luftwiderstand in Abfahrtshaltung (1/m)
 const RR = 0.05;             // Rollwiderstand (m/s²)
+/** Leistung des Spielers (W/kg): locker, unter Druck, zusätzlich im Wiegetritt */
+const P_EASY = 2.6;
+const P_PUSH = 5.2;
+const P_STAND = 1.0;
 const VMAX = 40;             // ~144 km/h
 const SUB = 1 / 120;
 
@@ -36,6 +40,8 @@ export interface Player {
   stand?: number;
   /** Drehzahl der Kurbel (rad/s), siehe motion.ts */
   cad?: number;
+  /** Anstrengung 0 (locker) … 1 (alles) – für die Darstellung (Oberkörper, Atmung), siehe motion.ts effortFor */
+  effort?: number;
 }
 
 export interface Opp {
@@ -46,6 +52,8 @@ export interface Opp {
   stand?: number;
   /** Drehzahl der Kurbel (rad/s), siehe motion.ts */
   cad?: number;
+  /** Anstrengung 0 … 1 (Darstellung) */
+  effort?: number;
   /** Geist (Zeitfahren): halbdurchsichtig mit dieser Deckkraft (0 = unsichtbar) */
   ghost?: number;
   /** gestürzt (Massensturz, WebGPU-Abfahrt): liegt und rutscht nach wreck.ts */
@@ -238,6 +246,10 @@ export class Abfahrt {
   private keys = { left: false, right: false, down: false, up: false };
   /** Spieler will sich ducken (Daumen hoch) bzw. bremsen (Daumen runter, 0–1) */
   private wantTuck = false;
+  /** Druck (Daumen hoch), weich 0–1, und die Haltung daraus */
+  private push = 0;
+  private ef: Effort = { tuck: 0, stand: 0, effort: 0, down: 0, steep: 0 };
+  private efO: Effort = { tuck: 0, stand: 0, effort: 0, down: 0, steep: 0 };
   private wantBrake = 0;
   /** wie weit insgesamt gelenkt wurde (für das Tutorial) */
   private steered = 0;
@@ -284,7 +296,7 @@ export class Abfahrt {
     this.score = emptyParts();
     this.stats = emptyStats();
     this.chain = 0; this.mult = 1; this.multT = 0;
-    this.draft = 0; this.shake = 0; this.heading = 0;
+    this.draft = 0; this.shake = 0; this.heading = 0; this.push = 0;
     this.phase = 'ready'; this.phaseT = 0; this.time = 0; this.timeScale = 1;
     // Abfahrt mit Startort: Ort, Landstraße und Panorama-Kehre ohne Feld – die ersten Gruppen kurz nach der Kehre
     this.nextSpawn = 120;
@@ -304,8 +316,10 @@ export class Abfahrt {
     this.rec.reset();
     this.ghostT = 0;
     this.tags = [];
-    // ein paar Fahrer stehen mit am Start (Abfahrt mit Startort: allein am Start – Platz für die Stadt)
+    // ein paar Fahrer stehen mit am Start; Abfahrt mit Startort: allein auf der Rampe, eine Gruppe ist schon
+    // unterwegs – vorn in der Ortsdurchfahrt zu sehen, gemächlich, man fährt an sie heran
     if (z0 === 0) this.spawnStartGroup();
+    else if (!this.opts.cruise) this.spawnAhead(this.p.z);
   }
 
   get total(): number {
@@ -542,14 +556,24 @@ export class Abfahrt {
     const manual = Math.max(this.wantBrake, this.keys.down ? 1 : 0);
     const wantBrake = p.air ? 0 : Math.max(assist, manual);
     p.brake += (wantBrake - p.brake) * Math.min(1, dt * 8);
-    // Ducken nur auf Wunsch (Daumen hoch); beim Bremsen richtet man sich auf
-    const tuckOn = (this.wantTuck || this.keys.up) && p.brake < 0.3 && !p.air;
-    p.tuck += ((tuckOn ? 1 : 0) - p.tuck) * Math.min(1, dt * 4);
+    // Daumen hoch = Druck machen – was der Fahrer daraus macht, hängt an der Steigung (motion.ts effortFor):
+    // bergab ducken (und rollen lassen, sobald Treten nichts mehr bringt), in der Ebene und am leichten Anstieg
+    // kräftiger treten, am steilen Stück aus dem Sattel. Beim Bremsen und in der Luft richtet man sich auf.
+    const pushOn = (this.wantTuck || this.keys.up) && p.brake < 0.3 && !p.air;
+    this.push += ((pushOn ? 1 : 0) - this.push) * Math.min(1, dt * 5);
+    const ef = effortFor(seg.grade, this.push, this.ef);
+    p.tuck += (ef.tuck * (1 - p.brake) - p.tuck) * Math.min(1, dt * 4);
+    p.stand = (p.stand ?? 0) + (ef.stand * (1 - p.brake) - (p.stand ?? 0)) * Math.min(1, dt * 5);
     void steering;
-    const cd = CD * (1 + 0.45 * (1 - p.tuck)) * (1 - 0.42 * this.draft) * (1 + p.brake * 0.4);
+    const cd = CD * (1 + 0.45 * (1 - p.tuck)) * (1 - 0.42 * this.draft) * (1 + p.brake * 0.4) * (1 + 0.12 * (p.stand ?? 0));
     const aG = -G * seg.grade;
     let a = aG - RR - extra - cd * p.v * p.v;
-    if (p.v < 13 && !p.air) a += 1.8 * (1 - p.v / 13) + 0.5;  // antreten
+    // Vortrieb aus Leistung (W/kg): locker treten, unter Druck kräftig, im Wiegetritt noch etwas mehr; jenseits
+    // von ~60 km/h (unter Druck) bzw. ~45 km/h (locker) bringt Treten nichts mehr – dann rollt der Fahrer
+    const spin = this.push * smooth(17.5, 13.5, p.v) + (1 - this.push) * smooth(13, 9.5, p.v);
+    const watts = (P_EASY + (P_PUSH - P_EASY) * this.push + P_STAND * (p.stand ?? 0)) * spin;
+    const drive = p.air ? 0 : spin * (1 - p.brake);
+    if (!p.air) a += (watts * (1 - p.brake)) / Math.max(p.v, 2);
     if (!p.air) a -= p.brake * 7.5 * Math.min(1, mu);
     p.v = clamp(p.v + a * dt, 0, VMAX);
     p.z += p.v * dt;
@@ -607,8 +631,8 @@ export class Abfahrt {
     // --- Pedal und Kosmetik
     // treten bei niedrigem Tempo oder aufrecht; geduckt, bremsend und in der Luft rollen lassen – stufenlos,
     // die Kurbel selbst hat Schwung (motion.ts) und pendelt beim Rollen in die Waagrechte
-    const drive = Math.max(smooth(16.5, 12.5, p.v), 1 - smooth(0.35, 0.65, p.tuck)) * (1 - p.brake) * (p.air ? 0 : 1);
-    pedalStep(p, drive * cadenceFor(p.v), dt);
+    pedalStep(p, drive * cadenceFor(p.v) * (1 + 0.12 * this.push), dt);
+    p.effort = ef.effort * drive;
     p.wobble = Math.max(0, p.wobble - dt * 2);
     p.slick = Math.max(0, p.slick - dt);
     this.shake = Math.max(0, this.shake - dt * 3);
@@ -924,6 +948,14 @@ export class Abfahrt {
     }
   }
 
+  /** Gruppe in der Ferne beim Start: 65–90 m voraus, langsamer als du (stehend bis „Los“) */
+  private spawnAhead(z: number) {
+    const r = this.rng;
+    const n0 = this.opps.length;
+    this.addGroup(z + between(r, 65, 90), Math.round(between(r, 5, 8)), between(r, 0.38, 0.42), 0);
+    for (let i = n0; i < this.opps.length; i++) this.opps[i].tuck = 0;
+  }
+
   private kit(r: Rng): Kit {
     const k = pick(r, TEAM_KITS);
     return { ...k, skin: pick(r, SKINS), number: String(Math.floor(between(r, 11, 199))) };
@@ -1165,9 +1197,16 @@ export class Abfahrt {
       o.lean += (clamp(lean, -0.7, 0.7) - o.lean) * Math.min(1, dt * 8);
       o.bump = Math.max(0, o.bump - dt);
       // treten: langsam, als Angreifer oder beim Beschleunigen – stufenlos statt An/Aus, dazu der Schwung der Kurbel
-      const drive = Math.max(smooth(16.5, 12.5, o.v), o.attacker ? 1 : 0, smooth(0.3, 1.2, acc)) * (1 - o.brake);
-      o.tuck += ((1 - 0.8 * drive) - o.tuck) * Math.min(1, dt0 * 2);
-      pedalStep(o, drive * cadenceFor(o.v), dt0);
+      // Haltung wie beim Spieler nach der Steigung: bergab geduckt, Angreifer und wer beschleunigt macht Druck
+      // (in der Ebene kräftiger im Sitzen, steil im Wiegetritt), sonst locker; treten, solange es etwas bringt
+      const down = smooth(-0.012, -0.035, seg.grade);
+      const push = Math.max(o.attacker ? 1 : 0, smooth(0.3, 1.2, acc), down);
+      const ef = effortFor(seg.grade, push, this.efO);
+      const drive = (push * smooth(17.5, 13.5, o.v) + (1 - push) * smooth(13, 9.5, o.v)) * (1 - o.brake);
+      o.tuck += (ef.tuck * (1 - o.brake) - o.tuck) * Math.min(1, dt0 * 2);
+      o.stand = (o.stand ?? 0) + (ef.stand * (1 - o.brake) - (o.stand ?? 0)) * Math.min(1, dt0 * 4);
+      o.effort = ef.effort * drive;
+      pedalStep(o, drive * cadenceFor(o.v) * (1 + 0.1 * push * (1 - down)), dt0);
     }
     if (live) this.separateOpps();
     if (this.pileAt) this.wreckHits();

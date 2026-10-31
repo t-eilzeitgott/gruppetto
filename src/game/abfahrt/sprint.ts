@@ -489,6 +489,8 @@ export class SprintRace {
     p.tuck += ((go ? 0.15 : 0.6) - p.tuck) * Math.min(1, dt * 5);
     // Antritt im Wiegetritt
     p.stand = (p.stand ?? 0) + ((go ? 1 : 0) - (p.stand ?? 0)) * Math.min(1, dt * 6);
+    // Anstrengung (Darstellung): im Windschatten locker, im Wind kräftiger, Antritt alles
+    p.effort = go ? 1 : ease ? 0.25 : 0.62 - 0.3 * this.draft;
     // Ansagen
     if (racing) this.callouts(d);
     // Ziel
@@ -632,6 +634,7 @@ export class SprintRace {
       pedalStep(o, o.v * 0.62, dt);
       o.tuck += ((o.going ? 0.15 : 0.6) - o.tuck) * Math.min(1, dt * 5);
       o.stand = (o.stand ?? 0) + ((o.going && o.e > 0.2 ? 1 : 0) - (o.stand ?? 0)) * Math.min(1, dt * 6);
+      o.effort = o.going ? 1 : o.order === 0 && o.team >= 0 && !o.peeled ? 0.8 : 0.4;
     }
   }
 

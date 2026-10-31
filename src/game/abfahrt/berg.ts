@@ -21,7 +21,7 @@ import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { RiderType, SprintRider } from './sprint';
 import type { StageRef } from './stageRef';
-import { pedalStep } from './motion';
+import { STEEP, effortFor, pedalStep, smooth } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
@@ -574,7 +574,8 @@ export class BergRace {
     } else {
       // bergauf und Zielsprint: am Hinterrad bleiben (bis etwas über der Dauerleistung), antreten, Tempo raus
       const final = stage === 'final';
-      if (go) { P = s.cp + s.kick * (final ? 1.8 : 1); standTarget = 1; posture = 1.08; }
+      // Antritt: steil aus dem Sattel, flacher kräftig im Sitzen (motion.ts effortFor); im Zielsprint immer stehend
+      if (go) { P = s.cp + s.kick * (final ? 1.8 : 1); standTarget = final ? 1 : steepness(grade); posture = 1 + 0.08 * standTarget; }
       else if (ease) P = s.cp - 0.9;
       else if (wheel && wheel.z - p.z < 9) {
         const vd = clamp(wheel.v + (wheel.z - p.z - 1.8) * 0.8, wheel.v - 1.2, wheel.v + 1.2);
@@ -624,9 +625,10 @@ export class BergRace {
     // Pedale: Trittfrequenz in Echtzeit (der Zeitraffer soll nicht hektisch wirken); bergab rollen lassen –
     // die Kurbel läuft aus und kommt wieder auf Touren (motion.ts), statt umzuschalten
     pedalStep(p, stage === 'descent' && P === 0 ? 0 : Math.min(9.5, 3.2 + p.v * 0.95) / this.warp, dt);
-    p.tuck += ((stage === 'descent' ? (posture < 0.7 ? 1 : 0.45) : stand(this.stand)) - p.tuck) * Math.min(1, dt * 5);
+    p.tuck += ((stage === 'descent' ? (posture < 0.7 ? 1 : 0.45) : seatedTuck(grade, go ? 1 : 0, this.stand)) - p.tuck) * Math.min(1, dt * 5);
     p.brake += (clamp(B / 6.5, 0, 1) - p.brake) * Math.min(1, dt * 8);
     p.stand = this.stand;
+    p.effort = effortOf(P, s.cp, s.kick);
     if (racing) this.callouts(z0, stage);
     // Gipfel und Ziel
     if (this.topT < 0 && z0 < MOUNTAIN_TOP && p.z >= MOUNTAIN_TOP) this.summit();
@@ -905,8 +907,8 @@ export class BergRace {
           if (o.attackT > 0) {
             o.attackT -= dt;
             P = o.cp + o.kick;
-            standTarget = 1;
-            posture = 1.08;
+            standTarget = steepness(grade);
+            posture = 1 + 0.08 * standTarget;
           } else if (o.hold > 0 && o.w > o.hold) {
             P = o.cp + 0.5;
           } else {
@@ -923,7 +925,7 @@ export class BergRace {
               const target = this.ahead(o, 70);
               P = o.chaseT > 0 && target ? o.cp + o.kick * 0.6 : own;
             }
-            if (o.chaseT > 0) standTarget = 0.6;
+            if (o.chaseT > 0) standTarget = 0.6 * steepness(grade);
           }
         }
         if (empty) P = Math.min(P, o.cp * 0.92);
@@ -996,8 +998,9 @@ export class BergRace {
       o.x = clamp(nx, -XMAX, XMAX);
       o.lean += (clamp(-o.vx * 0.12 + Math.atan2(seg.curve * o.v * o.v, G) * 0.8, -0.55, 0.55) - o.lean) * Math.min(1, dt * 6);
       pedalStep(o, stage === 'descent' && P === 0 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / this.warp, dt);
-      o.tuck += ((stage === 'descent' ? (posture < 0.7 ? 1 : 0.45) : stand(o.stand)) - o.tuck) * Math.min(1, dt * 5);
+      o.tuck += ((stage === 'descent' ? (posture < 0.7 ? 1 : 0.45) : seatedTuck(grade, P > o.cp + 0.5 ? 1 : 0, o.stand)) - o.tuck) * Math.min(1, dt * 5);
       o.brake += (clamp(B / 6.5, 0, 1) - o.brake) * Math.min(1, dt * 8);
+      o.effort = effortOf(P, o.cp, o.kick);
     }
   }
 
@@ -1135,5 +1138,14 @@ export class BergRace {
 }
 
 /** Haltung bergauf: im Wiegetritt etwas flacher (für das Fahrermodell) */
-function stand(s: number): number { return 0.15 * s; }
+/** Wiegetritt beim Antreten: erst am steilen Stück ganz (flacher kräftig im Sitzen) */
+function steepness(grade: number): number { return smooth(STEEP[0], STEEP[1], grade); }
+/** Haltung im Sitzen bergauf: unter Druck in der Ebene etwas tiefer (motion.ts effortFor), im Wiegetritt fast aufrecht */
+function seatedTuck(grade: number, push: number, stand: number): number {
+  return effortFor(grade, push).tuck * (1 - stand) + 0.15 * stand;
+}
+/** Anstrengung für die Darstellung aus der Leistung: locker … Dauerleistung … Antritt */
+function effortOf(P: number, cp: number, kick: number): number {
+  return clamp((P / cp - 0.5) / ((cp + kick) / cp - 0.5), 0, 1);
+}
 

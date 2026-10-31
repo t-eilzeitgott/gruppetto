@@ -32,6 +32,8 @@ export interface RiderState {
   surface: Surface;
   /** Taumeln, Rempler (0–1) */
   wobble: number;
+  /** Anstrengung 0 (locker) … 1 (alles); ohne Angabe aus der Trittfrequenz geschätzt */
+  effort?: number;
   light: number;
   roll: number;
 }
@@ -48,6 +50,7 @@ export class RiderAnim {
   private absorb = spring();
   private lurch = spring();
   private shake = spring();
+  private effort = spring();
   private prevPedal = 0;
   private cad = 0;
   private prevLean = 0;
@@ -85,6 +88,7 @@ export class RiderAnim {
     springSet(this.absorb, s.air > 0.02 ? 0.65 : 0);
     springSet(this.lurch, 0);
     springSet(this.shake, 0);
+    springSet(this.effort, s.effort ?? 0.4);
     this.prevPedal = s.pedal;
     this.cad = 0;
     this.prevLean = s.lean;
@@ -126,9 +130,13 @@ export class RiderAnim {
     else if (d < -Math.PI) d += Math.PI * 2;
     if (Math.abs(d) > 40 * dt) d = 0;
     this.cad += (d / dt - this.cad) * Math.min(1, dt * 8);
-    // Oberkörper arbeitet mit, sobald wirklich getreten wird – geduckt weniger, kräftig bei hoher Frequenz
-    const effort = smooth(2.5, 8.5, Math.abs(this.cad)) * (1 - 0.55 * tuck);
-    springStep(this.pump, effort * (0.75 + 0.35 * clamp01(Math.abs(this.cad) / 10)) * k, 6, dt);
+    // Oberkörper arbeitet mit, sobald wirklich getreten wird – geduckt weniger; wie kräftig, sagt die Anstrengung
+    // (locker: kaum Bewegung, in der Ebene unter Druck deutlich, am Anstieg mit Hüfte und Schultern), ohne Angabe
+    // die Trittfrequenz
+    const spin = smooth(2.5, 7, Math.abs(this.cad));
+    const eff = springStep(this.effort, s.effort ?? 0.45 + 0.35 * clamp01(Math.abs(this.cad) / 10), 4, dt);
+    const effort = spin * (1 - 0.55 * tuck);
+    springStep(this.pump, effort * (0.2 + 1.05 * eff) * k, 6, dt);
     // Sprünge: in der Luft stehen (Knie weich), beim Aufsetzen abfedern (je nach Fallgeschwindigkeit)
     const vy = (s.air - this.lastAir) / dt;
     const landed = this.lastAir > 0.02 && s.air <= 0.02;
@@ -136,7 +144,7 @@ export class RiderAnim {
     if (landed) this.absorb.v += 12 * clamp01(-vy / 5 + 0.25);
     springStep(this.absorb, s.air > 0.02 ? 0.65 : 0, 9, dt);
     // Atmen: ruhig beim Rollen, schnell unter Last
-    this.breath += dt * (2.0 + 3.6 * effort + 2.5 * stand);
+    this.breath += dt * (2.0 + 3.6 * effort * (0.4 + eff) + 2.5 * stand);
     // Rütteln: Untergrund (mehr bei Tempo), Wind bei hohem Tempo, Taumeln
     const rough = ROUGH[s.surface] ?? 0.12;
     springStep(this.shake, clamp01(rough * (0.3 + 0.7 * smooth(3, 15, s.v)) + 0.3 * (s.v / 32) ** 2 + s.wobble * 0.9), 6, dt);

@@ -22,8 +22,18 @@ function stateOf(g: Abfahrt): RiderState {
   return { lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, stand: p.stand ?? 0, sprint: 0, v: p.v, air: Math.max(0, p.y - g.track.heightAt(p.z)), surface: seg.surface, wobble: p.wobble, light: 0, roll: p.z / 0.34 };
 }
 
+/** Spieler an eine Stelle mit deutlichem Gefälle setzen (dort heißt Daumen hoch: ducken) */
+function downhill(g: Abfahrt) {
+  let z = 700;
+  while (g.track.segAt(z).grade > -0.045 || g.track.segAt(z + 40).grade > -0.045 || Math.abs(g.track.segAt(z).curve) > 0.004) z += 2;
+  g.p.z = z;
+  g.p.y = g.track.heightAt(z);
+  g.p.v = 12;
+}
+
 test('Haltungswechsel: Ducken und Bremsen setzen weich an, springen nicht und kommen zügig an', () => {
   const g = game();
+  downhill(g);
   const an = new RiderAnim(1, true);
   let prev: RiderPose | null = null;
   const dTuck: number[] = [];
