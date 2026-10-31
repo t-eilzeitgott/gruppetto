@@ -307,6 +307,8 @@ export function GamePage() {
       let lastPhase = '';
       let lastRange = rangeDrop();
       const loop = (now: number) => {
+        // fester Bildtakt (frameClock.ts): zu frühe Aufrufe auslassen – jedes Bild kommt im gleichen Abstand
+        if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
         const rec = !!P.rec;
         if (rec) P.begin(now);
         const dt = clock.tick(now);
@@ -324,7 +326,7 @@ export function GamePage() {
         if (rec) P.mark(SEC.spiel);
         renderer.prof = rec ? P : null;
         const c0 = performance.now();
-        renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.period));
+        renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.target));
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt, raw);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         hudRef.current(eng, dt);
@@ -334,7 +336,7 @@ export function GamePage() {
         frames += 1;
         // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
         if (uiRef.current === 'playing' && !low) {
-          const nq = gov.frame(raw, renderer.quality);
+          const nq = gov.frame(raw, renderer.quality, clock.target);
           if (nq !== null) {
             if (rec) P.event(EV.quality, `Auflösung ${Math.round(renderer.quality * 100)} % → ${Math.round(nq * 100)} %`);
             renderer.setQuality(nq); // wirkt direkt vor dem nächsten Bild (kein schwarzes Bild)
@@ -347,7 +349,7 @@ export function GamePage() {
           if (ph !== lastPhase) { P.event(EV.phase, ph); lastPhase = ph; }
           P.mark(SEC.anzeige);
           P.end({
-            dt: raw * 1000, period: clock.period, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
+            dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
             quality: renderer.quality, px: renderer.gl.getPixelRatio(), range: rd, z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
           });
         }

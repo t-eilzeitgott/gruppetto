@@ -126,3 +126,21 @@ test('Wahl im Pausenmenü setzt die automatische Kürzung zurück', () => {
   assert.equal(rangeDrop(), 0);
   assert.equal(viewRange().id, 'far');
 });
+
+test('fester Bildtakt 60 Hz: jedes sechste Bild zu spät (Stottern) – die Auflösung geht herunter', () => {
+  reset();
+  setViewRange('eco');
+  const gov = new QualityGovernor(0.5);
+  let q = 1;
+  const changes: number[] = [];
+  for (let i = 0; i < 1500; i++) {
+    const nq = gov.frame((i % 6 === 0 ? 33.3 : 16.7) / 1000, q, 1000 / 60);
+    if (nq !== null) { q = nq; changes.push(nq); }
+  }
+  assert.ok(q < 1, `Auflösung ${q}`);
+  // ohne festen Takt (Ziel unbekannt) bleibt es wie bisher ruhig
+  reset();
+  setViewRange('eco');
+  const r = run(Array.from({ length: 1500 }, (_, i) => (i % 6 === 0 ? 33.3 : 16.7)));
+  assert.equal(r.q, 1);
+});

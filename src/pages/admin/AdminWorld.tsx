@@ -274,6 +274,7 @@ export function WorldEditorPage() {
     let floorY: number | null = null;
     const loop = (now: number) => {
       frames += 1;
+      if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
       const dt = clock.tick(now);
       if (renderer.lost) { raf = requestAnimationFrame(loop); return; }
       fly(dt);
@@ -287,7 +288,7 @@ export function WorldEditorPage() {
       const fy = Math.sin(c.pitch);
       const fz = -Math.cos(c.yaw) * Math.cos(c.pitch);
       renderer.debugCam = [c.x, c.y, c.z, c.x + fx, c.y + fy, c.z + fz];
-      renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.period));
+      renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.target));
       if (!(low || shots) || (low && frames % 30 === 1) || (shots && frames === 1)) renderer.draw(view, dt, clock.raw);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
       info += dt;

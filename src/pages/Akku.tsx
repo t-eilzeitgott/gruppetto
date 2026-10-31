@@ -123,6 +123,7 @@ export function AkkuPage() {
     const fps = new FpsMeter(canvas.parentElement);
     let lastDraw = 0;
     const loop = (now: number) => {
+      if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
       const dt = clock.tick(now);
       const g = gameRef.current;
       if (g) {

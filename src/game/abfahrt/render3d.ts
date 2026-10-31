@@ -2841,9 +2841,10 @@ export class Renderer3D {
     }
     let d = yaw - cam.th;
     d = Math.atan2(Math.sin(d), Math.cos(d));
-    const turn = d * Math.min(1, dt * 6);
+    // (exakt abklingend: gleich weich bei jeder Bildrate)
+    const turn = d * (1 - Math.exp(-dt * 6));
     cam.th += turn;
-    cam.y += (ty - cam.y) * Math.min(1, dt * 7);
+    cam.y += (ty - cam.y) * (1 - Math.exp(-dt * 7));
     // nie unter die Straße sinken (z. B. nach einem Sprung nach vorn oder steil bergauf)
     cam.y = Math.max(cam.y, roadY + 1.2);
     const descent = track.kind === 'descent';
@@ -2852,7 +2853,7 @@ export class Renderer3D {
     // hinters Rad – aus der Drehgeschwindigkeit der Fahrtrichtung (rechts herum → Kamera nach links)
     const omega = dt > 0 ? turn / dt : 0;
     const swingT = !descent || still || g.phase !== 'playing' ? 0 : clamp(-omega * Math.min(1, p.v / 14) * 2.4, -1.7, 1.7);
-    this.swing += (swingT - this.swing) * Math.min(1, dt * 1.6);
+    this.swing += (swingT - this.swing) * (1 - Math.exp(-dt * 1.6));
     const sw = this.swing;
     const fx = Math.sin(cam.th);
     const fz = -Math.cos(cam.th);
@@ -2864,12 +2865,16 @@ export class Renderer3D {
     if (descent) {
       // nie im Hang: über dem Gelände bleiben und den Fahrer frei sehen (weich anheben, langsam wieder senken);
       // nicht im Tunnel und an seinen Portalen (dort liegt der Berg über der Straße)
+      // (weich in beide Richtungen: der Boden unter der Kamera und die Sichtlinie werden nur an einzelnen Punkten
+      // abgetastet – sprang die Kamera direkt mit, zitterte sie in Kurven über Böschungen und Hängen)
       if (!this.nearTunnel(track, p.z)) {
-        const need = this.needLift(A.pos.x, A.pos.y, A.pos.z, rx, ry + 1.1, rz, 1.1, 6);
-        if (dt > 0) this.chaseLift += (need - this.chaseLift) * Math.min(1, dt * (need > this.chaseLift ? 9 : 1.4));
+        const need = this.needLift(A.pos.x, A.pos.y, A.pos.z, rx, ry + 1.1, rz, 1.1, 10);
         const floor = Math.max(0, this.hAt(A.pos.x, A.pos.z) + 0.9 - A.pos.y);
-        A.pos.y += Math.max(this.chaseLift, floor);
-      } else if (dt > 0) this.chaseLift *= Math.max(0, 1 - dt * 3);
+        const want = Math.max(need, floor);
+        if (dt > 0) this.chaseLift += (want - this.chaseLift) * (1 - Math.exp(-dt * (want > this.chaseLift ? 8 : 1.4)));
+        // nie in den Boden (nur wenn er schneller steigt, als die Kamera nachkommt)
+        A.pos.y += Math.max(this.chaseLift, floor - 0.35);
+      } else if (dt > 0) this.chaseLift *= Math.exp(-dt * 3);
     }
     const look = 15 + 2 * cam.pack + 12 * rk;
     const aheadY = track.heightAt(p.z + look);

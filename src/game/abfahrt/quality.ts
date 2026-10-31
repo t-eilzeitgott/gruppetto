@@ -64,7 +64,7 @@ export class QualityGovernor {
    * ein Bild der Fahrt (echte Zeit seit dem letzten, s). Die Sichtweite stellt der Regler selbst um
    * (setRangeDrop); eine neue Auflösungsstufe liefert er zurück, sonst null.
    */
-  frame(dt: number, q: number): number | null {
+  frame(dt: number, q: number, target = 0): number | null {
     if (dt <= 0 || dt > 0.25) return null;
     if (this.warm < WARMUP_S) { this.warm += dt; return null; }
     this.dts.push(dt * 1000);
@@ -73,17 +73,19 @@ export class QualityGovernor {
     const a = this.dts.sort((x, y) => x - y);
     const n = a.length;
     const p60 = a[Math.min(n - 1, Math.floor(n * 0.6))];
+    // fester Bildtakt um 60 Hz (frameClock.ts): schon jedes zehnte Bild zu spät ist ein spürbares Stottern
+    const offBeat = target >= 14 && a[Math.min(n - 1, Math.floor(n * 0.9))] > target * 1.25 + 1;
     this.dts = [];
     this.t = 0;
     // zu wenige Bilder (App im Hintergrund, Karte offen): kein Urteil
     if (n < MIN_FRAMES) return null;
     if (this.settle > 0) { this.settle -= 1; return null; }
-    const slow = p60 > SLOW_MS;
+    const slow = p60 > SLOW_MS || offBeat;
     if (this.probe) {
       const pr = this.probe;
       this.probe = null;
       // Senken hat (fast) nichts gebracht: zurück und dabei bleiben
-      if (slow && p60 > pr.p60 * 0.93) {
+      if (slow && p60 > pr.p60 * 0.93 && !offBeat) {
         this.settle = 1;
         if (pr.kind === 'range') { this.rangeStuck = true; setRangeDrop(pr.from); return null; }
         this.cpuBound = true;
@@ -110,7 +112,7 @@ export class QualityGovernor {
       }
       return null;
     }
-    if (!slow && p60 < CALM_MS) {
+    if (!slow && p60 < CALM_MS && !offBeat) {
       this.calm += 1;
       // erst die Auflösung zurück (bis ganz an die Grenze; mit viel Luft in größeren Schritten) …
       if (this.calm >= 3 && q < this.ceil - 0.005) {

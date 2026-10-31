@@ -234,9 +234,13 @@ function makeReport(r: Rec): Report {
   const hist: Record<string, number> = { '<9': 0, '9-13': 0, '13-18': 0, '18-25': 0, '25-34': 0, '34-50': 0, '50-100': 0, '>100': 0 };
   const edges: [number, string][] = [[9, '<9'], [13, '9-13'], [18, '13-18'], [25, '18-25'], [34, '25-34'], [50, '34-50'], [100, '50-100'], [Infinity, '>100']];
   let hitches = 0, missed = 0, cpuBound = 0, lateBound = 0;
+  // Taktfehler: ein Bild kam später als im festen Bildtakt (auch die kleinen, z. B. 25 statt 16,7 ms auf 120 Hz –
+  // die fühlen sich als Mikroruckler an, obwohl sie unter der Rucklergrenze bleiben)
+  let offBeat = 0;
   const idx: number[] = [];
   for (const i of keep) {
     const d = dt[i];
+    if (d > period * 1.25 + 1) offBeat++;
     hist[edges.find(([e]) => d < e)![1]]++;
     if (d > hitchMs) {
       hitches++;
@@ -320,8 +324,9 @@ function makeReport(r: Rec): Report {
     art: 'gruppetto Abfahrt (WebGL) Messfahrt', v: 1, ...r.meta,
     zusammenfassung: {
       dauer_s: summary.s, bilder: n, takt_ms: summary.period, fps_mittel: summary.fps, fps_1pct_low: summary.low1,
+      taktfehler: offBeat, taktfehler_prozent: r1((offBeat / Math.max(1, keep.length)) * 100),
       ruckler: hitches, verpasste_bilder: missed, ruckler_cpu_gebunden: cpuBound, ruckler_spaeter_aufruf: lateBound, ruckler_grenze_ms: r1(hitchMs),
-      hinweis: 'Regler: zu langsam = mehr als 40 % der Bilder über 18,8 ms (bildzeit_p60_ms > 18,8) – dann erst Sichtweite, dann Auflösung',
+      hinweis: 'takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. Regler: zu langsam = mehr als 40 % der Bilder über 18,8 ms (bildzeit_p60_ms > 18,8) – dann erst Sichtweite, dann Auflösung',
     },
     orte: places,
     grafik_probe: probeAll ?? 'keine Probebilder',
