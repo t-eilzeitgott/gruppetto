@@ -21,6 +21,8 @@ import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { Skel, SkelText } from '../ui/skeleton';
 import { BoardLink, Countdown, StartSheet } from './startSheet';
+import { useMeasure } from './measure';
+import type { Renderer3D } from '../game/abfahrt/render3d';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent } from './Game';
 import { FpsSwitch, GfxSwitches, RangePicker } from './gameKit';
 import {
@@ -179,7 +181,15 @@ export function ZeitfahrenPage() {
     show(e.title, e.sub, e.tone);
   };
 
+  // Messmodus (Admin oder ?mess): Messfahrt und Kostenanalyse wie in der Abfahrt
+  const rendererRef = useRef<Renderer3D | null>(null);
+  const meas = useMeasure({
+    admin: !!me.is_admin, game: 'Zeitfahren', renderer: () => rendererRef.current,
+    meta: () => ({ strecke: track.title, tag: day }),
+    onResume: () => { if (uiRef.current === 'paused') setUi('playing'); },
+  });
   const onOver = (r: TtResult) => {
+    meas.m.stop();
     setResult(r);
     setUi('over');
     setCoach(null);
@@ -249,6 +259,7 @@ export function ZeitfahrenPage() {
   };
 
   const glGen = useRaceLoop({
+    perf: meas.m.perf, onRenderer: (r) => { rendererRef.current = r; },
     game: 'zeitfahren',
     stageRef: stageEl, engineRef, uiRef,
     make: makeEngine,
@@ -373,12 +384,16 @@ export function ZeitfahrenPage() {
             <RangePicker />
             <FpsSwitch />
             <GfxSwitches />
+            {meas.menu(() => engineRef.current)}
           </div>
         </div>
       ) : null}
 
+      {meas.overlays(ui === 'paused')}
+
       {ui === 'ready' ? (
-        <StartSheet game="zeitfahren" title="Zeitfahren" sub={sub} cta="Auf die Rampe" onStart={start} onClose={() => navigate('/')} plain={showBoard}>
+        <StartSheet game="zeitfahren" title="Zeitfahren" sub={sub} cta="Auf die Rampe" onStart={start} onClose={() => navigate('/')} plain={showBoard}
+          after={meas.m.can ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); meas.m.start(); }}>Auf die Rampe mit Messfahrt</button> : null}>
           {showBoard ? boardView : (
             <>
               <TtProfile track={track} ref_={ref} />

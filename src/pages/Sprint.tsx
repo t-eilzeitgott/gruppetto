@@ -21,6 +21,8 @@ import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, StartSheet } from './startSheet';
+import { useMeasure } from './measure';
+import type { Renderer3D } from '../game/abfahrt/render3d';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
 import { FpsSwitch, GfxSwitches, RangePicker } from './gameKit';
 import {
@@ -130,7 +132,15 @@ export function SprintPage() {
     setBanner({ key: bannerKey.current, title: e.title, sub: e.sub, tone: e.tone });
   };
 
+  // Messmodus (Admin oder ?mess): Messfahrt und Kostenanalyse wie in der Abfahrt
+  const rendererRef = useRef<Renderer3D | null>(null);
+  const meas = useMeasure({
+    admin: !!me.is_admin, game: 'Sprint', renderer: () => rendererRef.current,
+    meta: () => ({ strecke: gameSubFor('sprint', day, ref), tag: day }),
+    onResume: () => { if (uiRef.current === 'paused') setUi('playing'); },
+  });
   const onOver = (r: SprintResult) => {
+    meas.m.stop();
     setResult(r);
     setUi('over');
     setCoach(null);
@@ -162,6 +172,7 @@ export function SprintPage() {
   };
 
   const glGen = useRaceLoop({
+    perf: meas.m.perf, onRenderer: (r) => { rendererRef.current = r; },
     game: 'sprint',
     stageRef: stageEl, engineRef, uiRef,
     make: makeEngine,
@@ -285,9 +296,12 @@ export function SprintPage() {
             <RangePicker />
             <FpsSwitch />
             <GfxSwitches />
+            {meas.menu(() => engineRef.current)}
           </div>
         </div>
       ) : null}
+
+      {meas.overlays(ui === 'paused')}
 
       {ui === 'ready' ? (
         <StartSheet
@@ -295,6 +309,7 @@ export function SprintPage() {
           sub={gameSubFor('sprint', day, ref)}
           extra={ref?.finale?.line ? <span className="ghead__extra">Echtes Finale: {ref.finale.line}</span> : null}
           onStart={start} onClose={() => navigate('/')} plain={showBoard}
+          after={meas.m.can ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); meas.m.start(); }}>Losfahren mit Messfahrt</button> : null}
         >
           {showBoard ? boardView : (
             <>

@@ -7,6 +7,9 @@ import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/ab
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock } from '../game/frameClock';
+import { EV, SEC, type Perf3D } from '../game/abfahrt/perf3d';
+import type { Renderer3D } from '../game/abfahrt/render3d';
+import { rangeDrop, viewRange } from '../game/abfahrt/viewRange';
 import { afterPaint } from '../lib/afterPaint';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
@@ -46,6 +49,10 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
   onFrame: (eng: E, dt: number) => void;
   onGlError: () => void;
   onHidden: () => void;
+  /** Messfahrt (measure.tsx): Bausteine je Bild aufzeichnen */
+  perf?: RefObject<Perf3D>;
+  /** die Bühne steht (für Messmodus und Kostenanalyse) */
+  onRenderer?: (r: Renderer3D | null) => void;
 }): number {
   const cb = useRef(opts);
   cb.current = opts;
@@ -85,6 +92,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       }
       const { renderer, canvas, overlay } = st;
       stage.append(canvas, overlay);
+      cb.current.onRenderer?.(renderer);
       renderer.resize();
       renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
       const low = /[?&]lowgfx\b/.test(window.location.search);
@@ -111,9 +119,14 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       // Bildrate für Admins (unauffällig unten links)
       const fps = new FpsMeter(stage);
       let lastDraw = 0;
+      let lastPhase = '';
+      let lastRange = rangeDrop();
       const loop = (now: number) => {
         // fester Bildtakt (frameClock.ts): zu frühe Aufrufe auslassen – jedes Bild kommt im gleichen Abstand
         if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
+        const P = cb.current.perf?.current ?? null;
+        const rec = !!P?.rec;
+        if (rec) P!.begin(now);
         const dt = clock.tick(now);
         const raw = clock.raw;
         const eng = engineRef.current!;
@@ -126,6 +139,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         }
         lostT = 0;
         if (uiRef.current !== 'paused') eng.update(dt);
+        if (rec) P!.mark(SEC.spiel);
+        renderer.prof = rec ? P : null;
         // Start- und Ergebniskarte: Szene dahinter nur 10-mal pro Sekunde zeichnen (spart Akku und Wärme)
         const idle = uiRef.current === 'ready' || uiRef.current === 'over';
         idleT = idle ? idleT + dt : 0;
@@ -149,7 +164,21 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
         if (uiRef.current === 'playing' && !low) {
           const nq = gov.frame(raw, renderer.quality, clock.target);
-          if (nq !== null) renderer.setQuality(nq); // wirkt direkt vor dem nächsten Bild (kein schwarzes Bild)
+          if (nq !== null) {
+            if (rec) P!.event(EV.quality, `Auflösung ${Math.round(renderer.quality * 100)} % → ${Math.round(nq * 100)} %`);
+            renderer.setQuality(nq); // wirkt direkt vor dem nächsten Bild (kein schwarzes Bild)
+          }
+        }
+        if (rec && P!.rec) {
+          const rd = rangeDrop();
+          if (rd !== lastRange) { P!.event(EV.range, `Sichtweite ${viewRange().label}${rd ? ` (${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`); lastRange = rd; }
+          const ph = uiRef.current === 'paused' ? 'paused' : eng.phase;
+          if (ph !== lastPhase) { P!.event(EV.phase, ph); lastPhase = ph; }
+          P!.mark(SEC.anzeige);
+          P!.end({
+            dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
+            quality: renderer.quality, px: renderer.gl.getPixelRatio(), range: rd, z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+          });
         }
         raf = requestAnimationFrame(loop);
       };
@@ -189,6 +218,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         canvas.removeEventListener('webglcontextrestored', onRestored);
         ro?.disconnect();
         window.removeEventListener('orientationchange', fit);
+        cb.current.onRenderer?.(null);
         releaseStage(st);
         window.removeEventListener('resize', onResize);
         document.removeEventListener('visibilitychange', onVis);
