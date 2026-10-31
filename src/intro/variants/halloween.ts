@@ -31,7 +31,7 @@ radial-gradient(circle at 60% 34%,rgba(0,0,0,.12) 0 5%,transparent 6%),
 radial-gradient(circle at 63% 66%,rgba(0,0,0,.1) 0 4%,transparent 5%),
 radial-gradient(circle at 44% 40%,rgba(255,248,226,.3) 0,rgba(236,222,186,.24) 46%,rgba(226,210,170,.2) 49%,rgba(226,210,170,0) 51%),
 radial-gradient(circle,rgba(255,240,205,.05) 0 40%,rgba(255,240,205,0) 70%)}
-.ix-fog{border-radius:50%;opacity:0;background:radial-gradient(ellipse at 50% 50%,rgba(150,140,195,.24),rgba(150,140,195,0) 68%)}
+.ix-fog{opacity:0;background:radial-gradient(closest-side,rgba(150,140,195,.24),rgba(150,140,195,0))}
 .ix-bat{color:#221b2c;opacity:0}
 .ix-bat path{stroke:#3d344c;stroke-width:1.5}
 [data-theme=light] .ix-moon{background:
@@ -39,7 +39,7 @@ radial-gradient(circle at 36% 58%,rgba(90,80,120,.16) 0 7%,transparent 8%),
 radial-gradient(circle at 60% 34%,rgba(90,80,120,.12) 0 5%,transparent 6%),
 radial-gradient(circle at 44% 40%,rgba(214,206,236,.7) 0,rgba(196,186,226,.62) 49%,rgba(196,186,226,0) 51%),
 radial-gradient(circle,rgba(150,140,200,.12) 0 40%,rgba(150,140,200,0) 70%)}
-[data-theme=light] .ix-fog{background:radial-gradient(ellipse at 50% 50%,rgba(110,100,150,.14),rgba(110,100,150,0) 68%)}
+[data-theme=light] .ix-fog{background:radial-gradient(closest-side,rgba(110,100,150,.14),rgba(110,100,150,0))}
 [data-theme=light] .ix-glow{background:radial-gradient(circle,rgba(255,150,40,.28) 0,rgba(255,130,40,.1) 34%,rgba(255,120,30,0) 64%)}
 [data-theme=light] .ix-bat{color:#2a2232}
 [data-theme=light] .ix-bat path{stroke:none}
