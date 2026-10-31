@@ -41,6 +41,7 @@ function Sections({ tour }: { tour: Tour }) {
       sub: !tour.sync_mode || tour.sync_mode === 'off' ? 'Aus · Ergebnisse von procyclingstats.com holen' : `Von procyclingstats.com · ${SYNC_MODE_LABEL[tour.sync_mode]}`,
     },
     { to: '/admin/mitglieder', icon: 'user', title: 'Mitglieder & Einladung', sub: 'Einladungscode, Admins, Pro' },
+    { to: '/admin/intro', icon: 'star', title: 'Start-Animationen', sub: 'Themenwochen, Feiertage, Renntage – alle Varianten ansehen' },
     { to: '/admin/akku', icon: 'zap', title: 'Minispiel „Akku leer!“', sub: 'Prototyp · nur für Admins sichtbar' },
     { to: '/admin/welt', icon: 'mountain', title: 'Welt-Editor', sub: 'Durch die 3D-Welten fliegen, Requisiten und Gelände ändern, Notizen für Claude' },
     { to: '/admin/abfahrt', icon: 'mountain', title: 'Abfahrt · WebGPU', sub: 'Das ganze Spiel mit neuer Grafik: endlos, Gegner, Tunnel, dramatischer Himmel – ohne Wertung' },

@@ -70,11 +70,25 @@ const { bootHtml } = await import(`../${outdir}/.boot.mjs?${Date.now()}`);
 const boot = bootHtml(!url);
 await rm(`${outdir}/.boot.mjs`, { force: true });
 
+// Intro (läuft vor dem App-Skript, steht deshalb direkt in index.html): src/intro/main.ts als ein Block
+const intro = await esbuild.build({
+  entryPoints: ['src/intro/main.ts'],
+  bundle: true,
+  write: false,
+  minify: true,
+  format: 'iife',
+  target: ['es2020', 'safari15'],
+  legalComments: 'none',
+  logLevel: 'warning',
+});
+const introJs = intro.outputFiles[0].text.trim().replace(/<\/script/gi, '<\\/script');
+
 let html = await readFile('index.html', 'utf8');
 html = html
   .replace('<!--CSS-->', css ? `<link rel="stylesheet" href="${rel(css)}">` : '')
   .replace('<!--JS-->', `<script type="module" src="${rel(js)}"></script>`)
-  .replace('<!--BOOT-->', boot)
+  .replace('<!--BOOT-->', () => boot)
+  .replace('/*INTRO*/', () => introJs)
   // dezente Versionsnummer im Intro: „v56“ (Lauf-Nummer im Deploy), lokal Datum und Uhrzeit
   .replace('<!--VERSION-->', /^\d+$/.test(buildId) ? `v${buildId}` : buildId)
   .replace('/*LIVE*/false', url ? 'true' : 'false');

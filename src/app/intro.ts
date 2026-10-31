@@ -32,6 +32,7 @@ if (typeof window !== 'undefined') {
 export function endIntro() {
   if (ended) return;
   ended = true;
+  dropPreview();
   const a = api();
   if (!a) return;
   // ein Bild abwarten: die Seite ist gezeichnet, die Wortmarke steht an ihrem Platz
@@ -45,4 +46,15 @@ function findMark(): Element | null {
     if (r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight && getComputedStyle(el).visibility !== 'hidden') return el;
   }
   return null;
+}
+
+/** Vorschau-Parameter (?intro=…, ?introdate=…) nach dem Start aus der Adresse nehmen – neu laden zeigt wieder das normale Intro */
+function dropPreview() {
+  try {
+    const u = new URL(location.href);
+    if (!u.searchParams.has('intro') && !u.searchParams.has('introdate')) return;
+    u.searchParams.delete('intro');
+    u.searchParams.delete('introdate');
+    history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+  } catch { /* egal */ }
 }

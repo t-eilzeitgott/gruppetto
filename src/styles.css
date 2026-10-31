@@ -389,6 +389,8 @@ a.card--row:hover, a.card:hover { background: var(--surface2); }
   position: absolute; left: 0.03em; bottom: 0.0em; width: 0.17em; height: 0.17em; border-radius: 50%;
   box-shadow: 0 0 0 2px var(--accent); opacity: 0; pointer-events: none; transition: box-shadow 0.35s;
 }
+/* Ebenen der Intro-Varianten (src/intro): hinter bzw. vor der Wortmarke, über den ganzen Schirm */
+.intro__fx { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 /* Inhalt, der nach dem Laden an die Stelle der Platzhalter tritt: weich einblenden */
 .reveal { animation: reveal 0.3s ease-out both; }
 @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }

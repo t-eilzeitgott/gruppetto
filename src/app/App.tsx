@@ -8,6 +8,7 @@ import { refreshOnFocus, resetCache } from './query';
 import { useRoute } from './router';
 import { AppContext } from './context';
 import { setTourTheme } from './theme';
+import { rememberRaceDays } from './raceDays';
 import { LIVE_CONFIGURED, source } from './config';
 import { Shell } from '../ui/Shell';
 import { Button, Empty, ErrorBox, ToastHost } from '../ui/kit';
@@ -39,6 +40,7 @@ import { AdminResults } from '../pages/admin/AdminResults';
 import { AdminBonus } from '../pages/admin/AdminBonus';
 import { AdminMembers } from '../pages/admin/AdminMembers';
 import { AdminSync } from '../pages/admin/AdminSync';
+import { AdminIntro } from '../pages/admin/AdminIntro';
 import { BONUS_CATEGORIES, type BonusCategory, type Profile as ProfileT, type Tour as TourT } from '../lib/types';
 
 export function App() {
@@ -100,6 +102,11 @@ function MemberApp({ me }: { me: ProfileT }) {
   useLayoutEffect(() => {
     if (!loading) setTourTheme(tour?.theme ?? null);
   }, [tour?.theme, loading]);
+  // Etappentage für die Renntag-Animation des nächsten Starts merken
+  const tourData = useTourData(tour);
+  useEffect(() => {
+    if (tourData.data) rememberRaceDays(tourData.data);
+  }, [tourData.data]);
 
   const ctx = useMemo(() => ({ me, tour, tours }), [me, tour, tours]);
   // andere Seite als die Startseite (z. B. Link aufs Spiel): sobald der Rahmen steht, darf das Intro gehen
@@ -194,6 +201,7 @@ function AdminRouter({ section }: { section?: string }) {
     case 'bonus': return <AdminBonus />;
     case 'mitglieder': return <AdminMembers />;
     case 'automatik': return <AdminSync />;
+    case 'intro': return <AdminIntro />;
     case 'akku': return <Suspense fallback={<RouteSkeleton parts={['spiel', 'akku']} />}><AkkuPage /></Suspense>;
     case 'welt': return <Suspense fallback={<RouteSkeleton parts={['spiel', 'welt']} />}><WorldEditorPage /></Suspense>;
     case 'gpu': return <Suspense fallback={<RouteSkeleton parts={['spiel', 'gpu']} />}><GpuTestPage /></Suspense>;
