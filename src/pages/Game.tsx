@@ -15,6 +15,7 @@ import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock } from '../game/frameClock';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { Track } from '../game/abfahrt/track';
+import { HowTo } from './finale';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { EV, Perf3D, PLACES, SEC, type Report } from '../game/abfahrt/perf3d';
 import { rangeDrop, viewRange } from '../game/abfahrt/viewRange';
@@ -27,7 +28,7 @@ import { useBikes, type Bikes } from '../ui/useBikes';
 import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
-import { GameIcon } from '../ui/GameIcon';
+import { BoardLink, Countdown, StartSheet } from './startSheet';
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
 import { FpsSwitch, GfxSwitches, RangePicker, PauseIcon, PlayIcon, useCountUp } from './gameKit';
 
@@ -72,7 +73,7 @@ export function rankFor(totalKm: number) {
 }
 
 /** Startbild der Abfahrt ohne Seite: beim App-Start unsichtbar vorwärmen (siehe app/warm.ts) */
-export function warmAbfahrt(a: WarmArgs): Promise<void> {
+export function warmAbfahrt(a: WarmArgs, reuse = false): Promise<void> {
   return prewarm(() => new Abfahrt({
     dayKey: a.day,
     names: a.names,
@@ -84,7 +85,7 @@ export function warmAbfahrt(a: WarmArgs): Promise<void> {
     tutorial: false,
     onEvent: () => undefined,
     onOver: () => undefined,
-  }), { accent: a.accent, dark: a.dark });
+  }), { accent: a.accent, dark: a.dark }, 'abfahrt', reuse);
 }
 
 export function readAccent(): string {
@@ -267,7 +268,7 @@ export function GamePage() {
       const warm = hasWarmStage();
       let st: Stage;
       try {
-        st = acquireStage();
+        st = acquireStage('abfahrt');
       } catch {
         setGlError(true);
         return undefined;
@@ -699,11 +700,7 @@ export function GamePage() {
         </div>
       ) : null}
 
-      {ui === 'countdown' ? (
-        <div className="abf-count" aria-live="assertive">
-          <span key={count}>{count > 0 ? count : 'Los!'}</span>
-        </div>
-      ) : null}
+      {ui === 'countdown' ? <Countdown count={count} /> : null}
 
       {ui === 'paused' ? (
         <div className="abf-layer">
@@ -782,39 +779,36 @@ export function GamePage() {
       ) : null}
 
       {ui === 'ready' ? (
-        <div className="abf-layer">
-          <button type="button" className="abf-round abf-close" onClick={() => navigate('/')} aria-label="Schließen"><Icon name="x" size={20} /></button>
-          <div className="abf-card abf-scroll">
-            {showBoard ? (
-              <BoardView rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} />
-            ) : (
-              <>
-                <div className="abf-head">
-                  <GameIcon size={44} />
-                  <div>
-                    <h1 className="abf-title">Abfahrt</h1>
-                    <p className="abf-sub">{track.title}{wetter ? ` · ${wetter}` : ''}</p>
-                  </div>
+        <StartSheet
+          game="abfahrt" title="Abfahrt" sub={track.title}
+          onStart={() => start()} onClose={() => navigate('/')} plain={showBoard}
+          after={me.is_admin || canMeasure ? (
+            <div className="abf-sheet__extra">
+              {me.is_admin ? (
+                <div className="abf-cruise">
+                  <span className="abf-muted">Testfahrt ohne Hindernisse und Wertung</span>
+                  <button type="button" className="btn btn--secondary btn--sm" onClick={() => start(2)}>2×</button>
+                  <button type="button" className="btn btn--secondary btn--sm" onClick={() => start(3)}>3×</button>
                 </div>
-                <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />
-                <Missions missions={missions} done={doneIds} compact />
-                <button type="button" className="btn btn--primary btn--full abf-go" onClick={() => start()}><span>Losfahren</span></button>
-                {me.is_admin ? (
-                  <div className="abf-cruise">
-                    <span className="abf-muted">Testfahrt ohne Hindernisse und Wertung</span>
-                    <button type="button" className="btn btn--secondary btn--sm" onClick={() => start(2)}>2×</button>
-                    <button type="button" className="btn btn--secondary btn--sm" onClick={() => start(3)}>3×</button>
-                  </div>
-                ) : null}
-                {canMeasure ? (
-                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); startMeasure(); }}>Losfahren mit Messfahrt</button>
-                ) : null}
-                <BikeChip bikes={bikes} />
-                <MiniBoard rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} totalM={mine?.total_m ?? 0} />
-              </>
-            )}
-          </div>
-        </div>
+              ) : null}
+              {canMeasure ? (
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); startMeasure(); }}>Losfahren mit Messfahrt</button>
+              ) : null}
+            </div>
+          ) : null}
+        >
+          {showBoard ? (
+            <BoardView rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} />
+          ) : (
+            <>
+              <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />
+              <Missions missions={missions} done={doneIds} compact />
+              <HowTo items={[['↔', 'Lenken'], ['↑', 'Druck'], ['↓', 'Bremsen'], ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
+              <BikeChip bikes={bikes} />
+              <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={nf} />
+            </>
+          )}
+        </StartSheet>
       ) : null}
 
       {ui === 'over' && result ? (
@@ -933,39 +927,6 @@ function DescentProfile({ track, friends, members, max }: { track: Track; friend
         })}
       </div>
     </figure>
-  );
-}
-
-function MiniBoard({ rows, label, members, meId, onOpen, totalM }: {
-  rows: GameBest[]; label: string; members: Profile[]; meId: string; onOpen: () => void; totalM: number;
-}) {
-  const myIdx = rows.findIndex((r) => r.user_id === meId);
-  const shown = rows.slice(0, 3).map((r, i) => ({ r, i }));
-  if (myIdx >= 3) shown.push({ r: rows[myIdx], i: myIdx });
-  const rank = rankFor(totalM / 1000);
-  return (
-    <section className="abf-mini" aria-label="Bestenliste">
-      <div className="abf-row">
-        <h2 className="abf-eyebrow">Bestenliste · {label}</h2>
-        <button type="button" className="abf-link" onClick={onOpen}>Alle<Icon name="chevron" size={14} /></button>
-      </div>
-      {shown.length ? (
-        <ol className="abf-top">
-          {shown.map(({ r, i }) => {
-            const m = members.find((x) => x.id === r.user_id);
-            return (
-              <li key={r.user_id} className={cx(r.user_id === meId && 'is-me')}>
-                <span className="abf-top__rank">{i + 1}</span>
-                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={24} />
-                <span className="abf-top__name">{r.user_id === meId ? 'Du' : m?.display_name ?? 'Jemand'}</span>
-                <strong>{nf(r.best)}</strong>
-              </li>
-            );
-          })}
-        </ol>
-      ) : <p className="abf-muted">Noch keine Läufe – fahr die erste Bestmarke!</p>}
-      <RankBar totalM={totalM} name={rank.name} />
-    </section>
   );
 }
 

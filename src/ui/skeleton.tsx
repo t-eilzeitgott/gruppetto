@@ -106,54 +106,56 @@ export function HomeSkeleton() {
           </div>
         ))}
       </div>
-      <div className="card garage-teaser">
-        <Skel w={36} h={36} r={12} />
-        <SkelText w={150} size={15.5} className="garage-teaser__title" />
-        <SkelText w={34} size={14} />
-      </div>
-      <div className="card garage-teaser">
-        <Skel w={36} h={36} r={12} />
-        <SkelText w={120} size={15.5} className="garage-teaser__title" />
-        <SkelText w={44} size={14} />
-      </div>
       <GamesCardSkeleton />
     </div>
   );
 }
 
-/** Minispiele-Karte: Kopf mit Symbol und eine kleine Bestenliste */
+/** Spielkarte: Spielwahl, Kopf mit Symbol, kleine Bestenliste, Startknopf, drei Kacheln */
 export function GamesCardSkeleton() {
   return (
-    <section className="card games-card">
-      <div className="games-slide game-card">
-        <span className="game-card__head">
-          <Skel w={48} h={48} r={14} />
-          <span className="game-card__main">
-            <SkelText w={120} size={19} />
-            <SkelText w={200} size={13.5} />
-            <SkelText w={90} size={13.5} />
-          </span>
-        </span>
-        <BoardSkeleton />
+    <section className="card arena" aria-hidden="true">
+      <div className="arena__tabs">
+        <span className="arena__ind" />
+        {['Zeitfahren', 'Abfahrt', 'Sprint', 'Berg'].map((n, i) => <span key={n} className={cx('arena__tab', i === 0 && 'is-on')}>{n}</span>)}
       </div>
-      <div className="games-dots" aria-hidden="true">
-        <span className="games-dots__dot is-on" />
-        <span className="games-dots__dot" />
-        <span className="games-dots__dot" />
+      <div className="arena__body">
+        <div className="arena__pane" style={{ animation: 'none' }}>
+          <div className="ghead">
+            <Skel w={44} h={44} r={13} />
+            <div className="ghead__text">
+              <SkelText w={120} size={22} />
+              <SkelText w={200} size={13.5} />
+            </div>
+          </div>
+          <BoardSkeleton />
+        </div>
+      </div>
+      <Skel w="100%" h={48} r={14} />
+      <div className="arena__tiles">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="arena__tile">
+            <Skel w={34} h={34} r={10} />
+            <div className="arena__tile-text">
+              <SkelText w={36} size={17} />
+              <SkelText w={48} size={11.5} />
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
 }
 
-/** Bestenliste im Spiele-Karussell: drei Zeilen */
+/** Bestenliste in der Spielkarte: Kennzeichnung und drei Zeilen */
 export function BoardSkeleton() {
   return (
-    <span className="game-board" aria-hidden="true">
-      <SkelText w={56} size={11.5} className="game-board__label" />
+    <span className="arena__board" aria-hidden="true">
+      <SkelText w={44} size={11} className="arena__board-label" />
       {[0, 1, 2].map((i) => (
-        <span key={i} className="game-board__row">
+        <span key={i} className="arena__row">
           <SkelText w={10} size={13} />
-          <Skel w={24} h={24} r="50%" />
+          <Skel w={22} h={22} r="50%" />
           <SkelText w={['44%', '36%', '40%'][i]} size={15} />
           <SkelText w={44} size={15} className="skel-right" />
         </span>

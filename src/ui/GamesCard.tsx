@@ -1,31 +1,36 @@
 /**
- * Startseite: alle Minispiele in einer Karte. Wischen nach links/rechts wechselt das Spiel,
- * jedes zeigt seine eigene Bestenliste. Ein neues, noch nicht gespieltes Spiel steht ganz vorn (mit „Neu“ und Leuchten),
- * sonst das selbst meistgespielte, bei Gleichstand das zur Etappe passende. Darüber der Eingang zur Radgarage.
+ * Startseite: alle Minispiele in einer Karte. Oben die Spielwahl (gleitende Markierung), darunter das gewählte
+ * Spiel mit der Strecke des Tages und der kleinen Bestenliste der Runde, der Startknopf, unten Radgarage,
+ * Europareise und Passbuch als Kacheln. Wechseln geht per Tipp oder Wischen (die Inhalte gleiten nach), der
+ * Vorrat der 3D-Bühne folgt der Wahl (warm.ts) und der Kopf der Karte fliegt beim Start ins Spiel (handoff.ts).
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent, type RefObject } from 'react';
 import { useApp } from '../app/context';
 import { useMembers } from '../app/hooks';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
-import type { GameBest } from '../data/source';
+import { warmGame } from '../app/warm';
+import { beginHandoff } from '../app/handoff';
+import type { GameBest, GameRun } from '../data/source';
 import type { Stage, StageKind } from '../lib/types';
-import { GAMES, fmtBest, gameOrderByPlays, isNewGame, type GameInfo } from '../game/games';
+import { GAMES, fmtBest, gameOrder, isNewGame, type GameInfo } from '../game/games';
 import type { GameId } from '../data/source';
-import { Track } from '../game/abfahrt/track';
 import { overtaken, type Seen } from '../lib/overtaken';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
-import { shortTour, stageRef } from '../game/abfahrt/stageRef';
+import { gameSub } from '../game/gameSub';
 import { Avatar, Link, cx } from './kit';
-import { Icon } from './Icon';
-import { GameBadge } from './GameIcon';
+import { AreaIcon } from './GameIcon';
+import { GameHead } from './GameHead';
 import { useBikes } from './useBikes';
 import { useJourney } from './useJourney';
 import { fmtKm, ROUTE, ROUTE_KM } from '../game/journey';
-import { BIKES } from '../game/bikes';
+import { BIKES, GARAGE_START } from '../game/bikes';
+import { passStamps } from '../game/passbook';
 import { BoardSkeleton, SkelText } from './skeleton';
 
-const SWIPED = 'gruppetto.games.swiped';
+const LS_SEL = 'gruppetto.games.sel';
+/** kurze Namen für die Spielwahl */
+const SHORT: Record<GameId, string> = { zeitfahren: 'Zeitfahren', abfahrt: 'Abfahrt', sprint: 'Sprint', berg: 'Berg' };
 
 const seenKey = (game: string, board: string) => `gruppetto.rank.${game}.${board}`;
 const readSeen = (k: string): Seen | null => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) as Seen : null; } catch { return null; } };
@@ -51,183 +56,228 @@ function useOvertaken(game: string, board: string, rows: GameBest[], meId: strin
   return { alert, ack };
 }
 
-export function GamesCard({ stageKind = null, tourName = null, stages = null }: { stageKind?: StageKind | null; tourName?: string | null; stages?: Stage[] | null }) {
-  const { me } = useApp();
-  // eigene Läufe je Spiel (Saison) – gleiche Abfragen wie die Bestenlisten der Karten, also kein Mehraufwand
-  const boards = GAMES.map((g) => useQuery<GameBest[]>(`game:${g.id}:season`, () => source.gameLeaderboard(g.id))); // eslint-disable-line react-hooks/rules-of-hooks
-  const loaded = boards.every((q) => q.data);
-  const runsKey = loaded ? boards.map((q) => q.data!.find((b) => b.user_id === me.id)?.runs ?? 0).join(',') : '';
-  const runs = useMemo(() => {
-    if (!runsKey) return null;
-    const n = runsKey.split(',').map(Number);
-    return Object.fromEntries(GAMES.map((g, i) => [g.id, n[i]])) as Partial<Record<GameId, number>>;
-  }, [runsKey]);
-  const games = useMemo(() => gameOrderByPlays(stageKind, runs), [stageKind, runs]);
-  const scroller = useRef<HTMLDivElement | null>(null);
-  const [active, setActive] = useState(0);
-  // Spiele, in denen man gerade überholt wurde (Punkt unten pulsiert)
-  const [alerts, setAlerts] = useState<Record<string, boolean>>({});
-  const onAlert = (id: string, on: boolean) => setAlerts((a) => (a[id] === on ? a : { ...a, [id]: on }));
-  // Hinweis „rechts gibt es mehr“, bis man einmal gewischt hat
-  const [swiped, setSwiped] = useState(() => { try { return localStorage.getItem(SWIPED) === '1'; } catch { return false; } });
-  const onScroll = () => {
-    const el = scroller.current;
-    if (!el) return;
-    const w = (el.firstElementChild as HTMLElement | null)?.offsetWidth ?? el.clientWidth;
-    const i = Math.max(0, Math.min(games.length - 1, Math.round(el.scrollLeft / Math.max(1, w))));
-    setActive(i);
-    if (i > 0 && !swiped) {
-      setSwiped(true);
-      try { localStorage.setItem(SWIPED, '1'); } catch { /* egal */ }
-    }
-  };
-  const go = (i: number) => {
-    const el = scroller.current;
-    const slide = el?.children[i] as HTMLElement | undefined;
-    if (el && slide) el.scrollTo({ left: slide.offsetLeft - (el.firstElementChild as HTMLElement).offsetLeft, behavior: 'smooth' });
-  };
-  return (
-    <>
-      <GarageTeaser />
-      <JourneyTeaser />
-      <section className={cx('card games-card', games.length > 1 && active < games.length - 1 && 'has-more', !swiped && games.length > 1 && 'nudge')} aria-label="Minispiele">
-        <div className="games-scroller" ref={scroller} onScroll={onScroll}>
-          {games.map((g) => <GameSlide key={g.id} game={g} tourName={tourName} stages={stages} onAlert={onAlert} fresh={isNewGame(g, runs)} />)}
-        </div>
-        {games.length > 1 ? (
-          <div className="games-dots" role="tablist" aria-label="Spiel wählen">
-            {games.map((g, i) => (
-              <button
-                key={g.id}
-                type="button"
-                role="tab"
-                aria-selected={i === active}
-                aria-label={g.name}
-                className={cx('games-dots__dot', i === active && 'is-on', i === active + 1 && 'is-next', alerts[g.id] && i !== active && 'is-alert')}
-                onClick={() => go(i)}
-              />
-            ))}
-          </div>
-        ) : null}
-      </section>
-    </>
-  );
-}
-
-/**
- * Eingang zur Radgarage über den Spielen: leuchtet, solange es noch Räder freizuschalten gibt;
- * unten eine feine Linie bis zum nächsten Rad.
- */
-function GarageTeaser() {
-  const bikes = useBikes();
-  const n = bikes.unlocked.length;
-  const fresh = bikes.fresh.length > 0;
-  const next = bikes.next;
-  const p = next ? bikes.progress[next.id] : null;
-  const frac = p ? Math.min(1, p.value / (p.target || 1)) : 1;
-  const all = bikes.loaded && !next;
-  const label = fresh ? 'Neues Rad freigeschaltet' : all ? 'Radgarage' : 'Räder freischalten';
-  // bis die Läufe geladen sind: Zahl als Platzhalter (gleiche Breite), kein Leuchten
-  return (
-    <Link to="/spiel/garage" className={cx('card garage-teaser', bikes.loaded && !all && 'is-glow', fresh && 'is-fresh')} ariaLabel={`Radgarage – ${n} von ${BIKES.length} Rädern freigeschaltet${fresh ? ', neues Rad' : ''}`}>
-      <span className="garage-teaser__icon" aria-hidden="true"><Icon name="bike" size={22} /></span>
-      <strong className="garage-teaser__title">{label}</strong>
-      {bikes.loaded ? <span className="garage-teaser__count">{n}/{BIKES.length}</span> : <SkelText w={34} size={14} />}
-      <Icon name="chevron" className="muted" size={18} />
-      {bikes.loaded && !all ? <span className="garage-teaser__bar" aria-hidden="true"><i style={{ width: `${Math.round(frac * 100)}%` }} /></span> : null}
-    </Link>
-  );
-}
-
-/** Europareise: wo man gerade steht – alle Kilometer aus allen Spielen auf dem Weg nach Palermo */
-function JourneyTeaser() {
-  const j = useJourney();
-  const p = j.me;
-  const at = ROUTE[p.at];
-  const next = ROUTE[p.next];
-  const done = p.at === ROUTE.length - 1;
-  const sub = !j.loaded ? '' : p.meters === 0 ? `Wuppertal → Palermo · jeder Lauf zählt` : done ? 'In Palermo angekommen' : `${at.name} · noch ${fmtKm(p.toNext)} bis ${next.name}`;
-  return (
-    <Link to="/spiel/reise" className="card garage-teaser journey-teaser" ariaLabel={`Europareise – ${sub}`}>
-      <span className="garage-teaser__icon" aria-hidden="true"><Icon name="flag" size={22} /></span>
-      <span className="garage-teaser__title"><strong>Europareise</strong>{j.loaded ? <span className="journey-teaser__sub">{sub}</span> : <SkelText w={150} size={12} />}</span>
-      {j.loaded ? <span className="garage-teaser__count">{fmtKm(p.meters / 1000)}</span> : null}
-      <Icon name="chevron" className="muted" size={18} />
-      {j.loaded && p.meters > 0 ? <span className="garage-teaser__bar" aria-hidden="true"><i style={{ width: `${Math.round(Math.min(1, p.km / ROUTE_KM) * 100)}%` }} /></span> : null}
-    </Link>
-  );
-}
-
-function GameSlide({ game, tourName, stages, onAlert, fresh }: { game: GameInfo; tourName: string | null; stages: Stage[] | null; onAlert: (id: string, on: boolean) => void; fresh: boolean }) {
-  const { me } = useApp();
-  const members = useMembers().data ?? [];
+/** Bestenlisten eines Spiels: heute (wenn schon jemand gefahren ist), sonst Saison */
+function useBoard(game: GameId) {
   const day = berlinDayKey();
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
-  const season = useQuery<GameBest[]>(`game:${game.id}:season`, () => source.gameLeaderboard(game.id));
-  const today = useQuery<GameBest[]>(`game:${game.id}:day:${day}`, () => source.gameLeaderboard(game.id, since));
+  const season = useQuery<GameBest[]>(`game:${game}:season`, () => source.gameLeaderboard(game));
+  const today = useQuery<GameBest[]>(`game:${game}:day:${day}`, () => source.gameLeaderboard(game, since));
+  const useToday = (today.data?.length ?? 0) > 0;
+  return { loaded: !!season.data && !!today.data, error: !!(season.error || today.error), rows: (useToday ? today.data : season.data) ?? [], today: useToday, day, season: season.data };
+}
+
+/** Zahl der gestempelten Pässe – aus den eigenen Läufen, in einer ruhigen Minute gerechnet (baut Strecken nach) */
+function usePassCount(tourName: string | null, stages: Stage[] | null): number | null {
+  const runs = useQuery<GameRun[]>('game:runs:me', () => source.myRuns(GARAGE_START));
+  const [n, setN] = useState<number | null>(null);
+  const data = runs.data;
+  useEffect(() => {
+    if (!data) return undefined;
+    if (data.length === 0) { setN(0); return undefined; }
+    let on = true;
+    const idle = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    const go = () => { if (!on) return; try { setN(passStamps(data, tourName, stages).length); } catch { setN(0); } };
+    const h = idle ? idle(go, { timeout: 2500 }) : window.setTimeout(go, 600);
+    return () => { on = false; if (!idle) window.clearTimeout(h); };
+  }, [data, tourName, stages]);
+  return n;
+}
+
+export function GamesCard({ stageKind = null, tourName = null, stages = null }: { stageKind?: StageKind | null; tourName?: string | null; stages?: Stage[] | null }) {
+  const { me } = useApp();
+  const members = useMembers().data ?? [];
+  // Spielwahl: zuletzt gewählt, sonst das Spiel zur Etappe des Tages
+  const [sel, setSel] = useState<GameId>(() => {
+    try { const v = localStorage.getItem(LS_SEL) as GameId | null; if (v && GAMES.some((g) => g.id === v)) return v; } catch { /* egal */ }
+    return gameOrder(stageKind)[0]?.id ?? 'zeitfahren';
+  });
+  const [dir, setDir] = useState(1);
+  const idx = Math.max(0, GAMES.findIndex((g) => g.id === sel));
+  const game = GAMES[idx];
+  const choose = (id: GameId) => {
+    if (id === sel) return;
+    setDir(GAMES.findIndex((g) => g.id === id) > idx ? 1 : -1);
+    setSel(id);
+    try { localStorage.setItem(LS_SEL, id); } catch { /* egal */ }
+  };
+  // die 3D-Bühne im Vorrat folgt der Wahl
+  useEffect(() => { warmGame(sel); }, [sel]);
+
+  // Bestenlisten aller Spiele (für Hinweise auf den Reitern und die eigenen Läufe)
+  const boards = GAMES.map((g) => useBoard(g.id)); // eslint-disable-line react-hooks/rules-of-hooks
+  const runs = useMemo(() => {
+    if (!boards.every((b) => b.season)) return null;
+    return Object.fromEntries(GAMES.map((g, i) => [g.id, boards[i].season!.find((b) => b.user_id === me.id)?.runs ?? 0])) as Partial<Record<GameId, number>>;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boards.map((b) => b.season).join('|'), me.id]);
+  const alerts = GAMES.map((g, i) => useOvertaken(g.id, boards[i].today ? `day:${boards[i].day}` : 'season', boards[i].rows, me.id)); // eslint-disable-line react-hooks/rules-of-hooks
+
+  // Wischen zwischen den Spielen
+  const headRef = useRef<HTMLDivElement | null>(null);
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const swipe = useRef<{ id: number; x: number; y: number; on: boolean | null; moved: boolean } | null>(null);
+  const skipClick = useRef(false);
+  const onDown = (e: RPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    swipe.current = { id: e.pointerId, x: e.clientX, y: e.clientY, on: null, moved: false };
+    skipClick.current = false;
+  };
+  const onMove = (e: RPointerEvent<HTMLDivElement>) => {
+    const s = swipe.current;
+    if (!s || s.id !== e.pointerId) return;
+    const dx = e.clientX - s.x, dy = e.clientY - s.y;
+    if (s.on === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) s.on = Math.abs(dx) > Math.abs(dy) * 1.2;
+    if (!s.on) return;
+    s.moved = true;
+    skipClick.current = true;
+    const el = paneRef.current;
+    if (el) el.style.transform = `translateX(${dx * 0.3}px)`;
+  };
+  const onUp = (e: RPointerEvent<HTMLDivElement>) => {
+    const s = swipe.current;
+    if (!s || s.id !== e.pointerId) return;
+    swipe.current = null;
+    const el = paneRef.current;
+    if (el) { el.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1)'; el.style.transform = ''; window.setTimeout(() => { if (el) el.style.transition = ''; }, 320); }
+    if (!s.on) return;
+    const dx = e.clientX - s.x;
+    if (Math.abs(dx) < 42) return;
+    const next = GAMES[idx + (dx < 0 ? 1 : -1)];
+    if (next) choose(next.id);
+  };
+
+  const open = () => {
+    if (skipClick.current) { skipClick.current = false; return; }
+    alerts[idx].ack();
+    const head = headRef.current;
+    if (head) beginHandoff(head, game.path);
+    else beginHandoff(document.createElement('div'), game.path);
+  };
+
+  return (
+    <section className="card arena" aria-label="Minispiele">
+      <div className="arena__tabs" role="tablist" aria-label="Spiel wählen" style={{ '--i': idx } as CSSProperties}>
+        <span className="arena__ind" aria-hidden="true" />
+        {GAMES.map((g, i) => (
+          <button
+            key={g.id}
+            type="button"
+            role="tab"
+            aria-selected={i === idx}
+            className={cx('arena__tab', i === idx && 'is-on', (alerts[i].alert || isNewGame(g, runs)) && i !== idx && 'is-dot')}
+            onClick={() => choose(g.id)}
+          >
+            {SHORT[g.id]}
+          </button>
+        ))}
+      </div>
+      <div className="arena__body" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+        <div key={game.id} ref={paneRef} className="arena__pane" style={{ '--dir': dir } as CSSProperties}>
+          <GamePane game={game} board={boards[idx]} alert={alerts[idx].alert} fresh={isNewGame(game, runs)} tourName={tourName} stages={stages} members={members} meId={me.id} headRef={headRef} onOpen={open} />
+        </div>
+      </div>
+      <button type="button" className="btn btn--primary btn--full arena__go" onClick={open}><span>Spielen</span></button>
+      <Tiles tourName={tourName} stages={stages} />
+    </section>
+  );
+}
+
+function GamePane({ game, board, alert, fresh, tourName, stages, members, meId, headRef, onOpen }: {
+  game: GameInfo; board: ReturnType<typeof useBoard>; alert: ReturnType<typeof overtaken>; fresh: boolean;
+  tourName: string | null; stages: Stage[] | null; members: { id: string; display_name: string | null; avatar_color: string | null }[]; meId: string;
+  headRef: RefObject<HTMLDivElement | null>; onOpen: () => void;
+}) {
+  const day = board.day;
   const sprint = game.id === 'sprint';
   const berg = game.id === 'berg';
   const tt = game.id === 'zeitfahren';
   // echte Vorlage: Ziel der nächsten Flachetappe, Schlussanstieg der nächsten Bergetappe, nächstes Einzelzeitfahren
-  const sub = useMemo(() => {
-    if (sprint || berg || tt) {
-      const ref = stageRef(sprint ? 'sprint' : berg ? 'mountain' : 'tt', tourName, stages, day);
-      const pre = ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : '';
-      if (sprint) return `${pre}${new Track(day, [], 'sprint', ref).title.replace('Sprintfinale in ', 'Ziel in ')}`;
-      if (tt) return `${pre}${new Track(day, [], 'tt', ref).title} · 3 km`;
-      return `${pre}${new Track(day, [], 'mountain', ref).title}`;
-    }
-    return new Track(day).title;
-  }, [day, sprint, berg, tt, tourName, stages]);
-  const useToday = (today.data?.length ?? 0) > 0;
-  const rows = (useToday ? today.data : season.data) ?? [];
-  const myIdx = rows.findIndex((b) => b.user_id === me.id);
+  // (derselbe Text wie im Startblatt des Spiels)
+  const sub = useMemo(() => gameSub(game.id, day, tourName, stages), [game.id, day, tourName, stages]);
+  const rows = board.rows;
+  const myIdx = rows.findIndex((b) => b.user_id === meId);
   const shown = rows.slice(0, 3).map((r, i) => ({ r, i }));
   if (myIdx >= 3) shown.push({ r: rows[myIdx], i: myIdx });
-  const { alert, ack } = useOvertaken(game.id, useToday ? `day:${day}` : 'season', rows, me.id);
-  useEffect(() => { onAlert(game.id, !!alert); }, [game.id, !!alert]); // eslint-disable-line react-hooks/exhaustive-deps
   const nameOf = (id: string) => members.find((x) => x.id === id)?.display_name?.split(/\s+/)[0] ?? 'Jemand';
   const byNames = alert ? alert.by.map(nameOf) : [];
   const alertText = byNames.length === 0 ? 'Du wurdest überholt'
     : byNames.length === 1 ? `${byNames[0]} hat dich überholt`
       : `${byNames.slice(0, -1).join(', ')} und ${byNames[byNames.length - 1]} haben dich überholt`;
   return (
-    <Link to={game.path} className={cx('games-slide game-card', alert && 'is-overtaken', fresh && 'is-new')} ariaLabel={`Minispiel ${game.name} öffnen${fresh ? ' – neu' : ''}${alert ? ` – ${alertText}` : ''}`} onNavigate={ack}>
-      <span className="game-card__head">
-        <GameBadge game={game.id} size={48} />
-        <span className="game-card__main">
-          <strong className="game-card__title">{game.name}{fresh ? <span className="game-new">Neu</span> : null}</strong>
-          <span className="muted game-card__route">{sub}</span>
-          {alert ? (
-            <span className="game-alert" role="status">
-              <i aria-hidden="true" />
-              <span>{alertText}</span>
-              <b>Platz {alert.from} → {alert.to}</b>
-            </span>
-          ) : null}
-        </span>
-        <Icon name="chevron" className="muted" />
-      </span>
-      {!season.data || !today.data ? (
-        season.error || today.error ? <span className="game-card__meta">Bestenliste gerade nicht erreichbar</span> : <BoardSkeleton />
+    <>
+      <a href={`#${game.path}`} className="arena__hero" aria-label={`${game.name} spielen${fresh ? ' – neu' : ''}`} onClick={(e) => { e.preventDefault(); onOpen(); }}>
+        <GameHead ref={headRef} game={game.id} title={game.name} sub={sub} tag={fresh ? <span className="game-new">Neu</span> : null} />
+      </a>
+      {!board.loaded ? (
+        board.error ? <p className="arena__empty">Bestenliste gerade nicht erreichbar</p> : <BoardSkeleton />
       ) : shown.length ? (
-        <span className="game-board" role="list" aria-label={useToday ? 'Bestenliste heute' : 'Bestenliste Saison'}>
-          <span className="game-board__label">{useToday ? 'Heute' : 'Saison'}</span>
+        <ol className="arena__board" aria-label={board.today ? 'Bestenliste heute' : 'Bestenliste Saison'}>
+          <li className="arena__board-label" aria-hidden="true">{board.today ? 'Heute' : 'Saison'}</li>
           {shown.map(({ r, i }) => {
             const m = members.find((x) => x.id === r.user_id);
             return (
-              <span key={r.user_id} role="listitem" className={cx('game-board__row', r.user_id === me.id && 'is-me', alert?.by.includes(r.user_id) && 'is-by')}>
-                <span className="game-board__rank">{i + 1}</span>
-                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={24} />
-                <span className="game-board__name">{r.user_id === me.id ? 'Du' : m?.display_name ?? 'Jemand'}</span>
+              <li key={r.user_id} className={cx('arena__row', r.user_id === meId && 'is-me', alert?.by.includes(r.user_id) && 'is-by')}>
+                <span className="arena__rank">{i + 1}</span>
+                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={22} />
+                <span className="arena__name">{r.user_id === meId ? 'Du' : m?.display_name ?? 'Jemand'}</span>
                 <strong>{fmtBest(game, r.best)}</strong>
-              </span>
+              </li>
             );
           })}
-        </span>
+        </ol>
       ) : (
-        <span className="game-card__meta">{tt ? 'Fahr die erste Zeit des Tages – die Geister der Runde warten' : sprint || berg ? 'Hol dir den ersten Tagessieg' : 'Fahr die erste Bestmarke der Runde'}</span>
+        <p className="arena__empty">{tt ? 'Fahr die erste Zeit des Tages – die Geister der Runde warten' : sprint || berg ? 'Hol dir den ersten Tagessieg' : 'Fahr die erste Bestmarke der Runde'}</p>
       )}
-    </Link>
+      {alert ? (
+        <p className="arena__alert" role="status">
+          <i aria-hidden="true" />
+          <span>{alertText}</span>
+          <b>Platz {alert.from} → {alert.to}</b>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** Radgarage, Europareise und Passbuch als Kacheln mit Stand */
+function Tiles({ tourName, stages }: { tourName: string | null; stages: Stage[] | null }) {
+  const bikes = useBikes();
+  const j = useJourney();
+  const passes = usePassCount(tourName, stages);
+  const n = bikes.unlocked.length;
+  const fresh = bikes.fresh.length > 0;
+  const next = bikes.next;
+  const p = next ? bikes.progress[next.id] : null;
+  const frac = p ? Math.min(1, p.value / (p.target || 1)) : 1;
+  const pos = j.me;
+  const nextStop = ROUTE[pos.next];
+  const done = pos.at === ROUTE.length - 1;
+  const reiseSub = !j.loaded ? '' : pos.meters === 0 ? 'Wuppertal → Palermo' : done ? 'In Palermo' : `→ ${nextStop.name}`;
+  return (
+    <div className="arena__tiles">
+      <Link to="/spiel/garage" className={cx('arena__tile', fresh && 'is-fresh')} ariaLabel={`Radgarage – ${n} von ${BIKES.length} Rädern freigeschaltet${fresh ? ', neues Rad' : ''}`}>
+        <AreaIcon area="garage" size={34} />
+        <span className="arena__tile-text">
+          {bikes.loaded ? <strong>{n}<small>/{BIKES.length}</small></strong> : <SkelText w={36} size={17} />}
+          <span>{fresh ? 'Neues Rad' : 'Räder'}</span>
+        </span>
+        {bikes.loaded && next ? <i className="arena__tile-bar" style={{ '--p': frac } as CSSProperties} aria-hidden="true" /> : null}
+      </Link>
+      <Link to="/spiel/reise" className="arena__tile" ariaLabel={`Europareise – ${fmtKm(pos.meters / 1000)}${j.loaded && !done && pos.meters > 0 ? `, noch ${fmtKm(pos.toNext)} bis ${nextStop.name}` : ''}`}>
+        <AreaIcon area="reise" size={34} />
+        <span className="arena__tile-text">
+          {j.loaded ? <strong>{fmtKm(pos.meters / 1000)}</strong> : <SkelText w={44} size={17} />}
+          <span>{j.loaded ? reiseSub : 'Reise'}</span>
+        </span>
+        {j.loaded && pos.meters > 0 ? <i className="arena__tile-bar" style={{ '--p': Math.min(1, pos.km / ROUTE_KM) } as CSSProperties} aria-hidden="true" /> : null}
+      </Link>
+      <Link to="/spiel/reise" className="arena__tile" ariaLabel={`Passbuch – ${passes ?? 0} Pässe`}>
+        <AreaIcon area="paesse" size={34} />
+        <span className="arena__tile-text">
+          {passes !== null ? <strong>{passes}</strong> : <SkelText w={22} size={17} />}
+          <span>{passes === 1 ? 'Pass' : 'Pässe'}</span>
+        </span>
+      </Link>
+    </div>
   );
 }

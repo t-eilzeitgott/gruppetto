@@ -9,9 +9,9 @@ import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import { SprintRace, TYPE_STATS, typeBars, type SprintEvent, type SprintHud, type SprintResult } from '../game/abfahrt/sprint';
 import { riderOptions, rivalNames, sprintTrains, teamMate, type RiderOption } from '../game/abfahrt/sprintRiders';
-import { shortTour, stageRef } from '../game/abfahrt/stageRef';
-import { LOOKS } from '../game/abfahrt/region';
-import { SPRINT_FINISH, Track } from '../game/abfahrt/track';
+import { stageRef } from '../game/abfahrt/stageRef';
+import { gameSubFor } from '../game/gameSub';
+import { SPRINT_FINISH } from '../game/abfahrt/track';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
@@ -20,11 +20,11 @@ import { useBikes, type Bikes } from '../ui/useBikes';
 import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
-import { SprintIcon } from '../ui/GameIcon';
+import { BoardLink, Countdown, StartSheet } from './startSheet';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
 import { FpsSwitch, GfxSwitches, RangePicker } from './gameKit';
 import {
-  FinaleBoard, FinaleMini, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
+  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 
@@ -44,7 +44,7 @@ const sprintBars = (t: RiderOption['type']): [string, number][] => {
 };
 
 /** Startbild des Sprints ohne Seite: beim App-Start unsichtbar vorwärmen (siehe app/warm.ts) */
-export function warmSprint(a: WarmArgs): Promise<void> {
+export function warmSprint(a: WarmArgs, reuse = false): Promise<void> {
   const options = riderOptions(a.data, a.me, a.day);
   const pick = lsGet(LS_RIDER);
   const chosen = options.find((o) => `${o.id ?? 'x'}:${o.type}` === pick) ?? options[0];
@@ -60,7 +60,7 @@ export function warmSprint(a: WarmArgs): Promise<void> {
     town,
     onEvent: () => undefined,
     onOver: () => undefined,
-  }), { accent: a.accent, dark: a.dark });
+  }), { accent: a.accent, dark: a.dark }, 'sprint', reuse);
 }
 
 /** Minispiel „Sprintfinale“: die letzten 2,4 km im Feld – Windschatten, Position, Antritt */
@@ -101,7 +101,6 @@ export function SprintPage() {
   const chosen = options.find((o) => keyOf(o) === pickId) ?? options[0];
   // echte Vorlage: Zielort der heutigen oder nächsten Flachetappe (sonst Vorschau aus dem Tour-Plan)
   const ref = useMemo(() => stageRef('sprint', tour?.name, tourData.data?.stages, day), [tour?.name, tourData.data, day]);
-  const track = useMemo(() => new Track(day, names, 'sprint', ref), [day, names, ref]);
   const mine = season.data?.find((b) => b.user_id === me.id);
   const myBest = Math.max(best, mine?.best ?? 0);
 
@@ -163,6 +162,7 @@ export function SprintPage() {
   };
 
   const glGen = useRaceLoop({
+    game: 'sprint',
     stageRef: stageEl, engineRef, uiRef,
     make: makeEngine,
     onFrame: writeHud,
@@ -273,11 +273,7 @@ export function SprintPage() {
         </div>
       ) : null}
 
-      {ui === 'countdown' ? (
-        <div className="abf-count" aria-live="assertive">
-          <span key={count}>{count > 0 ? count : 'Los!'}</span>
-        </div>
-      ) : null}
+      {ui === 'countdown' ? <Countdown count={count} /> : null}
 
       {ui === 'paused' ? (
         <div className="abf-layer">
@@ -293,28 +289,21 @@ export function SprintPage() {
       ) : null}
 
       {ui === 'ready' ? (
-        <div className="abf-layer">
-          <button type="button" className="abf-round abf-close" onClick={() => navigate('/')} aria-label="Schließen"><Icon name="x" size={20} /></button>
-          <div className="abf-card abf-scroll">
-            {showBoard ? boardView : (
-              <>
-                <div className="abf-head">
-                  <SprintIcon size={44} />
-                  <div>
-                    <h1 className="abf-title">Sprintfinale</h1>
-                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title.replace('Sprintfinale in ', 'Ziel in ')} · 2,4 km{ref ? ` · ${LOOKS[ref.region].label}` : ''}{wetter ? ` · ${wetter}` : ''}</p>
-                    {ref?.finale?.line ? <p className="abf-sub abf-sub--finale">Echtes Finale: {ref.finale.line}</p> : null}
-                  </div>
-                </div>
-                <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => TYPE_STATS[t]} bars={sprintBars} />
-                <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Antreten'], ['↓', 'Tempo raus']]} />
-                <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
-                <BikeChip bikes={bikes} />
-                <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch keine Sprints – hol dir den ersten Tagessieg!" />
-              </>
-            )}
-          </div>
-        </div>
+        <StartSheet
+          game="sprint" title="Sprintfinale"
+          sub={gameSubFor('sprint', day, ref)}
+          extra={ref?.finale?.line ? <span className="ghead__extra">Echtes Finale: {ref.finale.line}</span> : null}
+          onStart={start} onClose={() => navigate('/')} plain={showBoard}
+        >
+          {showBoard ? boardView : (
+            <>
+              <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => TYPE_STATS[t]} bars={sprintBars} />
+              <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Antreten'], ['↓', 'Tempo raus'], ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
+              <BikeChip bikes={bikes} />
+              <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={nf} />
+            </>
+          )}
+        </StartSheet>
       ) : null}
 
       {ui === 'over' && result ? (

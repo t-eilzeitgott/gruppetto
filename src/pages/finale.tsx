@@ -36,6 +36,8 @@ export interface LoopEngine extends RaceView {
  * Auflösung senken), Größe und Thema verfolgen. Testmodi: ?nogl (ohne 3D) und ?lowgfx (winzig).
  */
 export function useRaceLoop<E extends LoopEngine>(opts: {
+  /** Kennung des Spiels (für den Vorrat der Bühnen) */
+  game: string;
   /** Platz für die 3D-Bühne (die Leinwand wird hineingehängt) */
   stageRef: RefObject<HTMLDivElement | null>;
   engineRef: RefObject<E | null>;
@@ -76,7 +78,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       const warm = hasWarmStage();
       let st: Stage;
       try {
-        st = acquireStage();
+        st = acquireStage(cb.current.game);
       } catch {
         cb.current.onGlError();
         return undefined;

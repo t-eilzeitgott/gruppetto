@@ -9,8 +9,8 @@ import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import { BERG_STATS, BergRace, bergBars, type BergEvent, type BergHud, type BergResult } from '../game/abfahrt/berg';
 import { riderOptions, rivalNames, teamMate, type RiderOption } from '../game/abfahrt/sprintRiders';
-import { shortTour, stageRef } from '../game/abfahrt/stageRef';
-import { LOOKS } from '../game/abfahrt/region';
+import { stageRef } from '../game/abfahrt/stageRef';
+import { gameSubFor } from '../game/gameSub';
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
@@ -20,11 +20,11 @@ import { useBikes, type Bikes } from '../ui/useBikes';
 import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
-import { BergIcon } from '../ui/GameIcon';
+import { BoardLink, Countdown, StartSheet } from './startSheet';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
 import { FpsSwitch, GfxSwitches, RangePicker } from './gameKit';
 import {
-  FinaleBoard, FinaleMini, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
+  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 
@@ -46,7 +46,7 @@ const bars = (t: RiderOption['type']): [string, number][] => {
 const sec = (s: number) => s.toFixed(1).replace('.', ',');
 
 /** Startbild des Bergfinales ohne Seite: beim App-Start unsichtbar vorwärmen (siehe app/warm.ts) */
-export function warmBerg(a: WarmArgs): Promise<void> {
+export function warmBerg(a: WarmArgs, reuse = false): Promise<void> {
   const options = riderOptions(a.data, a.me, a.day);
   const pick = lsGet(LS_RIDER);
   const chosen = options.find((o) => `${o.id ?? 'x'}:${o.type}` === pick) ?? options.find((o) => o.type === 'climber') ?? options[0];
@@ -61,7 +61,7 @@ export function warmBerg(a: WarmArgs): Promise<void> {
     town,
     onEvent: () => undefined,
     onOver: () => undefined,
-  }), { accent: a.accent, dark: a.dark });
+  }), { accent: a.accent, dark: a.dark }, 'berg', reuse);
 }
 
 /** Minispiel „Bergfinale“: Schlussanstieg in der Favoritengruppe, Bergwertung, Abfahrt ins Ziel */
@@ -184,6 +184,7 @@ export function BergPage() {
   };
 
   const glGen = useRaceLoop({
+    game: 'berg',
     stageRef: stageEl, engineRef, uiRef,
     make: makeEngine,
     onFrame: writeHud,
@@ -297,11 +298,7 @@ export function BergPage() {
         </div>
       ) : null}
 
-      {ui === 'countdown' ? (
-        <div className="abf-count" aria-live="assertive">
-          <span key={count}>{count > 0 ? count : 'Los!'}</span>
-        </div>
-      ) : null}
+      {ui === 'countdown' ? <Countdown count={count} /> : null}
 
       {ui === 'paused' ? (
         <div className="abf-layer">
@@ -317,28 +314,21 @@ export function BergPage() {
       ) : null}
 
       {ui === 'ready' ? (
-        <div className="abf-layer">
-          <button type="button" className="abf-round abf-close" onClick={() => navigate('/')} aria-label="Schließen"><Icon name="x" size={20} /></button>
-          <div className="abf-card abf-scroll">
-            {showBoard ? boardView : (
-              <>
-                <div className="abf-head">
-                  <BergIcon size={44} />
-                  <div>
-                    <h1 className="abf-title">Bergfinale</h1>
-                    <p className="abf-sub">{ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}{track.title}{ref ? ` · ${LOOKS[ref.region].label}` : ''}{wetter ? ` · ${wetter}` : ''}</p>
-                  </div>
-                </div>
-                <BergProfile track={track} />
-                <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => BERG_STATS[t]} bars={bars} />
-                <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Angreifen'], ['↓', 'Erholen'], ['⇄', 'Helfer']]} />
-                <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Losfahren</span></button>
-                <BikeChip bikes={bikes} />
-                <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch niemand am Berg – hol dir den ersten Tagessieg!" />
-              </>
-            )}
-          </div>
-        </div>
+        <StartSheet
+          game="berg" title="Bergfinale"
+          sub={gameSubFor('berg', day, ref)}
+          onStart={start} onClose={() => navigate('/')} plain={showBoard}
+        >
+          {showBoard ? boardView : (
+            <>
+              <BergProfile track={track} />
+              <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => BERG_STATS[t]} bars={bars} />
+              <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Angreifen'], ['↓', 'Erholen'], ['⇄', 'Helfer'], ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
+              <BikeChip bikes={bikes} />
+              <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={nf} />
+            </>
+          )}
+        </StartSheet>
       ) : null}
 
       {ui === 'over' && result ? (

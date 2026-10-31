@@ -239,7 +239,7 @@ export function WorldEditorPage() {
     if (!stage) return undefined;
     let st: Stage;
     try {
-      st = acquireStage();
+      st = acquireStage('editor');
     } catch {
       setGlError(true);
       return undefined;

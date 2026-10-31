@@ -2873,6 +2873,11 @@ export class Renderer3D {
     this.direct(g, A, dt, descent);
     this.camera.position.copy(A.pos);
     this.camera.lookAt(A.look);
+    // Startblatt: es deckt die unteren zwei Drittel – die Kamera neigt sich so weit, dass der Fahrer im freien
+    // oberen Drittel steht; mit „Los“ richtet sie sich im Lauf des Countdowns wieder auf
+    const wantTilt = g.phase === 'ready' ? Math.atan(0.95 * Math.tan((cam.fov * Math.PI) / 360)) : 0;
+    this.tilt += (wantTilt - this.tilt) * (still && g.phase === 'ready' ? 1 : Math.min(1, dt * 2.4));
+    if (this.tilt > 1e-4) this.camera.rotateX(-this.tilt);
     // leicht in die Kurve legen (Motorradkamera)
     if (descent && this.dirKind === 'chase') this.camera.rotateZ(clamp(p.lean, -0.7, 0.7) * 0.07 * (this.dirT < 1 ? this.dirT : 1));
     // Sichtfeld weich (Tempo); bei Regiewechseln folgt es direkt der Überblendung
@@ -2893,6 +2898,8 @@ export class Renderer3D {
   // ------------------------------------------------------------------ Regie (Abfahrt)
 
   private camA = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
+  /** Neigung der Kamera nach unten im Startbild (rad), siehe updateCamera */
+  private tilt = 0;
   private lastPhase = '';
   private dirKind: 'intro' | 'chase' | 'crash' = 'intro';
   private dirFrom = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };

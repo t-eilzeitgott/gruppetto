@@ -8,8 +8,8 @@ import { navigate } from '../app/router';
 import { source } from '../app/config';
 import type { GameBest } from '../data/source';
 import { TimeTrial, sectorGap, simulateGhost, type TtEvent, type TtHud, type TtResult } from '../game/abfahrt/zeitfahren';
-import { shortTour, stageRef, type StageRef } from '../game/abfahrt/stageRef';
-import { LOOKS } from '../game/abfahrt/region';
+import { stageRef, type StageRef } from '../game/abfahrt/stageRef';
+import { gameSubFor } from '../game/gameSub';
 import { TT_FINISH, TT_SPLITS, TT_TOP, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { firstName, fmtGap, fmtTime, ghostDayLabel, pickGhosts, ttMs, ttScore, type GhostRider, type TtGhostRow } from '../game/tt';
@@ -19,11 +19,11 @@ import { Avatar, cx, useTitle } from '../ui/kit';
 import { useBikes, type Bikes } from '../ui/useBikes';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
-import { ZeitIcon } from '../ui/GameIcon';
+import { BoardLink, Countdown, StartSheet } from './startSheet';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent } from './Game';
 import { FpsSwitch, GfxSwitches, RangePicker } from './gameKit';
 import {
-  FinaleBoard, FinaleMini, HowTo, dist, lsGet, lsSet, placeIn, placeThumb,
+  FinaleBoard, HowTo, dist, lsGet, lsSet, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 import type { Profile } from '../lib/types';
@@ -75,7 +75,7 @@ export function buildGhosts(rows: TtGhostRow[], members: Profile[], me: Profile,
 }
 
 /** Startbild des Zeitfahrens ohne Seite: beim App-Start unsichtbar vorwärmen (siehe app/warm.ts) */
-export function warmZeitfahren(a: WarmArgs): Promise<void> {
+export function warmZeitfahren(a: WarmArgs, reuse = false): Promise<void> {
   const town = stageRef('tt', a.tour?.name, a.data?.stages, a.day);
   return prewarm(() => new TimeTrial({
     dayKey: a.day,
@@ -87,7 +87,7 @@ export function warmZeitfahren(a: WarmArgs): Promise<void> {
     myBest: null,
     onEvent: () => undefined,
     onOver: () => undefined,
-  }), { accent: a.accent, dark: a.dark });
+  }), { accent: a.accent, dark: a.dark }, 'zeitfahren', reuse);
 }
 
 /** Minispiel „Zeitfahren“: 3 km gegen die Uhr, mit den Geistern der Runde auf der Strecke */
@@ -248,6 +248,7 @@ export function ZeitfahrenPage() {
   };
 
   const glGen = useRaceLoop({
+    game: 'zeitfahren',
     stageRef: stageEl, engineRef, uiRef,
     make: makeEngine,
     onFrame: writeHud,
@@ -301,8 +302,7 @@ export function ZeitfahrenPage() {
   const boardView = (
     <FinaleBoard title="Bestenliste Zeitfahren" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Fahrt', 'Fahrten']} fmt={fmtBest} />
   );
-  const km = (TT_FINISH / 1000).toLocaleString('de-DE', { minimumFractionDigits: 1 });
-  const sub = `${ref ? `${shortTour(ref.tour)} · ${ref.stage}. Etappe · ` : ''}${track.title} · ${km} km${ref ? ` · ${LOOKS[ref.region].label}` : ''}`;
+  const sub = gameSubFor('zeitfahren', day, ref);
 
   return (
     <div className={cx('abf', 'abf--sprint', 'abf--tt', `abf--${ui}`)}>
@@ -359,11 +359,7 @@ export function ZeitfahrenPage() {
         </div>
       ) : null}
 
-      {ui === 'countdown' ? (
-        <div className="abf-count tt-count" aria-live="assertive">
-          <span key={count}>{count > 0 ? count : 'Los!'}</span>
-        </div>
-      ) : null}
+      {ui === 'countdown' ? <Countdown count={count} step={0.6} /> : null}
 
       {ui === 'paused' ? (
         <div className="abf-layer">
@@ -380,29 +376,18 @@ export function ZeitfahrenPage() {
       ) : null}
 
       {ui === 'ready' ? (
-        <div className="abf-layer">
-          <button type="button" className="abf-round abf-close" onClick={() => navigate('/')} aria-label="Schließen"><Icon name="x" size={20} /></button>
-          <div className="abf-card abf-scroll">
-            {showBoard ? boardView : (
-              <>
-                <div className="abf-head">
-                  <ZeitIcon size={44} />
-                  <div>
-                    <h1 className="abf-title">Zeitfahren</h1>
-                    <p className="abf-sub">{sub}</p>
-                  </div>
-                </div>
-                <TtProfile track={track} ref_={ref} />
-                <HotSeat leader={leader} myBest={myBest} today={today.data ?? []} meId={me.id} members={members.data ?? []} error={!!ghostQ.error && !ghostQ.data} />
-                <GhostRow ghosts={ghosts} members={members.data ?? []} me={me} loading={ghostQ.loading} />
-                <HowTo items={[['↔', 'Linie'], ['↑', 'Drücken'], ['↓', 'Erholen']]} />
-                <button type="button" className="btn btn--primary btn--full abf-go" onClick={start}><span>Auf die Rampe</span></button>
-                <BikeChip bikes={bikes} />
-                <FinaleMini rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} empty="Noch keine Zeit – fahr die erste Zeit des Tages!" fmt={fmtBest} />
-              </>
-            )}
-          </div>
-        </div>
+        <StartSheet game="zeitfahren" title="Zeitfahren" sub={sub} cta="Auf die Rampe" onStart={start} onClose={() => navigate('/')} plain={showBoard}>
+          {showBoard ? boardView : (
+            <>
+              <TtProfile track={track} ref_={ref} />
+              <HotSeat leader={leader} myBest={myBest} today={today.data ?? []} meId={me.id} members={members.data ?? []} error={!!ghostQ.error && !ghostQ.data} />
+              <GhostRow ghosts={ghosts} members={members.data ?? []} me={me} loading={ghostQ.loading} />
+              <HowTo items={[['↔', 'Linie'], ['↑', 'Drücken'], ['↓', 'Erholen']]} />
+              <BikeChip bikes={bikes} />
+              <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={fmtBest} />
+            </>
+          )}
+        </StartSheet>
       ) : null}
 
       {ui === 'over' && result ? (
