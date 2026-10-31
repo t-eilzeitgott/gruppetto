@@ -497,6 +497,8 @@ export class Renderer3D {
   private sprMat!: THREE.MeshLambertMaterial;
   /** Zeitfahren: Startbereich (Podest, Rampe, Uhr, Personal) */
   private ttStart: TtStart3D | null = null;
+  /** Dinge in der Hand der Menschen (Kameras, Stoppuhr, Tassen): Eckpunktfarben, glatt */
+  private gearMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private runners: Runner[] = [];
   private runBuf = new THREE.InstancedInterleavedBuffer(new Float32Array(6 * STRIDE), STRIDE, 1).setUsage(THREE.DynamicDrawUsage);
   private runMeshes: THREE.Mesh[] = [];
@@ -1384,8 +1386,9 @@ export class Renderer3D {
     const rect = this.gl.domElement.getBoundingClientRect();
     const W = Math.max(100, Math.round(rect.width));
     const H = Math.max(100, Math.round(rect.height));
-    // höchstens 1,4-fache Pixeldichte: mit Kantenglättung auf Retina kaum sichtbar, spart aber viel Füllrate
-    const dpr = Math.min(1.4, window.devicePixelRatio || 1) * this.quality;
+    // höchstens 1,4-fache Pixeldichte: mit Kantenglättung auf Retina kaum sichtbar, spart aber viel Füllrate.
+    // Am Start (Fahrer steht, alles ruhig): gestochen scharf mit bis zu doppelter Dichte
+    const dpr = this.sharp ? Math.min(2, window.devicePixelRatio || 1) : Math.min(1.4, window.devicePixelRatio || 1) * this.quality;
     const cv = this.gl.domElement;
     // unverändert: nichts anfassen (jedes Setzen der Größe leert die Leinwand)
     if (W !== this.W || H !== this.H || dpr !== this.gl.getPixelRatio() || cv.width !== Math.floor(W * dpr) || cv.height !== Math.floor(H * dpr)) {
@@ -1410,6 +1413,8 @@ export class Renderer3D {
 
   /** Größe/Auflösung erst unmittelbar vor dem nächsten Zeichnen anpassen (kein leeres, schwarzes Bild dazwischen) */
   private pendingResize = false;
+  /** Startbild: volle Schärfe, solange der Fahrer am Start steht (bis ein paar Meter nach „Los“) */
+  private sharp = false;
   requestResize() { this.pendingResize = true; }
   /** neue Auflösungsstufe (wirkt mit dem nächsten Bild) */
   setQuality(q: number) {
@@ -1458,6 +1463,9 @@ export class Renderer3D {
     this.lastDt = dt;
     this.lastRaw = raw;
     this.idleBuild = g.phase === 'ready' || g.phase === 'countdown';
+    // scharfes Startbild: am Start und auf den ersten Metern (umgeschaltet wird erst in Fahrt, ein Bild Größenwechsel)
+    const sharp = this.idleBuild || (g.phase === 'playing' && g.p.z < 14 && this.sharp);
+    if (sharp !== this.sharp) { this.sharp = sharp; this.pendingResize = true; }
     this.time.value += dt;
     if (this.track !== g.track) {
       // gleiche Tagesstrecke (neuer Lauf, nachgeladene Namen): Landschaft behalten – sie ist identisch,
@@ -1842,7 +1850,7 @@ export class Renderer3D {
     if (track.kind === 'tt') {
       const T = this.terrain;
       this.ttStart = new TtStart3D({
-        track, props: this.mats.props, ads: this.mats.ads, people: this.runMat, shadow: this.shadowTex, glow: this.mats.lampGlow.map!,
+        track, props: this.mats.props, ads: this.mats.ads, gear: this.gearMat, shadow: this.shadowTex, glow: this.mats.lampGlow.map!,
         accent: this.accent, aniso: Math.min(4, this.gl.capabilities.getMaxAnisotropy()),
         side: (f, sg, dx) => {
           const s = track.seg(Math.max(track.first, Math.floor(f / SEG)));

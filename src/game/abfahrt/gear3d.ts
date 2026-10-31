@@ -133,11 +133,12 @@ function hairColor(kit: Kit): C3 {
   return rgb(dark ? HAIR[h % 3] : HAIR[h % HAIR.length]);
 }
 
-/** Haut, Haare, Hals und (bei der Mütze) Augen */
-function buildHead(m: Mesher, hairM: Mesher, kit: Kit, q: 0 | 1, eyes: boolean, hairTop: number) {
+/** Haut, Haare, Hals und (bei der Mütze) Augen; o: eigene Haarfarbe, lange Haare (Haaransatz hinten bis in den Nacken) */
+function buildHead(m: Mesher, hairM: Mesher, kit: Kit, q: 0 | 1, eyes: boolean, hairTop: number, o: { hair?: C3; long?: boolean; upright?: boolean } = {}) {
   const skin = rgb(kit.skin);
   const lip = mix(skin, rgb('#a4545a'), 0.38);
-  const hair = hairColor(kit);
+  const hair = o.hair ?? hairColor(kit);
+  const hairEdge = (phi: number) => (o.long ? Math.min(hairY(phi), -0.13 * clamp01((Math.abs(phi) - 0.95) / 0.55) + hairY(phi) * (1 - clamp01((Math.abs(phi) - 0.95) / 0.55))) : hairY(phi));
   const ys = q
     ? [0.104, 0.1, 0.094, 0.086, 0.076, 0.064, 0.05, 0.036, 0.024, 0.014, 0.006, -0.002, -0.009, -0.016, -0.023, -0.03, -0.037, -0.043, -0.048, -0.053, -0.058, -0.063, -0.068, -0.072, -0.076, -0.08, -0.084, -0.089, -0.095, -0.101, -0.107, -0.113, -0.119, -0.125, -0.13]
     : [0.104, 0.09, 0.06, 0.025, -0.008, -0.04, -0.07, -0.098, -0.13];
@@ -173,7 +174,7 @@ function buildHead(m: Mesher, hairM: Mesher, kit: Kit, q: 0 | 1, eyes: boolean, 
     const u = i / NH;
     const start = hairM.count;
     phis.forEach((phi, j) => {
-      const edge = hairY(phi) + (i === NH ? 0.0025 * Math.sin(j * 2.7) : 0);
+      const edge = hairEdge(phi) + (i === NH ? 0.0025 * Math.sin(j * 2.7) : 0);
       const y = hairTop + (edge - hairTop) * u;
       // Abstand zur Haut entlang der Kopfnormalen (oben auf dem Scheitel sonst zu dicht an der Haut)
       const p = headPoint(y, phi, 0, false);
@@ -208,8 +209,10 @@ function buildHead(m: Mesher, hairM: Mesher, kit: Kit, q: 0 | 1, eyes: boolean, 
     m.add(new THREE.SphereGeometry(1, q ? 12 : 5, q ? 8 : 3), M4(c.x, c.y, c.z + 0.008, -0.22, sx * 0.28, 0, 0.0105, 0.031, 0.018), ear);
     if (q) m.add(new THREE.SphereGeometry(1, 8, 6), M4(c.x + sx * 0.006, c.y + 0.002, c.z + 0.006, -0.22, sx * 0.28, 0, 0.004, 0.017, 0.009), mul(ear, 0.7));
   }
-  // Hals: schräg nach hinten unten in den Rumpf
-  const neck: V[] = [v3(0, -0.055, 0.018), v3(0, -0.1, 0.035), v3(0, -0.145, 0.055), v3(0, -0.19, 0.075)];
+  // Hals: beim Fahrer schräg nach hinten unten in den Rumpf, beim Stehen (upright) fast senkrecht
+  const neck: V[] = o.upright
+    ? [v3(0, -0.055, 0.016), v3(0, -0.1, 0.02), v3(0, -0.145, 0.022), v3(0, -0.19, 0.022)]
+    : [v3(0, -0.055, 0.018), v3(0, -0.1, 0.035), v3(0, -0.145, 0.055), v3(0, -0.19, 0.075)];
   const fr = neck.map(() => ({ s: v3(-1, 0, 0), c: v3(0, 0, 1) }));
   // Rahmen für Linie nach unten: s × c = −t → (−x) × z = y … die Linie läuft nach unten (−y), also passt es
   sweep(m, neck, fr, (i) => [0.098, 0.102, 0.108, 0.116][i], (i) => [0.09, 0.094, 0.1, 0.104][i], () => skin, shape('round', q ? 16 : 6));
@@ -834,6 +837,109 @@ export function headBuild(kit: Kit, head: Head, q: 0 | 1): THREE.BufferGeometry 
   if (glasses) buildGlasses(lens, frame, kit, q, head === 'aero', head === 'bandana' ? '#141414' : undefined);
   const g = merge([skin, hair, shellM, dark, straps, lens, frame])!;
   headCache.set(key, g);
+  return g;
+}
+
+// ------------------------------------------------------------------ Köpfe der Leute am Rand (Personal, Stadt)
+
+export interface PersonHeadOpts {
+  skin: string;
+  hair: string;
+  /** lange Haare (bis auf die Schultern) */
+  long: boolean;
+  /** Dutt hinten oben */
+  bun: boolean;
+  /** Kopfbedeckung: keine, Schirmmütze (Polizei, Jury), Baseballkappe */
+  hat: 'none' | 'peaked' | 'baseball';
+  hatCol: string;
+  /** dunkle Sonnenbrille */
+  glasses: boolean;
+}
+
+/** Baseballkappe: runde Krone aus sechs Bahnen mit Knopf, gebogener Schirm nach vorn */
+function baseball(m: Mesher, visor: Mesher, col: string, q: 0 | 1) {
+  const c = rgb(col);
+  const seam = mul(c, 0.82);
+  const seg = q ? 36 : 12;
+  const AX = 0.084, AZ = 0.1, CZ = 0.006;
+  const prof: [number, number, C3][] = [[1.04, 0.02, c], [1.05, 0.045, c], [1.0, 0.075, c], [0.88, 0.1, c], [0.68, 0.118, c], [0.4, 0.128, c], [0.001, 0.131, c]];
+  upRevolve(m, q ? prof : [prof[0], prof[2], prof[4], prof[6]], seg, AX, AZ, CZ, false, 0.12);
+  if (q) {
+    // Nähte der Bahnen (dunkler) und Knopf oben
+    for (let k = 0; k < 6; k++) {
+      const ph = (k / 6) * Math.PI * 2 + Math.PI / 6;
+      const pts: V[] = [];
+      for (let t = 0; t <= 6; t++) {
+        const u = t / 6;
+        const r = 1.03 * (1 - u * u) + 0.02;
+        pts.push(v3(Math.sin(ph) * AX * r, 0.03 + u * 0.1, CZ - Math.cos(ph) * AZ * r).applyAxisAngle(X, -0.12));
+      }
+      pipe(visor, pts, 0.0012, 4, seam);
+    }
+    visor.add(new THREE.SphereGeometry(0.008, 10, 6), new THREE.Matrix4().makeTranslation(0, 0.132, CZ - 0.016), c);
+  }
+  // Schirm: nach vorn, quer gebogen, leicht abwärts
+  const K = q ? 14 : 5;
+  const top: V[] = [];
+  const bot: V[] = [];
+  for (let k = 0; k <= K; k++) {
+    const ph = -1.1 + (2.2 * k) / K;
+    const inner = v3(Math.sin(ph) * AX * 1.03, 0.026, CZ - Math.cos(ph) * AZ * 1.03);
+    const out = v3(Math.sin(ph) * 0.6, 0, -1).normalize();
+    const len = 0.075 * Math.cos(ph * 0.75) ** 0.6;
+    const tip = inner.clone().addScaledVector(out, len).add(v3(0, -len * 0.18 - 0.008 * Math.cos(ph) ** 2, 0));
+    top.push(inner, tip);
+    bot.push(inner.clone().add(v3(0, -0.004, 0)), tip.clone().add(v3(0, -0.004, 0)));
+  }
+  const under = mul(c, 0.55);
+  const sT = visor.count;
+  for (const p of top) visor.v(p.x, p.y, p.z, c);
+  const sB = visor.count;
+  for (const p of bot) visor.v(p.x, p.y, p.z, under);
+  for (let k = 0; k < K; k++) {
+    const a = k * 2;
+    visor.quad(sT + a, sT + a + 1, sT + a + 3, sT + a + 2);
+    visor.quad(sB + a, sB + a + 2, sB + a + 3, sB + a + 1);
+    visor.quad(sT + a + 1, sB + a + 1, sB + a + 3, sT + a + 3);
+  }
+}
+
+const personCache = new Map<string, THREE.BufferGeometry>();
+/** Kopf eines Menschen am Rand: Gesicht, Augen, Brauen, Ohren, Hals, Haare (kurz, lang, Dutt), Mütze, Brille */
+export function personHeadBuild(o: PersonHeadOpts, q: 0 | 1): THREE.BufferGeometry {
+  const key = `${o.skin}|${o.hair}|${o.long}|${o.bun}|${o.hat}|${o.hatCol}|${o.glasses}|${q}`;
+  const hit = personCache.get(key);
+  if (hit) return hit;
+  const skin = new Mesher(0.08);
+  const hair = new Mesher(0.16);
+  const hat = new Mesher(0.06);
+  const visor = new Mesher(0.1);
+  const trim = new Mesher(0.5);
+  const lens = new Mesher(1.0);
+  const frame = new Mesher(0.4);
+  const kit = { skin: o.skin, number: '0', jersey: '#000000', side: '#000000', helmet: '#000000', shorts: '#000000', shoes: '#000000' } as Kit;
+  const hc = rgb(o.hair);
+  buildHead(skin, hair, kit, q, !o.glasses, o.hat === 'none' ? 0.104 : 0.06, { hair: hc, long: o.long, upright: true });
+  if (o.long) {
+    // offenes Haar hinten bis auf die Schultern: weich fallender Vorhang, unten etwas schmaler und dünner
+    const n = q ? 16 : 6;
+    const rows: [number, number, number, number][] = [[-0.02, 0.078, 0.06, 0.03], [-0.08, 0.074, 0.058, 0.04], [-0.14, 0.07, 0.052, 0.05], [-0.2, 0.066, 0.04, 0.058], [-0.25, 0.058, 0.026, 0.062]];
+    const st = hair.count;
+    for (const [y, a, b, cz] of rows) {
+      for (let j = 0; j <= n; j++) {
+        const ph = -Math.PI / 2 + (j / n) * Math.PI;
+        hair.v(Math.sin(ph) * a, y, cz + Math.cos(ph) * b, mul(hc, 0.92 + 0.08 * Math.cos(j * 1.9)));
+      }
+    }
+    const W = n + 1;
+    for (let i = 0; i < rows.length - 1; i++) for (let j = 0; j < n; j++) { const a = st + i * W + j; hair.quad(a, a + 1, a + W + 1, a + W); }
+  }
+  if (o.bun) hair.add(new THREE.SphereGeometry(0.038, q ? 14 : 6, q ? 10 : 4), new THREE.Matrix4().makeTranslation(0, 0.07, 0.085), hc);
+  if (o.hat === 'peaked') peaked(hat, visor, trim, q);
+  else if (o.hat === 'baseball') baseball(hat, visor, o.hatCol, q);
+  if (o.glasses) buildGlasses(lens, frame, kit, q, false, '#18191c');
+  const g = merge([skin, hair, hat, visor, trim, lens, frame])!;
+  personCache.set(key, g);
   return g;
 }
 

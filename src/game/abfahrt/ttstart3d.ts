@@ -8,12 +8,12 @@
  * Polizist und ein Lautsprechermast.
  *
  * Feste Teile liegen in einer Gruppe in Startkoordinaten: x nach rechts, y nach oben, Streckenmeter f nach vorn
- * (lokal −z). Die Menschen (3D wie die Zuschauer) stehen in Weltkoordinaten – ihr Shader rechnet mit der Welt.
+ * (lokal −z). Die Menschen am Start sind voll detailliert und bewegt (human3d.ts) und stehen in Weltkoordinaten.
  */
 import * as THREE from 'three';
 import { EDGE, type Track } from './track';
 import { GB, lin, type RGBf } from './models3d';
-import { Act, KINDS, STRIDE, crowdGeometry, disposeCrowdGeometry, kitSlot, packPerson, staffPoint, staffPerson, type Person, type StaffRole } from './crowd3d';
+import { Human, lookFor, propGeometries, type Act, type Role } from './human3d';
 import { adCell, AD_COUNT } from './tex3d';
 import { mulberry32 } from './rng';
 import type { RaceView } from './engine';
@@ -47,8 +47,8 @@ export interface TtStartDeps {
   props: THREE.Material;
   /** Banden-Atlas (adCell) */
   ads: THREE.Material;
-  /** 3D-Menschen ohne Detailstufen (wie die Läufer) */
-  people: THREE.Material;
+  /** Dinge in der Hand der Menschen (Kamera, Stoppuhr): Eckpunktfarben, glatt */
+  gear: THREE.Material;
   /** runder Schatten (Alpha) */
   shadow: THREE.Texture;
   /** Lichtpunkt (Blitz der Fotografen) */
@@ -108,13 +108,13 @@ export class TtStart3D {
   readonly root = new THREE.Group();
   private local = new THREE.Group();
   private dis: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[] = [];
-  private people: THREE.Mesh[] = [];
-  private buf: THREE.InstancedInterleavedBuffer;
-  private staff: { p: Person; role: StaffRole; x: number; f: number; y: number; yaw: number }[] = [];
+  /** Menschen am Start: Ort (Startkoordinaten), Blick zum Fahrer, ob sie ihm mit dem Körper folgen (Kameras) */
+  private staff: { h: Human; role: Role; x: number; f: number; y: number; act: Act; track: boolean; yaw: number }[] = [];
   private holder = 0;
   private starter = 1;
   private mech = -1;
-  private flashes: { s: THREE.Sprite; t: number; next: number; f: number; x: number }[] = [];
+  private flashes: { s: THREE.Sprite; t: number; next: number; who: number }[] = [];
+  private riderHead = new THREE.Vector3();
   private clockCv: HTMLCanvasElement;
   private clockTex: THREE.CanvasTexture;
   private clockKey = '';
@@ -151,31 +151,38 @@ export class TtStart3D {
     this.speakers(props);
     this.moto(props);
 
-    // Menschen: Rollen, Haltungen, Orte (x, f); das Gesicht zur Rampe
+    // Menschen: Rollen, Handlungen, Orte (x, f); das Gesicht zu einem Punkt (x, f)
     const r = mulberry32((t.seed ^ 0x51a7) >>> 0);
-    const add = (role: StaffRole, act: number, x: number, f: number, look: [number, number], y = 0) => {
-      const p = staffPerson(r, role, act);
-      const yaw = Math.atan2(look[0] - x, -(look[1] - f));
-      this.staff.push({ p, role, x, f, y, yaw });
+    const pg = propGeometries();
+    const add = (role: Role, act: Act, x: number, f: number, look: [number, number], y = 0, track = false) => {
+      // nah an der Startkamera (hinter dem Fahrer): Kopf in voller Detailstufe, weiter weg einfacher
+      const q: 0 | 1 = Math.hypot(x, f + 6.7) < 10 ? 1 : 0;
+      const h = new Human(lookFor(r, role), r() * 100, q);
+      h.act = act;
+      const yaw = Math.atan2(look[0] - x, look[1] - f);
+      this.staff.push({ h, role, x, f, y, act, track, yaw });
+      this.root.add(h.group);
       return this.staff.length - 1;
     };
-    this.holder = add('official', Act.holdBike, -0.24, -0.6, [0.3, -0.2]);
-    this.starter = add('official', Act.still, -1.3, 0.5, [0.3, 0.3], this.road(0.5));
-    add('official', Act.still, 2.05, -0.85, [0.3, 0.4]);
-    // Fotografen am Fuß der Rampe (zwischen Bande und Absperrung), Kameramann oben rechts
+    const carry = (i: number, geo: THREE.BufferGeometry, mode: 'hands' | 'right' | 'shoulder') => this.staff[i].h.carry(new THREE.Mesh(geo, d.gear), mode);
+    // Kommissär am Sattel, Starter (hebt die Hand), Zeitnehmer mit Stoppuhr
+    this.holder = add('official', 'hold', -0.24, -0.62, [0.3, -0.2]);
+    this.starter = add('official', 'stand', -1.32, 0.55, [0.3, 0.2], this.road(0.55));
+    carry(add('official', 'hands', 2.08, -0.85, [0.3, 0.4]), pg.watch, 'hands');
+    // Fotografen am Fuß der Rampe (zwischen Bande und Absperrung), Kameramann oben rechts – folgen dem Fahrer
     const ph = [
-      add('photographer', Act.photoKneel, -3.3, 7.4, [0.2, 0.5], this.road(7.4)),
-      add('photographer', Act.photo, -3.42, 11.2, [0.4, 1.0], this.road(11.2)),
-      add('photographer', Act.photoKneel, 3.3, 8.3, [0.2, 0.5], this.road(8.3)),
-      add('photographer', Act.photo, 3.42, 12.2, [0.0, 1.0], this.road(12.2)),
+      add('photographer', 'kneel', -3.28, 7.4, [0.2, 0.5], this.road(7.4), true),
+      add('photographer', 'photo', -3.4, 11.2, [0.4, 1.0], this.road(11.2), true),
+      add('photographer', 'kneel', 3.28, 8.3, [0.2, 0.5], this.road(8.3), true),
+      add('photographer', 'photo', 3.4, 12.2, [0.0, 1.0], this.road(12.2), true),
     ];
-    add('tv', Act.tvCam, 3.32, 4.4, [0.3, 0.0], this.road(4.4));
-    add('police', Act.still, -3.32, 13.9, [0.5, 16], this.road(13.9));
-    this.mech = add('mechanic', Act.still, -4.35, 20.9, [0, 22], this.road(20.9) + this.d.side(20.9, -1, 4.35 - EDGE));
-    // Kameras der Fotografen und des Kameramanns, Stoppuhr, Blitze, Schatten unter allen
-    for (const s of this.staff) this.gear(props, s, ph.includes(this.staff.indexOf(s)));
-    for (const s of this.staff) this.blob(flat, s.x, s.f, s.y, s.p.act === Act.photoKneel ? 1.0 : 0.85);
+    ph.forEach((i, k) => carry(i, k === 3 ? pg.tele : pg.camera, 'hands'));
+    carry(add('tv', 'tv', 3.3, 4.4, [0.3, 0.0], this.road(4.4), true), pg.tvcam, 'shoulder');
+    add('police', 'back', -3.3, 13.9, [0.5, 16], this.road(13.9));
+    this.mech = add('mechanic', 'cross', -4.35, 20.9, [0, 22], this.road(20.9) + this.d.side(20.9, -1, 4.35 - EDGE));
+    for (const s of this.staff) this.blob(flat, s.x, s.f, s.y, s.act === 'kneel' ? 1.0 : 0.85);
     this.blob(flat, CAR_X, CAR_F, this.road(CAR_F) + this.d.side(CAR_F, -1, -CAR_X - EDGE), 2.6, 5.4);
+    for (let i = 0; i < this.staff.length; i++) this.place(i);
 
     // Netze
     const mesh = (gb: GB, mat: THREE.Material, noShadow = false) => {
@@ -220,33 +227,15 @@ export class TtStart3D {
     this.local.add(fm);
     this.paintClock({ big: '--:--', col: '#ffb02e', lamps: 0, lampCol: '#ff2a1f', small: 'CRONO' });
 
-    // Blitze der Fotografen
+    // Blitze der Fotografen (folgen ihrer Kamera)
     const fmat = new THREE.SpriteMaterial({ map: d.glow, color: 0xffffff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
     this.dis.push(fmat);
     for (const i of ph) {
-      const s = this.staff[i];
-      const q = this.toLocal(s, staffPoint(s.p.act, [0, 1.68, 0.36]));
       const sp = new THREE.Sprite(fmat);
-      sp.position.set(q[0], q[1], q[2]);
       sp.scale.setScalar(0.9);
       sp.visible = false;
-      this.local.add(sp);
-      this.flashes.push({ s: sp, t: 0, next: 0.5 + r() * 3, f: s.f, x: s.x });
-    }
-
-    // Menschen in Weltkoordinaten (ihr Shader rechnet Blickrichtung und Sichtweite in der Welt)
-    this.buf = new THREE.InstancedInterleavedBuffer(new Float32Array(this.staff.length * STRIDE), STRIDE, 1);
-    this.buf.setUsage(THREE.DynamicDrawUsage);
-    for (let i = 0; i < this.staff.length; i++) this.pack(i);
-    for (const kind of KINDS) {
-      const geo = crowdGeometry(kind, 0, this.buf, this.staff.length);
-      if (!geo) continue;
-      const m = new THREE.Mesh(geo, d.people);
-      m.frustumCulled = false;
-      // (die Zuschauer-Shader kennen keinen Schattendurchgang: Schatten als runde Flecken)
-      m.userData.noShadow = true;
-      this.people.push(m);
-      this.root.add(m);
+      this.root.add(sp);
+      this.flashes.push({ s: sp, t: 0, next: 0.5 + r() * 3, who: i });
     }
   }
 
@@ -447,63 +436,11 @@ export class TtStart3D {
     put(new THREE.CylinderGeometry(0.015, 0.015, 0.35, 4), T(0.22, 0.16, 0.05, 0, 0, -0.5), metal);
   }
 
-  /** Kamera, Objektiv, Stoppuhr je nach Rolle (in der Hand bzw. auf der Schulter) */
-  private gear(props: GB, s: { p: Person; role: StaffRole; x: number; f: number; y: number; yaw: number }, photo: boolean) {
-    const act = s.p.act;
-    const black = lin('#141416');
-    const grey = lin('#3a3d44');
-    const put = (g: THREE.BufferGeometry, q: number[], off: [number, number, number], col: RGBf, rx = 0) => {
-      const c = this.toLocal(s, [q[0] + off[0], q[1] + off[1], q[2] + off[2]]);
-      props.add(g, new THREE.Matrix4().compose(new THREE.Vector3(c[0], c[1], c[2]), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, s.yaw, 0, 'YXZ')), new THREE.Vector3(1, 1, 1)), col);
-    };
-    if (photo) {
-      // Kamera vor dem Gesicht (zwischen den Händen); ein Teleobjektiv in Hellgrau, sonst ein schwarzes Zoom
-      const q = staffPoint(act, [0, 1.6, 0.2]);
-      const tele = s.p.act === Act.photo && s.x > 0;
-      put(new THREE.BoxGeometry(0.15, 0.11, 0.085), q, [0, 0, 0], black);
-      put(new THREE.BoxGeometry(0.05, 0.045, 0.05), q, [0, 0.07, -0.005], black);
-      if (tele) {
-        put(new THREE.CylinderGeometry(0.055, 0.05, 0.34, 10), q, [0, -0.005, 0.21], lin('#dcdcd4'), Math.PI / 2);
-        put(new THREE.CylinderGeometry(0.066, 0.066, 0.08, 10), q, [0, -0.005, 0.41], black, Math.PI / 2);
-      } else {
-        put(new THREE.CylinderGeometry(0.04, 0.042, 0.13, 10), q, [0, -0.005, 0.1], black, Math.PI / 2);
-        put(new THREE.CylinderGeometry(0.044, 0.044, 0.03, 10), q, [0, -0.005, 0.15], grey, Math.PI / 2);
-      }
-      // Aufsteckblitz
-      put(new THREE.BoxGeometry(0.06, 0.05, 0.05), q, [0, 0.115, 0.01], black);
-      return;
-    }
-    if (act === Act.tvCam) {
-      // Schulterkamera: Körper, Objektiv, Sucher links, Griff oben, rotes Licht
-      const q = staffPoint(act, [0.17, 1.62, 0.06]);
-      put(new THREE.BoxGeometry(0.15, 0.22, 0.46), q, [0, 0, 0.1], grey);
-      put(new THREE.CylinderGeometry(0.06, 0.068, 0.2, 10), q, [0, -0.02, 0.42], black, Math.PI / 2);
-      put(new THREE.BoxGeometry(0.06, 0.06, 0.14), q, [-0.11, 0.08, 0.2], black);
-      put(new THREE.BoxGeometry(0.03, 0.05, 0.24), q, [0, 0.15, 0.1], black);
-      put(new THREE.BoxGeometry(0.03, 0.02, 0.02), q, [0.03, 0.12, 0.33], lin('#e0241b'));
-      put(new THREE.BoxGeometry(0.12, 0.08, 0.1), q, [0, -0.02, -0.17], black);
-      return;
-    }
-    if (s.role === 'official' && act === Act.still) {
-      // Stoppuhr in den gefalteten Händen
-      const q = staffPoint(act, [0, 1.0, 0.2]);
-      put(new THREE.CylinderGeometry(0.03, 0.03, 0.015, 10), q, [0, 0.01, 0], lin('#c9cdd2'), Math.PI / 2);
-    }
-  }
-
   /** runder Schatten unter einer Person (oder dem Wagen) */
   private blob(flat: GB, x: number, f: number, y: number, size: number, len = size) {
     flat.uv = true;
     const yy = y + 0.03;
     flat.quad(P(x - size / 2, yy, f - len / 2), P(x + size / 2, yy, f - len / 2), P(x + size / 2, yy, f + len / 2), P(x - size / 2, yy, f + len / 2), [1, 1, 1], [[0, 0], [1, 0], [1, 1], [0, 1]]);
-  }
-
-  /** Punkt am Körper (Personenkoordinaten) → Startkoordinaten (three, f = −z) */
-  private toLocal(s: { p: Person; x: number; f: number; y: number; yaw: number }, q: number[]): number[] {
-    const hw = s.p.height * s.p.width, h = s.p.height;
-    const px = q[0] * hw, py = q[1] * h, pz = q[2] * hw;
-    const c = Math.cos(s.yaw), sn = Math.sin(s.yaw);
-    return [s.x + px * c + pz * sn, s.y + py, -s.f + (-px * sn + pz * c)];
   }
 
   // ------------------------------------------------------------------ Teamwagen
@@ -565,12 +502,15 @@ export class TtStart3D {
       bike(gb, m, paint);
     }
     const g = gb.build();
-    // der Mechaniker trägt die Teamfarbe
+    // der Mechaniker trägt die Teamfarben
     if (this.mech >= 0) {
-      const m = this.staff[this.mech].p;
-      m.top = m.hat = kitSlot(kit.jersey);
-      this.pack(this.mech);
-      this.buf.needsUpdate = true;
+      const m = this.staff[this.mech];
+      m.h.dispose();
+      m.h.group.removeFromParent();
+      m.h = new Human(lookFor(mulberry32(7), 'mechanic', kit), 3);
+      m.h.act = m.act;
+      this.root.add(m.h.group);
+      this.place(this.mech);
     }
     if (this.car) { this.local.remove(this.car); this.car.geometry.dispose(); }
     this.car = new THREE.Mesh(g, this.d.props);
@@ -579,24 +519,18 @@ export class TtStart3D {
 
   // ------------------------------------------------------------------ Laufzeit
 
-  private pack(i: number) {
-    const s = this.staff[i];
-    // Startkoordinaten → Welt (die Strecke ist am Start gerade; hinter dem Start geradeaus zurück)
+  /** Startkoordinaten → Welt (die Strecke ist am Start gerade; hinter dem Start geradeaus zurück) */
+  private world(x: number, y: number, f: number, out: THREE.Vector3): THREE.Vector3 {
     const th = this.W0.th;
-    const fx = Math.sin(th), fz = -Math.cos(th), rx = Math.cos(th), rz = Math.sin(th);
-    s.p.x = this.W0.x + rx * s.x + fx * s.f;
-    s.p.z = this.W0.z + rz * s.x + fz * s.f;
-    s.p.y = this.y0 + s.y;
-    s.p.yaw = s.yaw - th;
-    packPerson(s.p, this.buf.array as Float32Array, i);
+    return out.set(this.W0.x + Math.cos(th) * x + Math.sin(th) * f, this.y0 + y, this.W0.z + Math.sin(th) * x - Math.cos(th) * f);
   }
 
-  private setAct(i: number, act: number) {
+  /** Mensch an seinen Ort, Blick in seine Richtung (yaw: in Startkoordinaten, 0 = nach vorn) */
+  private place(i: number) {
     const s = this.staff[i];
-    if (s.p.act === act) return;
-    s.p.act = act;
-    this.pack(i);
-    this.buf.needsUpdate = true;
+    this.world(s.x, s.y, s.f, s.h.group.position);
+    // Gesicht des Menschen ist −z; Startrichtung (sin th, −cos th) entspricht Drehung −th
+    s.h.group.rotation.y = -this.W0.th - s.yaw;
   }
 
   private paintClock(st: ClockState) {
@@ -659,16 +593,33 @@ export class TtStart3D {
     if (waiting && Math.abs(p.x - this.holdX) > 0.01) {
       this.holdX = p.x;
       const h = this.staff[this.holder];
-      h.x = p.x - 0.54;
-      h.f = -0.6;
-      h.yaw = Math.atan2(0.82, -0.57);
-      this.pack(this.holder);
-      this.buf.needsUpdate = true;
+      h.x = p.x - 0.52;
+      h.f = -0.62;
+      h.yaw = Math.atan2(0.52, 0.4);
+      this.place(this.holder);
     }
+    // Fahrer (Kopf) – dorthin schauen alle; Sattel – dort greift der Halter
+    this.world(p.x, 1.55, p.z, this.riderHead);
+    const hold = this.staff[this.holder].h;
+    this.world(p.x, 0.97, -0.21, hold.holdAt);
     // „Los“: der Halter lässt los und klatscht dem Fahrer hinterher, der Starter senkt die Hand
     const released = !waiting && (this.goT < 0 || this.goT > 0.12);
-    this.setAct(this.holder, waiting || !released ? Act.holdBike : this.goT >= 0 && this.goT < 2.6 ? Act.clap : Act.still);
-    this.setAct(this.starter, phase === 'countdown' ? Act.starterUp : Act.still);
+    hold.act = !released ? 'hold' : this.goT >= 0 && this.goT < 2.8 ? 'clap' : 'hands';
+    this.staff[this.starter].h.act = phase === 'countdown' ? 'starter' : 'stand';
+    // alle schauen zum Fahrer; Fotografen und Kameramann schwenken mit dem ganzen Körper mit
+    for (let i = 0; i < this.staff.length; i++) {
+      const s = this.staff[i];
+      s.h.lookAt = i === this.holder && !released ? null : this.riderHead;
+      if (s.track) {
+        const want = Math.atan2(p.x - s.x, p.z + 0.5 - s.f);
+        let d = want - s.yaw;
+        d = Math.atan2(Math.sin(d), Math.cos(d));
+        // nicht ganz herum (sie stehen am Rand und schauen die Straße entlang)
+        s.yaw += Math.max(-1, Math.min(1, d)) * Math.min(1, dt * 4);
+        this.place(i);
+      }
+      s.h.update(dt);
+    }
     // Startuhr
     if (p.z < 80) {
       let st: ClockState;
@@ -690,9 +641,10 @@ export class TtStart3D {
     }
     // Blitze: ab und zu beim Warten, eine Salve bei „Los“, Serienbilder, wenn der Fahrer vorbeikommt
     for (const fl of this.flashes) {
+      const ph = this.staff[fl.who];
       if (fl.t > 0) { fl.t -= dt; if (fl.t <= 0) fl.s.visible = false; }
       fl.next -= dt;
-      const gap = fl.f - p.z;
+      const gap = ph.f - p.z;
       let want = false;
       if (phase === 'playing' && this.goT >= 0 && this.goT < 0.5 && fl.next > 0.6) fl.next = Math.random() * 0.4;
       if (fl.next <= 0) {
@@ -701,7 +653,14 @@ export class TtStart3D {
         fl.next = close ? 0.25 + Math.random() * 0.3 : waiting ? 1.6 + Math.random() * 4 : 3 + Math.random() * 5;
         if (phase === 'playing' && gap < -3) fl.next = 1e9;
       }
-      if (want) { fl.t = 0.07; fl.s.visible = true; fl.s.scale.setScalar(0.7 + Math.random() * 0.4); }
+      if (want) {
+        fl.t = 0.07;
+        fl.s.visible = true;
+        fl.s.scale.setScalar(0.7 + Math.random() * 0.4);
+        // über der Kamera (Aufsteckblitz)
+        ph.h.props.getWorldPosition(fl.s.position);
+        fl.s.position.y += 0.14;
+      }
     }
   }
 
@@ -709,8 +668,8 @@ export class TtStart3D {
     this.root.removeFromParent();
     for (const x of this.dis) x.dispose();
     this.dis = [];
-    for (const m of this.people) disposeCrowdGeometry(m.geometry);
-    this.people = [];
+    for (const s of this.staff) s.h.dispose();
+    this.staff = [];
     if (this.car) { this.car.geometry.dispose(); this.car = null; }
   }
 }

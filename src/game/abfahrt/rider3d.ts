@@ -74,7 +74,7 @@ const XAXIS = new THREE.Vector3(1, 0, 0);
 // ------------------------------------------------------------------ glatte Körper
 
 /** indizierter Baukasten: Ringe zu Röhren verbinden, glatte Normalen */
-class MB {
+export class MB {
   pos: number[] = [];
   col: number[] = [];
   uv: number[] = [];
@@ -121,10 +121,10 @@ class MB {
 }
 
 /** Querschnitt eines Körpers: Höhe y, Halbachsen a (seitlich) und b (Tiefe), Mittelpunkt-Versatz cz, Farbe */
-interface Ring { y: number; a: number; b: number; cz?: number; c: RGBf }
+export interface Ring { y: number; a: number; b: number; cz?: number; c: RGBf }
 
 /** Röhre aus Ringen entlang +y, Enden geschlossen; u läuft rundherum (0 = rechts, 0,75 = hinten, 0,25 = vorn) */
-function loft(mb: MB, rings: Ring[], n: number, v0: number, v1: number) {
+export function loft(mb: MB, rings: Ring[], n: number, v0: number, v1: number) {
   const first = mb.pos.length / 3;
   const span = rings[rings.length - 1].y - rings[0].y || 1;
   for (const r of rings) {
@@ -161,7 +161,7 @@ function loft(mb: MB, rings: Ring[], n: number, v0: number, v1: number) {
  * Gliedmaße mit Muskelform: je Querschnitt Breite a, Tiefe b und Versatz cz (nach −z = hinten liegen Wade und
  * Trizeps, nach +z vorn Schienbein und Bizeps – für die üblichen Haltungen), Enden halbrund
  */
-function muscle(len: number, prof: [number, number, number, number, RGBf][], n = 14): THREE.BufferGeometry {
+export function muscle(len: number, prof: [number, number, number, number, RGBf][], n = 14): THREE.BufferGeometry {
   const rings: Ring[] = [];
   const [, a0, b0, z0, c0] = prof[0];
   for (let k = 4; k >= 1; k--) {
@@ -304,7 +304,7 @@ function foreGeo(skin: RGBf, glove: RGBf, sx: number): THREE.BufferGeometry {
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** Knochen-Mesh von a nach b ausrichten (Länge ist fest im Mesh) */
-function bone(m: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3) {
+export function bone(m: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3) {
   m.position.copy(a);
   m.quaternion.setFromUnitVectors(UP, tmpD.subVectors(b, a).normalize());
 }
@@ -312,7 +312,7 @@ const tmpD = new THREE.Vector3();
 const tmpQ = new THREE.Vector3();
 
 /** Zweigelenk-Rechnung: Gelenk zwischen a und c bei festen Längen, gebeugt Richtung pole */
-function ik(a: THREE.Vector3, c: THREE.Vector3, l1: number, l2: number, pole: THREE.Vector3, out: THREE.Vector3, end: THREE.Vector3) {
+export function ik(a: THREE.Vector3, c: THREE.Vector3, l1: number, l2: number, pole: THREE.Vector3, out: THREE.Vector3, end: THREE.Vector3) {
   tmpD.subVectors(c, a);
   const dist = tmpD.length();
   const d = Math.max(Math.abs(l1 - l2) + 0.01, Math.min(l1 + l2 - 0.002, dist));
@@ -378,10 +378,10 @@ let shadowGeo: THREE.PlaneGeometry | null = null;
 const SHADOW_GEO = () => (shadowGeo ??= new THREE.PlaneGeometry(1.1, 2.2));
 
 interface Limbs { thigh: THREE.BufferGeometry; shin: THREE.BufferGeometry; upper: THREE.BufferGeometry; foreL: THREE.BufferGeometry; foreR: THREE.BufferGeometry }
-const elbowCap = (skin: RGBf) => { const mb = new MB(); mb.add(new THREE.SphereGeometry(0.042, 10, 8), new THREE.Matrix4(), skin); return mb.build(); };
-const kneeCap = (skin: RGBf) => { const mb = new MB(); mb.add(new THREE.SphereGeometry(0.05, 12, 8), new THREE.Matrix4().makeScale(1, 1, 1.08), skin); return mb.build(); };
+export const elbowCap = (skin: RGBf) => { const mb = new MB(); mb.add(new THREE.SphereGeometry(0.042, 10, 8), new THREE.Matrix4(), skin); return mb.build(); };
+export const kneeCap = (skin: RGBf) => { const mb = new MB(); mb.add(new THREE.SphereGeometry(0.05, 12, 8), new THREE.Matrix4().makeScale(1, 1, 1.08), skin); return mb.build(); };
 const geoCache = new Map<string, unknown>();
-function cached<T>(key: string, make: () => T): T {
+export function cached<T>(key: string, make: () => T): T {
   let v = geoCache.get(key) as T | undefined;
   if (v === undefined) { v = make(); geoCache.set(key, v); }
   return v;
@@ -389,7 +389,7 @@ function cached<T>(key: string, make: () => T): T {
 
 /** Arme und Beine (geteilt je Farbkombination) */
 /** zwei Geometrien zu einer (gleiche Eigenschaften, Indizes versetzt) – spart einen Zeichenaufruf */
-function mergeGeo(a: THREE.BufferGeometry, b: THREE.BufferGeometry): THREE.BufferGeometry {
+export function mergeGeo(a: THREE.BufferGeometry, b: THREE.BufferGeometry): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   const na = a.getAttribute('position').count;
   const nb = b.getAttribute('position').count;
@@ -452,7 +452,7 @@ function trunkAngle(pelvis: THREE.Vector3, target: THREE.Vector3, len: number, d
  * Drehung der Gelenke, das Netz folgt im Vertex-Shader. Die Knochenmatrizen sind relativ zum Körper (nicht
  * Weltkoordinaten): so bleiben sie klein und genau, obwohl die Welt kilometerweit reicht.
  */
-class RelSkeleton extends THREE.Skeleton {
+export class RelSkeleton extends THREE.Skeleton {
   private inv = new THREE.Matrix4();
   private rel = new THREE.Matrix4();
   constructor(bones: THREE.Bone[], private ref: THREE.Object3D) {
@@ -471,7 +471,7 @@ class RelSkeleton extends THREE.Skeleton {
 const IDENTITY = new THREE.Matrix4();
 
 /** Teile (je in eigenen Koordinaten) zu einer Geometrie mit Knochenindex je Ecke */
-function skinGeo(parts: { g: THREE.BufferGeometry; bone: number; pad?: boolean }[]): THREE.BufferGeometry {
+export function skinGeo(parts: { g: THREE.BufferGeometry; bone: number; pad?: boolean }[], pv = LIMB_V): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   let n = 0;
   let ni = 0;
@@ -498,7 +498,7 @@ function skinGeo(parts: { g: THREE.BufferGeometry; bone: number; pad?: boolean }
       if (A && A.itemSize === o.size && !(pad && k === 'uv')) o.arr.set(A.array as Float32Array, ov * o.size);
       else if (k === 'color') o.arr.fill(1, ov * 3, (ov + c) * 3);
       else if (k === 'gloss') o.arr.fill(0.3, ov, ov + c);
-      else if (k === 'uv') for (let i = 0; i < c; i++) { o.arr[(ov + i) * 2] = 0.5; o.arr[(ov + i) * 2 + 1] = LIMB_V; }
+      else if (k === 'uv') for (let i = 0; i < c; i++) { o.arr[(ov + i) * 2] = 0.5; o.arr[(ov + i) * 2 + 1] = pv; }
     }
     for (let i = 0; i < c; i++) { si[(ov + i) * 4] = bone; sw[(ov + i) * 4] = 1; }
     if (a.index) for (let i = 0; i < a.index.count; i++) idx[oi + i] = a.index.getX(i) + ov;
