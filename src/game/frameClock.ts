@@ -140,12 +140,20 @@ export class FrameClock {
     if (Math.abs(best - this.period) > 0.08 * this.period) {
       const t = this.target;
       this.period = best;
-      this.div = this.measured ? Math.max(1, Math.round(t / best)) : 1;
+      // nie langsamer als 45 Bilder je Sekunde (wie in learnPace): eine kurze Fehlerkennung (90 Hz, dann 120 Hz)
+      // ergab sonst drei Takte je Bild – 40 Bilder je Sekunde für die ganze Fahrt, und die Auflösungsregelung
+      // senkte Auflösung und Sichtweite, obwohl das Gerät 60 schafft
+      this.div = this.measured ? Math.max(1, Math.min(maxDiv(best), Math.round(t / best))) : 1;
       this.fn = 0;
       this.fk = 0;
     }
     this.measured = true;
   }
+}
+
+/** höchstens so viele Takte je Bild, dass es mindestens 45 Bilder je Sekunde bleiben */
+function maxDiv(period: number): number {
+  return Math.max(1, Math.floor((1000 / 45 + 0.5) / period));
 }
 
 /** übliche Bildschirmtakte (ms), längster zuerst */

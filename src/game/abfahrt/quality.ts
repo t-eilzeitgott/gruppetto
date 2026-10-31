@@ -21,6 +21,19 @@ import { canDropRange, rangeDrop, setRangeDrop } from './viewRange';
 
 const KEY = 'gruppetto.gfx';
 
+/**
+ * Einmal zurücksetzen: ein Fehler im festen Bildtakt (40 statt 60 Bilder je Sekunde) ließ die Regelung Auflösung
+ * und Sichtweite senken, obwohl das Gerät Luft hatte – diese Stufen sind gespeichert und sollen nicht bleiben.
+ */
+const RESET = 'gruppetto.gfx.v';
+try {
+  if (typeof localStorage !== 'undefined' && localStorage.getItem(RESET) !== '2') {
+    localStorage.removeItem(KEY);
+    localStorage.removeItem('gruppetto.rangeDrop');
+    localStorage.setItem(RESET, '2');
+  }
+} catch { /* kein Speicher */ }
+
 export function storedQuality(): number {
   try {
     const v = Number(localStorage.getItem(KEY));
@@ -74,13 +87,21 @@ export class QualityGovernor {
     const n = a.length;
     const p60 = a[Math.min(n - 1, Math.floor(n * 0.6))];
     // fester Bildtakt um 60 Hz (frameClock.ts): schon jedes zehnte Bild zu spät ist ein spürbares Stottern
-    const offBeat = target >= 14 && a[Math.min(n - 1, Math.floor(n * 0.9))] > target * 1.25 + 1;
+    const p90 = a[Math.min(n - 1, Math.floor(n * 0.9))];
+    const offBeat = target >= 14 && p90 > target * 1.25 + 1;
+    // Luft: deutlich schneller als nötig – im festen Bildtakt ist die Bildzeit der Takt, dann zählt nur, dass
+    // (fast) kein Bild zu spät kam
+    const roomy = p60 < 14 || (target >= 14 && p90 <= target + 1.5);
     this.dts = [];
     this.t = 0;
     // zu wenige Bilder (App im Hintergrund, Karte offen): kein Urteil
     if (n < MIN_FRAMES) return null;
     if (this.settle > 0) { this.settle -= 1; return null; }
-    const slow = p60 > SLOW_MS || offBeat;
+    // fester Bildtakt langsamer als 53 je Sekunde (90 Hz: jeder zweite Takt): die Bildzeit ist dann der Takt selbst
+    // und sagt nichts über die Last – nur verspätete Bilder zählen
+    const slowMs = Math.max(SLOW_MS, target * 1.06);
+    const calmMs = Math.max(CALM_MS, target * 1.03);
+    const slow = p60 > slowMs || offBeat;
     if (this.probe) {
       const pr = this.probe;
       this.probe = null;
@@ -112,7 +133,7 @@ export class QualityGovernor {
       }
       return null;
     }
-    if (!slow && p60 < CALM_MS && !offBeat) {
+    if (!slow && p60 < calmMs && !offBeat) {
       this.calm += 1;
       // erst die Auflösung zurück (bis ganz an die Grenze; mit viel Luft in größeren Schritten) …
       if (this.calm >= 3 && q < this.ceil - 0.005) {
@@ -130,7 +151,7 @@ export class QualityGovernor {
         return null;
       }
       // … dann die Sichtweite (Umbau der Landschaft: erst nach längerer Ruhe und nur mit Luft)
-      if (this.calm >= 6 && rangeDrop() > 0 && p60 < 14) {
+      if (this.calm >= 6 && rangeDrop() > 0 && roomy) {
         this.calm = 0;
         this.settle = 1;
         this.cpuBound = false;

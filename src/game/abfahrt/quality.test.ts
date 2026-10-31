@@ -144,3 +144,10 @@ test('fester Bildtakt 60 Hz: jedes sechste Bild zu spät (Stottern) – die Aufl
   const r = run(Array.from({ length: 1500 }, (_, i) => (i % 6 === 0 ? 33.3 : 16.7)));
   assert.equal(r.q, 1);
 });
+
+test('fester Bildtakt über 18,8 ms (90 Hz, jeder zweite Takt): pünktliche Bilder senken nichts', () => {
+  const g = new QualityGovernor(0.5);
+  let changed: number | null = null;
+  for (let i = 0; i < 45 * 20; i++) { const r = g.frame(2 / 90, 1, 2000 / 90); if (r !== null) changed = r; }
+  assert.equal(changed, null);
+});
