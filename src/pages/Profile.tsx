@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useApp } from '../app/context';
 import { useTourData } from '../app/hooks';
 import { source, BUILD_ID } from '../app/config';
@@ -11,22 +11,14 @@ import { Icon } from '../ui/Icon';
 import { lastName } from '../ui/bits';
 import { InstallSteps } from '../ui/InstallSteps';
 import { useInstall } from '../lib/install';
-import { gfxOn, onGfxChange, setGfx } from '../game/abfahrt/gfxOpts';
+import { GfxSliders } from './gameKit';
 
-/** Spielgrafik für alle 3D-Spiele: normal oder einfach (für langsame Geräte) – dieselbe Wahl wie im Pausenmenü */
+/** Spielgrafik für alle 3D-Spiele: dieselben Schieberegler wie im Pausenmenü */
 function GameGfx() {
-  const [lite, setLite] = useState(() => gfxOn('lite'));
-  useEffect(() => onGfxChange((k, on) => { if (k === 'lite') setLite(on); }), []);
   return (
     <div className="setting">
       <span className="setting__label">Spielgrafik</span>
-      <Segmented<'normal' | 'lite'>
-        label="Spielgrafik wählen"
-        value={lite ? 'lite' : 'normal'}
-        onChange={(v) => setGfx('lite', v === 'lite')}
-        options={[{ value: 'normal', label: 'Normal' }, { value: 'lite', label: 'Einfach' }]}
-      />
-      <p className="hint">Einfach: für langsame Geräte – volle Auflösung, dafür kurze Sicht und schlicht, ohne Schatten und Lichteffekte; reicht es nicht, gleichmäßige 30 Bilder je Sekunde. Gilt für alle Spiele.</p>
+      <GfxSliders page />
     </div>
   );
 }

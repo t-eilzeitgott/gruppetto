@@ -3,7 +3,7 @@
  * halben Sekunde, Rechenzeit fürs Zeichnen und – bei den 3D-Spielen – die Auflösungsstufe. Ein- und ausschaltbar
  * im Pausenmenü (anfangs aus, das Gerät merkt es sich). Schreibt direkt ins DOM (kein React), zweimal je Sekunde.
  */
-import { rangeDrop, viewRange } from './abfahrt/viewRange';
+import { viewRange } from './abfahrt/viewRange';
 
 const KEY = 'gruppetto.fps';
 let enabled = (() => { try { return localStorage.getItem(KEY) === '1'; } catch { return false; } })();
@@ -63,7 +63,7 @@ export class FpsMeter {
     const avg = this.sum / this.n;
     const f = (x: number) => x.toFixed(1).replace('.', ',');
     // Auflösungsstufe und wirksame Sichtweite (↓ = automatisch kürzer als gewählt)
-    const q = quality !== undefined ? ` · ${Math.round(quality * 100)} % · ${viewRange().label}${rangeDrop() > 0 ? '↓' : ''}` : '';
+    const q = quality !== undefined ? ` · ${String(quality).replace('.', ',')}× · ${viewRange().label}` : '';
     const bad = shaderErrors > 0 ? ` · ${shaderErrors} Shader kaputt` : '';
     el.textContent = `${Math.round(1000 / avg)} fps · ${f(avg)} ms · max ${Math.round(this.max)} · CPU ${f(this.cpu / this.n)}${q}${bad}`;
     // einbrechende Bildrate (und kaputte Shader) dezent markieren

@@ -1272,6 +1272,35 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf-switch__knob { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s; }
 .abf-switch.is-on .abf-switch__track { background: var(--accent); }
 .abf-switch.is-on .abf-switch__knob { transform: translateX(18px); }
+/* Grafik: Stufe (Low … PC) und Auflösung als Schieberegler – im Pausenmenü und im Profil (gameKit.tsx) */
+.gfx-sl { display: flex; flex-direction: column; gap: 16px; width: 100%; padding-top: 8px; }
+.gfx-sl--page { padding-top: 0; }
+.gfx-sl__row { display: flex; flex-direction: column; gap: 4px; cursor: default; }
+.gfx-sl__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.gfx-sl__label { font-size: 15px; font-weight: 600; }
+.gfx-sl--page .gfx-sl__label { font-size: 14px; font-weight: 600; color: var(--muted); }
+.gfx-sl__val { font-size: 14px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gfx-sl__ends { display: flex; justify-content: space-between; margin-top: -2px; font-size: 11px; font-weight: 600; opacity: 0.5; font-variant-numeric: tabular-nums; }
+.gfx-sl__hint { font-size: 12.5px; line-height: 1.35; opacity: 0.7; }
+.gfx-sl--page .gfx-sl__hint { opacity: 1; color: var(--muted); }
+/* (doppelte Klasse: im Profil färbt .card input sonst den Grund) */
+.gfx-sl .gfx-sl__input {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 30px; margin: 0; padding: 0; background: transparent; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.gfx-sl__input::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--accent) var(--p, 50%), rgba(127, 127, 127, 0.32) var(--p, 50%));
+}
+.gfx-sl__input::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 26px; height: 26px; margin-top: -10px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.12); transition: transform 0.15s ease;
+}
+.gfx-sl__input:active::-webkit-slider-thumb { transform: scale(1.12); }
+.gfx-sl__input::-moz-range-track { height: 6px; border-radius: 3px; background: rgba(127, 127, 127, 0.32); }
+.gfx-sl__input::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--accent); }
+.gfx-sl__input::-moz-range-thumb { width: 26px; height: 26px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+.gfx-sl__input:focus { outline: none; }
+.gfx-sl__input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px var(--accent-soft, rgba(127, 127, 127, 0.3)), 0 1px 4px rgba(0, 0, 0, 0.35); }
 /* Grafik-Schalter (Lichtfilter, Schatten, Details) */
 .abf-gfx { display: flex; flex-direction: column; gap: 2px; width: 100%; padding-top: 8px; }
 .abf-switch--sub { font-size: 14px; min-height: 48px; }

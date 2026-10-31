@@ -8,8 +8,8 @@ import { BUILD_ID } from '../app/config';
 import { Perf3D, type Report } from '../game/abfahrt/perf3d';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import type { RaceView } from '../game/abfahrt/engine';
-import { rangeDrop, viewRange } from '../game/abfahrt/viewRange';
-import { gfxOn } from '../game/abfahrt/gfxOpts';
+import { viewRange } from '../game/abfahrt/viewRange';
+import { gfxAA, gfxDescribe, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { copyText, shareFile } from './admin/gpuKit';
 import { lsGet, lsSet } from './gameKit';
@@ -43,14 +43,14 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
   const deviceInfo = () => {
     const r = o.renderer();
     const cv = r?.gl.domElement;
-    const rd = rangeDrop();
     return {
       geraet: navigator.userAgent,
       bildschirm: `${window.innerWidth}×${window.innerHeight} ×${window.devicePixelRatio || 1}`,
       zeichenflaeche: cv ? `${cv.width}×${cv.height}` : '?',
-      aufloesung: r ? `${Math.round(r.effQuality * 100)} % (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
-      sichtweite: `${viewRange().label}${rd ? ` (vom Regler ${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`,
-      grafik: `${gfxOn('lite') ? 'Einfache Grafik an, ' : ''}${r?.pc ? 'PC-Grafik an, ' : ''}Lichtfilter & Wetter ${gfxOn('licht') ? 'an' : 'aus'}, Sonnenschatten ${gfxOn('schatten') ? 'an' : 'aus'}, Landschaftsdetails ${gfxOn('details') ? 'an' : 'aus'}`,
+      aufloesung: r ? `${String(gfxRes()).replace('.', ',')}-fach (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
+      sichtweite: viewRange().label,
+      // (PC-Grafik und Kantenglättung gehören zur Bühne: nach einem Wechsel gelten sie erst im nächsten Spiel)
+      grafik: `${gfxDescribe()}${r && (r.pc !== gfxOn('pc') || r.aa !== gfxAA()) ? ' – PC-Grafik/Kantenglättung erst ab dem nächsten Spiel' : ''}`,
     };
   };
   const start = () => {

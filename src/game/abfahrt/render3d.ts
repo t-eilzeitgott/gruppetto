@@ -48,7 +48,7 @@ import { setGlossEnv } from './gloss';
 import { apIn, apOut, apQ, appearify, appearifyTree, setAp } from './appear';
 import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
 import type { WeatherEnv } from './weather';
-import { gfxOn, onGfxChange } from './gfxOpts';
+import { gfxAA, gfxOn, gfxRes, onGfxChange, onGfxSettings } from './gfxOpts';
 import { buildHouse, rowUnits, roofColor, roofKind, wallSet, type At, type Town } from './house3d';
 
 /** Kennung der feinen Landschafts-Shader (gfxOpts „details“) im Programmschlüssel */
@@ -358,6 +358,8 @@ export class Renderer3D {
   quality = 1;
   /** PC-Grafik (gfxOpts „pc“, gilt ab dem Start): höhere Auflösung, feinere Berge, Gras, alle Fahrer voll detailliert */
   readonly pc = gfxOn('pc');
+  /** Kantenglättung (gehört zur Bühne: ab Grafikstufe 3, beim Wechsel baut das nächste Spiel eine neue Bühne) */
+  readonly aa = gfxAA();
   dark = false;
   accent = '#ff5fa2';
   readonly gl: THREE.WebGLRenderer;
@@ -500,10 +502,6 @@ export class Renderer3D {
   spriteFar = this.pc ? 98 : SPRITE_FAR;
   /** einfache Grafik (gfxOpts): je Bild gelesen, damit das Umschalten im Pausenmenü sofort wirkt */
   private get lite(): boolean { return gfxOn('lite'); }
-  /** Kostenanalyse mit einfacher Grafik: diese Auflösungsstufe trotzdem (sonst null) */
-  private qMeasure: number | null = null;
-  /** wirksame Auflösungsstufe (Anzeige, Messung): mit einfacher Grafik immer voll */
-  get effQuality(): number { return this.lite ? 1 : this.quality; }
   private player: RiderModel | null = null;
   private playerAnim = new RiderAnim(1, true);
   private playerKit = '';
@@ -655,9 +653,9 @@ export class Renderer3D {
   private w = { x: 0, y: 0, z: 0, th: 0 };
 
   constructor(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement) {
-    // Kantenglättung an (MSAA): auf Handy-GPUs günstig, Kanten und Linien werden weich – außer mit einfacher Grafik
-    // (für langsame Geräte; gilt für die nächste Bühne, also ab dem nächsten Start)
-    this.gl = new THREE.WebGLRenderer({ canvas, antialias: !gfxOn('lite'), powerPreference: 'high-performance', alpha: false, stencil: false });
+    // Kantenglättung (MSAA): auf Handy-GPUs günstig, Kanten und Linien werden weich – nur in den untersten
+    // Grafikstufen aus
+    this.gl = new THREE.WebGLRenderer({ canvas, antialias: this.aa, powerPreference: 'high-performance', alpha: false, stencil: false });
     { const c = this.gl.getContext(); this.msaa = (c.getParameter(c.SAMPLES) as number) >= 2; }
     // Shader, die nicht übersetzen, bleiben unsichtbar (ganze Landschaftsstufen!): zählen und in der
     // Bildraten-Anzeige zeigen, dazu wie üblich in der Konsole melden
@@ -747,9 +745,9 @@ export class Renderer3D {
     this.resize();
     // im Pausenmenü umgeschaltet (gfxOpts): feine Landschafts-Shader oder Sonnenschatten – die betroffenen Shader
     // gleich neu übersetzen (ein kurzer Halt im Menü statt Ruckler beim ersten Dorf oder Tunnel)
+    // neue Auflösung (Schieberegler): wirkt direkt vor dem nächsten Bild
+    this.offRes = onGfxSettings(() => this.requestResize());
     this.offGfx = onGfxChange((k) => {
-      // einfache Grafik: weniger Bildpunkte (wirkt direkt vor dem nächsten Bild)
-      if (k === 'lite') this.requestResize();
       if (k === 'details') {
         const { asphalt, fresh, cobble, gravel, verge, terrain, portal } = this.mats;
         for (const m of [asphalt, fresh, cobble, gravel, verge, terrain, portal, ...this.terrMats]) m.needsUpdate = true;
@@ -760,6 +758,7 @@ export class Renderer3D {
   }
 
   private offGfx: () => void;
+  private offRes: () => void;
 
   /** nach einer Umschaltung: alle Shader neu anstoßen (Vorwärm-Gruppe und was gerade in der Szene ist) */
   private rewarm() {
@@ -1420,19 +1419,9 @@ export class Renderer3D {
     const rect = this.gl.domElement.getBoundingClientRect();
     const W = Math.max(100, Math.round(rect.width));
     const H = Math.max(100, Math.round(rect.height));
-    // höchstens 1,4-fache Pixeldichte: mit Kantenglättung auf Retina kaum sichtbar, spart aber viel Füllrate.
-    // Am Start (Fahrer steht, alles ruhig): gestochen scharf mit bis zu doppelter Dichte.
-    // PC-Grafik: volle Dichte des Bildschirms, mindestens 1,25-fach (feiner als die Pixel, zusammen mit der
-    // Kantenglättung gestochen scharf) – die Auflösungsregelung nimmt bei Bedarf zurück
-    const dev = window.devicePixelRatio || 1;
-    // (PC-Grafik höchstens ~4,5 Millionen Bildpunkte: auf großen Bildschirmen bliebe sonst kaum Rechenzeit fürs Bild)
-    // Einfache Grafik: volle Auflösung – doppelte Dichte (auf dem Handy kaum von der vollen des Bildschirms zu
-    // unterscheiden), nie abgesenkt; gespart wird an allem anderen
-    const lite = this.lite;
-    const dpr = lite ? Math.min(2, dev) * (this.qMeasure ?? 1)
-      : this.pc
-        ? Math.min(2, Math.max(1.25, dev), Math.sqrt(4.5e6 / (W * H))) * (this.sharp ? 1 : this.quality)
-        : this.sharp ? Math.min(2, dev) : Math.min(1.4, dev) * this.quality;
+    // Pixeldichte, wie im Schieberegler gewählt (gfxOpts; fest, keine automatische Regelung) – quality ist nur ein
+    // Faktor für die Kostenanalyse
+    const dpr = gfxRes() * this.quality;
     const cv = this.gl.domElement;
     // unverändert: nichts anfassen (jedes Setzen der Größe leert die Leinwand)
     if (W !== this.W || H !== this.H || dpr !== this.gl.getPixelRatio() || cv.width !== Math.floor(W * dpr) || cv.height !== Math.floor(H * dpr)) {
@@ -1457,8 +1446,6 @@ export class Renderer3D {
 
   /** Größe/Auflösung erst unmittelbar vor dem nächsten Zeichnen anpassen (kein leeres, schwarzes Bild dazwischen) */
   private pendingResize = false;
-  /** Startbild: volle Schärfe, solange der Fahrer am Start steht (bis ein paar Meter nach „Los“) */
-  private sharp = false;
   /**
    * Auftakt der Abfahrt: von kurz vor dem Tunnelausgang bis hinter die Spitzkehre (erster Panoramablick) wird nichts
    * gebaut und nichts hochgeladen – alles dafür entsteht vorher auf der Landstraße und im Tunnel (kein Ruckler)
@@ -1525,8 +1512,6 @@ export class Renderer3D {
     this.idleBuild = g.phase === 'ready' || g.phase === 'countdown';
     this.uiMoves = this.idleK < 1 && uiBusy();
     // scharfes Startbild: am Start und auf den ersten Metern (umgeschaltet wird erst in Fahrt, ein Bild Größenwechsel)
-    const sharp = this.idleBuild || (g.phase === 'playing' && g.p.z < g.track.startZ + 14 && this.sharp);
-    if (sharp !== this.sharp) { this.sharp = sharp; this.pendingResize = true; }
     this.calm = false;
     if (g.track.kind === 'descent') {
       if (!this.calmZ) {
@@ -1770,13 +1755,7 @@ export class Renderer3D {
     let usePost = true;
     const hideMats = (set: Set<THREE.Material> | undefined) => { for (const m of set ?? []) { if (!matVis.has(m)) matVis.set(m, m.visible); m.visible = false; } };
     const hideObjs = (list: THREE.Object3D[] | undefined) => { for (const o of list ?? []) { if (!objVis.has(o)) objVis.set(o, o.visible); o.visible = false; } };
-    // (einfache Grafik: volle Auflösung ist die Basis; die Stufen gelten dort nur für die Messung)
-    const lite0 = this.lite;
-    const qBase = lite0 ? 1 : q0;
-    const setQ = (q: number) => {
-      if (lite0) { const m = q >= 0.999 ? null : q; if (this.qMeasure !== m) { this.qMeasure = m; this.resize(); } }
-      else if (this.quality !== q) { this.quality = q; this.resize(); }
-    };
+    const setQ = (q: number) => { if (this.quality !== q) { this.quality = q; this.resize(); } };
     const restore = () => {
       for (const [m, v] of matVis) m.visible = v;
       matVis.clear();
@@ -1787,7 +1766,7 @@ export class Renderer3D {
       this.sunset.mesh.visible = sunVis0;
       gl.shadowMap.autoUpdate = shadowAuto0;
       usePost = true;
-      setQ(qBase);
+      setQ(q0);
     };
     const weather = !!this.post && this.debugTod !== null;
     const steps: [string, () => void][] = [['Basis', () => undefined]];
@@ -1801,7 +1780,13 @@ export class Renderer3D {
     if (gl.shadowMap.enabled) steps.push(['ohne Schattenkarte (Durchgang je Bild)', () => { gl.shadowMap.autoUpdate = false; gl.shadowMap.needsUpdate = false; }]);
     if (weather) steps.push(['ohne Wetter-Nachbearbeitung', () => { usePost = false; }]);
     steps.push(['nur Himmel', () => { for (const set of cats.values()) if (!set.has(this.skyMat)) hideMats(set); for (const l of objs.values()) hideObjs(l); this.sunset.mesh.visible = false; }]);
-    for (const q of [0.5, 0.75, 1]) if (Math.abs(q - qBase) > 0.01) steps.push([`Auflösung ${Math.round(q * 100)} % (statt ${Math.round(qBase * 100)} %)`, () => setQ(q)]);
+    // Auflösung: halb und drei Viertel der gewählten Pixeldichte, und – wo sie darunter liegt – die des Bildschirms
+    const res0 = gfxRes();
+    const fx = (d: number) => `${d.toFixed(2).replace(/0$/, '').replace('.', ',')}-fach`;
+    const qs = [0.5, 0.75];
+    const dev = window.devicePixelRatio || 1;
+    if (dev > res0 + 0.2) qs.push(dev / res0);
+    for (const q of qs) steps.push([`Auflösung ${fx(res0 * q)} (statt ${fx(res0)})`, () => setQ(q)]);
     // (quick: nur für Tests im Emulator – je Variante ein Bild, ohne Wiederholung)
     // Messen: K-mal zeichnen, dann auf die Grafik warten (Zeit je Bild: CPU und Grafik); vorher den Rückstau abwarten
     const K = quick ? 1 : 2;
@@ -6729,6 +6714,7 @@ export class Renderer3D {
 
   dispose() {
     this.offGfx();
+    this.offRes();
     try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); this.markers?.dispose(); this.ttStart?.dispose(); this.descStart?.dispose(); } catch { /* Kontext evtl. schon weg */ }
     try { this.gl.dispose(); } catch { /* egal */ }
     // Kontext sofort freigeben: iOS erlaubt nur wenige gleichzeitig – sonst bleibt ein späteres Spiel schwarz

@@ -1,9 +1,9 @@
 /**
- * Sichtweite (im Pausenmenü einstellbar, das Gerät merkt sie sich): wie weit die feine und mittlere Landschaft,
- * Bäume und Strecke reichen, wie viel Rechenzeit je Bild ins Nachladen gehen darf und wie dicht der Dunst ist.
- * Der Renderer liest die Stufe in jedem Bild und stellt sich bei einer Änderung um (ohne Neuaufbau).
+ * Sichtweite (Teil der Grafikstufe, gfxOpts.ts): wie weit die feine und mittlere Landschaft, Bäume und Strecke
+ * reichen, wie viel Rechenzeit je Bild ins Nachladen gehen darf und wie dicht der Dunst ist. Der Renderer liest sie
+ * in jedem Bild und stellt sich bei einer Änderung um (ohne Neuaufbau).
  */
-import { gfxOn, onGfxChange } from './gfxOpts';
+import { gfxRange, onGfxSettings } from './gfxOpts';
 export type RangeId = 'eco' | 'normal' | 'far' | 'max' | 'ultra' | 'extreme';
 
 export interface ViewRange {
@@ -35,68 +35,20 @@ export const RANGES: ViewRange[] = [
   { id: 'extreme', label: 'Extrem', rings: [8, 6, 2], morph: [[740, 950], [2450, 3040]], fade: 1000, gone: 1200, canNear: 780, canFull: 1550, budget: 12, chunkBudget: 6, ahead: 1300, fog: 0.35, detail: 2.7 },
 ];
 
-const KEY = 'gruppetto.range';
-const KEY_DROP = 'gruppetto.rangeDrop';
-/** ohne eigene Wahl: „Max“ – mit PC-Grafik „Extrem“ (die Auflösungsregelung kürzt bei Bedarf) */
-const fallback = () => (gfxOn('pc') ? RANGES[5] : RANGES[3]);
-let cur: ViewRange = (() => {
-  try { return RANGES.find((r) => r.id === localStorage.getItem(KEY)) ?? fallback(); } catch { return fallback(); }
-})();
 /**
- * Je Spiel getrennt gemerkt (Sichtweite hier, Auflösung in quality.ts): ein Spiel, das ein Gerät stärker fordert
- * (das Sprintfinale mit dem ganzen Feld), soll die anderen nicht mit herunterziehen.
- */
-let scope = 'abfahrt';
-const SCOPES = ['abfahrt', 'zeitfahren', 'sprint', 'berg', 'editor'];
-const dropKey = (sc = scope) => `${KEY_DROP}.${sc}`;
-const loadDrop = () => {
-  try { return Math.max(0, Math.min(RANGES.length - 1, Number(localStorage.getItem(dropKey())) || 0)); } catch { return 0; }
-};
-/** automatisch um so viele Stufen kürzer als gewählt (Auflösungsregelung, siehe quality.ts) */
-let drop = loadDrop();
-let ver = 1;
-
-/** welches Spiel gerade läuft (oder vorgewärmt wird): dessen gemerkte Stufen gelten */
-export function setGfxScope(id: string) {
-  if (id === scope) return;
-  scope = id;
-  const d = loadDrop();
-  if (d !== drop) { drop = d; ver += 1; }
-}
-export function gfxScope(): string { return scope; }
-
-// einfache Grafik (gfxOpts): immer die kürzeste Sichtweite – der Renderer stellt sich bei der Änderung um
-onGfxChange((k) => { if (k === 'lite') ver += 1; });
-
-/**
- * Einfache Grafik: Landschaft wie „Kurz“, Bäume enden näher (weniger durchsichtige Bilder übereinander), dichterer
+ * Stufe Minimal: Landschaft wie „Kurz“, Bäume enden näher (weniger durchsichtige Bilder übereinander), dichterer
  * Dunst verbirgt das Ende, feine Muster nur nah, weniger Bauzeit je Bild
  */
 const LITE: ViewRange = { ...RANGES[0], label: 'Einfach', fade: 160, gone: 210, canNear: 130, canFull: 280, budget: 1.5, chunkBudget: 1.2, ahead: 400, fog: 1.3, detail: 0.5 };
 
-/** wirksame Sichtweite: die gewählte, bei knapper Leistung automatisch kürzer; mit einfacher Grafik die eigene */
-export function viewRange(): ViewRange { return gfxOn('lite') ? LITE : RANGES[Math.max(0, RANGES.indexOf(cur) - drop)]; }
-/** die im Pausenmenü gewählte Sichtweite */
-export function userRange(): ViewRange { return cur; }
+let ver = 1;
+let last = gfxRange();
+onGfxSettings(() => { const r = gfxRange(); if (r !== last) { last = r; ver += 1; } });
+
+/** wirksame Sichtweite (aus der Grafikstufe) */
+export function viewRange(): ViewRange {
+  const r = gfxRange();
+  return r === 'lite' ? LITE : RANGES.find((x) => x.id === r) ?? RANGES[3];
+}
 /** zählt bei jeder Änderung hoch (der Renderer vergleicht) */
 export function viewRangeVersion(): number { return ver; }
-export function setViewRange(id: RangeId) {
-  const r = RANGES.find((x) => x.id === id);
-  if (!r || r === cur) return;
-  cur = r;
-  // neue Wahl: automatische Kürzung von vorn (in allen Spielen)
-  drop = 0;
-  ver += 1;
-  try { localStorage.setItem(KEY, id); for (const sc of SCOPES) localStorage.removeItem(dropKey(sc)); } catch { /* egal */ }
-}
-export function rangeDrop(): number { return drop; }
-/** um wie viele Stufen die Sichtweite automatisch kürzer ist (bis zur kürzesten); das Gerät merkt es sich */
-export function setRangeDrop(n: number) {
-  const d = Math.max(0, Math.min(RANGES.indexOf(cur), Math.round(n)));
-  if (d === drop) return;
-  drop = d;
-  ver += 1;
-  try { localStorage.setItem(dropKey(), String(d)); } catch { /* egal */ }
-}
-/** kann die Sichtweite noch kürzer werden? */
-export function canDropRange(): boolean { return !gfxOn('lite') && RANGES.indexOf(cur) - drop > 0; }

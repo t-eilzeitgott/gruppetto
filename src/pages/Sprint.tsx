@@ -24,7 +24,7 @@ import { BoardLink, Countdown, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
-import { FpsSwitch, GfxSwitches, RangePicker } from './gameKit';
+import { FpsSwitch, GfxSliders } from './gameKit';
 import {
   FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
@@ -293,9 +293,8 @@ export function SprintPage() {
             <h2 className="abf-title">Pause</h2>
             <button type="button" className="btn btn--primary btn--full" onClick={() => setUi('playing')}><span>Weiterfahren</span></button>
             <button type="button" className="btn btn--secondary btn--full" onClick={() => navigate('/')}><span>Aufhören</span></button>
-            <RangePicker />
+            <GfxSliders />
             <FpsSwitch />
-            <GfxSwitches />
             {meas.menu(() => engineRef.current)}
           </div>
         </div>

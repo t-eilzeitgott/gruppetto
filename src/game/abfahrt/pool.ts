@@ -8,7 +8,7 @@ import { Renderer3D } from './render3d';
 import { attachWeather, type WeatherFx } from './weather';
 import type { RaceView } from './engine';
 import { uiBusy } from '../uiBusy';
-import { setGfxScope } from './viewRange';
+import { gfxAA, gfxOn } from './gfxOpts';
 
 export interface Stage {
   renderer: Renderer3D; canvas: HTMLCanvasElement; overlay: HTMLCanvasElement; weather: WeatherFx | null;
@@ -31,6 +31,12 @@ function makeStage(): Stage {
   return { renderer, canvas, overlay, weather: attachWeather(renderer), game: null };
 }
 
+/**
+ * passt die Bühne zur Grafikstufe? PC-Grafik und Kantenglättung entstehen mit dem Renderer – nach einem Wechsel
+ * darüber hinweg baut das nächste Spiel eine neue Bühne
+ */
+const fits = (s: Stage) => !s.renderer.lost && s.renderer.pc === gfxOn('pc') && s.renderer.aa === gfxAA();
+
 function drop(s: Stage) {
   s.weather?.dispose();
   s.renderer.dispose();
@@ -38,12 +44,12 @@ function drop(s: Stage) {
 
 /** liegt eine vorgewärmte Bühne bereit? */
 export function hasWarmStage(): boolean {
-  return !!spare && !spare.renderer.lost;
+  return !!spare && fits(spare);
 }
 
 /** für welches Spiel die Bühne im Vorrat steht (null: keine oder leer) */
 export function warmGameId(): string | null {
-  return spare && !spare.renderer.lost ? spare.game : null;
+  return spare && fits(spare) ? spare.game : null;
 }
 
 /** ist ein Spiel offen (dann wird nicht vorgewärmt)? */
@@ -53,11 +59,9 @@ export function stageInUse(): boolean {
 
 /** Bühne für ein Spiel: die vorgewärmte oder eine neue (wirft, wenn kein WebGL) */
 export function acquireStage(game: string): Stage {
-  // Auflösung und Sichtweite merkt sich das Gerät je Spiel
-  setGfxScope(game);
   const s = spare;
   spare = null;
-  if (s && !s.renderer.lost) {
+  if (s && fits(s)) {
     inUse += 1;
     s.game = game;
     // jetzt sieht jemand zu: das Vorbauen der Welt tritt hinter ein flüssiges Bild zurück
@@ -94,11 +98,11 @@ export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: b
   let off = /[?&]nogl\b/.test(window.location.search);
   // automatische Oberflächenprüfung: ohne Grafikchip würde das Vorwärmen die Seiten lange blockieren
   try { off = off || localStorage.getItem('gruppetto.nowarm') === '1'; } catch { /* egal */ }
-  if (inUse > 0 || off || (spare && !reuse)) return Promise.resolve();
+  if (inUse > 0 || off || (spare && !reuse && fits(spare))) return Promise.resolve();
   let s: Stage;
   // Umbau: die Bühne bleibt im Vorrat (ein Spiel darf sie jederzeit nehmen – dann hört der Umbau einfach auf)
   let held = false;
-  if (spare && !spare.renderer.lost) {
+  if (spare && fits(spare)) {
     s = spare;
     held = true;
   } else {
@@ -110,7 +114,6 @@ export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: b
     }
   }
   s.game = game;
-  setGfxScope(game);
   // erstes Vorwärmen (unter dem Intro): mit allem, was geht; Umbau, während jemand die Startseite bedient: in
   // kleinen Portionen über mehr Bilder, damit die Seite flüssig bleibt
   s.renderer.idleK = reuse ? 0.35 : 1;

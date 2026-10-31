@@ -4,13 +4,12 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/abfahrt/pool';
-import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock, paceText } from '../game/frameClock';
-import { gfxOn } from '../game/abfahrt/gfxOpts';
+import { gfxLevel, gfxMinFps, gfxRes } from '../game/abfahrt/gfxOpts';
 import { EV, SEC, type Perf3D } from '../game/abfahrt/perf3d';
 import type { Renderer3D } from '../game/abfahrt/render3d';
-import { rangeDrop, viewRange } from '../game/abfahrt/viewRange';
+import { viewRange } from '../game/abfahrt/viewRange';
 import { afterPaint } from '../lib/afterPaint';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
@@ -98,10 +97,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
       const low = /[?&]lowgfx\b/.test(window.location.search);
       if (low) { renderer.quality = 0.25; renderer.resize(); }
-      // zuletzt gefundene Auflösungsstufe dieses Geräts
-      else if (renderer.quality !== storedQuality()) { renderer.quality = storedQuality(); renderer.resize(); }
-      // (einfache Grafik: volle Auflösung, die Regelung bleibt aus – reicht es nicht, gleichmäßig 30 Bilder je Sekunde)
-      const gov = new QualityGovernor(0.5);
+      // Auflösung: wie im Schieberegler gewählt (gfxOpts) – keine automatische Regelung
+      else if (renderer.quality !== 1) { renderer.quality = 1; renderer.resize(); }
       // beim Neuaufbau läuft das Rennen weiter
       if (!engineRef.current || (gen === 0 && uiRef.current === 'ready')) engineRef.current = cb.current.make();
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
@@ -122,7 +119,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       const fps = new FpsMeter(stage);
       let lastDraw = 0;
       let lastPhase = '';
-      let lastRange = rangeDrop();
+      let lastGfx = '';
       let lastPace = -1;
       let clockPhase = '';
       const loop = (now: number) => {
@@ -142,8 +139,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           return;
         }
         lostT = 0;
-        // einfache Grafik: notfalls gleichmäßig 30 statt 60; neue Fahrt (bereit, Countdown): wieder mit 60 beginnen
-        clock.minFps = gfxOn('lite') ? 30 : 60;
+        // unterste Grafikstufen: notfalls gleichmäßig 30 statt 60; neue Fahrt (bereit, Countdown): wieder mit 60 beginnen
+        clock.minFps = gfxMinFps();
         if (eng.phase !== clockPhase) { clockPhase = eng.phase; if (clockPhase === 'ready' || clockPhase === 'countdown') clock.resetSlow(); }
         if (uiRef.current !== 'paused') eng.update(dt);
         if (rec) P!.mark(SEC.spiel);
@@ -163,29 +160,21 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         idleT = 0;
         cb.current.onFrame(eng, dt);
-        fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0, renderer.effQuality, renderer.shaderErrors);
+        fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0, gfxRes(), renderer.shaderErrors);
         lastDraw = now;
         if (idle) { frames += 1; raf = requestAnimationFrame(loop); return; }
         acc += dt;
         frames += 1;
-        // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
-        if (uiRef.current === 'playing' && !low && !gfxOn('lite')) {
-          const nq = gov.frame(raw, renderer.quality, clock.target);
-          if (nq !== null) {
-            if (rec) P!.event(EV.quality, `Auflösung ${Math.round(renderer.quality * 100)} % → ${Math.round(nq * 100)} %`);
-            renderer.setQuality(nq); // wirkt direkt vor dem nächsten Bild (kein schwarzes Bild)
-          }
-        }
         if (rec && P!.rec) {
-          const rd = rangeDrop();
-          if (rd !== lastRange) { P!.event(EV.range, `Sichtweite ${viewRange().label}${rd ? ` (${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`); lastRange = rd; }
+          const gk = `${gfxLevel()}|${gfxRes()}`;
+          if (gk !== lastGfx) { P!.event(EV.range, `Grafikstufe ${gfxLevel()} (Sichtweite ${viewRange().label}), Auflösung ${gfxRes()}-fach`); lastGfx = gk; }
           if (clock.changes !== lastPace) { P!.event(EV.pace, `Bildtakt: ${paceText(clock)}`); lastPace = clock.changes; }
           const ph = uiRef.current === 'paused' ? 'paused' : eng.phase;
           if (ph !== lastPhase) { P!.event(EV.phase, ph); lastPhase = ph; }
           P!.mark(SEC.anzeige);
           P!.end({
             dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
-            quality: renderer.effQuality, px: renderer.gl.getPixelRatio(), range: rd, z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+            quality: gfxRes(), px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
           });
         }
         raf = requestAnimationFrame(loop);

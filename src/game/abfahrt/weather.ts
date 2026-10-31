@@ -24,8 +24,7 @@ import * as THREE from 'three';
 import type { RaceView } from './engine';
 import { MOUNTAIN_FINISH, SPRINT_FINISH } from './track';
 import { berlinDayKey } from './rng';
-import { storedQuality } from './quality';
-import { gfxOn, onGfxChange } from './gfxOpts';
+import { gfxLevel, gfxOn, onGfxChange } from './gfxOpts';
 import type { SkyMood } from './sky';
 
 export type WeatherId = 'gold' | 'storm' | 'nebel';
@@ -129,8 +128,9 @@ export type GfxTier = 'high' | 'mid' | 'low';
 
 export function gfxTier(): GfxTier {
   if (/[?&](lowgfx|nogl)\b/.test(window.location.search)) return 'low';
-  const q = storedQuality();
-  return q >= 0.8 ? 'high' : q >= 0.6 ? 'mid' : 'low';
+  // (Wetter mit Nachbearbeitung gibt es ab Stufe 8 – darüber in voller Güte)
+  const n = gfxLevel();
+  return n >= 9 ? 'high' : n >= 8 ? 'mid' : 'low';
 }
 
 // ------------------------------------------------------------------ Shader

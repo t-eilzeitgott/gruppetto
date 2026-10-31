@@ -15,7 +15,6 @@ import { source } from '../../app/config';
 import type { Player, RaceView } from '../../game/abfahrt/engine';
 import { Renderer3D } from '../../game/abfahrt/render3d';
 import { FrameClock } from '../../game/frameClock';
-import { storedQuality } from '../../game/abfahrt/quality';
 import { EDGE, SEG, Track, type Section } from '../../game/abfahrt/track';
 import { berlinDayKey } from '../../game/abfahrt/rng';
 import { stageRef } from '../../game/abfahrt/stageRef';
@@ -254,7 +253,7 @@ export function WorldEditorPage() {
     const shots = /[?&]shots\b/.test(window.location.search);
     if (low) { renderer.quality = 0.25; renderer.resize(); }
     else if (shots) { renderer.quality = 1; renderer.resize(); }
-    else if (renderer.quality !== storedQuality()) { renderer.quality = storedQuality(); renderer.resize(); }
+    else if (renderer.quality !== 1) { renderer.quality = 1; renderer.resize(); }
     renderer.hidePlayer = true;
     rendererRef.current = renderer;
     const view = new WorldView(track, readAccent());

@@ -283,7 +283,7 @@ function makeReport(r: Rec): Report {
     return {
       name, sekunden: r1(secs), bilder: m, fps: r1(m / Math.max(0.001, secs)), bildzeit_p60_ms: d.p60, bildzeit_p90_ms: d.p90, bildzeit_max_ms: d.max,
       cpu_mittel_ms: r2(c / m), groesste_bausteine_ms: Object.fromEntries(top), aufrufe: Math.round(calls / m), dreiecke_k: Math.round(tris / m / 1000),
-      aufloesung_stufe: r2(q / m), pixel_je_punkt: r2(px / m), fahrer_als_modell: r1(rd / m), grafik_probe: probeStats(pr),
+      aufloesung_fach: r2(q / m), pixel_je_punkt: r2(px / m), fahrer_als_modell: r1(rd / m), grafik_probe: probeStats(pr),
     };
   }).filter((x) => x !== null);
   const evText = (bits: number) => EV_NAMES.filter(([b]) => bits & b).map(([, k]) => k).join('+');
@@ -326,15 +326,15 @@ function makeReport(r: Rec): Report {
       dauer_s: summary.s, bilder: n, takt_ms: summary.period, fps_mittel: summary.fps, fps_1pct_low: summary.low1,
       taktfehler: offBeat, taktfehler_prozent: r1((offBeat / Math.max(1, keep.length)) * 100),
       ruckler: hitches, verpasste_bilder: missed, ruckler_cpu_gebunden: cpuBound, ruckler_spaeter_aufruf: lateBound, ruckler_grenze_ms: r1(hitchMs),
-      hinweis: 'takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. Regler: zu langsam = mehr als 40 % der Bilder über 18,8 ms (bildzeit_p60_ms > 18,8) – dann erst Sichtweite, dann Auflösung',
+      hinweis: 'takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. Grafikstufe und Auflösung sind fest gewählt (Schieberegler), nichts wird automatisch gesenkt',
     },
     orte: places,
     grafik_probe: probeAll ?? 'keine Probebilder',
     bildzeit_ms: stats(dtK), cpu_ms: stats(cpu), verspaetung_ms: stats(late),
     verteilung_ms: hist, bausteine_ms: secStats,
-    ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse'],
+    ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse'],
     ruckler_liste: hitchRows,
-    verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung', 'sichtweite_minus', 'ort', 'phase', 'fahrer_modelle', 'takt_ms'],
+    verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'grafikstufe', 'ort', 'phase', 'fahrer_modelle', 'takt_ms'],
     verlauf_2s: timeline,
     ereignisse: r.events.slice(0, 250).map((e) => [r1(e.t), e.kind, e.text]),
   };
@@ -349,7 +349,7 @@ function makeReport(r: Rec): Report {
   }
   const full = JSON.stringify({
     ...base,
-    bilder_spalten: ['t_s', 'bild_ms', 'verspaetung_ms', 'cpu_ms', ...SECTIONS, 'aufrufe', 'dreiecke_k', 'programme', 'aufloesung', 'pixel_je_punkt', 'sichtweite_minus', 'z_m', 'kmh', 'ort', 'phase', 'rueckstau_ms', 'abschicken_ms', 'grafik_ms', 'ereignis_bits'],
+    bilder_spalten: ['t_s', 'bild_ms', 'verspaetung_ms', 'cpu_ms', ...SECTIONS, 'aufrufe', 'dreiecke_k', 'programme', 'aufloesung_fach', 'pixel_je_punkt', 'grafikstufe', 'z_m', 'kmh', 'ort', 'phase', 'rueckstau_ms', 'abschicken_ms', 'grafik_ms', 'ereignis_bits'],
     orte_codes: PLACES, phasen_codes: PHASES, ereignis_bits: EV, alle_ereignisse: r.events.map((e) => [r2(e.t), e.f, e.kind, e.text]),
     bilder: frames,
   });

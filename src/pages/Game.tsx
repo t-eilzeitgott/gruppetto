@@ -13,13 +13,12 @@ import { Abfahrt, type Friend, type GameEvent, type HudState, type RunResult, ty
 import { Renderer3D } from '../game/abfahrt/render3d';
 import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock, paceText } from '../game/frameClock';
-import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { Track } from '../game/abfahrt/track';
 import { HowTo } from './finale';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { EV, Perf3D, PLACES, SEC, type Report } from '../game/abfahrt/perf3d';
-import { rangeDrop, viewRange } from '../game/abfahrt/viewRange';
-import { gfxOn } from '../game/abfahrt/gfxOpts';
+import { viewRange } from '../game/abfahrt/viewRange';
+import { gfxAA, gfxDescribe, gfxLevel, gfxMinFps, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
 import { copyText, shareFile } from './admin/gpuKit';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
@@ -30,7 +29,7 @@ import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, StartSheet } from './startSheet';
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
-import { FpsSwitch, GfxSwitches, RangePicker, PauseIcon, PlayIcon, useCountUp } from './gameKit';
+import { FpsSwitch, GfxSliders, PauseIcon, PlayIcon, useCountUp } from './gameKit';
 
 export { PauseIcon, PlayIcon, useCountUp };
 
@@ -282,10 +281,8 @@ export function GamePage() {
       // Testmodus (?lowgfx): winzige Auflösung, selten zeichnen – für schnelle automatische Layout-Checks
       const low = /[?&]lowgfx\b/.test(window.location.search);
       if (low) { renderer.quality = 0.25; renderer.resize(); }
-      // zuletzt gefundene Auflösungsstufe dieses Geräts
-      else if (renderer.quality !== storedQuality()) { renderer.quality = storedQuality(); renderer.resize(); }
-      // (einfache Grafik: volle Auflösung, die Regelung bleibt aus – reicht es nicht, gleichmäßig 30 Bilder je Sekunde)
-      const gov = new QualityGovernor(0.5);
+      // Auflösung: wie im Schieberegler gewählt (gfxOpts) – keine automatische Regelung
+      else if (renderer.quality !== 1) { renderer.quality = 1; renderer.resize(); }
       // beim Neuaufbau läuft die Fahrt weiter
       if (!engineRef.current || (glGen === 0 && uiRef.current === 'ready')) engineRef.current = makeEngine(false);
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
@@ -306,7 +303,7 @@ export function GamePage() {
       // Messfahrt (perf3d.ts): Bausteine je Bild, Regler, Phasen
       const P = perfRef.current;
       let lastPhase = '';
-      let lastRange = rangeDrop();
+      let lastGfx = '';
       let lastPace = -1;
       let clockPhase = '';
       const loop = (now: number) => {
@@ -325,8 +322,8 @@ export function GamePage() {
           return;
         }
         lostT = 0;
-        // einfache Grafik: notfalls gleichmäßig 30 statt 60; neue Fahrt (bereit, Countdown): wieder mit 60 beginnen
-        clock.minFps = gfxOn('lite') ? 30 : 60;
+        // unterste Grafikstufen: notfalls gleichmäßig 30 statt 60; neue Fahrt (bereit, Countdown): wieder mit 60 beginnen
+        clock.minFps = gfxMinFps();
         if (eng.phase !== clockPhase) { clockPhase = eng.phase; if (clockPhase === 'ready' || clockPhase === 'countdown') clock.resetSlow(); }
         if (uiRef.current !== 'paused') eng.update(dt);
         if (rec) P.mark(SEC.spiel);
@@ -336,28 +333,20 @@ export function GamePage() {
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt, raw);
       if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         hudRef.current(eng, dt);
-        fps.frame(raw * 1000, performance.now() - c0, renderer.effQuality, renderer.shaderErrors);
+        fps.frame(raw * 1000, performance.now() - c0, gfxRes(), renderer.shaderErrors);
         // Bildrate beobachten und notfalls die Qualität senken
         acc += dt;
         frames += 1;
-        // Auflösung nach Bildzeit regeln: alle Bilder der Fahrt zählen (Median – Nachladeruckler stören nicht)
-        if (uiRef.current === 'playing' && !low && !gfxOn('lite')) {
-          const nq = gov.frame(raw, renderer.quality, clock.target);
-          if (nq !== null) {
-            if (rec) P.event(EV.quality, `Auflösung ${Math.round(renderer.quality * 100)} % → ${Math.round(nq * 100)} %`);
-            renderer.setQuality(nq); // wirkt direkt vor dem nächsten Bild (kein schwarzes Bild)
-          }
-        }
         if (rec && P.rec) {
-          const rd = rangeDrop();
-          if (rd !== lastRange) { P.event(EV.range, `Sichtweite ${viewRange().label}${rd ? ` (${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`); lastRange = rd; }
+          const gk = `${gfxLevel()}|${gfxRes()}`;
+          if (gk !== lastGfx) { P.event(EV.range, `Grafikstufe ${gfxLevel()} (Sichtweite ${viewRange().label}), Auflösung ${gfxRes()}-fach`); lastGfx = gk; }
           if (clock.changes !== lastPace) { P.event(EV.pace, `Bildtakt: ${paceText(clock)}`); lastPace = clock.changes; }
           const ph = uiRef.current === 'paused' ? 'paused' : eng.phase;
           if (ph !== lastPhase) { P.event(EV.phase, ph); lastPhase = ph; }
           P.mark(SEC.anzeige);
           P.end({
             dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
-            quality: renderer.effQuality, px: renderer.gl.getPixelRatio(), range: rd, z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+            quality: gfxRes(), px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
           });
         }
         raf = requestAnimationFrame(loop);
@@ -587,14 +576,14 @@ export function GamePage() {
   const deviceInfo = () => {
     const r = rendererRef.current;
     const cv = canvasRef.current;
-    const rd = rangeDrop();
     return {
       geraet: navigator.userAgent,
       bildschirm: `${window.innerWidth}×${window.innerHeight} ×${window.devicePixelRatio || 1}`,
       zeichenflaeche: cv ? `${cv.width}×${cv.height}` : '?',
-      aufloesung: r ? `${Math.round(r.effQuality * 100)} % (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
-      sichtweite: `${viewRange().label}${rd ? ` (vom Regler ${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`,
-      grafik: `${gfxOn('lite') ? 'Einfache Grafik an, ' : ''}${r?.pc ? 'PC-Grafik an, ' : ''}Lichtfilter & Wetter ${gfxOn('licht') ? 'an' : 'aus'}, Sonnenschatten ${gfxOn('schatten') ? 'an' : 'aus'}, Landschaftsdetails ${gfxOn('details') ? 'an' : 'aus'}`,
+      aufloesung: r ? `${String(gfxRes()).replace('.', ',')}-fach (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
+      sichtweite: viewRange().label,
+      // (PC-Grafik und Kantenglättung gehören zur Bühne: nach einem Wechsel gelten sie erst im nächsten Spiel)
+      grafik: `${gfxDescribe()}${r && (r.pc !== gfxOn('pc') || r.aa !== gfxAA()) ? ' – PC-Grafik/Kantenglättung erst ab dem nächsten Spiel' : ''}`,
     };
   };
   const startMeasure = () => {
@@ -720,9 +709,8 @@ export function GamePage() {
             <h2 className="abf-title">Pause</h2>
             <button type="button" className="btn btn--primary btn--full" onClick={() => setUi('playing')}><span>Weiterfahren</span></button>
             <button type="button" className="btn btn--secondary btn--full" onClick={() => navigate('/')}><span>Aufhören</span></button>
-            <RangePicker />
+            <GfxSliders />
             <FpsSwitch />
-            <GfxSwitches />
             {canMeasure ? (
               <div className="abf-gfx">
                 <span className="abf-range__label">Messmodus</span>
