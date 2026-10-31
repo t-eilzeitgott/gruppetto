@@ -30,7 +30,7 @@ const PELVIS_Y = 0.93;
 const ANKLE_Y = 0.085;
 const UP = new THREE.Vector3(0, 1, 0);
 
-export type Clothes = 'polo' | 'jacket' | 'vest' | 'police' | 'tee' | 'check' | 'knit' | 'blouse';
+export type Clothes = 'polo' | 'jacket' | 'vest' | 'police' | 'tee' | 'check' | 'knit' | 'blouse' | 'waiter' | 'apron';
 
 /** Aussehen eines Menschen */
 export interface Look {
@@ -68,8 +68,8 @@ const PAD = 16;
 const LIMB_V = PAD / 2 / (TEX_H + PAD);
 
 /** Rumpf: Gesäß, Taille, Brust (bei Frauen schmalere Schultern, breitere Hüfte, Brust), runder Rücken */
-function torsoGeo(female: boolean): THREE.BufferGeometry {
-  return cached(`human-torso|${female}`, () => {
+function torsoGeo(female: boolean, far = false): THREE.BufferGeometry {
+  return cached(`human-torso|${female}|${far}`, () => {
     const w: RGBf = [1, 1, 1];
     const back = (y: number) => 0.024 * Math.sin(Math.PI * Math.max(0, Math.min(1, (y - 0.05) / 0.5)));
     const rows: [number, number, number][] = female
@@ -83,7 +83,7 @@ function torsoGeo(female: boolean): THREE.BufferGeometry {
     const bust = (y: number) => (female ? -0.02 * Math.exp(-(((y - 0.33) / 0.055) ** 2)) : 0);
     const rings: Ring[] = rows.map(([y, a, b]) => ({ y, a, b, cz: back(y) + bust(y) + (y < 0 ? 0.012 : 0), c: w }));
     const mb = new MB();
-    loft(mb, rings, 22, 0, 1);
+    loft(mb, far ? (rings.filter((_, i) => i % 2 === 0 || i === rings.length - 1)) : rings, far ? 12 : 22, 0, 1);
     const g = mb.build();
     const uv = g.getAttribute('uv');
     const k = TEX_H / (TEX_H + PAD);
@@ -93,7 +93,7 @@ function torsoGeo(female: boolean): THREE.BufferGeometry {
 }
 
 /** Unterarm mit Hand: Ärmel bis cuff (Anteil der Länge, 0 = kurz), Hand mit Daumen (sx = Seite) */
-function foreGeo(skin: RGBf, sleeve: RGBf, cuff: number, sx: number): THREE.BufferGeometry {
+function foreGeo(skin: RGBf, sleeve: RGBf, cuff: number, sx: number, far = false): THREE.BufferGeometry {
   const rings: Ring[] = [];
   const c0 = cuff > 0 ? sleeve : skin;
   const rs = 0.04;
@@ -121,19 +121,19 @@ function foreGeo(skin: RGBf, sleeve: RGBf, cuff: number, sx: number): THREE.Buff
   // Ringe der Höhe nach (das Bündchen kam mittendrin dazu)
   rings.sort((p, q) => p.y - q.y);
   const mb = new MB();
-  loft(mb, rings, 14, 0, 1);
+  loft(mb, rings, far ? 7 : 14, 0, 1);
   // Daumen innen, Finger als leichte Rillen (zwei dunklere Streifen täten es nicht: Farbe je Ecke)
-  mb.add(new THREE.SphereGeometry(1, 10, 6), new THREE.Matrix4().compose(new THREE.Vector3(-sx * 0.034, L * 0.89, -0.014), new THREE.Quaternion().setFromEuler(new THREE.Euler(0.5, 0, sx * 0.35)), new THREE.Vector3(0.014, 0.034, 0.013)), skin);
+  mb.add(new THREE.SphereGeometry(1, far ? 5 : 10, far ? 3 : 6), new THREE.Matrix4().compose(new THREE.Vector3(-sx * 0.034, L * 0.89, -0.014), new THREE.Quaternion().setFromEuler(new THREE.Euler(0.5, 0, sx * 0.35)), new THREE.Vector3(0.014, 0.034, 0.013)), skin);
   return mb.build();
 }
 
 /** Straßenschuh: Sohle, Oberteil, Zunge; Ursprung im Knöchel, Spitze nach −z */
-function shoeGeo(col: RGBf, sole: RGBf): THREE.BufferGeometry {
-  return cached(`human-shoe|${col.join(',')}|${sole.join(',')}`, () => {
+function shoeGeo(col: RGBf, sole: RGBf, far = false): THREE.BufferGeometry {
+  return cached(`human-shoe|${col.join(',')}|${sole.join(',')}|${far}`, () => {
     const mb = new MB();
     // Längsschnitt: [z, halbe Breite, Höhe Oberkante, Farbe]
     const prof: [number, number, number][] = [[0.075, 0.034, -0.02], [0.06, 0.042, 0.0], [0.02, 0.046, 0.012], [-0.03, 0.048, 0.0], [-0.08, 0.05, -0.022], [-0.13, 0.048, -0.04], [-0.17, 0.04, -0.05], [-0.195, 0.026, -0.056]];
-    const n = 12;
+    const n = far ? 6 : 12;
     const st = mb.pos.length / 3;
     for (const [z, a, top] of prof) {
       for (let j = 0; j <= n; j++) {
@@ -154,30 +154,32 @@ function shoeGeo(col: RGBf, sole: RGBf): THREE.BufferGeometry {
       for (let j = 0; j < n; j++) { const a = st + i * W + j; if (flip) mb.idx.push(c, a + 1, a); else mb.idx.push(c, a, a + 1); }
     }
     // Knöchel (Socke/Hosenbein endet darüber)
-    mb.add(new THREE.SphereGeometry(0.036, 10, 6), new THREE.Matrix4().makeScale(1, 1.1, 1.05), col);
+    mb.add(new THREE.SphereGeometry(0.036, far ? 5 : 10, far ? 3 : 6), new THREE.Matrix4().makeScale(1, 1.1, 1.05), col);
     return mb.build();
   });
 }
 
 /** Glieder je Farbkombination */
-function limbs(l: Look) {
-  return cached(`human-limbs|${l.skin}|${l.top}|${l.pants}|${l.sleeves}|${l.clothes}|${l.accent}`, () => {
+function limbs(l: Look, far = false) {
+  return cached(`human-limbs|${l.skin}|${l.top}|${l.pants}|${l.sleeves}|${l.clothes}|${l.accent}|${far}`, () => {
+    const n = far ? 7 : 14;
     const skin = lin(l.skin);
     const pants = lin(l.pants);
-    const top = lin(l.clothes === 'vest' ? l.accent : l.top);
+    // Weste (Fotograf, Kellner): Ärmel in der Farbe des Hemds darunter
+    const top = lin(l.clothes === 'vest' || l.clothes === 'waiter' ? l.accent : l.top);
     const ps = (t: number, a: number, b: number, cz: number): [number, number, number, number, RGBf] => [t, a, b, cz, pants];
-    const thigh = muscle(THIGH, [ps(0, 0.088, 0.09, 0), ps(0.2, 0.085, 0.09, 0.006), ps(0.45, 0.076, 0.08, 0.006), ps(0.7, 0.064, 0.066, 0.004), ps(1, 0.056, 0.058, 0.002)]);
+    const thigh = muscle(THIGH, [ps(0, 0.088, 0.09, 0), ps(0.2, 0.085, 0.09, 0.006), ps(0.45, 0.076, 0.08, 0.006), ps(0.7, 0.064, 0.066, 0.004), ps(1, 0.056, 0.058, 0.002)], n);
     // Hosenbein bis auf den Schuh, unten etwas weiter
-    const shin = mergeGeo(muscle(SHIN, [ps(0, 0.056, 0.058, 0), ps(0.25, 0.058, 0.064, -0.006), ps(0.5, 0.052, 0.056, -0.004), ps(0.8, 0.048, 0.048, 0), ps(1, 0.05, 0.05, 0.002)]), kneeCap(pants));
+    const shin = mergeGeo(muscle(SHIN, [ps(0, 0.056, 0.058, 0), ps(0.25, 0.058, 0.064, -0.006), ps(0.5, 0.052, 0.056, -0.004), ps(0.8, 0.048, 0.048, 0), ps(1, 0.05, 0.05, 0.002)], n), kneeCap(pants));
     // Oberarm: Ärmel (kurz bis zur Mitte, mit Saum), dann Haut
     const short = !l.sleeves;
     const upper = muscle(UPPER, short
       ? [[0, 0.064, 0.062, 0, top], [0.12, 0.066, 0.064, 0, top], [0.35, 0.058, 0.06, 0, top], [0.45, 0.056, 0.058, 0, top], [0.455, 0.05, 0.052, 0, skin], [0.68, 0.047, 0.05, 0.004, skin], [1, 0.04, 0.04, 0, skin]]
-      : [[0, 0.066, 0.064, 0, top], [0.12, 0.068, 0.066, 0, top], [0.4, 0.06, 0.062, 0, top], [0.7, 0.054, 0.056, 0.004, top], [1, 0.048, 0.048, 0, top]]);
+      : [[0, 0.066, 0.064, 0, top], [0.12, 0.068, 0.066, 0, top], [0.4, 0.06, 0.062, 0, top], [0.7, 0.054, 0.056, 0.004, top], [1, 0.048, 0.048, 0, top]], n);
     return {
       thigh, shin, upper,
-      foreL: mergeGeo(foreGeo(skin, top, short ? 0 : 0.7, -1), elbowCap(short ? skin : top)),
-      foreR: mergeGeo(foreGeo(skin, top, short ? 0 : 0.7, 1), elbowCap(short ? skin : top)),
+      foreL: mergeGeo(foreGeo(skin, top, short ? 0 : 0.7, -1, far), elbowCap(short ? skin : top)),
+      foreR: mergeGeo(foreGeo(skin, top, short ? 0 : 0.7, 1, far), elbowCap(short ? skin : top)),
     };
   });
 }
@@ -295,6 +297,52 @@ function clothesTex(l: Look): THREE.CanvasTexture {
       c.fillRect(U(backU - 0.12), vy(0.5), U(0.24), vy(0.1) - vy(0.5));
       text('PHOTO', backU, 0.4, 13, '#ffffff', '900', 54);
       text(l.print ?? '7', backU, 0.24, 18, '#141414', '900', 40);
+      break;
+    }
+    case 'waiter': {
+      // Kellner: weißes Hemd, schwarze Weste mit Knöpfen, Fliege
+      c.fillStyle = l.accent;
+      c.fillRect(0, 0, W, H);
+      c.fillStyle = top;
+      c.fillRect(0, vy(0.52), W, H - vy(0.52));
+      c.fillRect(U(0.09), vy(0.6), U(0.32), vy(0.52) - vy(0.6));
+      c.fillRect(U(0.59), vy(0.6), U(0.32), vy(0.52) - vy(0.6));
+      // V-Ausschnitt der Weste vorn (Hemd sichtbar)
+      c.fillStyle = l.accent;
+      c.beginPath();
+      c.moveTo(U(front - 0.06), vy(0.62)); c.lineTo(U(front), vy(0.34)); c.lineTo(U(front + 0.06), vy(0.62)); c.closePath();
+      c.fill();
+      c.fillStyle = 'rgba(0,0,0,0.25)';
+      c.fillRect(U(front) - 0.5, vy(0.6), 1, vy(0.34) - vy(0.6));
+      c.fillStyle = '#c9b88a';
+      for (const y of [0.3, 0.22, 0.14]) { c.beginPath(); c.arc(U(front), vy(y), 1.5, 0, Math.PI * 2); c.fill(); }
+      // Fliege
+      c.fillStyle = '#111113';
+      c.beginPath();
+      c.moveTo(U(front) - 7, vy(0.6) - 3); c.lineTo(U(front), vy(0.6)); c.lineTo(U(front) - 7, vy(0.6) + 3); c.closePath();
+      c.moveTo(U(front) + 7, vy(0.6) - 3); c.lineTo(U(front), vy(0.6)); c.lineTo(U(front) + 7, vy(0.6) + 3); c.closePath();
+      c.fill();
+      // Rücken der Weste: glänzendes Futter mit Riegel
+      c.fillStyle = 'rgba(255,255,255,0.08)';
+      c.fillRect(U(backU - 0.15), vy(0.5), U(0.3), vy(0.05) - vy(0.5));
+      c.fillStyle = 'rgba(0,0,0,0.3)';
+      c.fillRect(U(backU - 0.06), vy(0.16), U(0.12), 2);
+      break;
+    }
+    case 'apron': {
+      // Hemd mit Latzschürze (Marktstand): Bänder um den Hals, Latz vorn, Bund um die Hüfte, Tasche
+      c.fillStyle = l.accent;
+      c.fillRect(U(front - 0.12), vy(0.5), U(0.24), vy(-0.02) - vy(0.5));
+      c.fillRect(0, vy(0.08), W, vy(0.03) - vy(0.08));
+      c.strokeStyle = l.accent;
+      c.lineWidth = 2;
+      c.beginPath();
+      c.moveTo(U(front - 0.11), vy(0.5)); c.lineTo(U(front - 0.06), vy(0.63));
+      c.moveTo(U(front + 0.11), vy(0.5)); c.lineTo(U(front + 0.06), vy(0.63));
+      c.stroke();
+      c.strokeStyle = 'rgba(0,0,0,0.25)';
+      c.strokeRect(U(front - 0.07), vy(0.3), U(0.14), vy(0.18) - vy(0.3));
+      if (l.print) text(l.print, front, 0.4, 11, 'rgba(0,0,0,0.55)', '800', 50);
       break;
     }
     case 'police': {
@@ -450,7 +498,7 @@ function blendPose(cur: Pose, tgt: Pose, k: number, kFeet = k) {
 }
 
 /** Was ein Mensch gerade tut */
-export type Act = 'stand' | 'hands' | 'back' | 'cross' | 'hips' | 'hold' | 'photo' | 'kneel' | 'tv' | 'starter' | 'clap' | 'cheer' | 'wave' | 'walk' | 'sit' | 'drink' | 'watch' | 'point' | 'talk';
+export type Act = 'stand' | 'hands' | 'back' | 'cross' | 'hips' | 'hold' | 'photo' | 'kneel' | 'tv' | 'starter' | 'clap' | 'cheer' | 'wave' | 'walk' | 'sit' | 'drink' | 'watch' | 'point' | 'talk' | 'read' | 'speak';
 
 /** Halter am Rad (Personal am Start): Hände um diesen Weltpunkt */
 const tmpV = new THREE.Vector3();
@@ -468,6 +516,10 @@ export class Human {
   holdAt = new THREE.Vector3();
   /** Gehen: Tempo (m/s) – das Weiterbewegen der Gruppe übernimmt der Aufrufer */
   speed = 0;
+  /** Kellner: trägt ein Tablett in der Rechten (Hand bleibt auf Schulterhöhe, auch im Gehen) */
+  tray = false;
+  /** sitzt (Stuhl, Bank): Beine und Becken wie beim Sitzen, die Arme tun, was die Handlung sagt (reden, klatschen) */
+  seated = false;
   private torso: THREE.Bone;
   private head: THREE.Bone;
   private thighs: THREE.Bone[] = [];
@@ -497,8 +549,8 @@ export class Human {
   private spine = new THREE.Vector3();
   private inv = new THREE.Matrix4();
 
-  /** q: Kopf in voller (1) oder einfacher Detailstufe (0, für Leute weiter weg) */
-  constructor(look: Look, seed = Math.random() * 100, q: 0 | 1 = 1) {
+  /** q: Kopf in voller (1) oder einfacher Detailstufe (0, für Leute weiter weg); far: auch Rumpf, Glieder und Schuhe einfacher */
+  constructor(look: Look, seed = Math.random() * 100, q: 0 | 1 = 1, far = false) {
     this.look = look;
     this.seed = seed;
     this.t = seed * 3.7;
@@ -508,9 +560,9 @@ export class Human {
     const bones: THREE.Bone[] = [];
     const joint = () => { const b = new THREE.Bone(); this.body.add(b); bones.push(b); return b; };
     const bi = (b: THREE.Bone) => bones.indexOf(b);
-    const g = limbs(look);
+    const g = limbs(look, far);
     const sole = lin(look.shoes === '#f4f4f2' || look.shoes === '#ffffff' ? '#d8d8d4' : '#f0eee8');
-    const shoe = shoeGeo(lin(look.shoes), look.clothes === 'police' ? lin('#141414') : sole);
+    const shoe = shoeGeo(lin(look.shoes), look.clothes === 'police' ? lin('#141414') : sole, far);
     const limbParts: { g: THREE.BufferGeometry; bone: number; pad: boolean }[] = [];
     const glossParts: { g: THREE.BufferGeometry; bone: number }[] = [];
     for (let s = 0; s < 2; s++) {
@@ -523,7 +575,7 @@ export class Human {
     this.head = joint();
     glossParts.unshift({ g: personHeadBuild({ skin: look.skin, hair: look.hair, long: look.long, bun: look.bun, hat: look.hat, hatCol: look.hatCol, glasses: look.glasses }, q), bone: bi(this.head) });
     this.skel = new RelSkeleton(bones, this.body);
-    const key = `${q}|${look.female}|${look.skin}|${look.hair}|${look.long}|${look.bun}|${look.hat}|${look.hatCol}|${look.glasses}|${look.top}|${look.pants}|${look.shoes}|${look.sleeves}|${look.clothes}|${look.accent}`;
+    const key = `${q}|${far}|${look.female}|${look.skin}|${look.hair}|${look.long}|${look.bun}|${look.hat}|${look.hatCol}|${look.glasses}|${look.top}|${look.pants}|${look.shoes}|${look.sleeves}|${look.clothes}|${look.accent}`;
     const skinned = (name: string, parts: { g: THREE.BufferGeometry; bone: number; pad?: boolean }[], mat: THREE.Material) => {
       const geo = cached(`human-skin:${name}:${key}`, () => skinGeo(parts, LIMB_V));
       const m = new THREE.SkinnedMesh(geo, mat);
@@ -537,7 +589,7 @@ export class Human {
     skinned('gloss', glossParts, glossMat());
     this.tex = clothesTex(look);
     this.mat = new THREE.MeshLambertMaterial({ map: this.tex, vertexColors: true });
-    skinned('body', [{ g: torsoGeo(look.female), bone: bi(this.torso) }, ...limbParts], this.mat);
+    skinned('body', [{ g: torsoGeo(look.female, far), bone: bi(this.torso) }, ...limbParts], this.mat);
     this.body.add(this.props);
     this.props.visible = false;
   }
@@ -715,6 +767,31 @@ export class Human {
         P.roll = 0;
         break;
       }
+      case 'read': {
+        // sitzt und liest Zeitung: Blatt vor der Brust, Blick hinunter; ab und zu umblättern
+        P.pelvis.set(0, 0.5, 0.06);
+        P.lean = 0.03;
+        P.roll = 0;
+        P.feet[0].set(-0.13, ANKLE_Y, -0.38); P.feet[1].set(0.14, ANKLE_Y, -0.44);
+        P.knees[0].set(-0.1, 0.6, -1); P.knees[1].set(0.1, 0.6, -1);
+        const c = (t * 0.06 + sd) % 1;
+        const turn = c < 0.06 ? Math.sin((c / 0.06) * Math.PI) : 0;
+        P.hands[0].set(-0.17, 0.98, -0.3);
+        P.hands[1].set(0.17 - 0.12 * turn, 0.98 + 0.06 * turn, -0.3 + 0.04 * turn);
+        P.elbows[0].set(-1, -0.6, 0.2); P.elbows[1].set(1, -0.6, 0.2);
+        P.headPitch = -0.38;
+        break;
+      }
+      case 'speak': {
+        // Sprecher: Mikrofon in der Rechten vor dem Mund, die Linke erklärt
+        const k = Math.sin(t * 1.9 + sd);
+        P.hands[1].set(0.07, sy - 0.02, -0.17);
+        P.elbows[1].set(1, -0.5, 0.2);
+        P.hands[0].set(-0.21 - 0.06 * k, 1.12 + 0.09 * Math.sin(t * 2.7 + sd), -0.3);
+        P.elbows[0].set(-1, -0.5, 0.3);
+        P.lean = 0.05;
+        break;
+      }
       case 'sit':
       case 'drink': {
         // sitzt auf einem Stuhl (Sitz 0,46 m), Füße vorn auf dem Boden; trinken: Tasse ab und zu zum Mund
@@ -733,6 +810,23 @@ export class Human {
         }
         break;
       }
+    }
+    // sitzend reden, klatschen, schauen: Becken und Beine vom Sitzen, Hände entsprechend tiefer
+    if (this.seated && this.act !== 'sit' && this.act !== 'drink' && this.act !== 'read') {
+      const drop = 0.5 - P.pelvis.y;
+      P.pelvis.set(0, 0.5, 0.06);
+      P.lean = -0.02;
+      P.roll = 0;
+      P.twist *= 0.5;
+      P.feet[0].set(-0.13, ANKLE_Y, -0.38); P.feet[1].set(0.14, ANKLE_Y, -0.44);
+      P.footPitch[0] = 0; P.footPitch[1] = 0;
+      P.knees[0].set(-0.1, 0.6, -1); P.knees[1].set(0.1, 0.6, -1);
+      for (const h of P.hands) { h.y += drop * 0.9; h.z -= 0.08; }
+    }
+    // Tablett: rechte Hand vorn auf Schulterhöhe, Ellbogen angewinkelt (auch im Gehen)
+    if (this.tray && this.act !== 'sit' && this.act !== 'drink' && this.act !== 'read') {
+      P.hands[1].set(0.25, 1.1, -0.2);
+      P.elbows[1].set(1, -0.7, 0.15);
     }
     // Blick (Kopf und etwas der Rumpf drehen mit)
     if (this.lookAt && this.act !== 'photo' && this.act !== 'kneel' && this.act !== 'tv') {
@@ -908,6 +1002,39 @@ export function propGeometries(): Record<string, THREE.BufferGeometry> {
     watch: mk((mb) => {
       mb.add(new THREE.CylinderGeometry(0.03, 0.03, 0.016, 16), M(0, 0.0, -0.03, Math.PI / 2), steel);
       mb.add(new THREE.CylinderGeometry(0.024, 0.024, 0.018, 16), M(0, 0.0, -0.032, Math.PI / 2), lin('#f6f6f2'));
+    }),
+    // Zeitung (aufgeschlagen, zwischen beiden Händen): rosa Sportzeitung mit Schlagzeilen auf der Außenseite
+    paper: mk((mb) => {
+      const pink = lin('#f1b3c4'), ink = lin('#3a2a30'), pic = lin('#7d6a70');
+      const T = (x: number, y: number, z: number, rx: number) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, 0, 0)), new THREE.Vector3(1, 1, 1));
+      const tilt = -0.3;
+      const at = (x: number, y: number, dz: number) => T(x, 0.13 + y * Math.cos(tilt), -0.04 + y * Math.sin(-tilt) * -1 + dz, tilt);
+      for (const sx of [-1, 1]) mb.add(new THREE.BoxGeometry(0.25, 0.36, 0.003), at(sx * 0.127, 0, 0), pink);
+      mb.add(new THREE.BoxGeometry(0.36, 0.035, 0.002), at(0.04, 0.13, -0.003), ink);
+      mb.add(new THREE.BoxGeometry(0.2, 0.02, 0.002), at(-0.1, 0.08, -0.003), ink);
+      mb.add(new THREE.BoxGeometry(0.12, 0.09, 0.002), at(0.12, 0.03, -0.003), pic);
+      for (const y of [-0.04, -0.07, -0.1, -0.13]) mb.add(new THREE.BoxGeometry(0.2, 0.008, 0.002), at(-0.11, y, -0.003), lin('#8a7178'));
+    }),
+    // Tablett des Kellners (auf der flachen Hand): zwei Tassen und ein Glas Spritz
+    tray: mk((mb) => {
+      mb.add(new THREE.CylinderGeometry(0.17, 0.165, 0.012, 20), M(0.0, 0.035, -0.02), steel);
+      mb.add(new THREE.CylinderGeometry(0.028, 0.022, 0.05, 12), M(-0.06, 0.066, -0.06), lin('#f6f6f2'));
+      mb.add(new THREE.CylinderGeometry(0.028, 0.022, 0.05, 12), M(0.05, 0.066, 0.03), lin('#f6f6f2'));
+      mb.add(new THREE.CylinderGeometry(0.004, 0.004, 0.06, 6), M(0.06, 0.07, -0.07), lin('#e8eef0'));
+      mb.add(new THREE.CylinderGeometry(0.036, 0.022, 0.065, 12), M(0.06, 0.13, -0.07), lin('#f0701f'));
+    }),
+    // Mikrofon des Sprechers (in der Rechten, Kopf vor dem Mund)
+    mic: mk((mb) => {
+      const d = new THREE.Vector3(-0.02, 0.11, 0.045).normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+      mb.add(new THREE.CylinderGeometry(0.016, 0.012, 0.14, 10), new THREE.Matrix4().compose(d.clone().multiplyScalar(0.05), q, new THREE.Vector3(1, 1, 1)), black);
+      mb.add(new THREE.SphereGeometry(0.026, 10, 8), new THREE.Matrix4().compose(d.clone().multiplyScalar(0.13), q, new THREE.Vector3(1, 1, 1)), grey);
+    }),
+    // Glas Spritz (orange, mit Stiel)
+    glass: mk((mb) => {
+      mb.add(new THREE.CylinderGeometry(0.03, 0.03, 0.004, 10), M(0, -0.02, -0.04), lin('#e8eef0'));
+      mb.add(new THREE.CylinderGeometry(0.004, 0.004, 0.06, 6), M(0, 0.01, -0.04), lin('#e8eef0'));
+      mb.add(new THREE.CylinderGeometry(0.036, 0.022, 0.07, 12), M(0, 0.075, -0.04), lin('#f0701f'));
     }),
     cup: mk((mb) => {
       mb.add(new THREE.CylinderGeometry(0.035, 0.028, 0.07, 14), M(0, 0.02, -0.05), lin('#f6f6f2'));

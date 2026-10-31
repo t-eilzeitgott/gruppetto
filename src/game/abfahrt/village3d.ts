@@ -77,6 +77,8 @@ export class Villages3D {
   private list: Village[] = [];
   private scanZ = 0;
   private started = false;
+  /** Strecke beginnt in einem Ort (Startort der Abfahrt): Dörfer seltener, als Höhepunkte */
+  private sparse = false;
   private w = { x: 0, y: 0, z: 0, th: 0 };
   private nameNo = 0;
   private ranges: [number, number][] = [];
@@ -111,8 +113,10 @@ export class Villages3D {
       // Startdorf: nicht, wo die Strecke schon in einem Ort beginnt
       let ok = true;
       for (let z = 20; z < 320; z += 8) { const s = t.segAt(z); if (s.bL || s.bR || t.sections[s.sec]?.biome === 'village') ok = false; }
+      this.sparse = !ok;
       if (ok) this.add(34, 330);
-      this.scanZ = 1700;
+      // Startort auf der Passhöhe: die Dörfer sind nur noch vereinzelte Höhepunkte unterwegs
+      this.scanZ = ok ? 1700 : 2600;
     }
     while (this.scanZ < Math.min(zEnd, L)) {
       const z0 = this.scanZ;
@@ -127,7 +131,7 @@ export class Villages3D {
       }
       if (!ok) { this.scanZ += 24; continue; }
       this.add(z0, z0 + len);
-      this.scanZ = z0 + len + 1900 + hash(Math.round(z0), 9) * 1300;
+      this.scanZ = z0 + len + (this.sparse ? 3600 + hash(Math.round(z0), 9) * 2400 : 1900 + hash(Math.round(z0), 9) * 1300);
     }
   }
 

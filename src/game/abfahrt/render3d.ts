@@ -30,6 +30,7 @@ import { Villages3D } from './village3d';
 import { LAMP_GLSL, LAMP_U, haloMaterial, lampFrag, lampHalos, pickLamps, warmLamps } from './lamps3d';
 import { SunsetGlow } from './sunset3d';
 import { TT_PODIUM, TtStart3D, ttCrowdGap } from './ttstart3d';
+import { DescentStart3D } from './descstart3d';
 import { EV, SEC, type Perf3D } from './perf3d';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
@@ -497,6 +498,8 @@ export class Renderer3D {
   private sprMat!: THREE.MeshLambertMaterial;
   /** Zeitfahren: Startbereich (Podest, Rampe, Uhr, Personal) */
   private ttStart: TtStart3D | null = null;
+  /** Abfahrt: Startort auf der Passhöhe (Piazza, Turm, Café, Menschen, Tauben) – nach dem Ort wieder freigegeben */
+  private descStart: DescentStart3D | null = null;
   /** Dinge in der Hand der Menschen (Kameras, Stoppuhr, Tassen): Eckpunktfarben, glatt */
   private gearMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private runners: Runner[] = [];
@@ -1415,6 +1418,14 @@ export class Renderer3D {
   private pendingResize = false;
   /** Startbild: volle Schärfe, solange der Fahrer am Start steht (bis ein paar Meter nach „Los“) */
   private sharp = false;
+  /**
+   * Auftakt der Abfahrt: von kurz vor dem Tunnelausgang bis hinter die Spitzkehre (erster Panoramablick) wird nichts
+   * gebaut und nichts hochgeladen – alles dafür entsteht vorher auf der Landstraße und im Tunnel (kein Ruckler)
+   */
+  private calm = false;
+  private calmZ: [number, number] | null = null;
+  /** Berge am Horizont: im Startort und auf der Landstraße schon die der Kehre (kein Tausch vor dem Panorama) */
+  private peakRole: BiomeId | null = null;
   requestResize() { this.pendingResize = true; }
   /** neue Auflösungsstufe (wirkt mit dem nächsten Bild) */
   setQuality(q: number) {
@@ -1464,8 +1475,19 @@ export class Renderer3D {
     this.lastRaw = raw;
     this.idleBuild = g.phase === 'ready' || g.phase === 'countdown';
     // scharfes Startbild: am Start und auf den ersten Metern (umgeschaltet wird erst in Fahrt, ein Bild Größenwechsel)
-    const sharp = this.idleBuild || (g.phase === 'playing' && g.p.z < 14 && this.sharp);
+    const sharp = this.idleBuild || (g.phase === 'playing' && g.p.z < g.track.startZ + 14 && this.sharp);
     if (sharp !== this.sharp) { this.sharp = sharp; this.pendingResize = true; }
+    this.calm = false;
+    if (g.track.kind === 'descent') {
+      if (!this.calmZ) {
+        // Lage der Spitzkehre nach dem Tunnel (der Abschnitt mit der Rolle reveal entsteht spätestens hier)
+        g.track.seg(Math.ceil(1200 / SEG));
+        const rv = g.track.sections.find((x) => x.role === 'reveal');
+        this.calmZ = rv ? [rv.start * SEG - 30, rv.start * SEG + 150] : [Infinity, -Infinity];
+        this.peakRole = rv?.biome ?? null;
+      }
+      this.calm = g.phase === 'playing' && g.p.z > this.calmZ[0] && g.p.z < this.calmZ[1];
+    }
     this.time.value += dt;
     if (this.track !== g.track) {
       // gleiche Tagesstrecke (neuer Lauf, nachgeladene Namen): Landschaft behalten – sie ist identisch,
@@ -1549,13 +1571,16 @@ export class Renderer3D {
     this.pickLamps(p.z);
     // Sonnenuntergangs-Licht (Abfahrt am Abend; nicht unter dem Wetter – das hat seine eigene Nachbearbeitung)
     this.sunset.update(this.camera, ATMO.fogSunDir.value, track.kind === 'descent' && this.debugTod === null, this.tunnelDim, dt);
-    this.updateEnvironment(biome, dt);
+    // im Auftakt (Startort, Landstraße) schon die Berge der Kehre: kein Tausch kurz vor dem ersten Panorama
+    const role = track.sections[seg.sec]?.role;
+    this.updateEnvironment(this.peakRole && (role === 'top' || role === 'road') ? this.peakRole : biome, dt);
     P?.mark(SEC.umgebung);
     this.updateTerrain(g, dt);
     this.work = performance.now() - w0;
     P?.mark(SEC.landschaft);
     this.updateRiders(g);
     this.ttStart?.update(g, dt);
+    this.updateDescStart(g, dt);
     P?.mark(SEC.fahrer);
     this.updateSky(g, biome, dt);
     // Wasser strömt: eine Texturlänge je Sekunde (wie schnell das aussieht, legt die Dichte der Koordinaten fest)
@@ -1582,7 +1607,7 @@ export class Renderer3D {
     P?.mark(SEC.zeichnen);
     // neue Teile vorab hochladen (eine Portion je Bild), bevor sie sichtbar werden
     const u0 = performance.now();
-    this.updateStaging();
+    if (!this.calm) this.updateStaging();
     this.updateDispose();
     this.work += performance.now() - u0;
     const rest = performance.now() - d0 - this.work;
@@ -1807,6 +1832,8 @@ export class Renderer3D {
     this.routeEnd = 0;
     this.pre = null;
     this.terrain = new Terrain(track);
+    this.calmZ = null;
+    this.peakRole = null;
     // Zeitfahren: hinter dem Startpodest ein ebener Platz auf Höhe seines Fußes (sonst eine Grube unter der Straße)
     if (track.kind === 'tt') {
       const w = { x: 0, y: 0, z: 0, th: 0 };
@@ -1817,6 +1844,18 @@ export class Renderer3D {
         pts.push(w.x, yp, w.z, Math.min(1, Math.max(0, (-f - 0.5) / 2.5)));
       }
       this.terrain.addFlat(pts, 34, 1, [], true);
+    }
+    // Abfahrt mit Startort: der Platz hinter dem Anfang der Strecke (Turm, Palazzi) und rund um die Piazza eben
+    if (track.kind === 'descent' && track.startZ > 0) {
+      const w = { x: 0, y: 0, z: 0, th: 0 };
+      const pts: number[] = [];
+      const fEnd = track.startZ + 40;
+      for (let f = -110; f <= fEnd; f += 4) {
+        track.world(f, 0, 0, w);
+        const e = Math.min(1, (f + 110) / 30, (fEnd - f) / 30);
+        pts.push(w.x, track.heightAt(Math.max(0, f)) - 0.06 + (f < 0 ? track.heightAt(f) - track.heightAt(0) : 0), w.z, e * e * (3 - 2 * e));
+      }
+      this.terrain.addFlat(pts, 46, 1, [], true);
     }
     // Abfahrt wie in der WebGPU-Welt: zerklüftete Berge (Grate, Rinnen, Felsbänder) und Bergwald (geschlossene
     // Bestände mit klarem Waldrand statt verstreuter Einzelbäume)
@@ -1859,10 +1898,33 @@ export class Renderer3D {
       });
       this.scene.add(this.ttStart.root);
     }
+    this.descStart?.dispose();
+    this.descStart = null;
+    this.makeDescStart(track);
     this.cam.init = false;
     this.resetDirector(false);
     this.runners = [];
     this.runNext = 0;
+  }
+
+  private makeDescStart(track: Track) {
+    if (track.kind !== 'descent' || track.startZ <= 0 || this.descStart) return;
+    this.descStart = new DescentStart3D({
+      track, props: this.mats.props, gear: this.gearMat, facade: this.mats.facade, roof: this.mats.roof, tiles: this.mats.tiles, sign: this.mats.sign,
+      lantern: this.mats.lantern, bulb: this.mats.bulb, shadow: this.shadowTex, glow: this.mats.lampGlow.map!,
+      aniso: Math.min(8, this.gl.capabilities.getMaxAnisotropy()), accent: this.accent,
+      night: () => this.mats.bulb.opacity,
+    });
+    this.scene.add(this.descStart.root);
+  }
+
+  /** Startort: bewegen; hinter dem Ort (vor Landstraße und Kehre) freigeben, bei einer neuen Fahrt wieder bauen */
+  private updateDescStart(g: RaceView, dt: number) {
+    const t = g.track;
+    if (t.kind !== 'descent' || t.startZ <= 0) return;
+    if (this.descStart && g.phase === 'playing' && g.p.z > t.startZ + 280) { this.descStart.dispose(); this.descStart = null; return; }
+    if (!this.descStart && (g.phase === 'ready' || g.phase === 'countdown') && g.p.z < t.startZ + 20) this.makeDescStart(t);
+    this.descStart?.update(g, dt, this.camera);
   }
 
   /** Startwert der Sprüche auf Pappschildern und Spruchbändern – jedes Rennen ein neuer */
@@ -2100,7 +2162,8 @@ export class Renderer3D {
     // Der Nahbereich (feine und mittlere Stufe) entsteht aber sofort vollständig: sonst schneidet die
     // grobe Stufe (ohne Straßenklemmen) durch Straße und Zuschauer
     // auf der Startkarte großzügig: dort soll die Welt komplett stehen, bevor es losgeht
-    const budget = this.idleBuild ? 30 : startup ? 12 : Math.max(1.2, Math.min(this.range.budget, this.room() * 0.62));
+    // (erster Panoramablick der Abfahrt: nur in winzigen Häppchen weiter – die Ringe stehen schon)
+    const budget = this.idleBuild ? 30 : startup ? 12 : this.calm ? 0.25 : Math.max(1.2, Math.min(this.range.budget, this.room() * 0.62));
     // Korridorbreiten der Strecke vorab in kleinen Portionen (die Kacheln fragen sie dann nur noch ab)
     T.prefetchLim(t0 + (this.idleBuild ? 6 : 0.3));
     if (fresh) {
@@ -2655,9 +2718,12 @@ export class Renderer3D {
     const still = !cam.init || g.phase === 'ready' || g.phase === 'countdown';
     if (still) cam.pack = wantPack;
     else cam.pack += (wantPack - cam.pack) * Math.min(1, dt * 1.2);
-    const back = CAM_BACK + (SPRINT_BACK - CAM_BACK) * cam.pack;
+    // erster Panoramablick (Auftakt der Abfahrt): aus dem Tunnel heraus steigt die Kamera weich höher und weiter
+    // zurück, der Blick geht über den Fahrer ins Tal – nach der Spitzkehre wieder die gewohnte Fahrkamera
+    const rk = this.revealK(track, p.z);
+    const back = CAM_BACK + (SPRINT_BACK - CAM_BACK) * cam.pack + 3.2 * rk;
     const behindY = track.heightAt(Math.max(0, p.z - back));
-    const ty = Math.max(behindY, roadY) + CAM_UP + (SPRINT_UP - CAM_UP) * cam.pack + air * 0.35;
+    const ty = Math.max(behindY, roadY) + CAM_UP + (SPRINT_UP - CAM_UP) * cam.pack + air * 0.35 + 4.2 * rk;
     if (still) {
       cam.th = yaw;
       cam.y = ty;
@@ -2695,14 +2761,14 @@ export class Renderer3D {
         A.pos.y += Math.max(this.chaseLift, floor);
       } else if (dt > 0) this.chaseLift *= Math.max(0, 1 - dt * 3);
     }
-    const look = 15 + 2 * cam.pack;
+    const look = 15 + 2 * cam.pack + 12 * rk;
     const aheadY = track.heightAt(p.z + look);
-    A.look.set(rx + fx * look, roadY + (aheadY - roadY) * 0.55 + 0.9 + air * 0.4, rz + fz * look);
+    A.look.set(rx + fx * look, roadY + (aheadY - roadY) * 0.55 + 0.9 + air * 0.4 + 2.2 * rk, rz + fz * look);
     cam.x = rx; cam.z = rz;
     // Sichtfeld: hochkant mehr Höhe, bei Tempo etwas weiter (Geschwindigkeitsgefühl)
     const aspect = this.W / this.H;
     const base = aspect < 1 ? 72 - (aspect - 0.45) * 22 : 56;
-    A.fov = base + Math.min(9, Math.max(0, (p.v - 14) * 0.38));
+    A.fov = base + Math.min(9, Math.max(0, (p.v - 14) * 0.38)) + 9 * rk;
     // Regie der Abfahrt: TV-Kran vor dem Start, Sturz aus der Fernsehperspektive – Wechsel weich geflogen
     if (descent) this.direct(g, A, dt);
     this.camera.position.copy(A.pos);
@@ -2714,6 +2780,14 @@ export class Renderer3D {
     cam.fov += (A.fov - cam.fov) * (direct ? 1 : Math.min(1, dt * 2));
     if (Math.abs(this.camera.fov - cam.fov) > 0.01) { this.camera.fov = cam.fov; this.camera.updateProjectionMatrix(); }
     this.lastPhase = g.phase;
+  }
+
+  /** Panoramablick nach dem Tunnel (0–1): steigt kurz vor dem Ausgang an, hält durch die Spitzkehre, klingt danach aus */
+  private revealK(t: Track, z: number): number {
+    if (t.kind !== 'descent' || !this.calmZ || !isFinite(this.calmZ[0])) return 0;
+    const s0 = this.calmZ[0] + 30;
+    const sm = (a: number, b: number, x: number) => { const u = Math.max(0, Math.min(1, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
+    return sm(s0 - 10, s0 + 14, z) * (1 - sm(s0 + 80, s0 + 150, z));
   }
 
   // ------------------------------------------------------------------ Regie (Abfahrt)
@@ -3017,7 +3091,7 @@ export class Renderer3D {
         this.mtnBiome = biome;
       }
     }
-    if (this.mtnGen) {
+    if (this.mtnGen && !this.calm) {
       const t0 = performance.now();
       let r = this.mtnGen.it.next();
       while (!r.done && performance.now() - t0 < 1.2) r = this.mtnGen.it.next();
@@ -3029,7 +3103,7 @@ export class Renderer3D {
         if (!w.ready) this.stage([w.m], () => { w.ready = true; }, () => this.mtnWait === w);
       }
     }
-    if (this.mtnWait?.ready) {
+    if (this.mtnWait?.ready && !this.calm) {
       this.prof?.event(EV.mtn, `Berge am Horizont getauscht (${this.mtnWait.biome})`);
       if (this.mtnOld) { this.scene.remove(this.mtnOld); this.mtnOld.geometry.dispose(); (this.mtnOld.material as THREE.Material).dispose(); }
       this.mtnOld = this.mtn;
@@ -3440,6 +3514,8 @@ export class Renderer3D {
       this.addChunk(k, this.buildChunk(g, k), false);
       this.prof?.event(EV.sync, `Abschnitt ${k} (${Math.round(k * CH * SEG)} m) sofort gebaut: ${(performance.now() - t0).toFixed(1)} ms`);
     }
+    // erster Panoramablick (Auftakt der Abfahrt): nichts weiter bauen – alles Nötige steht schon
+    if (this.calm) return;
     // danach mit Zeitbudget je Bild (nächste zuerst), auf der Startkarte großzügiger; der Bau gibt an der
     // Zeitgrenze von selbst ab (feine Häppchen)
     const t0 = performance.now();
@@ -4036,6 +4112,16 @@ export class Renderer3D {
     if (side.ground === 'pavement') {
       const pv = lin('#b9b2a5');
       const cu = lin('#a8a296');
+      // Piazza (und der Startort der Abfahrt bis hinter die Piazza): eben gepflastert bis zu den Häusern
+      const sec = this.track!.sections[s.sec];
+      const pz = sec?.piazza;
+      if (pz && (s.i >= pz[0] - 1 && s.i <= pz[1] + 1 || sec.role === 'top' && s.i <= pz[1] + 3)) {
+        return {
+          o: [0, 0.01, 0.02, 1.2, 3.5, 8, 18, 26, 34],
+          h: [0, 0.07, 0.13, 0.13, 0.13, 0.13, 0.13, 0.13, 0.5],
+          cols: [cu, cu, pv, pv, pv, pv, pv, shadeF(pv, 0.96)],
+        };
+      }
       return {
         o: [0, 0.01, 0.02, 1.2, 3.5, 8, 18, 26, 34],
         h: [0, 0.07, 0.13, 0.13, 0.13, 0.4, 1.5, 2.2, 3],
@@ -6432,7 +6518,7 @@ export class Renderer3D {
 
   dispose() {
     this.offGfx();
-    try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); this.markers?.dispose(); this.ttStart?.dispose(); } catch { /* Kontext evtl. schon weg */ }
+    try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); this.markers?.dispose(); this.ttStart?.dispose(); this.descStart?.dispose(); } catch { /* Kontext evtl. schon weg */ }
     try { this.gl.dispose(); } catch { /* egal */ }
     // Kontext sofort freigeben: iOS erlaubt nur wenige gleichzeitig – sonst bleibt ein späteres Spiel schwarz
     try { this.gl.forceContextLoss(); } catch { /* egal */ }

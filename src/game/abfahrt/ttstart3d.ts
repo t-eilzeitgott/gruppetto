@@ -75,7 +75,7 @@ function rod(gb: GB, a: THREE.Vector3, b: THREE.Vector3, r: number, col: RGBf, n
 }
 
 /** Rennrad (stehend, Blick −z, Ursprung am Boden unter dem Tretlager) in die Matrix m */
-function bike(gb: GB, m: THREE.Matrix4, frame: RGBf) {
+export function bike(gb: GB, m: THREE.Matrix4, frame: RGBf) {
   const black = lin('#16171a');
   const grey = lin('#8d939b');
   const at = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(m);

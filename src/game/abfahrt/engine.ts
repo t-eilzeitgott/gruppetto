@@ -213,6 +213,8 @@ export class Abfahrt {
   private rng: Rng;
   private oppId = 0;
   private nextSpawn = 160;
+  /** nächste Gruppe näher voraus (nach dem Auftakt der Abfahrt) */
+  private nearSpawn = false;
   private overtakePop = -9;
   private curve = { active: false, sign: 0, hairpin: false, minV: 99, clean: true, maxK: 0 };
   private lastBarrier = 0;
@@ -256,8 +258,10 @@ export class Abfahrt {
     this.wreck = null;
     this.pileCount = 0;
     this.pileAt = null;
+    // Start mitten im Startort (auf der Piazza), allein – das Feld kommt erst nach dem Ort ins Bild
+    const z0 = this.track.startZ;
     this.p = {
-      z: 6, x: 0.9, vx: 0, v: 0, y: 0, vy: 0, air: false, airT: 0,
+      z: 6 + z0, x: 0.9, vx: 0, v: 0, y: 0, vy: 0, air: false, airT: 0,
       lean: 0, pedal: 0, tuck: 0, brake: 0, wobble: 0, slip: 0, grip: 1, slick: 0,
       kit: this.opts.kit,
     };
@@ -272,7 +276,15 @@ export class Abfahrt {
     this.chain = 0; this.mult = 1; this.multT = 0;
     this.draft = 0; this.shake = 0; this.heading = 0;
     this.phase = 'ready'; this.phaseT = 0; this.time = 0; this.timeScale = 1;
+    // Abfahrt mit Startort: Ort, Landstraße und Panorama-Kehre ohne Feld – die ersten Gruppen kurz nach der Kehre
     this.nextSpawn = 120;
+    this.nearSpawn = false;
+    if (z0 > 0) {
+      this.track.seg(Math.round((z0 + 1400) / SEG));
+      const rv = this.track.sections.find((s) => s.role === 'reveal');
+      this.nextSpawn = rv ? rv.start * SEG + 150 : z0 + 900;
+      this.nearSpawn = true;
+    }
     this.sectionIdx = -1;
     this.recordShown = false;
     this.lastBarrierZ = 0;
@@ -282,8 +294,8 @@ export class Abfahrt {
     this.rec.reset();
     this.ghostT = 0;
     this.tags = [];
-    // ein paar Fahrer stehen mit am Start
-    this.spawnStartGroup();
+    // ein paar Fahrer stehen mit am Start (Abfahrt mit Startort: allein am Start – Platz für die Stadt)
+    if (z0 === 0) this.spawnStartGroup();
   }
 
   get total(): number {
@@ -808,8 +820,11 @@ export class Abfahrt {
       const first = this.sectionIdx < 0;
       this.sectionIdx = seg.sec;
       const s = this.track.sections[seg.sec];
-      this.opts.onEvent?.({ type: 'section', name: s.name, biome: s.biome, alt: s.alt, first });
-      if (!first) this.award('bonus', 100, 'Neues Tal', 'white');
+      // Auftakt der Abfahrt: Landstraße und Panorama-Kehre ohne Einblendung (der Blick gehört dem Bild)
+      if (s.role !== 'road' && s.role !== 'reveal') {
+        this.opts.onEvent?.({ type: 'section', name: s.name, biome: s.biome, alt: s.alt, first });
+        if (!first) this.award('bonus', 100, 'Neues Tal', 'white');
+      }
     }
     if (seg.banner?.kind === 'sprint' && Math.floor(z0 / SEG) !== seg.i) {
       this.award('bonus', p.v > 16.7 ? 200 : 150, 'Zwischensprint!', 'gold');
@@ -935,7 +950,9 @@ export class Abfahrt {
     this.nextSpawn = p.z + between(r, 110, 210) * (1 - 0.3 * D);
     const kind = r();
     const group = this.oppId;
-    const zBase = p.z + between(r, 170, 230);
+    // (erste Gruppe nach dem Auftakt: schon in Sichtweite, damit das Rennen gleich wieder beginnt)
+    const zBase = p.z + (this.nearSpawn ? between(r, 85, 120) : between(r, 170, 230));
+    this.nearSpawn = false;
     const lane = chance(r, 0.5) ? -1 : 1;
     // langsames Gruppetto oder zähe Gruppe, an die man sich ranarbeiten muss
     const f = chance(r, 0.55) ? between(r, 0.58, 0.7) : between(r, 0.72, 0.84);

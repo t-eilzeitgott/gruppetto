@@ -130,7 +130,9 @@ test('Spiel: Autopilot fährt weit, überholt, sammelt und bekommt Kombos', () =
     g.tx = best;
     g.key('up', true);
   };
-  const { g } = run('2027-05-09', pilot, 90);
+  // (die Abfahrt beginnt im Startort, dann Landstraße, Tunnel und Panorama-Kehre ohne Feld und Flaschen – das Rennen
+  // geht erst danach los, darum etwas länger)
+  const { g } = run('2027-05-09', pilot, 120);
   assert.ok(g.p.z > 1000, `weit gekommen: ${Math.round(g.p.z)} m`);
   assert.ok(g.stats.overtakes > 0, 'überholt');
   assert.ok(g.stats.bidons > 0, 'Flaschen gesammelt');

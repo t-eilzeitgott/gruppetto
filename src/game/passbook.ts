@@ -26,7 +26,14 @@ export interface PassStamp {
 function descentPasses(track: Track, meters: number): { name: string; alt: number }[] {
   const last = Math.max(0, Math.floor(meters / SEG));
   track.seg(last);
-  return track.sections.filter((s) => s.biome === 'pass' && s.start <= last).map((s) => ({ name: s.name, alt: s.alt }));
+  // (Abfahrt mit Startort: der Ort auf der Passhöhe zählt als Pass – gleicher Name wie die Kehre danach, nur einmal)
+  const out = new Map<string, { name: string; alt: number }>();
+  for (const s of track.sections) {
+    if (s.start > last || (s.biome !== 'pass' && s.role !== 'top')) continue;
+    const key = s.name.toLowerCase();
+    if (!out.has(key)) out.set(key, { name: s.name, alt: s.alt });
+  }
+  return [...out.values()];
 }
 
 export function passStamps(runs: GameRun[], tourName: string | null | undefined, stages: Stage[] | null | undefined): PassStamp[] {
