@@ -329,7 +329,7 @@ export class Track {
   constructor(dayKey: string, names: string[] = [], kind: TrackKind = 'descent', town: string | StageRef | null = '') {
     this.dayKey = dayKey;
     this.kind = kind;
-    this.ramp = kind !== 'tt';
+    this.ramp = kind === 'descent';
     this.ref = typeof town === 'object' ? town : null;
     this.lang = this.ref?.lang ?? 'it';
     this.town = (typeof town === 'string' ? town : town?.town ?? '').trim().slice(0, 24);
@@ -391,8 +391,9 @@ export class Track {
 
   /**
    * Startrampe wie im Zeitfahren (Podest, Rampe, Startuhr): die ersten 14 m nach dem Start mit 9 % hinunter, dann
-   * weich in die Strecke (das Zeitfahren hat das in Track.ttGrade). Die WebGPU-Welt baut keine Rampe und schaltet es
-   * ab – vor dem ersten Abschnitt, also gleich nach dem Anlegen der Strecke.
+   * weich in die Strecke – nur in der Abfahrt (das Zeitfahren hat das in Track.ttGrade; Sprint- und Bergfinale
+   * starten im rollenden Feld). Die WebGPU-Welt baut keine Rampe und schaltet es ab – vor dem ersten Abschnitt, also
+   * gleich nach dem Anlegen der Strecke.
    */
   ramp: boolean;
   /** Streckenmeter des Starts auf der Rampe (dort steht der Fahrer) */

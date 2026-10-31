@@ -168,12 +168,6 @@ export class SprintRace {
   private launchAt = 0;
   private placeAt300 = 0;
   private flags = new Set<string>();
-  /**
-   * Start von der Rampe: das Feld rollt neutralisiert voraus, bis du hinten dran bist (oder nach 25 s) – erst dann
-   * geht es richtig los. goT: Sekunden seit „Los“
-   */
-  private joined = false;
-  private goT = 0;
   private popSide: 1 | -1 = 1;
   private countShown = 4;
 
@@ -211,8 +205,6 @@ export class SprintRace {
     this.topV = 0;
     this.launchAt = 0;
     this.flags.clear();
-    this.joined = false;
-    this.goT = 0;
     this.wreck = null;
     this.pileAt = null;
     this.crashes = 0;
@@ -249,8 +241,7 @@ export class SprintRace {
     const slots: [number, number][] = [];
     for (let row = 0; row < 8; row++) for (let l = 0; l < LANES.length; l++) slots.push([row, l]);
     const takenSlots = new Set<string>();
-    // vor der Startrampe (14 m mit 9 % hinunter, dann flach): die letzte Reihe gut 20 m dahinter
-    const zOf = (row: number) => 38 - row * 2.1;
+    const zOf = (row: number) => 48 - row * 2.1;
     const takeSlot = (row: number, l: number) => { takenSlots.add(`${row}:${l}`); return [zOf(row) + (r() - 0.5) * 0.3, LANES[l] + (r() - 0.5) * 0.1] as const; };
     // Züge: je eine Spur, vier Fahrer hintereinander (Anfahrer vorn, Sprinter zuletzt)
     const trainLanes = [0, 4, 1, 3];
@@ -267,6 +258,7 @@ export class SprintRace {
     // übrige Fahrer auf freie Plätze (einige mit Sprintambitionen), einer bleibt für den Spieler
     const free = slots.filter(([row, l]) => !takenSlots.has(`${row}:${l}`) && row < 7);
     const me = free.splice(free.findIndex(([row, l]) => row >= 3 && l === 2) >= 0 ? free.findIndex(([row, l]) => row >= 3 && l === 2) : Math.floor(free.length / 2), 1)[0];
+    this.startSlot = [zOf(me[0]), LANES[me[1]]];
     // eigener Anfahrer: im Trikot des Spielers direkt davor
     {
       const ahead = free.findIndex(([row, l]) => row === me[0] - 1 && l === me[1]);
@@ -287,10 +279,11 @@ export class SprintRace {
     }
   }
 
-  /** Startplatz des Spielers: oben auf der Rampe (sein Platz im Feld bleibt frei, der Anfahrer wartet davor) */
+  private startSlot: [number, number] = [20, 0];
+
+  /** Startplatz des Spielers: ein freier Platz mitten im Feld */
   private placePlayer() {
-    this.p.z = 0;
-    this.p.x = 0.3;
+    [this.p.z, this.p.x] = this.startSlot;
     this.tx = this.p.x;
   }
 
@@ -334,15 +327,6 @@ export class SprintRace {
       const n = 3 - Math.floor(this.phaseT / 0.75);
       if (n !== this.countShown) { this.countShown = n; this.opts.onEvent?.({ type: 'count', n: Math.max(0, n) }); }
       if (this.phaseT >= 2.25) { this.phase = 'playing'; this.phaseT = 0; }
-    }
-    if (this.phase === 'playing') {
-      this.goT += dt;
-      // hinten am Feld angekommen (in Reichweite des Hinterrads)?
-      if (!this.joined) {
-        let back = Infinity;
-        for (const o of this.opps) if (!o.wreck) back = Math.min(back, o.z);
-        if (this.p.z >= back - 10 || this.goT > 25) this.joined = true;
-      }
     }
     let left = dt;
     while (left > 1e-6) {
@@ -440,15 +424,6 @@ export class SprintRace {
     const s = this.stats;
     const racing = this.phase === 'playing' && this.finT < 0;
     const V = this.phase === 'countdown' ? 9 : packSpeed(d);
-    if (this.phase === 'countdown') {
-      // auf der Rampe, der Kommissär hält das Rad
-      p.v = 0;
-      p.vx = 0;
-      p.stand = 0;
-      p.tuck += (0.35 - p.tuck) * Math.min(1, dt * 5);
-      p.y = this.track.heightAt(p.z);
-      return;
-    }
     // Eingabe → Fahrweise
     const go = racing && (this.wantGo || this.keys.up);
     const ease = racing && !go && (this.wantEase || this.keys.down);
@@ -564,8 +539,7 @@ export class SprintRace {
     for (const o of this.opps) {
       if (o.wreck) { slideOn(o, o.wreck, dt); continue; }
       const d = SPRINT_FINISH - o.z;
-      // neutralisiert, bis du vom Start hinten dran bist: im Countdown langsam, danach allmählich schneller
-      const V = roll ? 4 : this.joined ? packSpeed(d) : Math.min(packSpeed(d), 7 + 0.3 * this.goT);
+      const V = roll ? 9 : packSpeed(d);
       o.driftT -= dt;
       if (o.driftT <= 0) { o.driftT = between(this.rng, 2, 5); o.drift = between(this.rng, -0.35, 0.45); }
       const wheel = this.wheelAhead(o.z, o.x, 9, o);

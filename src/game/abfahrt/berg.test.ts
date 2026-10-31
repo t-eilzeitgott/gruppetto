@@ -19,8 +19,7 @@ test('Bergfinale-Strecke: bergauf bis zur Bergwertung, bergab ins Ziel, gleich f
     assert.equal(a.seg(i).curve, b.seg(i).curve);
     assert.ok(!a.seg(i).objs?.length, 'keine Hindernisse');
     assert.ok(!a.seg(i).tunnel, 'keine Tunnel');
-    // (nach der Startrampe: 14 m mit 9 % hinunter, auf 26 m in den Anstieg)
-    if (i * SEG >= 40 && i < top - 40) assert.ok(a.seg(i).grade > 0.01, `bergauf bei ${i * SEG} m`);
+    if (i < top - 40) assert.ok(a.seg(i).grade > 0.01, `bergauf bei ${i * SEG} m`);
     if (i > top + 30 && i < fin - 200) assert.ok(a.seg(i).grade < 0, `bergab bei ${i * SEG} m`);
   }
   assert.ok(a.seg(top).y - a.seg(0).y > 45, 'echter Anstieg');
@@ -41,8 +40,7 @@ test('Bergfinale: Rennen endet, Punkte stimmen, Gruppe zerfällt am Berg', () =>
       t += 1 / 30;
       if (g.p.z >= MOUNTAIN_TOP && !spread) spread = Math.max(...g.opps.map((o) => o.z)) - Math.min(...g.opps.map((o) => o.z));
       // (nach einem Sturz liegt man kurz und fährt aus dem Stand wieder an)
-      // (von der Rampe: die erste Sekunde rollt man an)
-      if (g.phase === 'playing' && t > 3.5 && g.p.z < MOUNTAIN_FINISH && !g.wreck && g.crashes === 0) assert.ok(g.p.v > 2, `Spieler fährt (${g.p.v.toFixed(1)} m/s bei ${g.p.z.toFixed(0)} m)`);
+      if (g.phase === 'playing' && g.p.z < MOUNTAIN_FINISH && !g.wreck && g.crashes === 0) assert.ok(g.p.v > 2, 'Spieler fährt');
     }
     assert.ok(over, `Rennen am ${day} beendet`);
     const r = over as BergResult;

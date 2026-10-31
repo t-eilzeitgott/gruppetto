@@ -217,9 +217,6 @@ export class BergRace {
   private topT = -1;
   private topV = 0;
   private flags = new Set<string>();
-  /** Start von der Rampe: das Feld rollt neutralisiert voraus, bis du hinten dran bist (oder nach 25 s) */
-  private joined = false;
-  private goT = 0;
   private popSide: 1 | -1 = 1;
   private countShown = 4;
   private warp = WARP;
@@ -281,8 +278,6 @@ export class BergRace {
     this.emptyT = 0;
     this.stand = 0;
     this.flags.clear();
-    this.joined = false;
-    this.goT = 0;
     this.spawnField();
     this.tx = this.p.x;
     this.txs = this.p.x;
@@ -315,7 +310,7 @@ export class BergRace {
       // stärkere Kletterer stehen weiter oben in der Namensliste
       const cp = role === 'helper' ? between(r, 5.95, 6.05) : role === 'weak' ? between(r, 5.7, 5.85) : 6.24 - (favNo - 1) * 0.045 + between(r, -0.05, 0.05);
       this.opps.push({
-        id: id++, z: z + (r() - 0.5) * 0.3, x, vx: 0, v: ROLL, tx: x, f: 0.7,
+        id: id++, z: z + (r() - 0.5) * 0.3, x, vx: 0, v: this.v0, tx: x, f: 0.7,
         kit: { ...kit, skin: pick(r, SKINS), number: String(Math.floor(between(r, 11, 199))) },
         pedal: r() * 6, lean: 0, tuck: 0, brake: 0, passed: false, group: role === 'helper' ? 0 : -1, bump: 0, attacker: false,
         name, role, cp, kick: role === 'helper' ? 2.4 : between(r, 2.8, 3.8), desc: between(r, 0.92, 0.99), w: 1,
@@ -325,15 +320,14 @@ export class BergRace {
         drift: 0, driftT: r() * 3, topT: -1, done: false, finT: -1,
       });
     }
-    // der Spieler startet oben auf der Rampe (sein Platz im Feld bleibt frei, der Helfer wartet davor)
-    this.p.z = 0;
-    this.p.x = 0.3;
+    this.p.z = rows[meSlot][0];
+    this.p.x = rows[meSlot][1];
     // Edelhelfer im eigenen Trikot direkt vor dem Spieler: macht bergauf das Tempo und wartet auf dich
     {
       const k = this.opts.kit;
       const [z, x] = rows[mateSlot];
       this.opps.push({
-        id: id++, z, x, vx: 0, v: ROLL, tx: x, f: 0.7,
+        id: id++, z, x, vx: 0, v: this.v0, tx: x, f: 0.7,
         kit: { ...k, number: String(Math.floor(between(r, 11, 199))) },
         pedal: r() * 6, lean: 0, tuck: 0, brake: 0, passed: false, group: -1, bump: 0, attacker: false,
         name: this.opts.mate || 'Dein Helfer', role: 'mate', cp: 6.1, kick: 2.4, desc: 0.95, w: 1,
@@ -409,15 +403,6 @@ export class BergRace {
           sub: real?.grad ? `Die letzten ${MOUNTAIN_TOP} m · Ø ${real.grad.toLocaleString('de-DE')} %` : `${MOUNTAIN_TOP} m bis zum Gipfel`,
         });
         if (mate && this.opts.mate) this.mateIntro = 4;
-      }
-    }
-    if (this.phase === 'playing') {
-      this.goT += dt;
-      // hinten am Feld angekommen (in Reichweite des Hinterrads)?
-      if (!this.joined) {
-        let back = Infinity;
-        for (const o of this.opps) if (!o.wreck) back = Math.min(back, o.z);
-        if (this.p.z >= back - 10 || this.goT > 25) this.joined = true;
       }
     }
     let left = dt;
@@ -570,18 +555,8 @@ export class BergRace {
     let B = 0;
     let posture = 1;
     let standTarget = 0;
-    if (this.phase === 'countdown') {
-      // auf der Rampe, der Kommissär hält das Rad
-      p.v = 0;
-      p.vx = 0;
-      p.stand = 0;
-      this.stand = 0;
-      p.tuck += (0.15 - p.tuck) * Math.min(1, dt * 5);
-      p.y = this.track.heightAt(p.z);
-      return;
-    }
     if (!racing) {
-      // Auslauf nach dem Ziel
+      // Countdown (rollend am Berg) und Auslauf nach dem Ziel
       const vd = this.finT >= 0 ? 8 : this.v0;
       P = clamp(powerTo(vd, p.v, grade, CDA), 0, 9);
       if (p.v > vd + 1) B = 2;
@@ -609,8 +584,6 @@ export class BergRace {
         if (!this.steer.active && wheel.z - p.z < 6 && this.losing(wheel, speedAt(s.cp * 0.98, grade, CDA))) this.passWheel();
       } else P = final ? s.cp * 0.92 : s.cp * 0.98;
       if (empty) P = Math.min(P, s.cp * 0.92);
-      // vom Start ans Feld heranfahren: etwas über der Dauerleistung, kostet nichts
-      if (!this.joined && !ease) P = Math.max(P, s.cp + 0.9);
       // Helfer soll wieder nach vorn: kurz Tempo raus, damit er vor dich kommt
       if (!go && !final && this.letMateBy()) P = Math.min(P, s.cp * 0.86);
       P = Math.max(0, P);
@@ -635,7 +608,7 @@ export class BergRace {
       // bergauf kostet alles über der Dauerleistung den Spieler deutlich mehr (Kraft einteilen!), Erholung ist langsam
       const push = stage === 'climb' ? PUSH_COST : 1;
       // bergab kostet Ducken (und das Antreten aus den Kehren) keine Kraft – dort erholt man sich
-      const Pe = stage === 'descent' ? Math.min(P, s.cp * 0.6) : !this.joined && !go ? Math.min(P, s.cp) : P;
+      const Pe = stage === 'descent' ? Math.min(P, s.cp * 0.6) : P;
       if (Pe > s.cp) this.energy -= ((Pe - s.cp) * push / WJ) * dt;
       else this.energy += ((s.cp - Pe) / WJ) * (stage === 'climb' ? 0.35 : 0.55) * dt;
       this.energy = clamp(this.energy, 0, 1);
@@ -873,7 +846,7 @@ export class BergRace {
       let posture = 1;
       let standTarget = 0;
       if (roll || o.done) {
-        const vd = o.done ? 8 : ROLL;
+        const vd = o.done ? 8 : this.v0;
         P = clamp(powerTo(vd, o.v, grade, CDA), 0, 9);
         if (o.v > vd + 1) B = 2;
       } else if (stage === 'climb') {
@@ -974,12 +947,6 @@ export class BergRace {
         else P = o.cp * 0.95;
         if (empty) P = Math.min(P, o.cp * 0.92);
         if (wheel && wheel.z - o.z < 3.2 && toGo < o.launch) this.changeLane(o);
-      }
-      // neutralisiert, bis der Spieler vom Start hinten dran ist: gemächlich, keine Angriffe
-      if (!roll && !o.done && !this.joined && stage === 'climb') {
-        P = clamp(powerTo(this.v0 * 0.62, o.v, grade, CDA), 0, 9);
-        standTarget = 0;
-        posture = 1;
       }
       o.stand += (standTarget - o.stand) * Math.min(1, dt * 6);
       const aero = CDA * posture * (1 - 0.35 * dr);
@@ -1171,8 +1138,6 @@ export class BergRace {
 }
 
 /** Haltung bergauf: im Wiegetritt etwas flacher (für das Fahrermodell) */
-/** Tempo des Felds im Countdown (es rollt langsam an, der Spieler steht auf der Rampe) */
-const ROLL = 3;
 /** Wiegetritt beim Antreten: erst am steilen Stück ganz (flacher kräftig im Sitzen) */
 function steepness(grade: number): number { return smooth(STEEP[0], STEEP[1], grade); }
 /** Haltung im Sitzen bergauf: unter Druck in der Ebene etwas tiefer (motion.ts effortFor), im Wiegetritt fast aufrecht */

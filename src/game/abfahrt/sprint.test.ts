@@ -36,8 +36,7 @@ test('Sprint: Rennen endet, Platz und Punkte sind plausibel, niemand bleibt steh
       g.update(1 / 30);
       t += 1 / 30;
       // (wer im Massensturz liegt, steht natürlich – der Spieler steigt danach wieder auf)
-      // (von der Rampe: nach gut sechs Sekunden ist man auf Tempo)
-      if (t > 8.5 && g.phase === 'playing' && SPRINT_FINISH - g.p.z > 0) {
+      if (t > 5 && g.phase === 'playing' && SPRINT_FINISH - g.p.z > 0) {
         if (!g.wreck && !g.pileAt) assert.ok(g.p.v > 9 || g.crashes > 0, `Spieler fährt (${g.p.v.toFixed(1)} m/s)`);
         for (const o of g.opps) if (!o.wreck && !g.pileAt) assert.ok(o.v > 8, `${(o as unknown as { name: string }).name} fährt`);
       }

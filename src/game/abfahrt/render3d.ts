@@ -1863,9 +1863,9 @@ export class Renderer3D {
     this.terrain = new Terrain(track);
     this.calmZ = null;
     this.peakRole = null;
-    // Start von der Rampe (Zeitfahren, Sprint- und Bergfinale): hinter dem Startpodest ein ebener Platz auf Höhe
-    // seines Fußes (sonst eine Grube unter der Straße); in der Abfahrt liegt die Piazza selbst auf Höhe des Podests
-    if (track.kind === 'tt' || (track.ramp && track.kind !== 'descent')) {
+    // Zeitfahren: hinter dem Startpodest ein ebener Platz auf Höhe seines Fußes (sonst eine Grube unter der Straße);
+    // in der Abfahrt liegt die Piazza selbst auf Höhe des Podests
+    if (track.kind === 'tt') {
       const w = { x: 0, y: 0, z: 0, th: 0 };
       const yp = track.heightAt(0) - TT_PODIUM;
       const pts: number[] = [];
