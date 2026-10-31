@@ -329,6 +329,7 @@ export class Track {
   constructor(dayKey: string, names: string[] = [], kind: TrackKind = 'descent', town: string | StageRef | null = '') {
     this.dayKey = dayKey;
     this.kind = kind;
+    this.ramp = kind !== 'tt';
     this.ref = typeof town === 'object' ? town : null;
     this.lang = this.ref?.lang ?? 'it';
     this.town = (typeof town === 'string' ? town : town?.town ?? '').trim().slice(0, 24);
@@ -387,6 +388,15 @@ export class Track {
 
   /** Abfahrt: der Start liegt mitten im Startort (dahinter noch ein Stück Piazza) – so weit ist er nach vorn gerückt */
   get startZ(): number { return this.kind === 'descent' ? DESCENT_START : 0; }
+
+  /**
+   * Startrampe wie im Zeitfahren (Podest, Rampe, Startuhr): die ersten 14 m nach dem Start mit 9 % hinunter, dann
+   * weich in die Strecke (das Zeitfahren hat das in Track.ttGrade). Die WebGPU-Welt baut keine Rampe und schaltet es
+   * ab – vor dem ersten Abschnitt, also gleich nach dem Anlegen der Strecke.
+   */
+  ramp: boolean;
+  /** Streckenmeter des Starts auf der Rampe (dort steht der Fahrer) */
+  get rampZ(): number { return this.kind === 'descent' ? DESCENT_START + 6 : 0; }
 
   /** Name des Zielorts (Sprint- und Bergfinale, Zeitfahren) */
   get finishTown(): string {
@@ -761,6 +771,14 @@ export class Track {
         sm[k] = a / c;
       }
       for (let k = 0; k < n; k++) grade[k] = sm[k];
+    }
+    // Startrampe (wie Track.ttGrade im Zeitfahren): 14 m mit 9 % hinunter, auf 26 m in die Strecke
+    if (this.ramp && !tt) {
+      const R = this.rampZ;
+      for (let k = 0; k < n; k++) {
+        const dz = (start + k) * SEG - R;
+        if (dz >= 0 && dz < 40) grade[k] = dz < 14 ? -0.09 : -0.09 + (grade[k] + 0.09) * ((dz - 14) / 26);
+      }
     }
 
     // 2) Seiten, Beläge, Deko

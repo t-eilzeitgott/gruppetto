@@ -1520,7 +1520,7 @@ export class Renderer3D {
       // gleiche Tagesstrecke (neuer Lauf, nachgeladene Namen): Landschaft behalten – sie ist identisch,
       // ein Neuaufbau würde ruckeln. Nur Namen auf Schildern und Straße ändern sich.
       const old = this.track;
-      if (old && old.dayKey === g.track.dayKey && old.kind === g.track.kind) {
+      if (old && old.dayKey === g.track.dayKey && old.kind === g.track.kind && old.ramp === g.track.ramp) {
         this.track = g.track;
         this.terrain?.setTrack(g.track);
         this.cam.init = false; this.runners = []; this.runNext = 0;
@@ -1863,8 +1863,9 @@ export class Renderer3D {
     this.terrain = new Terrain(track);
     this.calmZ = null;
     this.peakRole = null;
-    // Zeitfahren: hinter dem Startpodest ein ebener Platz auf Höhe seines Fußes (sonst eine Grube unter der Straße)
-    if (track.kind === 'tt') {
+    // Start von der Rampe (Zeitfahren, Sprint- und Bergfinale): hinter dem Startpodest ein ebener Platz auf Höhe
+    // seines Fußes (sonst eine Grube unter der Straße); in der Abfahrt liegt die Piazza selbst auf Höhe des Podests
+    if (track.kind === 'tt' || (track.ramp && track.kind !== 'descent')) {
       const w = { x: 0, y: 0, z: 0, th: 0 };
       const yp = track.heightAt(0) - TT_PODIUM;
       const pts: number[] = [];
@@ -1916,9 +1917,10 @@ export class Renderer3D {
     this.clearChunks();
     this.ttStart?.dispose();
     this.ttStart = null;
-    if (track.kind === 'tt') {
+    if (track.kind === 'tt' || track.ramp) {
       const T = this.terrain;
       this.ttStart = new TtStart3D({
+        f0: track.kind === 'tt' ? 0 : track.rampZ, flush: track.kind === 'descent', count: track.kind === 'tt' ? [5, 0.6] : [3, 0.75],
         track, props: this.mats.props, ads: this.mats.ads, gear: this.gearMat, shadow: this.shadowTex, glow: this.mats.lampGlow.map!,
         accent: this.accent, aniso: Math.min(this.pc ? 16 : 4, this.gl.capabilities.getMaxAnisotropy()),
         side: (f, sg, dx) => {
@@ -1950,7 +1952,7 @@ export class Renderer3D {
       track, props: this.mats.props, gear: this.gearMat, facade: this.mats.facade, roof: this.mats.roof, tiles: this.mats.tiles, sign: this.mats.sign,
       lantern: this.mats.lantern, bulb: this.mats.bulb, shadow: this.shadowTex, glow: this.mats.lampGlow.map!,
       aniso: Math.min(this.pc ? 16 : 8, this.gl.capabilities.getMaxAnisotropy()), accent: this.accent,
-      night: () => this.mats.bulb.opacity, pc: this.pc,
+      night: () => this.mats.bulb.opacity, pc: this.pc, ramp: track.ramp,
     });
     this.scene.add(this.descStart.root);
   }

@@ -260,6 +260,7 @@ export class Showcase {
     // Strecke und Landschaft wie im Spiel
     await step(0.09, 'Straße');
     const track = (this.track = new Track(this.opts.dayKey, this.opts.names, 'descent'));
+    track.ramp = false;
     const terrain = new Terrain(track);
     terrain.window(0, Z1 + 700);
     const i0 = Math.max(0, Math.floor(Z0 / SEG) - 40);

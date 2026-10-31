@@ -171,6 +171,8 @@ export interface GameOptions {
    * reißt sich und den Vordermann um, und wer dahinter zu spät reagiert, fällt drüber
    */
   pileups?: boolean;
+  /** ohne Startrampe (WebGPU-Welt: dort steht keine) */
+  noRamp?: boolean;
   /**
    * WebGPU-Abfahrt: Fahrerfeld – so viele Fahrer stehen am Start mit dir (du startest hinten) und so viele sind
    * unterwegs ungefähr um dich herum (neue Gruppen kommen weit voraus dazu, Abgehängte fallen weg)
@@ -262,6 +264,7 @@ export class Abfahrt {
     this.friends = opts.friends.map((f) => ({ ...f, passed: false })).sort((a, b) => a.meters - b.meters);
     this.missionsDone = new Set(opts.missionsDone);
     this.track = new Track(opts.dayKey, opts.names);
+    this.track.ramp = !opts.noRamp;
     if (opts.cruise) { this.track.dropHazards(); this.dbg.speed = opts.cruise; }
     else if (opts.pileups) this.track.dropHazards();
     this.rng = mulberry32(this.track.seed ^ 0x5eed);
@@ -270,6 +273,8 @@ export class Abfahrt {
 
   reset() {
     this.track = new Track(this.opts.dayKey, this.opts.names);
+    // Start von der Rampe (die WebGPU-Welt baut keine)
+    this.track.ramp = !this.opts.noRamp;
     if (this.opts.cruise || this.opts.pileups) this.track.dropHazards();
     // WebGPU-Abfahrt (Massenstürze): Straße mal breiter, mal enger; sonst breiter nur dort, wo der Teamwagen kommt
     this.track.widthVar = !!this.opts.pileups;
@@ -402,7 +407,8 @@ export class Abfahrt {
       if (this.phaseT >= 2.25) {
         this.phase = 'playing';
         this.phaseT = 0;
-        this.p.v = 5;
+        // von der Rampe: anrollen (das Gefälle der Rampe bringt den Schwung)
+        this.p.v = this.track.ramp ? 1.5 : 5;
         for (const o of this.opps) o.v = 5;
       }
     }
@@ -948,11 +954,11 @@ export class Abfahrt {
     }
   }
 
-  /** Gruppe in der Ferne beim Start: 65–90 m voraus, langsamer als du (stehend bis „Los“) */
+  /** Gruppe in der Ferne beim Start: 55–75 m voraus, langsamer als du (stehend bis „Los“) */
   private spawnAhead(z: number) {
     const r = this.rng;
     const n0 = this.opps.length;
-    this.addGroup(z + between(r, 65, 90), Math.round(between(r, 5, 8)), between(r, 0.38, 0.42), 0);
+    this.addGroup(z + between(r, 55, 75), Math.round(between(r, 5, 8)), between(r, 0.44, 0.48), 0);
     for (let i = n0; i < this.opps.length; i++) this.opps[i].tuck = 0;
   }
 

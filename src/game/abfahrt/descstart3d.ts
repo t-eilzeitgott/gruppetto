@@ -46,6 +46,11 @@ export interface DescentStartDeps {
   night: () => number;
   /** PC-Grafik: alle Menschen in voller Detailstufe */
   pc?: boolean;
+  /**
+   * Start von der Rampe (ttstart3d.ts, bündig im Platz): Startlinie, Starter, Kommissäre, Fotografen und Kameramann
+   * stellt dann die Rampe – hier nur der Sprecher und die Leute im Ort
+   */
+  ramp?: boolean;
 }
 
 type V = number[];
@@ -217,7 +222,7 @@ export class DescentStart3D {
     this.kiosk(props, smooth);
     this.lamps(props, smooth);
     this.banners();
-    this.startLine();
+    if (!d.ramp) this.startLine();
     this.staff();
     this.locals();
     this.makePigeons();
@@ -1032,19 +1037,22 @@ export class DescentStart3D {
     const z = this.z0;
     const pg = propGeometries();
     const rider: [number, number] = [0.9, z];
-    const starter = this.add(lookFor(r, 'official'), 'stand', -2.35, z + 1.1, rider);
-    this.people[starter].role = 'starter';
-    this.carry(this.add(lookFor(r, 'official'), 'hands', 2.55, z - 0.6, rider), pg.watch, 'hands');
-    this.add(lookFor(r, 'official'), 'talk', 3.05, z - 2.1, [2.4, z + 0.6], { cheer: true });
-    const ph = [
-      this.add(lookFor(r, 'photographer'), 'kneel', -2.2, z + 4.6, rider, { follow: true }),
-      this.add(lookFor(r, 'photographer'), 'photo', 2.3, z + 5.4, rider, { follow: true }),
-      this.add(lookFor(r, 'photographer'), 'photo', -2.6, z + 6.8, rider, { follow: true }),
-    ];
-    ph.forEach((i, k) => this.carry(i, k === 2 ? pg.tele : pg.camera, 'hands'));
-    this.carry(this.add(lookFor(r, 'tv'), 'tv', 2.45, z + 2.6, rider, { follow: true }), pg.tvcam, 'shoulder');
-    this.add(lookFor(r, 'police'), 'back', -3.55, z - 6.5, [0, z - 6]);
-    this.add(lookFor(r, 'police'), 'back', 3.55, z + 9.5, [0, z + 9]);
+    const ph: number[] = [];
+    if (!this.d.ramp) {
+      const starter = this.add(lookFor(r, 'official'), 'stand', -2.35, z + 1.1, rider);
+      this.people[starter].role = 'starter';
+      this.carry(this.add(lookFor(r, 'official'), 'hands', 2.55, z - 0.6, rider), pg.watch, 'hands');
+      this.add(lookFor(r, 'official'), 'talk', 3.05, z - 2.1, [2.4, z + 0.6], { cheer: true });
+      ph.push(
+        this.add(lookFor(r, 'photographer'), 'kneel', -2.2, z + 4.6, rider, { follow: true }),
+        this.add(lookFor(r, 'photographer'), 'photo', 2.3, z + 5.4, rider, { follow: true }),
+        this.add(lookFor(r, 'photographer'), 'photo', -2.6, z + 6.8, rider, { follow: true }),
+      );
+      ph.forEach((i, k) => this.carry(i, k === 2 ? pg.tele : pg.camera, 'hands'));
+      this.carry(this.add(lookFor(r, 'tv'), 'tv', 2.45, z + 2.6, rider, { follow: true }), pg.tvcam, 'shoulder');
+      this.add(lookFor(r, 'police'), 'back', -3.55, z - 6.5, [0, z - 6]);
+      this.add(lookFor(r, 'police'), 'back', 3.55, z + 9.5, [0, z + 9]);
+    }
     // Sprecher auf der Bühne (Mikrofon), schaut zum Fahrer
     const sx = 6.6, sf = this.z0 - 16.5;
     const sp = this.add({ ...lookFor(r, 'official'), accent: this.d.accent, print: 'SPEAKER', badge: true }, 'speak', sx, sf, [0, sf], { y: this.gy(sx, sf) + 0.95, lod: 'mid' });

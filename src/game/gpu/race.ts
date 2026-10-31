@@ -303,6 +303,8 @@ export class Race {
 
     await step(0.1, 'Strecke');
     const track = (this.track = new Track(this.opts.dayKey, this.opts.names, this.opts.tt ? 'tt' : 'descent', this.opts.tt?.town ?? null));
+    // keine Startrampe in der WebGPU-Welt (dieselbe Straße wie die Fahrphysik mit Massenstürzen)
+    track.ramp = false;
     // Abfahrt mit Fahrerfeld: Straße mal breiter, mal enger (dieselbe Regel wie in der Fahrphysik)
     track.widthVar = !this.opts.tt;
     const terrain = (this.terrain = new Terrain(track));
@@ -482,6 +484,7 @@ export class Race {
       // keine Hindernisse, dafür Massenstürze (zu schnell aufs Hinterrad); ein ganzes Fahrerfeld
       pileups: true,
       field: FIELD,
+      noRamp: true,
       onEvent: (ev) => this.opts.onEvent?.(ev),
       onOver: (res) => this.opts.onOver?.(res),
     });

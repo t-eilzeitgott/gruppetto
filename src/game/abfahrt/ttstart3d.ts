@@ -11,7 +11,7 @@
  * (lokal −z). Die Menschen am Start sind voll detailliert und bewegt (human3d.ts) und stehen in Weltkoordinaten.
  */
 import * as THREE from 'three';
-import { EDGE, type Track } from './track';
+import { EDGE, SEG, type Track } from './track';
 import { GB, lin, type RGBf } from './models3d';
 import { Human, lookFor, propGeometries, type Act, type Role } from './human3d';
 import { adCell, AD_COUNT } from './tex3d';
@@ -38,7 +38,8 @@ const CAR_X = -4.95;
 
 /** Zuschauer hinter der Absperrung weglassen? (Lücke für den Teamwagen; Stück i, Seite sg) */
 export function ttCrowdGap(track: Track, i: number, sg: number): boolean {
-  return track.kind === 'tt' && sg < 0 && i >= 6 && i <= 10;
+  const k = i - Math.round(track.rampZ / SEG);
+  return track.kind !== 'descent' && sg < 0 && k >= 6 && k <= 10;
 }
 
 export interface TtStartDeps {
@@ -59,6 +60,15 @@ export interface TtStartDeps {
   side: (f: number, sg: number, dx: number) => number;
   /** PC-Grafik: alle Menschen in voller Detailstufe */
   pc?: boolean;
+  /** Streckenmeter des Starts (Fahrer auf der Rampe), Standard 0 */
+  f0?: number;
+  /**
+   * Podest bündig im Platz (Abfahrt: die Piazza liegt auf Höhe des Podests, nur die Rampe führt hinunter auf die
+   * Straße) – ohne Verkleidung, Treppe, Teamwagen und Mechaniker
+   */
+  flush?: boolean;
+  /** Countdown des Spiels: von welcher Zahl, Sekunden je Zahl (Zeitfahren 5 / 0,6) */
+  count?: [number, number];
 }
 
 type V = number[];
@@ -129,12 +139,15 @@ export class TtStart3D {
   private readonly track: Track;
   private readonly d: TtStartDeps;
   private readonly y0: number;
+  /** Streckenmeter des Starts: alles hier rechnet in Metern ab dort */
+  private readonly f0: number;
 
   constructor(d: TtStartDeps) {
     this.d = d;
     const t = d.track;
     this.track = t;
-    t.world(0, 0, 0, this.W0);
+    this.f0 = d.f0 ?? 0;
+    t.world(this.f0, 0, 0, this.W0);
     this.y0 = this.W0.y;
     this.local.position.set(this.W0.x, this.W0.y, this.W0.z);
     this.local.rotation.y = -this.W0.th;
@@ -147,7 +160,7 @@ export class TtStart3D {
     const carpet = new GB();
     carpet.uv = true;
     const flat = new GB();
-    this.podium(props, ads);
+    if (!d.flush) this.podium(props, ads);
     this.ramp(props, ads, carpet);
     this.clockStand(props);
     this.speakers(props);
@@ -181,9 +194,9 @@ export class TtStart3D {
     ph.forEach((i, k) => carry(i, k === 3 ? pg.tele : pg.camera, 'hands'));
     carry(add('tv', 'tv', 3.3, 4.4, [0.3, 0.0], this.road(4.4), true), pg.tvcam, 'shoulder');
     add('police', 'back', -3.3, 13.9, [0.5, 16], this.road(13.9));
-    this.mech = add('mechanic', 'cross', -4.35, 20.9, [0, 22], this.road(20.9) + this.d.side(20.9, -1, 4.35 - EDGE));
+    if (!d.flush) this.mech = add('mechanic', 'cross', -4.35, 20.9, [0, 22], this.road(20.9) + this.side(20.9, -1, 4.35 - EDGE));
     for (const s of this.staff) this.blob(flat, s.x, s.f, s.y, s.act === 'kneel' ? 1.0 : 0.85);
-    this.blob(flat, CAR_X, CAR_F, this.road(CAR_F) + this.d.side(CAR_F, -1, -CAR_X - EDGE), 2.6, 5.4);
+    if (!d.flush) this.blob(flat, CAR_X, CAR_F, this.road(CAR_F) + this.side(CAR_F, -1, -CAR_X - EDGE), 2.6, 5.4);
     for (let i = 0; i < this.staff.length; i++) this.place(i);
 
     // Netze
@@ -198,7 +211,10 @@ export class TtStart3D {
     };
     mesh(props, d.props);
     mesh(ads, d.ads, true);
-    const ct = new THREE.CanvasTexture(carpetTex(d.accent));
+    // Schrift auf dem Podest: im Zeitfahren „Cronometro“, sonst „Partenza“ in der Landessprache
+    const lang = t.lang;
+    const label = t.kind === 'tt' ? 'CRONOMETRO' : lang === 'fr' ? 'DÉPART' : lang === 'es' ? 'SALIDA' : lang === 'en' ? 'START' : 'PARTENZA';
+    const ct = new THREE.CanvasTexture(carpetTex(d.accent, label));
     ct.colorSpace = THREE.SRGBColorSpace;
     ct.anisotropy = d.aniso;
     ct.wrapS = ct.wrapT = THREE.ClampToEdgeWrapping;
@@ -245,7 +261,12 @@ export class TtStart3D {
 
   /** Fahrbahnhöhe an Streckenmeter f über dem Start (hinter dem Start: Podest, 0) */
   private road(f: number): number {
-    return f <= 0 ? 0 : this.track.heightAt(f) - this.y0;
+    return f <= 0 ? 0 : this.track.heightAt(this.f0 + f) - this.y0;
+  }
+
+  /** Boden neben der Straße (Startkoordinaten f) */
+  private side(f: number, sg: number, dx: number): number {
+    return this.d.side(this.f0 + f, sg, dx);
   }
 
   /** Kiste in Startkoordinaten (Mitte x, y, f; Maße quer, hoch, längs) */
@@ -455,7 +476,7 @@ export class TtStart3D {
     const glass = lin('#26303a');
     const black = lin('#141416');
     const metal = lin('#b9bec5');
-    const y = this.road(CAR_F) + this.d.side(CAR_F, -1, -CAR_X - EDGE);
+    const y = this.road(CAR_F) + this.side(CAR_F, -1, -CAR_X - EDGE);
     const base = M4(CAR_X, y, CAR_F);
     const put = (g: THREE.BufferGeometry, x: number, yy: number, z: number, col: RGBf, rx = 0, ry = 0, rz = 0) =>
       gb.add(g, new THREE.Matrix4().compose(new THREE.Vector3(x, yy, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(1, 1, 1)).premultiply(base), col);
@@ -577,13 +598,15 @@ export class TtStart3D {
   /** je Bild: Halter, Starter, Uhr, Blitze; Teamwagen in den Farben des Fahrers */
   update(g: RaceView, dt: number) {
     const p = g.p;
+    // Lage des Fahrers ab dem Start
+    const pz = p.z - this.f0;
     const phase = g.phase as string;
-    const near = p.z < 260 || phase === 'ready' || phase === 'countdown';
+    const near = pz < 260 || phase === 'ready' || phase === 'countdown';
     this.root.visible = near;
     if (!near) return;
     // Teamwagen (erst, wenn das Trikot feststeht)
     const kk = `${p.kit.jersey}|${p.kit.side}`;
-    if (kk !== this.carKit) { this.carKit = kk; this.buildCar(p.kit); }
+    if (kk !== this.carKit && !this.d.flush) { this.carKit = kk; this.buildCar(p.kit); }
     if (phase !== this.lastPhase) {
       if (phase === 'playing' && (this.lastPhase === 'countdown' || this.lastPhase === '')) this.goT = 0;
       if (phase === 'ready' || phase === 'countdown') this.goT = -1;
@@ -601,7 +624,7 @@ export class TtStart3D {
       this.place(this.holder);
     }
     // Fahrer (Kopf) – dorthin schauen alle; Sattel – dort greift der Halter
-    this.world(p.x, 1.55, p.z, this.riderHead);
+    this.world(p.x, 1.55, pz, this.riderHead);
     const hold = this.staff[this.holder].h;
     this.world(p.x, 0.97, -0.21, hold.holdAt);
     // „Los“: der Halter lässt los und klatscht dem Fahrer hinterher, der Starter senkt die Hand
@@ -613,7 +636,7 @@ export class TtStart3D {
       const s = this.staff[i];
       s.h.lookAt = i === this.holder && !released ? null : this.riderHead;
       if (s.track) {
-        const want = Math.atan2(p.x - s.x, p.z + 0.5 - s.f);
+        const want = Math.atan2(p.x - s.x, pz + 0.5 - s.f);
         let d = want - s.yaw;
         d = Math.atan2(Math.sin(d), Math.cos(d));
         // nicht ganz herum (sie stehen am Rand und schauen die Straße entlang)
@@ -623,11 +646,12 @@ export class TtStart3D {
       s.h.update(dt);
     }
     // Startuhr
-    if (p.z < 80) {
+    if (pz < 80) {
       let st: ClockState;
       if (phase === 'countdown') {
-        const n = Math.max(1, 5 - Math.floor(g.phaseT / 0.6));
-        st = { big: String(n), col: '#ff3b2f', lamps: 6 - n, lampCol: '#ff2a1f', small: 'START' };
+        const [from, step] = this.d.count ?? [5, 0.6];
+        const n = Math.max(1, from - Math.floor(g.phaseT / step));
+        st = { big: String(n), col: '#ff3b2f', lamps: Math.round((5 * (from - n + 1)) / from), lampCol: '#ff2a1f', small: 'START' };
       } else if (phase === 'playing' && this.goT >= 0 && this.goT < 1.6) {
         st = { big: 'GO', col: '#39e46b', lamps: 5, lampCol: '#2fe05a', small: 'START' };
       } else if (phase === 'playing') {
@@ -646,7 +670,7 @@ export class TtStart3D {
       const ph = this.staff[fl.who];
       if (fl.t > 0) { fl.t -= dt; if (fl.t <= 0) fl.s.visible = false; }
       fl.next -= dt;
-      const gap = ph.f - p.z;
+      const gap = ph.f - pz;
       let want = false;
       if (phase === 'playing' && this.goT >= 0 && this.goT < 0.5 && fl.next > 0.6) fl.next = Math.random() * 0.4;
       if (fl.next <= 0) {
@@ -683,7 +707,7 @@ export class TtStart3D {
  * Startlinie, „START“ lang gezogen (aus der Kamera hinter dem Fahrer lesbar), Pfeile die Rampe hinunter, das
  * Logo auf dem Podest hinter dem Fahrer und der Rahmen des Startplatzes.
  */
-function carpetTex(accent: string): HTMLCanvasElement {
+function carpetTex(accent: string, label = 'CRONOMETRO'): HTMLCanvasElement {
   const W = 512, H = 2048;
   const cv = document.createElement('canvas');
   cv.width = W;
@@ -771,6 +795,6 @@ function carpetTex(accent: string): HTMLCanvasElement {
   }
   // Logo auf dem Podest hinter dem Fahrer
   word('gruppetto', 0, -2.25, 58, '800', '"Arial Rounded MT Bold", "SF Pro Rounded", ui-rounded, ' + SANS, 0.85, X(1.45) - X(-1.45));
-  word('CRONOMETRO', 0, -3.35, 22, '700', SANS, 0.6, X(1.1) - X(-1.1));
+  word(label, 0, -3.35, 22, '700', SANS, 0.6, X(1.1) - X(-1.1));
   return cv;
 }
