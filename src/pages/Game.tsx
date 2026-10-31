@@ -12,7 +12,7 @@ import type { Profile } from '../lib/types';
 import { Abfahrt, type Friend, type GameEvent, type HudState, type RunResult, type ScoreCat } from '../game/abfahrt/engine';
 import { Renderer3D } from '../game/abfahrt/render3d';
 import { FpsMeter } from '../game/fpsMeter';
-import { FrameClock } from '../game/frameClock';
+import { FrameClock, paceText } from '../game/frameClock';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { Track } from '../game/abfahrt/track';
 import { HowTo } from './finale';
@@ -306,6 +306,7 @@ export function GamePage() {
       const P = perfRef.current;
       let lastPhase = '';
       let lastRange = rangeDrop();
+      let lastPace = -1;
       const loop = (now: number) => {
         // fester Bildtakt (frameClock.ts): zu frühe Aufrufe auslassen – jedes Bild kommt im gleichen Abstand
         if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
@@ -345,6 +346,7 @@ export function GamePage() {
         if (rec && P.rec) {
           const rd = rangeDrop();
           if (rd !== lastRange) { P.event(EV.range, `Sichtweite ${viewRange().label}${rd ? ` (${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`); lastRange = rd; }
+          if (clock.changes !== lastPace) { P.event(EV.pace, `Bildtakt: ${paceText(clock)}`); lastPace = clock.changes; }
           const ph = uiRef.current === 'paused' ? 'paused' : eng.phase;
           if (ph !== lastPhase) { P.event(EV.phase, ph); lastPhase = ph; }
           P.mark(SEC.anzeige);

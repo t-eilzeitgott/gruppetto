@@ -8,6 +8,7 @@ import { Renderer3D } from './render3d';
 import { attachWeather, type WeatherFx } from './weather';
 import type { RaceView } from './engine';
 import { uiBusy } from '../uiBusy';
+import { setGfxScope } from './viewRange';
 
 export interface Stage {
   renderer: Renderer3D; canvas: HTMLCanvasElement; overlay: HTMLCanvasElement; weather: WeatherFx | null;
@@ -52,6 +53,8 @@ export function stageInUse(): boolean {
 
 /** Bühne für ein Spiel: die vorgewärmte oder eine neue (wirft, wenn kein WebGL) */
 export function acquireStage(game: string): Stage {
+  // Auflösung und Sichtweite merkt sich das Gerät je Spiel
+  setGfxScope(game);
   const s = spare;
   spare = null;
   if (s && !s.renderer.lost) {
@@ -107,6 +110,7 @@ export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: b
     }
   }
   s.game = game;
+  setGfxScope(game);
   // erstes Vorwärmen (unter dem Intro): mit allem, was geht; Umbau, während jemand die Startseite bedient: in
   // kleinen Portionen über mehr Bilder, damit die Seite flüssig bleibt
   s.renderer.idleK = reuse ? 0.35 : 1;

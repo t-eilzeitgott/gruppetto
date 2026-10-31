@@ -23,7 +23,7 @@ const NS = SECTIONS.length;
 export const SEC = Object.fromEntries(SECTIONS.map((s, i) => [s, i])) as Record<Section, number>;
 
 /** Ereignisse (als Bits je Bild, mit Text auch als Liste) */
-export const EV = { chunk: 1, sync: 2, tile: 4, shader: 8, quality: 16, range: 32, phase: 64, resize: 128, lost: 256, mtn: 512, probe: 1024, error: 2048 } as const;
+export const EV = { chunk: 1, sync: 2, tile: 4, shader: 8, quality: 16, range: 32, phase: 64, resize: 128, lost: 256, mtn: 512, probe: 1024, error: 2048, pace: 4096 } as const;
 const EV_NAMES: [number, string][] = Object.entries(EV).map(([k, v]) => [v, k]);
 
 /** Ort auf der Strecke */
@@ -311,7 +311,7 @@ function makeReport(r: Rec): Report {
     const m = i1 - i0;
     const mid = i0 + (m >> 1);
     dts.sort((a, b) => a - b);
-    timeline.push([r1(r.t[i0]), Math.round(r.z[mid]), Math.round(r.v[mid] * 3.6), r1(1000 / (s / m)), r1(pct(dts, 0.6)), r1(mx), r1(c / m), r1(cm), r1(lt), r1(g), r1(dr), h, r.calls[mid], Math.round(r.tris[mid] / 1000), r2(r.quality[mid]), r.range[mid], PLACES[r.place[mid]], PHASES[r.phase[mid]], r.riders[mid]]);
+    timeline.push([r1(r.t[i0]), Math.round(r.z[mid]), Math.round(r.v[mid] * 3.6), r1(1000 / (s / m)), r1(pct(dts, 0.6)), r1(mx), r1(c / m), r1(cm), r1(lt), r1(g), r1(dr), h, r.calls[mid], Math.round(r.tris[mid] / 1000), r2(r.quality[mid]), r.range[mid], PLACES[r.place[mid]], PHASES[r.phase[mid]], r.riders[mid], r1(r.period[mid])]);
     i0 = i1;
   }
   const probeAll = probeStats(probes.filter((i) => r.phase[i] === playing));
@@ -334,7 +334,7 @@ function makeReport(r: Rec): Report {
     verteilung_ms: hist, bausteine_ms: secStats,
     ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse'],
     ruckler_liste: hitchRows,
-    verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung', 'sichtweite_minus', 'ort', 'phase', 'fahrer_modelle'],
+    verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung', 'sichtweite_minus', 'ort', 'phase', 'fahrer_modelle', 'takt_ms'],
     verlauf_2s: timeline,
     ereignisse: r.events.slice(0, 250).map((e) => [r1(e.t), e.kind, e.text]),
   };

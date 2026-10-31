@@ -6090,6 +6090,8 @@ export class Renderer3D {
         if (!this.fadeWarm) {
           const fm = new RiderModel(LOOKS[0], this.shadowTex, this.pc ? 1 : 0);
           fm.prepareFade();
+          // halb durchsichtig: zeichnet (unsichtbar) mit den durchsichtigen Materialien
+          fm.fade(0.5, 1);
           appearifyTree(fm.group);
           this.scene.add(fm.group);
           this.warmUp(fm.group);
@@ -6150,10 +6152,14 @@ export class Renderer3D {
     }
     // PC-Grafik: auch die Gegner mit voller Detailstufe am Rad (Kette, Zähne, Schriftzüge)
     const n = new RiderModel(kit, this.shadowTex, this.pc ? 1 : 0);
-    if (fade) n.prepareFade();
     appearifyTree(n.group);
-    // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen
+    // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen – deckend und,
+    // wer durchsichtig werden kann, auch durchsichtig (fade wechselt zwischen beiden)
     this.warmUp(n.group);
+    if (fade) {
+      n.prepareFade();
+      n.withFadeMats(() => this.warmUp(n.group));
+    }
     this.scene.add(n.group);
     return n;
   }

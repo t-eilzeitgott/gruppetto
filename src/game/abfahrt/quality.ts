@@ -17,33 +17,35 @@
  *   Fahrt unscharf halten). Danach die Sichtweite wieder weiter.
  * - Beide Stufen merkt sich das Gerät für die nächste Fahrt.
  */
-import { canDropRange, rangeDrop, setRangeDrop } from './viewRange';
+import { canDropRange, gfxScope, rangeDrop, setRangeDrop } from './viewRange';
 
-const KEY = 'gruppetto.gfx';
+/** je Spiel (viewRange.ts: setGfxScope) */
+const key = () => `gruppetto.gfx.${gfxScope()}`;
 
 /**
  * Einmal zurücksetzen: ein Fehler im festen Bildtakt (40 statt 60 Bilder je Sekunde) ließ die Regelung Auflösung
  * und Sichtweite senken, obwohl das Gerät Luft hatte – diese Stufen sind gespeichert und sollen nicht bleiben.
+ * (Seit Stand 3 je Spiel getrennt; die alten gemeinsamen Stufen fallen weg.)
  */
 const RESET = 'gruppetto.gfx.v';
 try {
-  if (typeof localStorage !== 'undefined' && localStorage.getItem(RESET) !== '2') {
-    localStorage.removeItem(KEY);
+  if (typeof localStorage !== 'undefined' && localStorage.getItem(RESET) !== '3') {
+    localStorage.removeItem('gruppetto.gfx');
     localStorage.removeItem('gruppetto.rangeDrop');
-    localStorage.setItem(RESET, '2');
+    localStorage.setItem(RESET, '3');
   }
 } catch { /* kein Speicher */ }
 
 export function storedQuality(): number {
   try {
-    const v = Number(localStorage.getItem(KEY));
+    const v = Number(localStorage.getItem(key()));
     if (v >= 0.5 && v <= 1) return v;
   } catch { /* kein Speicher */ }
   return 1;
 }
 
 function store(q: number) {
-  try { localStorage.setItem(KEY, q.toFixed(2)); } catch { /* egal */ }
+  try { localStorage.setItem(key(), q.toFixed(2)); } catch { /* egal */ }
 }
 
 /** Bildzeit, ab der ein Bild als langsam gilt (ms; unter 53 Bilder je Sekunde) */

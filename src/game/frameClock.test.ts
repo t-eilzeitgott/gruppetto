@@ -125,12 +125,23 @@ test('nach einer langen Pause wird nichts nachgeholt', () => {
   for (const d of dts) assert.ok(d < P60 * 2.1, `Schritt ${d.toFixed(2)} ms`);
 });
 
-test('kurz falsch erkannter Takt (90 Hz, dann 120 Hz): nie langsamer als 45 Bilder je Sekunde', () => {
+test('kurz falsch erkannter Takt (90 Hz, dann 120 Hz): nie seltener als 60 Bilder je Sekunde', () => {
   const stamps: number[] = [];
   let t = 0;
   // erst 90 Hz in Zweierschritten, dann 120 Hz
   for (let i = 0; i < 200; i++) { t += 2000 / 90; stamps.push(t); }
   for (let i = 0; i < 1200; i++) { t += P120; stamps.push(t); }
   const { clock } = run(stamps);
-  assert.ok(clock.target <= 1000 / 45 + 0.5, `Takt ${clock.target.toFixed(1)} ms`);
+  assert.ok(clock.target <= P60 + 1, `Takt ${clock.target.toFixed(1)} ms`);
+});
+
+test('falsch erkannter Takt (90, 100, 144, 240 Hz) und langsame Bilder: der feste Takt bleibt bei höchstens 16,7 ms', () => {
+  for (const hz of [60, 72, 75, 90, 100, 120, 144, 165, 240]) {
+    const clock = new FrameClock(0);
+    clock.period = 1000 / hz;
+    // Bilder, die jeden Takt verpassen (25 ms auf dem echten 120-Hz-Schirm)
+    let t = 0;
+    for (let i = 0; i < 2000; i++) { t += 25; clock.tick(t); }
+    assert.ok(clock.target <= P60 + 1, `${hz} Hz: Takt ${clock.target.toFixed(1)} ms (jeder ${clock.div}.)`);
+  }
 });

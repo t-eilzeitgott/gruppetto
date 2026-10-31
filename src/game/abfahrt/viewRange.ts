@@ -42,11 +42,28 @@ const fallback = () => (gfxOn('pc') ? RANGES[5] : RANGES[3]);
 let cur: ViewRange = (() => {
   try { return RANGES.find((r) => r.id === localStorage.getItem(KEY)) ?? fallback(); } catch { return fallback(); }
 })();
+/**
+ * Je Spiel getrennt gemerkt (Sichtweite hier, Auflösung in quality.ts): ein Spiel, das ein Gerät stärker fordert
+ * (das Sprintfinale mit dem ganzen Feld), soll die anderen nicht mit herunterziehen.
+ */
+let scope = 'abfahrt';
+const SCOPES = ['abfahrt', 'zeitfahren', 'sprint', 'berg', 'editor'];
+const dropKey = (sc = scope) => `${KEY_DROP}.${sc}`;
+const loadDrop = () => {
+  try { return Math.max(0, Math.min(RANGES.length - 1, Number(localStorage.getItem(dropKey())) || 0)); } catch { return 0; }
+};
 /** automatisch um so viele Stufen kürzer als gewählt (Auflösungsregelung, siehe quality.ts) */
-let drop = (() => {
-  try { return Math.max(0, Math.min(RANGES.length - 1, Number(localStorage.getItem(KEY_DROP)) || 0)); } catch { return 0; }
-})();
+let drop = loadDrop();
 let ver = 1;
+
+/** welches Spiel gerade läuft (oder vorgewärmt wird): dessen gemerkte Stufen gelten */
+export function setGfxScope(id: string) {
+  if (id === scope) return;
+  scope = id;
+  const d = loadDrop();
+  if (d !== drop) { drop = d; ver += 1; }
+}
+export function gfxScope(): string { return scope; }
 
 /** wirksame Sichtweite: die gewählte, bei knapper Leistung automatisch kürzer */
 export function viewRange(): ViewRange { return RANGES[Math.max(0, RANGES.indexOf(cur) - drop)]; }
@@ -58,10 +75,10 @@ export function setViewRange(id: RangeId) {
   const r = RANGES.find((x) => x.id === id);
   if (!r || r === cur) return;
   cur = r;
-  // neue Wahl: automatische Kürzung von vorn
+  // neue Wahl: automatische Kürzung von vorn (in allen Spielen)
   drop = 0;
   ver += 1;
-  try { localStorage.setItem(KEY, id); localStorage.setItem(KEY_DROP, '0'); } catch { /* egal */ }
+  try { localStorage.setItem(KEY, id); for (const sc of SCOPES) localStorage.removeItem(dropKey(sc)); } catch { /* egal */ }
 }
 export function rangeDrop(): number { return drop; }
 /** um wie viele Stufen die Sichtweite automatisch kürzer ist (bis zur kürzesten); das Gerät merkt es sich */
@@ -70,7 +87,7 @@ export function setRangeDrop(n: number) {
   if (d === drop) return;
   drop = d;
   ver += 1;
-  try { localStorage.setItem(KEY_DROP, String(d)); } catch { /* egal */ }
+  try { localStorage.setItem(dropKey(), String(d)); } catch { /* egal */ }
 }
 /** kann die Sichtweite noch kürzer werden? */
 export function canDropRange(): boolean { return RANGES.indexOf(cur) - drop > 0; }

@@ -5,6 +5,7 @@ const store = new Map<string, string>();
 (globalThis as { localStorage?: unknown }).localStorage = {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => { store.set(k, v); },
+  removeItem: (k: string) => { store.delete(k); },
 };
 // erst nach dem Speicher-Ersatz laden (die Sichtweite liest ihn beim Start)
 const { QualityGovernor, storedQuality } = await import('./quality.ts');
@@ -23,7 +24,7 @@ function run(frames: number[], q0 = 1): { q: number; changes: number[] } {
 }
 
 const rep = (ms: number, n: number) => Array.from({ length: n }, () => ms);
-const reset = () => { setViewRange('max'); setRangeDrop(0); store.set('gruppetto.gfx', '1'); };
+const reset = () => { setViewRange('max'); setRangeDrop(0); store.set('gruppetto.gfx.abfahrt', '1'); };
 
 test('120 Hz mit einzelnen Rucklern: nichts ändert sich', () => {
   reset();

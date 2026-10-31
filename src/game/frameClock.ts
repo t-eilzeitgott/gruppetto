@@ -36,6 +36,8 @@ export class FrameClock {
   /** fester Bildtakt eingeschaltet (ready lässt Aufrufe aus) */
   pace = true;
   private measured = false;
+  /** zählt bei jeder Änderung von Takt oder Takten je Bild hoch (für die Messfahrt) */
+  changes = 0;
 
   constructor(start = performance.now()) {
     this.prev = start;
@@ -101,10 +103,11 @@ export class FrameClock {
     const T = this.target;
     let late = 0;
     for (let i = 0; i < this.fn; i++) if (this.frames[i] > T * 1.25 + 1) late += 1;
-    // nie langsamer als 45 Bilder je Sekunde (auf 120 Hz also höchstens jeder zweite Takt: 60 je Sekunde) – reicht
-    // das nicht, ist es Sache der Auflösungsregelung
-    if (late > this.fn / 8 && this.period * (this.div + 1) <= 1000 / 45 + 0.5) {
+    // nie seltener als 60 Bilder je Sekunde (auf 120 Hz also höchstens jeder zweite Takt) – reicht das nicht, ist es
+    // Sache der Auflösungsregelung
+    if (late > this.fn / 8 && this.div + 1 <= maxDiv(this.period)) {
       this.div += 1;
+      this.changes += 1;
       this.fn = 0;
       this.fk = 0;
     }
@@ -140,20 +143,30 @@ export class FrameClock {
     if (Math.abs(best - this.period) > 0.08 * this.period) {
       const t = this.target;
       this.period = best;
-      // nie langsamer als 45 Bilder je Sekunde (wie in learnPace): eine kurze Fehlerkennung (90 Hz, dann 120 Hz)
-      // ergab sonst drei Takte je Bild – 40 Bilder je Sekunde für die ganze Fahrt, und die Auflösungsregelung
-      // senkte Auflösung und Sichtweite, obwohl das Gerät 60 schafft
+      // nie seltener als 60 Bilder je Sekunde (wie in learnPace): eine Fehlerkennung (90 oder 240 statt 120 Hz)
+      // ergab sonst einen Takt von 20–22 ms – auf dem 120-Hz-Schirm also 25 ms, 40 Bilder je Sekunde, und die
+      // Auflösungsregelung senkte Auflösung und Sichtweite, obwohl das Gerät 60 schafft
       this.div = this.measured ? Math.max(1, Math.min(maxDiv(best), Math.round(t / best))) : 1;
       this.fn = 0;
       this.fk = 0;
+      this.changes += 1;
     }
     this.measured = true;
   }
 }
 
-/** höchstens so viele Takte je Bild, dass es mindestens 45 Bilder je Sekunde bleiben */
-function maxDiv(period: number): number {
-  return Math.max(1, Math.floor((1000 / 45 + 0.5) / period));
+/**
+ * höchstens so viele Takte je Bild, dass es mindestens 60 Bilder je Sekunde bleiben. Der feste Takt soll nur das
+ * Springen zwischen 60 und 120 glätten – nie selbst bremsen: ein falsch erkannter Takt (90, 144 oder 240 statt
+ * 120 Hz) mit einem Bildabstand zwischen 17 und 25 ms wird auf dem echten 120-Hz-Schirm zu 25 ms.
+ */
+export function maxDiv(period: number): number {
+  return Math.max(1, Math.floor((1000 / 60 + 1) / period));
+}
+
+/** Takt in Worten (Messfahrt): „120 Hz, jeder 2. Takt → 16,7 ms“ */
+export function paceText(c: FrameClock): string {
+  return `${Math.round(1000 / c.period)} Hz erkannt${c.div > 1 ? `, jeder ${c.div}. Takt` : ''} → Bild alle ${c.target.toFixed(1)} ms`;
 }
 
 /** übliche Bildschirmtakte (ms), längster zuerst */

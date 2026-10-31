@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/abfahrt/pool';
 import { QualityGovernor, storedQuality } from '../game/abfahrt/quality';
 import { FpsMeter } from '../game/fpsMeter';
-import { FrameClock } from '../game/frameClock';
+import { FrameClock, paceText } from '../game/frameClock';
 import { EV, SEC, type Perf3D } from '../game/abfahrt/perf3d';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { rangeDrop, viewRange } from '../game/abfahrt/viewRange';
@@ -121,6 +121,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       let lastDraw = 0;
       let lastPhase = '';
       let lastRange = rangeDrop();
+      let lastPace = -1;
       const loop = (now: number) => {
         // fester Bildtakt (frameClock.ts): zu frühe Aufrufe auslassen – jedes Bild kommt im gleichen Abstand
         if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
@@ -172,6 +173,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         if (rec && P!.rec) {
           const rd = rangeDrop();
           if (rd !== lastRange) { P!.event(EV.range, `Sichtweite ${viewRange().label}${rd ? ` (${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`); lastRange = rd; }
+          if (clock.changes !== lastPace) { P!.event(EV.pace, `Bildtakt: ${paceText(clock)}`); lastPace = clock.changes; }
           const ph = uiRef.current === 'paused' ? 'paused' : eng.phase;
           if (ph !== lastPhase) { P!.event(EV.phase, ph); lastPhase = ph; }
           P!.mark(SEC.anzeige);

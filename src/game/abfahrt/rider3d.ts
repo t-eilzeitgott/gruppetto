@@ -730,31 +730,60 @@ export class RiderModel {
   }
 
   private fadeMats: THREE.Material[] | null = null;
+  /** je Netz: das eigene (geteilte, deckende) Material und sein durchsichtiger Zwilling */
+  private solidOf: THREE.Material[] = [];
+  private fadeOf: THREE.Material[] = [];
+  private solid = true;
   private alpha = 1;
 
-  /** Für Durchsichtigkeit vorbereiten (eigene Materialien); danach ändert fade() nur die Deckkraft */
+  /**
+   * Für Durchsichtigkeit vorbereiten (eigene Materialien); danach ändert fade() nur die Deckkraft. Ganz deckend
+   * zeichnet der Fahrer wieder mit den geteilten, deckenden Materialien: Durchsichtiges wird nach hinten sortiert,
+   * gemischt und auf dem iPhone ganz schattiert, auch wo es verdeckt ist – im dichten Feld des Sprintfinales mit
+   * 20 und mehr Fahrern teuer.
+   */
   prepareFade() {
     if (this.fadeMats) return;
     const list: THREE.Material[] = [];
     const cache = new Map<THREE.Material, THREE.Material>();
     for (const m of this.meshes) {
-      if (Array.isArray(m.material)) continue;
+      if (Array.isArray(m.material)) { this.solidOf.push(m.material[0]); this.fadeOf.push(m.material[0]); continue; }
       const src = m.material as THREE.Material;
       let c = cache.get(src);
       if (!c) { c = src.clone(); c.transparent = true; appearify(c); cache.set(src, c); list.push(c); }
-      m.material = c;
+      this.solidOf.push(src);
+      this.fadeOf.push(c);
     }
     this.fadeMats = list;
+    this.solid = true;
+    this.useSolid(this.alpha >= 0.999);
+  }
+
+  /** Materialien setzen: deckend (geteilt) oder die durchsichtigen Zwillinge */
+  private useSolid(on: boolean) {
+    if (on === this.solid || !this.fadeMats) return;
+    this.solid = on;
+    this.meshes.forEach((m, i) => { if (!Array.isArray(m.material)) m.material = on ? this.solidOf[i] : this.fadeOf[i]; });
+  }
+
+  /** zum Vorübersetzen (render3d warmUp): kurz die durchsichtigen Materialien, danach wieder wie vorher */
+  withFadeMats(fn: () => void) {
+    const was = this.solid;
+    this.useSolid(false);
+    fn();
+    this.useSolid(was);
   }
 
   /** Deckkraft weich auf das Ziel bringen (Fahrer zwischen Kamera und Spieler werden durchsichtig) */
   fade(target: number, dt: number) {
     if (!this.fadeMats) return;
     const a = Math.abs(target - this.alpha) < 0.01 ? target : this.alpha + (target - this.alpha) * Math.min(1, dt * 9);
-    if (a === this.alpha) return;
-    this.alpha = a;
-    // Tiefe weiter schreiben: der durchsichtige Fahrer bleibt ein ruhiger „Geist“ ohne innere Überlagerungen
-    for (const m of this.fadeMats) m.opacity = a;
+    if (a !== this.alpha) {
+      this.alpha = a;
+      // Tiefe weiter schreiben: der durchsichtige Fahrer bleibt ein ruhiger „Geist“ ohne innere Überlagerungen
+      for (const m of this.fadeMats) m.opacity = a;
+    }
+    this.useSolid(a >= 0.999);
   }
 
   private v1 = new THREE.Vector3();
