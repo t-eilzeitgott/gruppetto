@@ -303,13 +303,15 @@ export class Abfahrt {
     this.chain = 0; this.mult = 1; this.multT = 0;
     this.draft = 0; this.shake = 0; this.heading = 0; this.push = 0;
     this.phase = 'ready'; this.phaseT = 0; this.time = 0; this.timeScale = 1;
-    // Abfahrt mit Startort: Ort, Landstraße und Panorama-Kehre ohne Feld – die ersten Gruppen kurz nach der Kehre
+    // Abfahrt mit Startort: im Ort nur die eine Gruppe voraus (spawnAhead), gleich hinter dem Ort das volle Feld –
+    // die ersten Gruppen fahren schon auf der Landstraße vor dir (das Feld setzt sie 170–380 m voraus)
     this.nextSpawn = 120;
     this.nearSpawn = false;
     if (z0 > 0) {
-      this.track.seg(Math.round((z0 + 1400) / SEG));
-      const rv = this.track.sections.find((s) => s.role === 'reveal');
-      this.nextSpawn = rv ? rv.start * SEG + 150 : z0 + 900;
+      this.track.seg(Math.round((z0 + 600) / SEG));
+      const top = this.track.sections.find((s) => s.role === 'top');
+      const townEnd = top ? top.end * SEG : z0 + 180;
+      this.nextSpawn = this.opts.field ? townEnd - 170 : townEnd - 90;
       this.nearSpawn = true;
     }
     this.sectionIdx = -1;
