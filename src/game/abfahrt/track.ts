@@ -701,11 +701,11 @@ export class Track {
     if (mountain) n = secIndex < 4 ? MOUNTAIN_SECS[secIndex] : secIndex === 4 ? MOUNTAIN_FINISH / SEG - MOUNTAIN_SECS.reduce((a, b) => a + b, 0) + 125 : 300;
     // Zeitfahren: Kuppe genau bei TT_TOP, Ziel 250 m vor dem Ende des Zielorts
     if (tt) n = secIndex < 4 ? TT_SECS[secIndex] : secIndex === 4 ? TT_FINISH / SEG - TT_SECS.reduce((a, b) => a + b, 0) + 125 : 300;
-    // Auftakt der Abfahrt: Startort 240 m (60 m davon hinter der Startlinie), Landstraße gut 220 m und Tunnel 130 m –
+    // Auftakt der Abfahrt: Startort 240 m (60 m davon hinter der Startlinie), Landstraße gut 210 m und Tunnel 130 m –
     // vom Start bis in den Tunnel knapp 400 m (die Kurven der Landstraße enden nach spätestens ~205 m)
     const role = p.role;
     if (role === 'top') n = 120;
-    if (role === 'road') n = 176;
+    if (role === 'road') n = 172;
     const last = !race && this.plan.length === 0;   // letzter Abschnitt der Abfahrt → Tunnel zum nächsten Pass
     this.sections.push({ biome: p.biome, start, end: start + n, name: p.name, alt: p.alt, descent: p.descent, role });
 
