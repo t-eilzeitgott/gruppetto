@@ -34,6 +34,7 @@ import { SunsetGlow } from './sunset3d';
 import { TT_PODIUM, TtStart3D, ttCrowdGap } from './ttstart3d';
 import { DescentStart3D } from './descstart3d';
 import { EV, SEC, type Perf3D } from './perf3d';
+import { uiBusy } from '../uiBusy';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
@@ -1469,6 +1470,14 @@ export class Renderer3D {
 
   /** Startkarte oder Countdown: Zeit, die Landschaft vollständig aufzubauen (niemand fährt) */
   private idleBuild = false;
+  /**
+   * Leerlauf-Arbeit auf der Startkarte (idleBuild): 1 = unsichtbar vorwärmen (große Budgets, egal ob das Bild
+   * ruckelt), kleiner, sobald jemand zusieht – das Startblatt und die Kamera sollen sich flüssig bewegen. Solange
+   * die Oberfläche sich bewegt (uiBusy.ts: Blatt, Flug, Countdown), tritt die Arbeit fast ganz zurück.
+   */
+  idleK = 1;
+  private uiMoves = false;
+  private idleMs(ms: number): number { return ms * this.idleK * (this.uiMoves ? 0.2 : 1); }
   /** Rechenzeit für Landschaft und Abschnitte im letzten Bild (ms) */
   private work = 0;
   /**
@@ -1501,6 +1510,7 @@ export class Renderer3D {
     this.lastDt = dt;
     this.lastRaw = raw;
     this.idleBuild = g.phase === 'ready' || g.phase === 'countdown';
+    this.uiMoves = this.idleK < 1 && uiBusy();
     // scharfes Startbild: am Start und auf den ersten Metern (umgeschaltet wird erst in Fahrt, ein Bild Größenwechsel)
     const sharp = this.idleBuild || (g.phase === 'playing' && g.p.z < g.track.startZ + 14 && this.sharp);
     if (sharp !== this.sharp) { this.sharp = sharp; this.pendingResize = true; }
@@ -1562,7 +1572,7 @@ export class Renderer3D {
 
     this.updateLight(g, biome, seg, dt);
     if (!this.warmGroup) this.warmAll();
-    if (!this.rs.ready && this.rs.bakeStep(this.gl, performance.now() + (this.idleBuild ? 8 : 1.5))) {
+    if (!this.rs.ready && this.rs.bakeStep(this.gl, performance.now() + (this.idleBuild ? Math.max(1.5, this.idleMs(8)) : 1.5))) {
       // Material jetzt übersetzen (nicht erst, wenn der erste Fahrer in die Ferne rückt)
       this.rs.mesh.visible = true;
       this.gl.compile(this.scene, this.camera);
@@ -1581,7 +1591,7 @@ export class Renderer3D {
     }
     // Dörfer weit voraus festlegen (Dorfebene und Dorfstraße, bevor dort Landschaft und Straße entstehen)
     this.villages?.ahead(p.z + 6500);
-    if (this.idleBuild && !this.houses.ready) this.houses.buildStep();
+    if (this.idleBuild && !this.uiMoves && !this.houses.ready) this.houses.buildStep();
     P?.mark(SEC.welt);
     const w0 = performance.now();
     this.updateChunks(g, dt);
@@ -1968,7 +1978,7 @@ export class Renderer3D {
     const cz = this.calmZ;
     if (cz && isFinite(cz[0]) && z > cz[0] - 240 && z < cz[1]) ahead = Math.max(ahead, cz[1] + 100);
     // (vor dem Start, wenn niemand fährt, großzügiger)
-    this.grass.update(z, ahead, this.debugPeakMs ?? (this.idleBuild ? 4 : 1));
+    this.grass.update(z, ahead, this.debugPeakMs ?? (this.idleBuild ? Math.max(1, this.idleMs(4)) : 1));
   }
 
   /**
@@ -2212,7 +2222,8 @@ export class Renderer3D {
   private dispI = 0;
   private updateDispose() {
     const t0 = performance.now();
-    while (this.dispI < this.dispQ.length && (this.idleBuild || performance.now() - t0 < 0.5)) this.dispQ[this.dispI++]();
+    const lim = this.idleBuild ? Math.max(0.5, this.idleMs(6)) : 0.5;
+    while (this.dispI < this.dispQ.length && performance.now() - t0 < lim) this.dispQ[this.dispI++]();
     if (this.dispI >= this.dispQ.length && this.dispI) { this.dispQ.length = 0; this.dispI = 0; }
   }
 
@@ -2258,9 +2269,9 @@ export class Renderer3D {
     // grobe Stufe (ohne Straßenklemmen) durch Straße und Zuschauer
     // auf der Startkarte großzügig: dort soll die Welt komplett stehen, bevor es losgeht
     // (erster Panoramablick der Abfahrt: nur in winzigen Häppchen weiter – die Ringe stehen schon)
-    const budget = this.idleBuild ? 30 : startup ? 12 : this.calm ? 0.25 : Math.max(1.2, Math.min(this.range.budget, this.room() * 0.62));
+    const budget = this.idleBuild ? Math.max(1.5, this.idleMs(30)) : startup ? 12 : this.calm ? 0.25 : Math.max(1.2, Math.min(this.range.budget, this.room() * 0.62));
     // Korridorbreiten der Strecke vorab in kleinen Portionen (die Kacheln fragen sie dann nur noch ab)
-    T.prefetchLim(t0 + (this.idleBuild ? 6 : 0.3));
+    T.prefetchLim(t0 + (this.idleBuild ? Math.max(0.3, this.idleMs(6)) : 0.3));
     if (fresh) {
       this.pending = null;
       for (const lv of [0, 1]) {
@@ -3220,7 +3231,7 @@ export class Renderer3D {
     if (this.mtnGen && !this.calm) {
       const t0 = performance.now();
       // vor dem Start (niemand fährt) großzügiger: die feinen Berge stehen dann, bevor es losgeht
-      const budget = this.debugPeakMs ?? (this.idleBuild ? 8 : 1.2);
+      const budget = this.debugPeakMs ?? (this.idleBuild ? Math.max(1.2, this.idleMs(8)) : 1.2);
       let r = this.mtnGen.it.next();
       while (!r.done && performance.now() - t0 < budget) r = this.mtnGen.it.next();
       if (r.done) {
@@ -3277,7 +3288,7 @@ export class Renderer3D {
     }
     const t0 = performance.now();
     let r = this.mtnSun.it.next();
-    while (!r.done && performance.now() - t0 < (this.debugPeakMs ?? (this.idleBuild ? 6 : 1))) r = this.mtnSun.it.next();
+    while (!r.done && performance.now() - t0 < (this.debugPeakMs ?? (this.idleBuild ? Math.max(1, this.idleMs(6)) : 1))) r = this.mtnSun.it.next();
     if (r.done) {
       this.mtnSun = null;
       if (r.value) this.mtnSunFade = m;
@@ -3335,7 +3346,8 @@ export class Renderer3D {
     };
     const w = wait ? this.warmUp(c.group) : null;
     // im Hintergrund gebaut: erst zeigen, wenn auch die Geometrie (portionsweise) auf der Grafikkarte ist
-    const up = wait && !this.idleBuild;
+    // (sichtbare Startkarte: auch dort portionsweise – sonst stockt das Bild beim ersten Zeichnen)
+    const up = wait && (!this.idleBuild || this.idleK < 1);
     if (w || up) {
       c.group.visible = false;
       const e = { w, show, staged: !up };
@@ -3556,7 +3568,7 @@ export class Renderer3D {
   /** je Bild (nach dem Zeichnen) eine Portion hochladen; auf der Startkarte alles auf einmal */
   private updateStaging() {
     if (!this.upQ.length) return;
-    const budget = this.idleBuild ? Infinity : UP_BYTES;
+    const budget = this.idleBuild ? (this.idleK >= 1 ? Infinity : UP_BYTES * (this.uiMoves ? 2 : 8)) : UP_BYTES;
     let bytes = 0;
     let nm = 0;
     let np = 0;
@@ -3677,7 +3689,7 @@ export class Renderer3D {
     // danach mit Zeitbudget je Bild (nächste zuerst), auf der Startkarte großzügiger; der Bau gibt an der
     // Zeitgrenze von selbst ab (feine Häppchen)
     const t0 = performance.now();
-    let budget = this.idleBuild ? 12 : Math.max(0.8, Math.min(this.range.chunkBudget, this.room() * 0.38));
+    let budget = this.idleBuild ? Math.max(0.8, this.idleMs(12)) : Math.max(0.8, Math.min(this.range.chunkBudget, this.room() * 0.38));
     // knapp vor dem Fahrer fehlt noch etwas: dann zügig (sonst müsste es gleich am Stück entstehen – ein Ruckler)
     {
       let k = from;

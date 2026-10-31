@@ -268,8 +268,9 @@ export function BergPage() {
         </div>
       ) : null}
 
-      {ui === 'playing' || ui === 'paused' || ui === 'countdown' ? (
-        <div className="abf-hud hud" aria-hidden={ui === 'countdown'}>
+      {/* HUD erst mit „Los“ (gestaffelt herein) – im Countdown nur Welt und Ring */}
+      {ui === 'playing' || ui === 'paused' ? (
+        <div className="abf-hud hud">
           <div className="hud-top">
             <button type="button" className="abf-round" onClick={togglePause} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
               {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
@@ -277,7 +278,7 @@ export function BergPage() {
             <RaceBar bind={bind} marks={[{ at: MOUNTAIN_TOP / MOUNTAIN_FINISH, kind: 'gpm' }, { at: (MOUNTAIN_FINISH - 1000) / MOUNTAIN_FINISH, kind: 'flamme' }]} />
             <PowerRing bind={bind} badge />
           </div>
-          {banner && (ui === 'playing' || ui === 'countdown') ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
+          {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
             <span className="abf-thumb__up"><TuckIcon /></span>
             <span className="abf-thumb__dot" />

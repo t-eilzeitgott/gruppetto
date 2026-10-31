@@ -1284,6 +1284,7 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 /* 3D-Szene blendet ein, sobald das erste Bild gezeichnet ist (die Startkarte steht schon) */
 .abf__canvas { opacity: 0; transition: opacity 0.45s ease; }
 .abf__canvas.is-drawn { opacity: 1; }
+.abf__canvas.is-instant { transition: none; }
 .abf__overlay { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
 /* leichter Kamerafilter: Vignette und ein Hauch Wärme oben (liegt unter Popups und HUD) – gehört zum
    „Lichtfilter“ im Pausenmenü (gfxOpts.ts) */
@@ -1470,7 +1471,7 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   align-self: center; display: flex; flex-direction: column; align-items: center; gap: 1px; max-width: min(100%, 360px);
   padding: 9px 20px 10px; border-radius: 20px; text-align: center; color: #fff;
   background: rgba(12, 14, 20, 0.8); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 8px 24px rgba(0, 0, 0, 0.25);
-  animation: hud-banner 2.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation: hud-banner 2.8s 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .hud-banner strong { font-size: 17px; letter-spacing: -0.01em; }
 .hud-banner span { font-size: 12.5px; opacity: 0.85; }
@@ -1568,7 +1569,7 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 @media (prefers-reduced-motion: reduce) { .abf-coach__gesture i { animation: none !important; } }
 
 /* Countdown (startSheet.tsx): ein Ring läuft je Zahl ab, dann „Los“ in der Akzentfarbe */
-.abf-count { position: absolute; inset: 0; display: grid; place-items: start center; padding-top: 27%; pointer-events: none; }
+.abf-count { position: absolute; inset: 0; display: grid; place-items: start center; padding-top: 30%; pointer-events: none; }
 .abf-count__wrap { position: relative; width: 112px; height: 112px; display: grid; place-items: center; animation: count-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
 .abf-count__ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
 .abf-count__track { fill: rgba(8, 10, 16, 0.5); stroke: rgba(255, 255, 255, 0.22); stroke-width: 3; }
@@ -1970,8 +1971,10 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .arena__tile.is-fresh .arena__tile-text > span { color: var(--accent); font-weight: 600; }
 @keyframes gi-glow { 0%, 100% { filter: drop-shadow(0 0 0 transparent); } 50% { filter: drop-shadow(0 0 7px var(--accent)); } }
 @media (prefers-reduced-motion: reduce) { .arena__tile.is-fresh .gi { animation: none; } }
-/* Übergang ins Spiel: die Kopie des Kopfs liegt über allem (handoff.ts) */
+/* Übergang ins Spiel (handoff.ts): das Abbild der Startseite und die Kopie des Kopfs liegen über allem */
 .handoff { position: fixed; inset: 0; z-index: 90; pointer-events: none; }
+.handoff__shot { position: fixed; inset: 0; overflow: hidden; background: var(--bg); transform-origin: 50% 40%; will-change: opacity, transform; }
+.handoff__page { position: absolute; left: 0; right: 0; }
 .handoff__item { pointer-events: none; }
 /* Symbole der Spiele und Bereiche (GameIcon.tsx): Glyphe in einer Farbe auf getönter Kachel */
 .gi { flex: none; --gi-hue: var(--accent); --gi-tint: color-mix(in srgb, var(--gi-hue) 15%, var(--surface2)); }

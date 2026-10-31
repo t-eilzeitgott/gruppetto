@@ -19,6 +19,7 @@ import { Avatar, cx, useTitle } from '../ui/kit';
 import { useBikes, type Bikes } from '../ui/useBikes';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
+import { Skel, SkelText } from '../ui/skeleton';
 import { BoardLink, Countdown, StartSheet } from './startSheet';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent } from './Game';
 import { FpsSwitch, GfxSwitches, RangePicker } from './gameKit';
@@ -328,8 +329,9 @@ export function ZeitfahrenPage() {
         </div>
       ) : null}
 
-      {ui === 'playing' || ui === 'paused' || ui === 'countdown' ? (
-        <div className="abf-hud hud" aria-hidden={ui === 'countdown'}>
+      {/* HUD erst mit „Los“ (gestaffelt herein) – im Countdown nur Welt und Ring */}
+      {ui === 'playing' || ui === 'paused' ? (
+        <div className="abf-hud hud">
           <div className="hud-top">
             <button type="button" className="abf-round" onClick={togglePause} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
               {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
@@ -342,7 +344,7 @@ export function ZeitfahrenPage() {
             <span className="tt-clock__gap" ref={bind('clockGap')} />
           </div>
           <TtStrip strip={strip} ghosts={ghosts} bind={bind} />
-          {banner && (ui === 'playing' || ui === 'countdown') ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
+          {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
             <span className="abf-thumb__up"><TuckIcon /></span>
             <span className="abf-thumb__dot" />
@@ -516,7 +518,23 @@ function HotSeat({ leader, myBest, today, meId, members, error }: { leader: Ghos
 
 /** Wer heute als Geist mitfährt – mit seinem Rad */
 export function GhostRow({ ghosts, members, me, loading }: { ghosts: GhostRider[]; members: Profile[]; me: Profile; loading: boolean }) {
-  if (loading) return <p className="abf-muted tt-ghosts">Geister werden geladen …</p>;
+  // beim Laden schon so hoch wie die Liste (vier Zeilen): das Startblatt springt dann nicht
+  if (loading) {
+    return (
+      <div className="tt-ghosts" aria-busy="true" aria-label="Geister werden geladen">
+        <span className="tt-ghosts__label">Auf der Strecke</span>
+        <ul className="tt-ghosts__list">
+          {[0, 1, 2, 3].map((i) => (
+            <li key={i} aria-hidden="true">
+              <Skel w={22} h={22} r="50%" />
+              <SkelText w={['38%', '30%', '34%', '28%'][i]} size={13.5} />
+              <SkelText w={44} size={13} className="skel-right" />
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
   if (!ghosts.length) return <p className="abf-muted tt-ghosts">Noch niemand auf der Strecke – du fährst allein gegen die Uhr.</p>;
   // heute zuerst (nach Zeit), dann die älteren Geister
   const sorted = [...ghosts].sort((a, b) => Number(!!a.old) - Number(!!b.old) || a.timeMs - b.timeMs);

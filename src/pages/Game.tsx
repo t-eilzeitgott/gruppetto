@@ -288,7 +288,9 @@ export function GamePage() {
       // beim Neuaufbau läuft die Fahrt weiter
       if (!engineRef.current || (glGen === 0 && uiRef.current === 'ready')) engineRef.current = makeEngine(false);
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
-      if (warm) renderer.draw(engineRef.current!, 0);
+      // vorgewärmt: die Leinwand zeigt die Welt schon – sofort zeigen, ohne Einblenden (so bleibt der Übergang
+      // von der Startseite ein Überblenden, kein Schwarz dazwischen)
+      if (warm) { renderer.draw(engineRef.current!, 0); canvas.classList.add('is-instant', 'is-drawn'); }
       let raf = 0;
       // Spielzeit im Takt des Bildschirms (gleichmäßige Schritte, ausgefallene Bilder ohne Sprung nachholen)
       const clock = new FrameClock();
@@ -667,8 +669,9 @@ export function GamePage() {
 
       {/* HUD */}
       {cruiseRef.current && (ui === 'playing' || ui === 'countdown') ? <DebugBar eng={() => engineRef.current} /> : null}
-      {ui === 'playing' || ui === 'paused' || ui === 'countdown' ? (
-        <div className="abf-hud hud" aria-hidden={ui === 'countdown'}>
+      {/* HUD erst mit „Los“ (gestaffelt herein) – im Countdown nur Welt und Ring */}
+      {ui === 'playing' || ui === 'paused' ? (
+        <div className="abf-hud hud">
           <div className="hud-top hud-top--score">
             <button type="button" className="abf-round" onClick={togglePause} aria-label={ui === 'paused' ? 'Weiter' : 'Pause'}>
               {ui === 'paused' ? <PlayIcon /> : <PauseIcon />}
@@ -683,7 +686,7 @@ export function GamePage() {
             <PowerRing bind={bind} />
           </div>
           <RaceBar bind={bind} wide marks={friends.map((f) => ({ at: f.meters / profileMax, kind: 'friend' as const, color: f.color }))} />
-          {banner && (ui === 'playing' || ui === 'countdown') ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
+          {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
             <span className="abf-thumb__up"><TuckIcon /></span>
             <span className="abf-thumb__dot" />

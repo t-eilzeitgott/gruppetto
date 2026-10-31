@@ -56,11 +56,14 @@ export function acquireStage(game: string): Stage {
   if (s && !s.renderer.lost) {
     inUse += 1;
     s.game = game;
+    // jetzt sieht jemand zu: das Vorbauen der Welt tritt hinter ein flüssiges Bild zurück
+    s.renderer.idleK = 0.3;
     return s;
   }
   if (s) drop(s);
   const fresh = makeStage();
   fresh.game = game;
+  fresh.renderer.idleK = 0.3;
   inUse += 1;
   return fresh;
 }
@@ -82,7 +85,7 @@ interface WarmEngine extends RaceView { update(dt: number): void; setViewport(w:
  * game: Kennung des Spiels; reuse: eine Bühne im Vorrat für dieses Spiel umbauen (die Shader bleiben – nur die
  * Welt entsteht neu), sonst nur vorwärmen, wenn der Vorrat leer ist.
  */
-export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: boolean }, game: string, reuse = false, frames = 8): Promise<void> {
+export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: boolean }, game: string, reuse = false, frames = reuse ? 30 : 8): Promise<void> {
   // Testmodus ohne 3D (?nogl): nichts vorwärmen
   let off = /[?&]nogl\b/.test(window.location.search);
   // automatische Oberflächenprüfung: ohne Grafikchip würde das Vorwärmen die Seiten lange blockieren
@@ -103,6 +106,9 @@ export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: b
     }
   }
   s.game = game;
+  // erstes Vorwärmen (unter dem Intro): mit allem, was geht; Umbau, während jemand die Startseite bedient: in
+  // kleinen Portionen über mehr Bilder, damit die Seite flüssig bleibt
+  s.renderer.idleK = reuse ? 0.35 : 1;
   // in echter Größe, aber unsichtbar (sonst misst die Leinwand 0 × 0)
   holder ??= Object.assign(document.createElement('div'), { className: 'stage-holder' });
   if (!holder.isConnected) document.body.append(holder);

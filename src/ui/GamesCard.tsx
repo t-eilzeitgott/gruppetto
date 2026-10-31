@@ -11,6 +11,7 @@ import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import { warmGame } from '../app/warm';
 import { beginHandoff } from '../app/handoff';
+import { markUiBusy } from '../game/uiBusy';
 import type { GameBest, GameRun } from '../data/source';
 import type { Stage, StageKind } from '../lib/types';
 import { GAMES, fmtBest, gameOrder, isNewGame, type GameInfo } from '../game/games';
@@ -96,6 +97,8 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
   const game = GAMES[idx];
   const choose = (id: GameId) => {
     if (id === sel) return;
+    // der Inhalt gleitet – ein laufender Umbau der 3D-Bühne tritt so lange zurück
+    markUiBusy(450);
     setDir(GAMES.findIndex((g) => g.id === id) > idx ? 1 : -1);
     setSel(id);
     try { localStorage.setItem(LS_SEL, id); } catch { /* egal */ }

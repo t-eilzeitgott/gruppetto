@@ -5,7 +5,8 @@
  * Dazu der Countdown selbst: ein Ring, der je Sekunde abläuft, die Zahl in der Mitte.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { endHandoff, sheetIn, sheetOut } from '../app/handoff';
+import { HANDOFF_MS, endHandoff, sheetIn, sheetOut } from '../app/handoff';
+import { markUiBusy } from '../game/uiBusy';
 import type { GameId } from '../data/source';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
@@ -28,6 +29,7 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
   /** unter dem Startknopf (Testfahrt, Messfahrt) */
   after?: ReactNode;
 }) {
+  const layer = useRef<HTMLDivElement | null>(null);
   const sheet = useRef<HTMLDivElement | null>(null);
   const head = useRef<HTMLDivElement | null>(null);
   const [leaving, setLeaving] = useState(false);
@@ -36,17 +38,21 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
     const s = sheet.current;
     if (!s || !firstRef.current) return;
     firstRef.current = false;
+    // solange das Blatt hereinkommt, baut die 3D-Welt nur in kleinen Portionen weiter
+    markUiBusy(HANDOFF_MS + 350);
     const h = head.current;
     if (!(h && endHandoff(h, s))) sheetIn(s);
   }, []);
   const go = () => {
     if (leaving) return;
     setLeaving(true);
+    // Blatt weg, Countdown, HUD herein: Bewegung vor Vorbauen
+    markUiBusy(3800);
     const s = sheet.current;
-    (s ? sheetOut(s) : Promise.resolve()).then(onStart);
+    (s ? sheetOut(s, layer.current) : Promise.resolve()).then(onStart);
   };
   return (
-    <div className={cx('abf-layer abf-layer--sheet', leaving && 'is-leaving')}>
+    <div ref={layer} className={cx('abf-layer abf-layer--sheet', leaving && 'is-leaving')}>
       <button type="button" className="abf-round abf-close" onClick={onClose} aria-label="Schließen"><Icon name="x" size={20} /></button>
       <div className="abf-sheet" ref={sheet}>
         {plain ? (

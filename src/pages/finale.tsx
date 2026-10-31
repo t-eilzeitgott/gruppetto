@@ -95,7 +95,9 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       // beim Neuaufbau läuft das Rennen weiter
       if (!engineRef.current || (gen === 0 && uiRef.current === 'ready')) engineRef.current = cb.current.make();
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
-      if (warm) renderer.draw(engineRef.current!, 0);
+      // vorgewärmt: die Leinwand zeigt die Welt schon – sofort zeigen, ohne Einblenden (so bleibt der Übergang
+      // von der Startseite ein Überblenden, kein Schwarz dazwischen)
+      if (warm) { renderer.draw(engineRef.current!, 0); canvas.classList.add('is-instant', 'is-drawn'); }
       let raf = 0;
       // Spielzeit im Takt des Bildschirms (gleichmäßige Schritte, ausgefallene Bilder ohne Sprung nachholen)
       const clock = new FrameClock();

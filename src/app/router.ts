@@ -41,18 +41,24 @@ function fadeIn(update: () => void) {
 type VTDocument = Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void>; ready?: Promise<void> } };
 
 let running = 0;
+/** der nächste Wechsel ins Spiel wird von außen überblendet (handoff.ts) – dann nicht noch einmal einblenden */
+let handed = false;
+export function handOver() { handed = true; }
 
 function transition(update: () => void) {
   const d = document as VTDocument;
   const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   if (!d.startViewTransition || calm || document.hidden) {
+    handed = false;
     update();
     return;
   }
   if (isGame(onScreen) || isGame(current())) {
+    if (handed) { handed = false; flushSync(update); return; }
     fadeIn(update);
     return;
   }
+  handed = false;
   const root = document.documentElement;
   try {
     // „vt“: Tableiste und Statusleiste während des Übergangs deckend (siehe styles.css)
