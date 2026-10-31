@@ -3,6 +3,10 @@
  * Fels mit Rinnen und Schichten, Schneefelder, die in den Rinnen tiefer hinabreichen, Wald und Matten unten,
  * dazu Licht von Sonne und Himmel und Luftperspektive (je weiter und tiefer, desto mehr Dunst). So bleiben
  * Grate und Schneegrenzen scharf statt einer verwaschenen Eckpunktfarbe.
+ *
+ * PC-Grafik: gut zwanzigmal so fein (1800 × 150 Punkte), mehr Oktaven an den Graten, dazu feine Felsstruktur je
+ * Bildpunkt (Normale aus dem Rauschen gestört), Schnee mit durchscheinendem Licht und Schlagschatten der Berge
+ * aufeinander (je Punkt der Sonne entgegen abgetastet; wandert die Sonne, wird nachgerechnet und weich überblendet).
  */
 import * as THREE from 'three';
 import { BIOME_PALETTES, mixRGB, type RGB } from './palette';
@@ -37,11 +41,20 @@ varying vec3 vP;
 varying vec3 vN;
 varying float vR;
 varying vec3 vN1;
+#ifdef PEAK_PC
+attribute float aSun0;
+attribute float aSun1;
+uniform float uSunMix;
+varying float vSun;
+#endif
 void main() {
   vP = position;
   vN = normal;
   vR = aR;
   vN1 = aN1;
+  #ifdef PEAK_PC
+    vSun = mix(aSun0, aSun1, uSunMix);
+  #endif
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
@@ -55,10 +68,37 @@ varying vec3 vP;
 varying vec3 vN;
 varying float vR;
 varying vec3 vN1;
+#ifdef PEAK_PC
+varying float vSun;
+/* Steigung des Rauschens (Kanal g) je Kachel bei q / s (zwei Nachbarn; in der Ferne glätten die Mipmaps) */
+vec2 bumpAt(vec2 q, float s) {
+  vec2 u = q / s;
+  float e = 1.0 / 256.0;
+  float h0 = texture2D(uNoise, u).g;
+  return vec2(texture2D(uNoise, u + vec2(e, 0.0)).g - h0, texture2D(uNoise, u + vec2(0.0, e)).g - h0) / e;
+}
+#endif
 void main() {
   vec3 N = normalize(vN);
   float r = length(vP.xz);
   float h = vP.y;
+  #ifdef PEAK_PC
+    // feine Felsstruktur je Bildpunkt: die Normale folgt einem Relief aus zwei Maßstäben (Rippen, Blöcke) – in der
+    // Wand auf die Wandfläche projiziert, auf flachen Hängen von oben; je weiter weg, desto ruhiger
+    {
+      float fade = 1.0 - smoothstep(9000.0, 15000.0, r);
+      vec2 tw0 = vec2(-N.z, N.x) / max(1e-3, length(N.xz));
+      float wall = 1.0 - smoothstep(0.45, 0.8, N.y);
+      vec2 qW = vec2(dot(vP.xz, tw0), h);
+      vec2 bW = bumpAt(qW, 210.0) * 0.022 + bumpAt(qW * vec2(1.0, 1.6), 58.0) * 0.014;
+      vec2 bF = bumpAt(vP.xz, 260.0) * 0.02 + bumpAt(vP.xz, 70.0) * 0.012;
+      // Wand: Steigung entlang der Wand (waagrecht) und nach oben; Hang: in x und z
+      vec3 gW = vec3(tw0.x, 0.0, tw0.y) * bW.x + vec3(0.0, bW.y, 0.0);
+      vec3 gF = vec3(bF.x, 0.0, bF.y);
+      vec3 g = mix(gF, gW, wall) * fade;
+      N = normalize(N - (g - N * dot(g, N)));
+    }
+  #endif
   // großflächiges Rauschen je Ecke, mittleres pro Bildpunkt
   vec3 n1 = vN1;
   vec3 n2 = texture2D(uNoise, vP.xz / 820.0).rgb;
@@ -94,7 +134,18 @@ void main() {
   c = mix(c, mix(uSnowS, uSnowC, smoothstep(0.55, 0.95, N.y)), sn);
   c *= mix(ao, 1.0, sn * 0.5);
   // Licht: Himmel (Halbkugel), Sonne, Gegenlicht
-  vec3 light = mix(uGroundC, uSkyC, 0.5 + 0.5 * N.y) + uSunC * max(dot(N, uSunDir), 0.0) + uFillC * max(dot(N, uFillDir), 0.0);
+  #ifdef PEAK_PC
+    // Schlagschatten der Berge aufeinander (je Punkt vorab), Schnee lässt Licht etwas um die Kante (weicher
+    // Übergang ins Schattenblau), Mulden bekommen weniger Himmel
+    float nl = dot(N, uSunDir);
+    float sunL = mix(max(nl, 0.0), clamp((nl + 0.25) / 1.25, 0.0, 1.0), sn * 0.6) * vSun;
+    float sky = (0.5 + 0.5 * N.y) * (0.72 + 0.28 * smoothstep(0.1, 0.8, vR));
+    vec3 light = mix(uGroundC, uSkyC, sky) + uSunC * sunL + uFillC * max(dot(N, uFillDir), 0.0) * (0.6 + 0.4 * vSun);
+    // im Schatten liegender Schnee bläulich (Himmelslicht), in der Sonne ein Hauch wärmer
+    c = mix(c, c * vec3(0.9, 0.96, 1.08), sn * (1.0 - vSun) * 0.6);
+  #else
+    vec3 light = mix(uGroundC, uSkyC, 0.5 + 0.5 * N.y) + uSunC * max(dot(N, uSunDir), 0.0) + uFillC * max(dot(N, uFillDir), 0.0);
+  #endif
   vec3 col = c * light;
   // Luftperspektive: mit der Entfernung und zum Tal hin mehr Dunst, Gipfel bleiben klarer
   float far = smoothstep(uR0, uR1, r);
@@ -112,17 +163,25 @@ const lin = (c: RGB) => new THREE.Color().setRGB(c[0] / 255, c[1] / 255, c[2] / 
 export const PEAK_R0 = 4600;
 export const PEAK_R1 = 15000;
 
-/** Bergring für eine Landschaft (Größe und Charakter je Tal) */
-export function buildPeaks(biome: BiomeId, L: PeakLight): THREE.Mesh {
-  const it = buildPeaksSteps(biome, L);
+/** Bergring für eine Landschaft (Größe und Charakter je Tal); pc: die feine Fassung der PC-Grafik */
+export function buildPeaks(biome: BiomeId, L: PeakLight, pc = false): THREE.Mesh {
+  const it = buildPeaksSteps(biome, L, pc);
   for (;;) {
     const r = it.next();
     if (r.done) return r.value;
   }
 }
 
+/** Gitter des Rings (Punkte je Ring, Ringe) */
+const GRID = { lo: { NA: 420, NR: 34, oct: 6 }, pc: { NA: 1800, NR: 150, oct: 7 } };
+
+/** ist das die feine Fassung (PC-Grafik)? */
+export function isPcPeaks(m: THREE.Mesh): boolean {
+  return !!m.userData.pc;
+}
+
 /** wie buildPeaks, in Schritten (ein Ring je Schritt): beim Landschaftswechsel kein langes Bild */
-export function* buildPeaksSteps(biome: BiomeId, L: PeakLight): Generator<void, THREE.Mesh, void> {
+export function* buildPeaksSteps(biome: BiomeId, L: PeakLight, pc = false): Generator<void, THREE.Mesh, void> {
   const pal = BIOME_PALETTES[biome];
   let seed = 7;
   for (const ch of biome) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
@@ -152,12 +211,13 @@ export function* buildPeaksSteps(biome: BiomeId, L: PeakLight): Generator<void, 
     return a + (b - a) * v;
   };
   // Grate: 1 − |n|, geschärft; feinere Oktaven folgen den groben (Täler bleiben ruhig, Grate werden zackig)
+  const G = pc ? GRID.pc : GRID.lo;
   const ridged = (x: number, y: number) => {
     let sum = 0;
     let amp = 0.55;
     let f = 1;
     let w = 1;
-    for (let o = 0; o < 6; o++) {
+    for (let o = 0; o < G.oct; o++) {
       let n = 1 - Math.abs(noise(x * f + o * 3.1, y * f - o * 1.7) * 2 - 1);
       n = Math.pow(n, 2.2);
       sum += n * amp * w;
@@ -167,8 +227,7 @@ export function* buildPeaksSteps(biome: BiomeId, L: PeakLight): Generator<void, 
     }
     return sum;
   };
-  const NA = 420;
-  const NR = 34;
+  const { NA, NR } = G;
   const W = NA + 1;
   const pos = new Float32Array(NR * W * 3);
   const rid = new Float32Array(NR * W);
@@ -199,7 +258,7 @@ export function* buildPeaksSteps(biome: BiomeId, L: PeakLight): Generator<void, 
     }
     yield;
   }
-  const idx = new Uint16Array((NR - 1) * NA * 6);
+  const idx = NR * W > 65535 ? new Uint32Array((NR - 1) * NA * 6) : new Uint16Array((NR - 1) * NA * 6);
   let k = 0;
   for (let i = 0; i < NR - 1; i++) {
     for (let j = 0; j < NA; j++) {
@@ -207,6 +266,7 @@ export function* buildPeaksSteps(biome: BiomeId, L: PeakLight): Generator<void, 
       const b = a + W;
       idx[k++] = a; idx[k++] = a + 1; idx[k++] = b; idx[k++] = a + 1; idx[k++] = b + 1; idx[k++] = b;
     }
+    if (pc && (i & 15) === 15) yield;
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -235,6 +295,13 @@ export function* buildPeaksSteps(biome: BiomeId, L: PeakLight): Generator<void, 
   }
   geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   yield;
+  if (pc) {
+    // Schlagschatten der Berge aufeinander für den jetzigen Sonnenstand (beide Puffer gleich: nichts zu überblenden)
+    const sun = new Float32Array(NR * W).fill(1);
+    yield* sunSteps(pos, NA, NR, L.uSunDir.value, sun);
+    geo.setAttribute('aSun0', new THREE.BufferAttribute(sun, 1));
+    geo.setAttribute('aSun1', new THREE.BufferAttribute(sun.slice(), 1));
+  }
   const own = {
     uRock: { value: lin(mixRGB(pal.far, [134, 130, 124], 0.6)) },
     uRockD: { value: lin(mixRGB(pal.far, [78, 76, 74], 0.62)) },
@@ -245,17 +312,22 @@ export function* buildPeaksSteps(biome: BiomeId, L: PeakLight): Generator<void, 
     uAmp: { value: c.amp }, uSnow: { value: c.snow }, uTree: { value: c.tree }, uOpacity: { value: 1 },
     uR0: { value: PEAK_R0 }, uR1: { value: PEAK_R1 },
   };
-  const mat = peakMaterial(L, own, true);
+  if (pc) Object.assign(own, { uSunMix: { value: 0 } });
+  const mat = peakMaterial(L, own, true, pc);
   const mesh = new THREE.Mesh(geo, mat);
   // nach der Landschaft zeichnen: verdeckte Bildpunkte fallen dann früh weg (die Berge sind meist nur ein Streifen)
   mesh.renderOrder = 10;
   mesh.frustumCulled = false;
+  mesh.userData.pc = pc;
+  mesh.userData.grid = { NA, NR };
+  mesh.userData.sunAt = L.uSunDir.value.clone();
   return mesh;
 }
 
-function peakMaterial(L: PeakLight, own: Record<string, THREE.IUniform>, transparent: boolean): THREE.ShaderMaterial {
+function peakMaterial(L: PeakLight, own: Record<string, THREE.IUniform>, transparent: boolean, pc = false): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: { ...L, ...own },
+    defines: pc ? { PEAK_PC: '' } : {},
     vertexShader: VERT,
     fragmentShader: FRAG,
     transparent,
@@ -265,20 +337,126 @@ function peakMaterial(L: PeakLight, own: Record<string, THREE.IUniform>, transpa
 }
 
 /**
+ * Sonnenlicht je Punkt des Rings (0 = im Schatten eines anderen Bergs, 1 = frei): von jedem Punkt der Sonne entgegen
+ * über das Höhenfeld tasten (Schritte wachsen mit dem Abstand, bis 9 km). Gerechnet wird auf jedem zweiten Ring
+ * und jedem dritten Punkt, dazwischen weich verteilt; ein Ring je Schritt (kein langes Bild).
+ */
+function* sunSteps(pos: Float32Array, NA: number, NR: number, sd: THREE.Vector3, out: Float32Array): Generator<void, void, void> {
+  const W = NA + 1;
+  const hz = Math.hypot(sd.x, sd.z);
+  // Sonne unter dem Horizont: alles im Schatten (Nacht – das Sonnenlicht ist dann ohnehin aus)
+  if (sd.y <= 0.002 || hz < 1e-4) { out.fill(sd.y > 0.002 ? 1 : 0); return; }
+  const dx = sd.x / hz, dz = sd.z / hz;
+  const slope = sd.y / hz;
+  const lnR = Math.log(PEAK_R1 / PEAK_R0);
+  const height = (x: number, z: number): number => {
+    const r = Math.hypot(x, z);
+    if (r < PEAK_R0 || r > PEAK_R1) return -1e9;
+    const fi = (Math.log(r / PEAK_R0) / lnR) * (NR - 1);
+    let a = Math.atan2(z, x);
+    if (a < 0) a += Math.PI * 2;
+    const fj = (a / (Math.PI * 2)) * NA;
+    const i0 = Math.min(NR - 2, Math.floor(fi)), j0 = Math.min(NA - 1, Math.floor(fj));
+    const u = fi - i0, v = fj - j0;
+    const H = (i: number, j: number) => pos[(i * W + j) * 3 + 1];
+    const a0 = H(i0, j0) + (H(i0, j0 + 1) - H(i0, j0)) * v;
+    const a1 = H(i0 + 1, j0) + (H(i0 + 1, j0 + 1) - H(i0 + 1, j0)) * v;
+    return a0 + (a1 - a0) * u;
+  };
+  const SI = 2;
+  const SJ = 3;
+  const ci = Math.ceil((NR - 1) / SI) + 1;
+  const cj = Math.ceil(NA / SJ) + 1;
+  const coarse = new Float32Array(ci * cj);
+  for (let a = 0; a < ci; a++) {
+    const i = Math.min(NR - 1, a * SI);
+    for (let b = 0; b < cj; b++) {
+      const j = Math.min(NA, b * SJ);
+      const o = (i * W + j) * 3;
+      const x0 = pos[o], y0 = pos[o + 1] + 6, z0 = pos[o + 2];
+      // weicher Schatten: wie knapp der Strahl über die Grate geht (Halbschatten statt harter Kante)
+      let vis = 1;
+      let t = 60;
+      while (t < 9000) {
+        const hh = height(x0 + dx * t, z0 + dz * t);
+        const ray = y0 + slope * t;
+        const k = (ray - hh) / (t * 0.022);
+        if (k < vis) { vis = k; if (vis <= 0) { vis = 0; break; } }
+        t += 30 + t * 0.06;
+      }
+      coarse[a * cj + b] = vis;
+      if ((b & 255) === 255) yield;
+    }
+    yield;
+  }
+  // auf alle Punkte verteilen (zwischen den gerechneten weich)
+  for (let i = 0; i < NR; i++) {
+    const fa = i / SI;
+    const a0 = Math.min(ci - 2, Math.floor(fa));
+    const ua = Math.min(1, fa - a0);
+    for (let j = 0; j <= NA; j++) {
+      const fb = j / SJ;
+      const b0 = Math.min(cj - 2, Math.floor(fb));
+      const ub = Math.min(1, fb - b0);
+      const c00 = coarse[a0 * cj + b0], c01 = coarse[a0 * cj + b0 + 1];
+      const c10 = coarse[(a0 + 1) * cj + b0], c11 = coarse[(a0 + 1) * cj + b0 + 1];
+      const v0 = c00 + (c01 - c00) * ub;
+      const v1 = c10 + (c11 - c10) * ub;
+      const v = v0 + (v1 - v0) * ua;
+      out[i * W + j] = v * v * (3 - 2 * v);
+    }
+    if ((i & 7) === 7) yield;
+  }
+}
+
+/**
+ * Sonne gewandert: Schatten der feinen Berge neu rechnen (in Schritten) und dann weich überblenden – das alte Licht
+ * bleibt im einen Puffer, das neue kommt in den anderen. Gibt false zurück, wenn es nichts zu tun gibt.
+ */
+export function* peakSunUpdate(m: THREE.Mesh, sd: THREE.Vector3): Generator<void, boolean, void> {
+  if (!m.userData.pc) return false;
+  const geo = m.geometry;
+  const { NA, NR } = m.userData.grid as { NA: number; NR: number };
+  const pos = geo.getAttribute('position').array as Float32Array;
+  const mat = m.material as THREE.ShaderMaterial;
+  // der gerade sichtbare Stand wird zum alten (aSun0), der neue kommt nach aSun1
+  const a0 = geo.getAttribute('aSun0') as THREE.BufferAttribute;
+  const a1 = geo.getAttribute('aSun1') as THREE.BufferAttribute;
+  const next = new Float32Array(a0.count);
+  yield* sunSteps(pos, NA, NR, sd.clone(), next);
+  // (erst jetzt lesen: eine frühere Überblendung kann während des Rechnens weitergelaufen sein)
+  const mix = mat.uniforms.uSunMix.value as number;
+  const cur = a0.array as Float32Array;
+  const was = a1.array as Float32Array;
+  for (let k = 0; k < cur.length; k++) cur[k] = cur[k] + (was[k] - cur[k]) * mix;
+  (a1.array as Float32Array).set(next);
+  a0.needsUpdate = true;
+  a1.needsUpdate = true;
+  mat.uniforms.uSunMix.value = 0;
+  m.userData.sunAt = sd.clone();
+  return true;
+}
+
+/**
  * Stellvertreter beider Spielarten (beim Überblenden durchsichtig, sonst nicht) – bleiben die ganze Zeit bestehen:
  * Sonst gibt three.js die Programme frei, sobald der alte Berg beim Landschaftswechsel verschwindet, und der neue
  * müsste sie mitten im Rennen neu übersetzen (spürbares Stocken).
  */
-export function peakKeepers(L: PeakLight): THREE.ShaderMaterial[] {
+export function peakKeepers(L: PeakLight, pc = false): THREE.ShaderMaterial[] {
   const own = {
     uRock: { value: [0, 0, 0] }, uRockD: { value: [0, 0, 0] }, uForest: { value: [0, 0, 0] }, uMeadow: { value: [0, 0, 0] },
     uSnowC: { value: [0, 0, 0] }, uSnowS: { value: [0, 0, 0] }, uAmp: { value: 1 }, uSnow: { value: 0 }, uTree: { value: 0 }, uOpacity: { value: 1 },
-    uR0: { value: PEAK_R0 }, uR1: { value: PEAK_R1 },
+    uR0: { value: PEAK_R0 }, uR1: { value: PEAK_R1 }, uSunMix: { value: 0 },
   };
-  const t = peakMaterial(L, own, true);
-  const o = peakMaterial(L, own, false);
-  o.depthWrite = true;
-  return [t, o];
+  const out: THREE.ShaderMaterial[] = [];
+  // (PC-Grafik: die feine Fassung zusätzlich – erst die einfache Fassung steht, dann kommt die feine)
+  for (const fine of pc ? [false, true] : [false]) {
+    const t = peakMaterial(L, own, true, fine);
+    const o = peakMaterial(L, own, false, fine);
+    o.depthWrite = true;
+    out.push(t, o);
+  }
+  return out;
 }
 
 export function setPeakOpacity(m: THREE.Mesh, a: number) {

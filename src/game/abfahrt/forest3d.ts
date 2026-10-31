@@ -303,10 +303,8 @@ export function treeVariant(kind: string, h: number): number {
 const COLS = 8;
 const ROWS = 3;
 /** Farbe je Zelle (Pixel); die Normalen in halber Auflösung (Licht ändert sich weich) */
-const CPX = 384;
-const RPX = 768;
-const NPX = 192;
-const NRPX = 384;
+const CPX0 = 384;
+const NPX0 = 192;
 
 interface Cell {
   u0: number; v0: number; du: number; dv: number;
@@ -332,7 +330,14 @@ void main() {
  * in zwei Bildern. Jede Zelle wird einzeln mit Kantenglättung gezeichnet (kleines Ziel, wenig Speicher) und in
  * den großen Vorrat kopiert. Die Ränder sind mit der Abdeckung vormultipliziert.
  */
-export function bakeTreeAtlas(gl: THREE.WebGLRenderer): TreeAtlas {
+/** scale: Auflösung des Bildvorrats (PC-Grafik 1,5: nahe Bäume am Straßenrand bleiben scharf) */
+export function bakeTreeAtlas(gl: THREE.WebGLRenderer, scale = 1): TreeAtlas {
+  // höchstens so groß, wie die Grafik Texturen kann
+  const sc = Math.max(1, Math.min(scale, gl.capabilities.maxTextureSize / (COLS * CPX0)));
+  const CPX = Math.round(CPX0 * sc / 8) * 8;
+  const RPX = CPX * 2;
+  const NPX = Math.round(NPX0 * sc / 8) * 8;
+  const NRPX = NPX * 2;
   const AW = COLS * CPX;
   const AH = ROWS * RPX;
   const NW = COLS * NPX;
@@ -499,23 +504,8 @@ export interface TreeLightU {
   uFillDir: { value: THREE.Vector3 }; uFillC: { value: THREE.Color };
 }
 
-/**
- * Bildbäume: drehen sich um die eigene Achse zur Kamera, von oben gesehen kippen sie etwas zurück;
- * Licht aus den gespeicherten Normalen (wie Lambert), Wind wiegt die Spitze. Zwischen fade[0] und fade[1]
- * werden sie weich durchsichtig, danach nicht mehr gezeichnet.
- * msaa: Durchsichtigkeit über die Kantenglättung (4 Stufen je Bildpunkt, dazwischen gerastert – wirkt wie echtes
- * Überblenden); ohne Kantenglättung ein Raster je Bildpunkt.
- */
-export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: { value: THREE.Vector2 }, msaa = true, morph?: { value: THREE.Vector4 }): THREE.ShaderMaterial {
-  const m = new THREE.ShaderMaterial({
-    fog: true,
-    defines: msaa ? { BB_A2C: '' } : {},
-    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
-      uA: { value: null }, uN: { value: null }, uTime: { value: 0 }, uMorph: { value: new THREE.Vector4(0, 0, 1e9, 2e9) },
-      uSunDir: { value: new THREE.Vector3() }, uSunC: { value: new THREE.Color() }, uSkyC: { value: new THREE.Color() }, uGroundC: { value: new THREE.Color() },
-      uFillDir: { value: new THREE.Vector3() }, uFillC: { value: new THREE.Color() },
-    }]),
-    vertexShader: /* glsl */ `
+/** Bild eines Baums: zur Kamera gedreht (im Schattendurchgang zur Sonne – dort ist die Lichtquelle die Kamera) */
+const BB_VERT = /* glsl */ `
 #include <common>
 #include <fog_pars_vertex>
 attribute vec4 aT0; // Ort, Größe
@@ -569,7 +559,25 @@ void main() {
   vec4 mvPosition = viewMatrix * vec4(wp, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   #include <fog_vertex>
-}`,
+}`;
+
+/**
+ * Bildbäume: drehen sich um die eigene Achse zur Kamera, von oben gesehen kippen sie etwas zurück;
+ * Licht aus den gespeicherten Normalen (wie Lambert), Wind wiegt die Spitze. Zwischen fade[0] und fade[1]
+ * werden sie weich durchsichtig, danach nicht mehr gezeichnet.
+ * msaa: Durchsichtigkeit über die Kantenglättung (4 Stufen je Bildpunkt, dazwischen gerastert – wirkt wie echtes
+ * Überblenden); ohne Kantenglättung ein Raster je Bildpunkt.
+ */
+export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: { value: THREE.Vector2 }, msaa = true, morph?: { value: THREE.Vector4 }): THREE.ShaderMaterial {
+  const m = new THREE.ShaderMaterial({
+    fog: true,
+    defines: msaa ? { BB_A2C: '' } : {},
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+      uA: { value: null }, uN: { value: null }, uTime: { value: 0 }, uMorph: { value: new THREE.Vector4(0, 0, 1e9, 2e9) },
+      uSunDir: { value: new THREE.Vector3() }, uSunC: { value: new THREE.Color() }, uSkyC: { value: new THREE.Color() }, uGroundC: { value: new THREE.Color() },
+      uFillDir: { value: new THREE.Vector3() }, uFillC: { value: new THREE.Color() },
+    }]),
+    vertexShader: BB_VERT,
     fragmentShader: /* glsl */ `
 #include <common>
 #include <fog_pars_fragment>
@@ -627,5 +635,27 @@ void main() {
   m.uniforms.uFade = fade;
   for (const k of ['uSunDir', 'uSunC', 'uSkyC', 'uGroundC', 'uFillDir', 'uFillC'] as const) m.uniforms[k] = light[k];
   Object.assign(m.uniforms, ATMO);
+  return m;
+}
+
+/**
+ * PC-Grafik: Bäume werfen Schatten. Im Schattendurchgang ist die Sonne die Kamera – dasselbe Bild dreht sich also
+ * zu ihr und wirft seinen Umriss (Abdeckung aus dem Vorrat, scharf abgeschnitten) auf Straße, Wiese und Häuser.
+ */
+export function billboardDepthMaterial(atlas: TreeAtlas, time: { value: number }, fade: { value: THREE.Vector2 }, morph?: { value: THREE.Vector4 }): THREE.ShaderMaterial {
+  const m = new THREE.ShaderMaterial({
+    uniforms: { uA: { value: atlas.albedo }, uTime: time, uFade: fade, uMorph: morph ?? { value: new THREE.Vector4(0, 0, 1e9, 2e9) } },
+    vertexShader: BB_VERT,
+    fragmentShader: /* glsl */ `
+uniform sampler2D uA;
+varying vec2 vUv;
+varying float vFade;
+void main() {
+  float dth = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  if (dth >= vFade) discard;
+  if (texture2D(uA, vUv).a < 0.5) discard;
+  gl_FragColor = vec4(1.0);
+}`,
+  });
   return m;
 }

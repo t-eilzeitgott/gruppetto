@@ -3,6 +3,7 @@
  * Bäume und Strecke reichen, wie viel Rechenzeit je Bild ins Nachladen gehen darf und wie dicht der Dunst ist.
  * Der Renderer liest die Stufe in jedem Bild und stellt sich bei einer Änderung um (ohne Neuaufbau).
  */
+import { gfxOn } from './gfxOpts';
 export type RangeId = 'eco' | 'normal' | 'far' | 'max' | 'ultra' | 'extreme';
 
 export interface ViewRange {
@@ -36,8 +37,10 @@ export const RANGES: ViewRange[] = [
 
 const KEY = 'gruppetto.range';
 const KEY_DROP = 'gruppetto.rangeDrop';
+/** ohne eigene Wahl: „Max“ – mit PC-Grafik „Extrem“ (die Auflösungsregelung kürzt bei Bedarf) */
+const fallback = () => (gfxOn('pc') ? RANGES[5] : RANGES[3]);
 let cur: ViewRange = (() => {
-  try { return RANGES.find((r) => r.id === localStorage.getItem(KEY)) ?? RANGES[3]; } catch { return RANGES[3]; }
+  try { return RANGES.find((r) => r.id === localStorage.getItem(KEY)) ?? fallback(); } catch { return fallback(); }
 })();
 /** automatisch um so viele Stufen kürzer als gewählt (Auflösungsregelung, siehe quality.ts) */
 let drop = (() => {

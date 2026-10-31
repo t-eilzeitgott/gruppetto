@@ -17,7 +17,8 @@ import { mistTexture, waterTexture } from './falls3d';
 import { adCell, adsTex, AD_COUNT, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
 import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
-import { buildPeaks, buildPeaksSteps, peakKeepers, peakLight, setPeakOpacity } from './peaks3d';
+import { buildPeaks, buildPeaksSteps, isPcPeaks, peakKeepers, peakLight, peakSunUpdate, setPeakOpacity } from './peaks3d';
+import { Grass3D, grassMaterial, grassWarm } from './grass3d';
 import { FAC_B, FAC_H, FAC_W, TB, portalFacade, tunnelMaterial, tunnelName, tunnelRing, tunnelUniforms, type TunnelUniforms } from './tunnel3d';
 import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, TINTABLE, WALL_PAL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
 import { GB, alphaTex, lin, lin255, propGeometries, type Prop3D, type RGBf } from './models3d';
@@ -37,7 +38,7 @@ import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
 import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
 import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
-import { TREC, TREE_KINDS, bakeTreeAtlas, billboardMaterial, disposeBillboards, treeBillboards, treeTint, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
+import { TREC, TREE_KINDS, bakeTreeAtlas, billboardDepthMaterial, billboardMaterial, disposeBillboards, treeBillboards, treeTint, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
 import { mulberry32 } from './rng';
 import { ATMO } from './grade';
 import { viewRange, viewRangeVersion } from './viewRange';
@@ -353,6 +354,8 @@ interface AtlasEntry { u0: number; v0: number; u1: number; v1: number; w: number
 
 export class Renderer3D {
   quality = 1;
+  /** PC-Grafik (gfxOpts „pc“, gilt ab dem Start): höhere Auflösung, feinere Berge, Gras, alle Fahrer voll detailliert */
+  readonly pc = gfxOn('pc');
   dark = false;
   accent = '#ff5fa2';
   readonly gl: THREE.WebGLRenderer;
@@ -388,6 +391,16 @@ export class Renderer3D {
   /** Berge der neuen Landschaft: fertig gebaut, werden noch hochgeladen (dann erst überblenden) */
   private mtnWait: { m: THREE.Mesh; biome: BiomeId; ready: boolean } | null = null;
   private mtnFade = 1;
+  /** PC-Grafik: Schatten der feinen Berge nach der gewanderten Sonne neu rechnen (in Schritten), dann überblenden */
+  private mtnSun: { m: THREE.Mesh; it: Generator<void, boolean, void> } | null = null;
+  private mtnSunFade: THREE.Mesh | null = null;
+  /** zum Prüfen: Rechenzeit je Bild für den Bau der Berge (ms; null = wie üblich) */
+  debugPeakMs: number | null = null;
+  /** PC-Grafik: Schattenwurf der Bäume (Bild zur Sonne gedreht, Umriss aus dem Vorrat) */
+  private bbDepth: THREE.ShaderMaterial | null = null;
+  /** PC-Grafik: Gras am Wegrand (grass3d.ts) – ein Material für alle Strecken (bleibt übersetzt) */
+  private grass: Grass3D | null = null;
+  private grassMat: THREE.MeshLambertMaterial | null = null;
   /** Licht für die Berge am Horizont (eigener Shader) */
   private peakU = peakLight();
   private valley: THREE.Mesh;
@@ -476,9 +489,9 @@ export class Renderer3D {
   private anims = new Map<number, RiderAnim>();
   /** Fahrer in der Ferne als 2D-Bilder (ein Zeichenaufruf für alle) */
   private rs!: RiderSprites;
-  /** ab wo Bilder statt 3D-Fahrer (m; zum Prüfen änderbar) */
-  spriteNear = SPRITE_NEAR;
-  spriteFar = SPRITE_FAR;
+  /** ab wo Bilder statt 3D-Fahrer (m; zum Prüfen änderbar) – PC-Grafik: 3D-Fahrer bis gut 80 m */
+  spriteNear = this.pc ? 82 : SPRITE_NEAR;
+  spriteFar = this.pc ? 98 : SPRITE_FAR;
   private player: RiderModel | null = null;
   private playerAnim = new RiderAnim(1, true);
   private playerKit = '';
@@ -694,9 +707,11 @@ export class Renderer3D {
 
     this.initMaterials();
     this.crowdAtlas = bakeCrowdAtlas(this.gl);
-    this.treeAtlas = bakeTreeAtlas(this.gl);
+    this.treeAtlas = bakeTreeAtlas(this.gl, this.pc ? 1.5 : 1);
     // mit Kantenglättung (Normalfall) blenden die Bäume über sie weich aus
     this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, this.treeFadeU, this.msaa, this.morphU[0]);
+    // PC-Grafik: Bäume werfen Schatten (ihr Bild dreht sich im Schattendurchgang zur Sonne)
+    this.bbDepth = this.pc ? billboardDepthMaterial(this.treeAtlas, this.time, this.treeFadeU, this.morphU[0]) : null;
     this.sprMat = spriteMaterial(this.crowdU, this.crowdAtlas);
     this.rs = new RiderSprites(this.peakU, this.msaa);
     this.scene.add(this.rs.mesh);
@@ -753,7 +768,8 @@ export class Renderer3D {
     const t = new THREE.CanvasTexture(c);
     if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = Math.min(aniso, this.gl.capabilities.getMaxAnisotropy());
+    // (PC-Grafik: volle anisotrope Filterung – Straße und Hänge bis in die Ferne scharf)
+    t.anisotropy = Math.min(this.pc ? Math.max(aniso, 16) : aniso, this.gl.capabilities.getMaxAnisotropy());
     return t;
   }
 
@@ -825,7 +841,7 @@ export class Renderer3D {
     t.minFilter = THREE.LinearMipmapLinearFilter;
     t.generateMipmaps = true;
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = Math.min(2, this.gl.capabilities.getMaxAnisotropy());
+    t.anisotropy = Math.min(this.pc ? 16 : 2, this.gl.capabilities.getMaxAnisotropy());
     t.needsUpdate = true;
     return { tex: t, mean };
   }
@@ -842,7 +858,7 @@ export class Renderer3D {
     facade.magFilter = THREE.LinearFilter;
     facade.minFilter = THREE.LinearMipmapLinearFilter;
     facade.generateMipmaps = true;
-    facade.anisotropy = Math.min(4, this.gl.capabilities.getMaxAnisotropy());
+    facade.anisotropy = Math.min(this.pc ? 16 : 4, this.gl.capabilities.getMaxAnisotropy());
     facade.needsUpdate = true;
     const facadeLit = this.tex(fa.night, false);
     facadeLit.wrapS = THREE.RepeatWrapping;
@@ -1369,7 +1385,7 @@ export class Renderer3D {
     }
     // Farbe in die durchsichtigen Ränder ausdehnen (sonst mischt die Filterung dort Zufallsfarben hinein)
     const t = alphaTex(cv, 'bleed');
-    t.anisotropy = Math.min(4, this.gl.capabilities.getMaxAnisotropy());
+    t.anisotropy = Math.min(this.pc ? 16 : 4, this.gl.capabilities.getMaxAnisotropy());
     this.mats.billboard.map = t;
   }
 
@@ -1390,8 +1406,14 @@ export class Renderer3D {
     const W = Math.max(100, Math.round(rect.width));
     const H = Math.max(100, Math.round(rect.height));
     // höchstens 1,4-fache Pixeldichte: mit Kantenglättung auf Retina kaum sichtbar, spart aber viel Füllrate.
-    // Am Start (Fahrer steht, alles ruhig): gestochen scharf mit bis zu doppelter Dichte
-    const dpr = this.sharp ? Math.min(2, window.devicePixelRatio || 1) : Math.min(1.4, window.devicePixelRatio || 1) * this.quality;
+    // Am Start (Fahrer steht, alles ruhig): gestochen scharf mit bis zu doppelter Dichte.
+    // PC-Grafik: volle Dichte des Bildschirms, mindestens 1,25-fach (feiner als die Pixel, zusammen mit der
+    // Kantenglättung gestochen scharf) – die Auflösungsregelung nimmt bei Bedarf zurück
+    const dev = window.devicePixelRatio || 1;
+    // (PC-Grafik höchstens ~4,5 Millionen Bildpunkte: auf großen Bildschirmen bliebe sonst kaum Rechenzeit fürs Bild)
+    const dpr = this.pc
+      ? Math.min(2, Math.max(1.25, dev), Math.sqrt(4.5e6 / (W * H))) * (this.sharp ? 1 : this.quality)
+      : this.sharp ? Math.min(2, dev) : Math.min(1.4, dev) * this.quality;
     const cv = this.gl.domElement;
     // unverändert: nichts anfassen (jedes Setzen der Größe leert die Leinwand)
     if (W !== this.W || H !== this.H || dpr !== this.gl.getPixelRatio() || cv.width !== Math.floor(W * dpr) || cv.height !== Math.floor(H * dpr)) {
@@ -1581,6 +1603,7 @@ export class Renderer3D {
     this.updateRiders(g);
     this.ttStart?.update(g, dt);
     this.updateDescStart(g, dt);
+    this.updateGrass(g);
     P?.mark(SEC.fahrer);
     this.updateSky(g, biome, dt);
     // Wasser strömt: eine Texturlänge je Sekunde (wie schnell das aussieht, legt die Dichte der Koordinaten fest)
@@ -1891,17 +1914,24 @@ export class Renderer3D {
       const T = this.terrain;
       this.ttStart = new TtStart3D({
         track, props: this.mats.props, ads: this.mats.ads, gear: this.gearMat, shadow: this.shadowTex, glow: this.mats.lampGlow.map!,
-        accent: this.accent, aniso: Math.min(4, this.gl.capabilities.getMaxAnisotropy()),
+        accent: this.accent, aniso: Math.min(this.pc ? 16 : 4, this.gl.capabilities.getMaxAnisotropy()),
         side: (f, sg, dx) => {
           const s = track.seg(Math.max(track.first, Math.floor(f / SEG)));
           return this.groundAt(sg < 0 ? s.L : s.R, s, sg, dx, T.lim(s.i)[sg < 0 ? 0 : 1] - track.extra(s.i)) ?? 0;
         },
+        pc: this.pc,
       });
       this.scene.add(this.ttStart.root);
     }
     this.descStart?.dispose();
     this.descStart = null;
     this.makeDescStart(track);
+    if (this.grass) { this.scene.remove(this.grass.group); this.grass.dispose(); this.grass = null; }
+    if (this.pc) {
+      this.grassMat ??= grassMaterial(this.time);
+      this.grass = new Grass3D({ track, material: this.grassMat, verge: (i, sg) => this.grassVerge(i, sg) });
+      this.scene.add(this.grass.group);
+    }
     this.cam.init = false;
     this.resetDirector(false);
     this.runners = [];
@@ -1913,10 +1943,41 @@ export class Renderer3D {
     this.descStart = new DescentStart3D({
       track, props: this.mats.props, gear: this.gearMat, facade: this.mats.facade, roof: this.mats.roof, tiles: this.mats.tiles, sign: this.mats.sign,
       lantern: this.mats.lantern, bulb: this.mats.bulb, shadow: this.shadowTex, glow: this.mats.lampGlow.map!,
-      aniso: Math.min(8, this.gl.capabilities.getMaxAnisotropy()), accent: this.accent,
-      night: () => this.mats.bulb.opacity,
+      aniso: Math.min(this.pc ? 16 : 8, this.gl.capabilities.getMaxAnisotropy()), accent: this.accent,
+      night: () => this.mats.bulb.opacity, pc: this.pc,
     });
     this.scene.add(this.descStart.root);
+  }
+
+  /**
+   * PC-Gras pflegen: Stücke voraus bauen, hinten freigeben. Im ruhigen Auftakt der Abfahrt (Tunnelausgang bis hinter
+   * die Kehre) entsteht nichts – das Gras dafür wird vorher schon bis hinter die Kehre gebaut.
+   */
+  private updateGrass(g: RaceView) {
+    if (!this.grass || this.calm) return;
+    const z = g.p.z;
+    let ahead = z + 120;
+    const cz = this.calmZ;
+    if (cz && isFinite(cz[0]) && z > cz[0] - 240 && z < cz[1]) ahead = Math.max(ahead, cz[1] + 100);
+    // (vor dem Start, wenn niemand fährt, großzügiger)
+    this.grass.update(z, ahead, this.debugPeakMs ?? (this.idleBuild ? 4 : 1));
+  }
+
+  /** Querprofil einer Straßenseite fürs Gras – null, wo keine Wiese ist (Tunnel, Brücke, Fels, Ort, Zuschauer) */
+  private grassVerge(i: number, sg: number): { pr: { o: number[]; h: number[]; cols: RGBf[] }; lim: number } | null {
+    const t = this.track;
+    if (!t || i < t.first) return null;
+    const s = t.seg(i);
+    if (s.tunnel || s.bridge > 0 || s.portal || s.crowd) return null;
+    const side = sg < 0 ? s.L : s.R;
+    if (side.ground !== 'meadow' || side.wall > 0 || side.barrier === 'crowd') return null;
+    // Startort der Abfahrt, Häuser in der Nähe (Straßenzeile), Dörfer: dort Gärten und Pflaster
+    if (t.kind === 'descent' && t.startZ > 0 && i * SEG < t.startZ + 160) return null;
+    for (let d = -7; d <= 7; d++) { const o = t.seg(Math.max(t.first, i + d)); if (sg < 0 ? o.bL : o.bR) return null; }
+    if (this.villages?.inside(i * SEG)) return null;
+    const e = t.extra(i);
+    const lim = (this.terrain ? this.terrain.lim(i)[sg < 0 ? 0 : 1] : LIM_MAX) - e;
+    return { pr: this.profile(side, s, sg, lim), lim: lim - EDGE };
   }
 
   /** Startort: bewegen; hinter dem Ort (vor Landstraße und Kehre) freigeben, bei einer neuen Fahrt wieder bauen */
@@ -2456,6 +2517,7 @@ export class Renderer3D {
       this.bbOf.set(tsrc, bg);
       const bm = new THREE.Mesh(bg, this.bbMat);
       bm.userData.bb = true;
+      if (this.bbDepth) { bm.customDepthMaterial = this.bbDepth; bm.castShadow = true; }
       objs.push(bm);
     }
     if (d.falls) {
@@ -2626,7 +2688,7 @@ export class Renderer3D {
     ATMO.fogSunCol.value.copy(sunC).multiplyScalar((0.18 + 0.55 * L.hazeAmt) * Math.max(0, Math.min(1, 1 - L.stars * 1.5)) * dim);
     this.peakU.uGlow.value.copy(ATMO.fogSunCol.value);
     const c = this.shadowCenter(g, sd);
-    this.sun.position.copy(c).addScaledVector(sd, 220);
+    this.sun.position.copy(c).addScaledVector(sd, this.pc ? 450 : 220);
     this.sun.target.position.copy(c);
     // Gegenlicht: von der anderen Seite, flacher, bläulich wie Himmelslicht
     this.fill.position.copy(this.camera.position).add(new THREE.Vector3(-sd.x, 0.45, -sd.z).normalize().multiplyScalar(200));
@@ -2691,11 +2753,14 @@ export class Renderer3D {
   private sAy = new THREE.Vector3();
   /** Mittelpunkt des Schattenbereichs: etwas vor dem Fahrer, im Lichtraum auf Texelgröße gerastet */
   private shadowCenter(g: RaceView, sd: THREE.Vector3): THREE.Vector3 {
-    const w = this.track!.world(g.p.z + 16, 0, 0, this.w2);
+    // (PC-Grafik: die große Schattenkarte reicht weiter voraus – Mitte 60 m vor dem Fahrer)
+    const w = this.track!.world(g.p.z + (this.pc ? 60 : 16), 0, 0, this.w2);
     const c = this.sc0.set(w.x, w.y, w.z);
     const ax = this.sAx.set(0, 1, 0).cross(sd).normalize();
     const ay = this.sAy.copy(sd).cross(ax).normalize();
-    const texel = 72 / 1024;
+    // auf ganze Texel der Schattenkarte springen (sonst flimmern die Schattenkanten beim Fahren)
+    const sc = this.sun.shadow.camera;
+    const texel = (sc.right - sc.left) / Math.max(1, this.sun.shadow.mapSize.x);
     const u = Math.round(c.dot(ax) / texel) * texel - c.dot(ax);
     const v = Math.round(c.dot(ay) / texel) * texel - c.dot(ay);
     return c.addScaledVector(ax, u).addScaledVector(ay, v);
@@ -3091,13 +3156,23 @@ export class Renderer3D {
     // zurück in die Landschaft, deren Berge schon stehen: angefangenen Bau verwerfen
     // (fertig gebaut, aber noch beim Hochladen: zählt schon als die neue Landschaft)
     const waitB = this.mtnWait?.biome;
+    const dropWait = () => { if (this.mtnWait) { this.mtnWait.m.geometry.dispose(); (this.mtnWait.m.material as THREE.Material).dispose(); this.mtnWait = null; } };
     if (biome === this.mtnBiome) {
-      this.mtnGen = null;
-      if (this.mtnWait) { this.mtnWait.m.geometry.dispose(); (this.mtnWait.m.material as THREE.Material).dispose(); this.mtnWait = null; }
+      // PC-Grafik: steht erst die einfache Fassung, kommt die feine derselben Landschaft in Schritten hinterher
+      const upgrade = this.pc && !!this.mtn && !isPcPeaks(this.mtn);
+      if (!upgrade) {
+        this.mtnGen = null;
+        dropWait();
+      } else {
+        if (this.mtnWait && this.mtnWait.biome !== biome) dropWait();
+        if (this.mtnGen && this.mtnGen.biome !== biome) this.mtnGen = null;
+        if (!this.mtnGen && !this.mtnWait) this.mtnGen = { biome, it: buildPeaksSteps(biome, this.peakU, true) };
+      }
     } else if (this.mtnGen?.biome !== biome && waitB !== biome) {
-      this.mtnGen = this.mtn ? { biome, it: buildPeaksSteps(biome, this.peakU) } : null;
-      if (this.mtnWait) { this.mtnWait.m.geometry.dispose(); (this.mtnWait.m.material as THREE.Material).dispose(); this.mtnWait = null; }
+      this.mtnGen = this.mtn ? { biome, it: buildPeaksSteps(biome, this.peakU, this.pc) } : null;
+      dropWait();
       if (!this.mtn) {
+        // (zuerst immer die einfache Fassung sofort – die feine braucht zu lange für ein Bild)
         this.mtn = buildPeaks(biome, this.peakU);
         this.scene.add(this.mtn);
         this.mtnFade = 1;
@@ -3106,8 +3181,10 @@ export class Renderer3D {
     }
     if (this.mtnGen && !this.calm) {
       const t0 = performance.now();
+      // vor dem Start (niemand fährt) großzügiger: die feinen Berge stehen dann, bevor es losgeht
+      const budget = this.debugPeakMs ?? (this.idleBuild ? 8 : 1.2);
       let r = this.mtnGen.it.next();
-      while (!r.done && performance.now() - t0 < 1.2) r = this.mtnGen.it.next();
+      while (!r.done && performance.now() - t0 < budget) r = this.mtnGen.it.next();
       if (r.done) {
         // erst hochladen (gut 0,7 MB), dann überblenden
         const w = { m: r.value, biome: this.mtnGen.biome, ready: this.idleBuild };
@@ -3127,6 +3204,7 @@ export class Renderer3D {
       this.mtnWait = null;
     }
     this.mtnFade = Math.min(1, this.mtnFade + dt / 2.5);
+    if (this.pc) this.peakSun(dt);
     for (const [m, a] of [[this.mtn, this.mtnFade], [this.mtnOld, 1 - this.mtnFade]] as [THREE.Mesh | null, number][]) {
       if (!m) continue;
       m.position.set(cp.x, cp.y - 240, cp.z);
@@ -3138,6 +3216,33 @@ export class Renderer3D {
       this.mtnOld.geometry.dispose();
       (this.mtnOld.material as THREE.Material).dispose();
       this.mtnOld = null;
+    }
+  }
+
+  /**
+   * PC-Grafik: Schlagschatten der feinen Berge der Sonne nachführen. Ist sie um gut ein Grad gewandert, wird in
+   * Schritten neu gerechnet (nicht im ruhigen Auftakt der Abfahrt) und dann über zwei Sekunden überblendet.
+   */
+  private peakSun(dt: number) {
+    const m = this.mtn;
+    if (this.mtnSunFade) {
+      const u = (this.mtnSunFade.material as THREE.ShaderMaterial).uniforms.uSunMix;
+      u.value = Math.min(1, u.value + dt / 2);
+      if (u.value >= 1) this.mtnSunFade = null;
+    }
+    if (this.mtnSun && this.mtnSun.m !== m) this.mtnSun = null;
+    if (!m || !isPcPeaks(m) || this.calm) return;
+    if (!this.mtnSun) {
+      const at = m.userData.sunAt as THREE.Vector3;
+      if (at.angleTo(this.peakU.uSunDir.value) < 0.021) return;
+      this.mtnSun = { m, it: peakSunUpdate(m, this.peakU.uSunDir.value) };
+    }
+    const t0 = performance.now();
+    let r = this.mtnSun.it.next();
+    while (!r.done && performance.now() - t0 < (this.debugPeakMs ?? (this.idleBuild ? 6 : 1))) r = this.mtnSun.it.next();
+    if (r.done) {
+      this.mtnSun = null;
+      if (r.value) this.mtnSunFade = m;
     }
   }
 
@@ -3309,11 +3414,13 @@ export class Renderer3D {
     for (const o of this.houses.warmObjects()) g.add(o);
     // Halos der Laternen, Sonnenuntergangs-Licht
     g.add(warmLamps());
+    // PC-Gras
+    if (this.pc) { this.grassMat ??= grassMaterial(this.time); g.add(grassWarm(this.grassMat)); }
     g.add(new THREE.Mesh(this.sunset.mesh.geometry, this.sunset.mesh.material));
     if (!this.houses.group.parent) this.scene.add(this.houses.group);
     // Berge am Horizont: beide Spielarten am Leben halten (Landschaftswechsel tauscht ihr Material)
     this.peakU.uNoise.value ??= this.noiseMap;
-    for (const m of peakKeepers(this.peakU)) g.add(new THREE.Mesh(geo, m));
+    for (const m of peakKeepers(this.peakU, this.pc)) g.add(new THREE.Mesh(geo, m));
     // Requisiten: je Art ein Zeichenaufruf mit eigener Farbe je Exemplar
     const im = new THREE.InstancedMesh(geo, this.mats.props, 1);
     im.receiveShadow = true;
@@ -3923,6 +4030,7 @@ export class Renderer3D {
       const cbg = treeBillboards(csrc, this.treeAtlas);
       this.bbOf.set(csrc, cbg);
       cbm = new THREE.Mesh(cbg, this.bbMat);
+      if (this.bbDepth) { cbm.customDepthMaterial = this.bbDepth; cbm.castShadow = true; }
       group.add(cbm);
       this.treeSrc.add(csrc);
     }
@@ -5825,7 +5933,7 @@ export class Renderer3D {
     // in den Rennfinals das ganze Feld; Fahrer zwischen Kamera und Spieler werden durchsichtig
     const sprint = track.kind !== 'descent';
     const field = g.ghosts?.length ? [...g.opps, ...g.ghosts] : g.opps;
-    const list = field.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, sprint ? 32 : 14);
+    const list = field.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, (sprint ? 32 : 14) * (this.pc ? 2 : 1));
     const cp = this.camera.position;
     const rsOn = this.rs.ready;
     this.rs.begin();
@@ -5925,7 +6033,7 @@ export class Renderer3D {
         // Fahrerfeld: wer dich verdeckt, wird durchsichtig – diese Shader gleich jetzt übersetzen (nicht erst mitten
         // im Rennen); der Stellvertreter bleibt (sonst gäbe three.js die Programme wieder frei)
         if (!this.fadeWarm) {
-          const fm = new RiderModel(LOOKS[0], this.shadowTex);
+          const fm = new RiderModel(LOOKS[0], this.shadowTex, this.pc ? 1 : 0);
           fm.prepareFade();
           appearifyTree(fm.group);
           this.scene.add(fm.group);
@@ -5985,7 +6093,8 @@ export class Renderer3D {
       if (fade) m.prepareFade();
       return m;
     }
-    const n = new RiderModel(kit, this.shadowTex);
+    // PC-Grafik: auch die Gegner mit voller Detailstufe am Rad (Kette, Zähne, Schriftzüge)
+    const n = new RiderModel(kit, this.shadowTex, this.pc ? 1 : 0);
     if (fade) n.prepareFade();
     appearifyTree(n.group);
     // auch die Teile, die erst später sichtbar werden (Speichen-Schleier), gleich übersetzen lassen

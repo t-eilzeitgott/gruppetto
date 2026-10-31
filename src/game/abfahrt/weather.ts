@@ -54,6 +54,12 @@ export interface Weather {
   grain: number;
 }
 
+/** PC-Grafik ohne Wetter: Nachbearbeitung ohne eigenen Bildstil (nur ein Hauch Leuchten) */
+const NEUTRAL: Weather = {
+  id: 'gold', name: '', tod: [0, 0], bloom: 0.1, bloomThreshold: 0.95, rays: 0, clouds: 0, sky: {}, fogBank: 0, fogBankH: 10,
+  exposure: 1, contrast: 1, sat: 1, warm: 0, split: 0, splitS: [1, 1, 1], splitH: [1, 1, 1], vignette: 0, grain: 0,
+};
+
 export const WEATHERS: Record<WeatherId, Weather> = {
   gold: {
     id: 'gold', name: 'Goldene Stunde', tod: [0.4, 0.56],
@@ -175,6 +181,77 @@ void main() {
 	gl_FragColor = s;
 }`;
 
+/**
+ * PC-Grafik: Umgebungsverdeckung aus dem Tiefenbild (halbe Auflösung) – Ecken, Fugen, der Boden unter Fahrern, Autos
+ * und Dachvorsprüngen, Stämme im Gras werden dunkler. Je Bildpunkt 14 Proben in der Halbkugel über der Fläche
+ * (Normale aus den Nachbartiefen), gedreht nach einem Muster, das das Weichzeichnen danach glättet. Nur in der
+ * Nähe (bis gut 100 m), nie am Himmel.
+ */
+const AO_FRAG = `${GEOM}
+uniform sampler2D tDepth;
+uniform vec2 uTexel;
+uniform mat4 uProj;
+uniform float uRadius;
+varying vec2 vUv;
+vec3 viewAt( vec2 uv ) { float d = texture2D( tDepth, uv ).r; vec4 v = uInvProj * vec4( uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0 ); return v.xyz / v.w; }
+float ign( vec2 p ) { return fract( 52.9829189 * fract( dot( p, vec2( 0.06711056, 0.00583715 ) ) ) ); }
+void main() {
+	float d = texture2D( tDepth, vUv ).r;
+	if ( d >= 0.99999 ) { gl_FragColor = vec4( 1.0 ); return; }
+	vec3 P = viewAt( vUv );
+	float dist = - P.z;
+	if ( dist > 140.0 ) { gl_FragColor = vec4( 1.0 ); return; }
+	// Normale aus den Nachbarn (je Richtung die nähere Seite: keine Säume an Kanten)
+	vec3 pr = viewAt( vUv + vec2( uTexel.x, 0.0 ) ), pl = viewAt( vUv - vec2( uTexel.x, 0.0 ) );
+	vec3 pu = viewAt( vUv + vec2( 0.0, uTexel.y ) ), pd = viewAt( vUv - vec2( 0.0, uTexel.y ) );
+	vec3 dx = abs( pr.z - P.z ) < abs( P.z - pl.z ) ? pr - P : P - pl;
+	vec3 dy = abs( pu.z - P.z ) < abs( P.z - pd.z ) ? pu - P : P - pd;
+	vec3 N = normalize( cross( dx, dy ) );
+	if ( dot( N, P ) > 0.0 ) N = - N;
+	// Halbkugel um N: Spirale, je Bildpunkt gedreht
+	vec3 T = normalize( abs( N.y ) < 0.9 ? cross( N, vec3( 0.0, 1.0, 0.0 ) ) : cross( N, vec3( 1.0, 0.0, 0.0 ) ) );
+	vec3 B = cross( N, T );
+	float rot = ign( gl_FragCoord.xy ) * 6.2831853;
+	float R = uRadius * ( 1.0 + dist * 0.012 );
+	float occ = 0.0;
+	const int NS = 14;
+	for ( int i = 0; i < NS; i ++ ) {
+		float fi = ( float( i ) + 0.5 ) / float( NS );
+		float a = rot + float( i ) * 2.39996;
+		float r = sqrt( fi );
+		vec3 h = T * ( cos( a ) * r ) + B * ( sin( a ) * r ) + N * sqrt( max( 0.0, 1.0 - r * r ) );
+		vec3 S = P + h * R * ( 0.25 + 0.75 * fi * fi );
+		vec4 c = uProj * vec4( S, 1.0 );
+		vec2 suv = c.xy / c.w * 0.5 + 0.5;
+		if ( suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0 ) continue;
+		float sz = viewAt( suv ).z;
+		// verdeckt, wenn die Szene dort näher liegt als die Probe – nur in Reichweite (kein Schatten durch Ferne)
+		float range = smoothstep( 0.0, 1.0, R / max( 1e-3, abs( P.z - sz ) ) );
+		occ += ( sz >= S.z + 0.03 * R ? 1.0 : 0.0 ) * range;
+	}
+	float ao = 1.0 - occ / float( NS );
+	ao = mix( ao, 1.0, smoothstep( 80.0, 140.0, dist ) );
+	gl_FragColor = vec4( vec3( ao ), 1.0 );
+}`;
+
+/** Weichzeichnen der Verdeckung: nur über ähnliche Tiefe (Kanten bleiben scharf) */
+const AO_BLUR_FRAG = `${GEOM}
+uniform sampler2D tIn, tDepth;
+uniform vec2 uDir;
+varying vec2 vUv;
+void main() {
+	float z0 = linZ( texture2D( tDepth, vUv ).r );
+	float sum = 0.0, wsum = 0.0;
+	for ( int i = -4; i <= 4; i ++ ) {
+		vec2 uv = vUv + uDir * float( i );
+		float z = linZ( texture2D( tDepth, uv ).r );
+		float w = exp( - float( i * i ) / 12.0 ) * ( 1.0 / ( 1.0 + abs( z - z0 ) / ( 0.04 * z0 + 0.05 ) ) );
+		sum += texture2D( tIn, uv ).r * w;
+		wsum += w;
+	}
+	gl_FragColor = vec4( vec3( sum / max( wsum, 1e-4 ) ), 1.0 );
+}`;
+
 const RAYS_FRAG = `uniform sampler2D tIn; uniform vec2 uSun; uniform vec4 uChan; uniform float uDensity, uDecay, uWeight; varying vec2 vUv;
 void main() {
 	vec2 d = ( vUv - uSun ) * uDensity / 24.0;
@@ -186,7 +263,8 @@ void main() {
 const COMP_FRAG = `${GEOM}
 ${NOISE}
 #include <common>
-uniform sampler2D tScene, tDepth, tBloom, tRays;
+uniform sampler2D tScene, tDepth, tBloom, tRays, tAO;
+uniform float uAO;
 uniform vec2 uRes, uSunUv;
 uniform vec3 uSunDir, uSunCol, uFogCol, uSkyTop, uSkyHz, uSplitS, uSplitH;
 uniform float uSunVis, uTime;
@@ -202,6 +280,7 @@ void main() {
 	vec3 wp = worldAt( uv, d );
 	vec3 col = sceneAt( tScene, uv );
 	if ( ! sky ) {
+		if ( uAO > 0.0 ) col *= mix( 1.0, texture2D( tAO, uv ).r, uAO );
 		if ( uClouds > 0.0 ) {
 			float n = fbm( wp.xz * 0.0026 + uTime * vec2( 0.011, 0.006 ) );
 			col *= 1.0 - uClouds * 0.55 * smoothstep( 0.42, 0.66, n );
@@ -272,6 +351,10 @@ export class WeatherFx {
   private blur: THREE.ShaderMaterial;
   private rays: THREE.ShaderMaterial;
   private comp: THREE.ShaderMaterial;
+  /** PC-Grafik: Umgebungsverdeckung (halbe Auflösung, zwei Ziele zum Weichzeichnen) */
+  private ao: THREE.ShaderMaterial;
+  private aoBlur: THREE.ShaderMaterial;
+  private aoRT: THREE.WebGLRenderTarget[] = [];
   private time = 0;
   private last = performance.now();
   private lastPhase = '';
@@ -282,9 +365,12 @@ export class WeatherFx {
   private shadows = false;
   private off: () => void;
 
+  /** PC-Grafik (gilt ab dem Start, wie im Renderer) */
+  private readonly pc = gfxOn('pc');
+
   constructor(private host: WeatherHost) {
     this.env = host.weatherEnv;
-    this.tier = gfxTier();
+    this.tier = this.pc ? 'high' : gfxTier();
     this.fixed = weatherOverride();
     const geomU = () => ({
       uInvProj: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() },
@@ -300,8 +386,14 @@ export class WeatherFx {
     this.rays = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: RAYS_FRAG, depthTest: false, depthWrite: false, uniforms: {
       tIn: { value: null }, uSun: { value: new THREE.Vector2() }, uChan: { value: new THREE.Vector4(0, 0, 0, 1) }, uDensity: { value: 0.9 }, uDecay: { value: 0.93 }, uWeight: { value: 0.07 },
     } });
+    this.ao = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: AO_FRAG, depthTest: false, depthWrite: false, uniforms: {
+      ...geomU(), tDepth: { value: null }, uTexel: { value: new THREE.Vector2() }, uProj: { value: new THREE.Matrix4() }, uRadius: { value: 0.9 },
+    } });
+    this.aoBlur = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: AO_BLUR_FRAG, depthTest: false, depthWrite: false, uniforms: {
+      ...geomU(), tIn: { value: null }, tDepth: { value: null }, uDir: { value: new THREE.Vector2() },
+    } });
     this.comp = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: COMP_FRAG, depthTest: false, depthWrite: false, uniforms: {
-      ...geomU(), tScene: { value: null }, tDepth: { value: null }, tBloom: { value: null }, tRays: { value: null },
+      ...geomU(), tScene: { value: null }, tDepth: { value: null }, tBloom: { value: null }, tRays: { value: null }, tAO: { value: null }, uAO: { value: 0 },
       uRes: { value: new THREE.Vector2() }, uSunUv: { value: new THREE.Vector2() }, uSunDir: { value: new THREE.Vector3() }, uSunCol: { value: new THREE.Color() },
       uFogCol: { value: new THREE.Color() }, uSkyTop: { value: new THREE.Color() }, uSkyHz: { value: new THREE.Color() },
       uSplitS: { value: new THREE.Vector3(1, 1, 1) }, uSplitH: { value: new THREE.Vector3(1, 1, 1) },
@@ -349,12 +441,17 @@ export class WeatherFx {
     gl.shadowMap.enabled = true;
     gl.shadowMap.type = THREE.PCFShadowMap;
     sun.castShadow = true;
-    sun.shadow.mapSize.set(high ? 2048 : 1024, high ? 2048 : 1024);
-    sun.shadow.bias = -0.0006;
-    sun.shadow.normalBias = 0.06;
-    const half = high ? 80 : 48;
+    // PC-Grafik: große, feine Schattenkarte (4096², ±150 m – Häuser, Bäume und Hänge werfen bis weit voraus
+    // Schatten) mit weichen Kanten (gestreute Abtastung über gut zwei Texel)
+    const pc = this.pc;
+    const size = pc ? Math.min(4096, gl.capabilities.maxTextureSize) : high ? 2048 : 1024;
+    sun.shadow.mapSize.set(size, size);
+    sun.shadow.bias = pc ? -0.0007 : -0.0006;
+    sun.shadow.normalBias = pc ? 0.085 : 0.06;
+    sun.shadow.radius = pc ? 2.2 : 1;
+    const half = pc ? 150 : high ? 80 : 48;
     const sc = sun.shadow.camera;
-    sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half; sc.near = 10; sc.far = 520;
+    sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half; sc.near = 10; sc.far = pc ? 900 : 520;
     sc.updateProjectionMatrix();
     this.flagShadows();
   }
@@ -389,6 +486,9 @@ export class WeatherFx {
     const L = this.weather;
     if (!L) {
       this.host.debugTod = null;
+      // PC-Grafik: auch ohne Wetter durch die Nachbearbeitung – neutral (Licht und Farben des Spiels), aber mit
+      // Umgebungsverdeckung und 8-facher Kantenglättung
+      if (this.pc && this.host.quality >= 0.55) { this.render(draw, NEUTRAL); return; }
       draw();
       return;
     }
@@ -406,10 +506,33 @@ export class WeatherFx {
     this.rt?.dispose();
     for (const s of this.small) s.dispose();
     const depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
-    this.rt = new THREE.WebGLRenderTarget(w, h, { depthTexture, samples: this.tier === 'high' ? 4 : 2, type: THREE.HalfFloatType, colorSpace: THREE.LinearSRGBColorSpace });
+    // Kantenglättung im Szenenbild: PC-Grafik 8-fach (so viel die Grafik kann; bei sehr großem Bild – dann ist es
+    // ohnehin feiner als die Pixel des Bildschirms – 4-fach), sonst 4- oder 2-fach
+    const samples = this.pc ? Math.min(w * h > 2.2e6 ? 4 : 8, this.maxFloatSamples()) : this.tier === 'high' ? 4 : 2;
+    this.rt = new THREE.WebGLRenderTarget(w, h, { depthTexture, samples, type: THREE.HalfFloatType, colorSpace: THREE.LinearSRGBColorSpace });
     const sw = Math.max(8, Math.round(w / 4));
     const sh = Math.max(8, Math.round(h / 4));
     this.small = [0, 1, 2, 3].map(() => new THREE.WebGLRenderTarget(sw, sh, { type: THREE.HalfFloatType, depthBuffer: false, colorSpace: THREE.LinearSRGBColorSpace }));
+    for (const a of this.aoRT) a.dispose();
+    this.aoRT = this.pc
+      ? [0, 1].map(() => new THREE.WebGLRenderTarget(Math.max(8, Math.round(w / 2)), Math.max(8, Math.round(h / 2)), { type: THREE.UnsignedByteType, depthBuffer: false, colorSpace: THREE.NoColorSpace }))
+      : [];
+  }
+
+  /**
+   * höchstens 8-fache Kantenglättung – so viel, wie die Grafik für Halbfloat-Bilder kann (manche können dafür
+   * weniger als allgemein; zu viel ließe das Bild schwarz)
+   */
+  private maxFloatSamples(): number {
+    const cap = Math.min(8, this.env.gl.capabilities.maxSamples);
+    try {
+      const c = this.env.gl.getContext() as WebGL2RenderingContext;
+      const list = c.getInternalformatParameter(c.RENDERBUFFER, c.RGBA16F, c.SAMPLES) as Int32Array | null;
+      const dl = c.getInternalformatParameter(c.RENDERBUFFER, c.DEPTH_COMPONENT24, c.SAMPLES) as Int32Array | null;
+      const a = list && list.length ? list[0] : 4;
+      const b = dl && dl.length ? dl[0] : 4;
+      return Math.max(2, Math.min(cap, a, b));
+    } catch { return Math.min(4, cap); }
   }
 
   private pass(mat: THREE.ShaderMaterial, target: THREE.WebGLRenderTarget | null) {
@@ -464,9 +587,28 @@ export class WeatherFx {
       ru.tIn.value = s0.texture; (ru.uChan.value as THREE.Vector4).set(0, 0, 0, 1); ru.uDensity.value = 0.55; ru.uDecay.value = 0.95; ru.uWeight.value = 0.085; this.pass(this.rays, s3);
       ru.tIn.value = s3.texture; (ru.uChan.value as THREE.Vector4).set(1, 0, 0, 0); ru.uDensity.value = 0.9; ru.uDecay.value = 0.9; ru.uWeight.value = 0.1; this.pass(this.rays, s1);
     }
+    // PC-Grafik: Umgebungsverdeckung, dann zweimal tiefenbewusst weich
+    let aoTex: THREE.Texture | null = null;
+    if (this.aoRT.length) {
+      const [a0, a1] = this.aoRT;
+      geom(this.ao);
+      const au = this.ao.uniforms;
+      au.tDepth.value = rt.depthTexture;
+      (au.uTexel.value as THREE.Vector2).set(1 / a0.width, 1 / a0.height);
+      (au.uProj.value as THREE.Matrix4).copy(camera.projectionMatrix);
+      this.pass(this.ao, a0);
+      geom(this.aoBlur);
+      const bu2 = this.aoBlur.uniforms;
+      bu2.tDepth.value = rt.depthTexture;
+      bu2.tIn.value = a0.texture; (bu2.uDir.value as THREE.Vector2).set(1 / a0.width, 0); this.pass(this.aoBlur, a1);
+      bu2.tIn.value = a1.texture; (bu2.uDir.value as THREE.Vector2).set(0, 1 / a0.height); this.pass(this.aoBlur, a0);
+      aoTex = a0.texture;
+    }
     // Zusammensetzen
     geom(this.comp);
     const cu = this.comp.uniforms;
+    cu.tAO.value = aoTex;
+    cu.uAO.value = aoTex ? 0.85 : 0;
     cu.tScene.value = rt.texture; cu.tDepth.value = rt.depthTexture; cu.tBloom.value = s2.texture; cu.tRays.value = s1.texture;
     (cu.uRes.value as THREE.Vector2).set(size.x, size.y);
     (cu.uSunUv.value as THREE.Vector2).set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5);
@@ -487,7 +629,8 @@ export class WeatherFx {
   dispose() {
     this.rt?.dispose();
     for (const s of this.small) s.dispose();
-    this.down.dispose(); this.blur.dispose(); this.rays.dispose(); this.comp.dispose();
+    for (const a of this.aoRT) a.dispose();
+    this.down.dispose(); this.blur.dispose(); this.rays.dispose(); this.comp.dispose(); this.ao.dispose(); this.aoBlur.dispose();
     this.mesh.geometry.dispose();
     this.off();
     this.host.post = null;

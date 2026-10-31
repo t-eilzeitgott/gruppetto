@@ -582,7 +582,7 @@ export function GamePage() {
       zeichenflaeche: cv ? `${cv.width}×${cv.height}` : '?',
       aufloesung: r ? `${Math.round(r.quality * 100)} % (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
       sichtweite: `${viewRange().label}${rd ? ` (vom Regler ${rd} Stufe${rd > 1 ? 'n' : ''} kürzer)` : ''}`,
-      grafik: `Lichtfilter & Wetter ${gfxOn('licht') ? 'an' : 'aus'}, Sonnenschatten ${gfxOn('schatten') ? 'an' : 'aus'}, Landschaftsdetails ${gfxOn('details') ? 'an' : 'aus'}`,
+      grafik: `${r?.pc ? 'PC-Grafik an, ' : ''}Lichtfilter & Wetter ${gfxOn('licht') ? 'an' : 'aus'}, Sonnenschatten ${gfxOn('schatten') ? 'an' : 'aus'}, Landschaftsdetails ${gfxOn('details') ? 'an' : 'aus'}`,
     };
   };
   const startMeasure = () => {

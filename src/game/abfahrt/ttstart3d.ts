@@ -57,6 +57,8 @@ export interface TtStartDeps {
   aniso: number;
   /** Höhe des Bodens neben der Straße über der Fahrbahn: Streckenmeter f, Seite sg, Abstand dx ab dem Bankett */
   side: (f: number, sg: number, dx: number) => number;
+  /** PC-Grafik: alle Menschen in voller Detailstufe */
+  pc?: boolean;
 }
 
 type V = number[];
@@ -156,7 +158,7 @@ export class TtStart3D {
     const pg = propGeometries();
     const add = (role: Role, act: Act, x: number, f: number, look: [number, number], y = 0, track = false) => {
       // nah an der Startkamera (hinter dem Fahrer): Kopf in voller Detailstufe, weiter weg einfacher
-      const q: 0 | 1 = Math.hypot(x, f + 6.7) < 10 ? 1 : 0;
+      const q: 0 | 1 = d.pc || Math.hypot(x, f + 6.7) < 10 ? 1 : 0;
       const h = new Human(lookFor(r, role), r() * 100, q);
       h.act = act;
       const yaw = Math.atan2(look[0] - x, look[1] - f);

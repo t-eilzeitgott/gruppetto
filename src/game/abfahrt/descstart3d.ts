@@ -44,6 +44,8 @@ export interface DescentStartDeps {
   accent: string;
   /** Abendlicht 0–1 (Zifferblatt, Laternen) */
   night: () => number;
+  /** PC-Grafik: alle Menschen in voller Detailstufe */
+  pc?: boolean;
 }
 
 type V = number[];
@@ -1006,7 +1008,7 @@ export class DescentStart3D {
   private add(look: Look, act: Act, x: number, f: number, look2: [number, number], opts: { y?: number; watch?: boolean; follow?: boolean; lod?: 'near' | 'mid' | 'far'; seed?: number; cheer?: boolean; seated?: boolean } = {}) {
     // Detailstufe: nah am Fahrer (Kran, Startkamera) voll, auf der Piazza einfacher
     const dr = Math.hypot(x - 0.9, f - this.z0);
-    const lod = opts.lod ?? (dr < 8 ? 'near' : dr < 20 ? 'mid' : 'far');
+    const lod = this.d.pc ? 'near' : opts.lod ?? (dr < 8 ? 'near' : dr < 20 ? 'mid' : 'far');
     const h = new Human(look, opts.seed ?? (x * 13.7 + f * 3.1), lod === 'near' ? 1 : 0, lod === 'far');
     h.act = act;
     h.seated = !!opts.seated;
@@ -1288,11 +1290,13 @@ export class DescentStart3D {
       // Ferne: unsichtbar bzw. seltener bewegt
       this.world(s.x, s.y + 1, s.f, tmp);
       const dist = tmp.distanceTo(camPos);
-      const vis = dist < 85 && !(phase === 'playing' && s.f < camF - 3);
+      const pc = !!this.d.pc;
+      const vis = dist < (pc ? 140 : 85) && !(phase === 'playing' && s.f < camF - 3);
       h.group.visible = vis;
       if (!vis) continue;
       s.tick++;
-      const every = dist > 70 ? 4 : dist > 40 ? 2 : 1;
+      // (PC-Grafik: alle in jedem Bild bewegt)
+      const every = pc ? 1 : dist > 70 ? 4 : dist > 40 ? 2 : 1;
       if (s.walk) this.walk(s, dt, i);
       if (s.tick % every !== 0 && !s.walk) continue;
       const sdt = dt * (s.walk ? 1 : every);

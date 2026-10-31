@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
 import { RANGES, setViewRange, userRange, type RangeId } from '../game/abfahrt/viewRange';
-import { GFX_OPTS, gfxOn, setGfx, type GfxOpt } from '../game/abfahrt/gfxOpts';
+import { GFX_OPTS, gfxOwn, setGfx, type GfxOpt } from '../game/abfahrt/gfxOpts';
 import { Segmented } from '../ui/kit';
 
 export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -107,17 +107,24 @@ export function FpsSwitch() {
  * Umschalten übersetzt Shader neu – ein kurzer Halt hier im Menü.
  */
 export function GfxSwitches() {
-  const [on, setOn] = useState<Record<GfxOpt, boolean>>(() => ({ licht: gfxOn('licht'), schatten: gfxOn('schatten'), details: gfxOn('details') }));
+  const read = () => Object.fromEntries(GFX_OPTS.map((o) => [o.id, gfxOwn(o.id)])) as Record<GfxOpt, boolean>;
+  const [on, setOn] = useState<Record<GfxOpt, boolean>>(read);
   return (
     <div className="abf-gfx">
       <span className="abf-range__label">Grafik</span>
-      {GFX_OPTS.map((o) => (
-        <button key={o.id} type="button" role="switch" aria-checked={on[o.id]} className={`abf-switch abf-switch--sub${on[o.id] ? ' is-on' : ''}`}
-          onClick={() => { const v = !on[o.id]; setGfx(o.id, v); setOn({ ...on, [o.id]: v }); }}>
-          <span className="abf-switch__text"><span>{o.label}</span><small>{o.hint}</small></span>
-          <span className="abf-switch__track" aria-hidden="true"><span className="abf-switch__knob" /></span>
-        </button>
-      ))}
+      {GFX_OPTS.map((o) => {
+        // mit PC-Grafik ist alles andere mit an (die eigene Wahl bleibt gespeichert)
+        const forced = o.id !== 'pc' && on.pc;
+        const v = on[o.id] || forced;
+        return (
+          <button key={o.id} type="button" role="switch" aria-checked={v} aria-disabled={forced} disabled={forced}
+            className={`abf-switch abf-switch--sub${v ? ' is-on' : ''}${forced ? ' is-forced' : ''}`}
+            onClick={() => { setGfx(o.id, !on[o.id]); setOn(read()); }}>
+            <span className="abf-switch__text"><span>{o.label}</span><small>{forced ? 'mit PC-Grafik immer an' : o.hint}</small></span>
+            <span className="abf-switch__track" aria-hidden="true"><span className="abf-switch__knob" /></span>
+          </button>
+        );
+      })}
       <span className="abf-range__hint">Kosten Bildrate – auf schwächeren Geräten besser aus</span>
     </div>
   );
