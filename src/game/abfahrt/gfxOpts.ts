@@ -6,7 +6,7 @@
  * Was die Stufen schalten (die Bausteine lesen weiter einzelne Schalter, gfxOn):
  *  - Sichtweite: Einfach (Minimal) · Kurz · Normal · Weit · Max · Ultra · Extrem (viewRange.ts)
  *  - lite (Stufe 1–2): schlichte Fahrer (eigener in einfacher Detailstufe, weniger 3D-Modelle), ruhiger Himmel ohne
- *    Wolkentürme und Vögel, ohne Weichzeichner unter Namensschildern, notfalls gleichmäßige 30 Bilder je Sekunde
+ *    Wolkentürme und Vögel, ohne Weichzeichner unter Namensschildern
  *  - Kantenglättung (ab Stufe 3; gilt ab dem nächsten Spielstart, sie gehört zur Bühne)
  *  - schatten (ab 6): Sonnenschatten (ein zweiter Zeichendurchgang je Bild)
  *  - details (ab 7): feine Landschafts-Shader – Relief im Licht, Baumkronen mit Licht und Schatten, Felsstruktur,
@@ -226,8 +226,6 @@ export function gfxRange(): GfxRange { return cur().range; }
 export function gfxLevel(): number { return level; }
 /** Pixeldichte (Bildpunkte je Punkt) */
 export function gfxRes(): number { return res; }
-/** mindestens so viele Bilder je Sekunde im festen Takt (frameClock.ts): einfache Stufen notfalls gleichmäßig 30 */
-export function gfxMinFps(): number { return cur().lite ? 30 : 60; }
 
 const OPTS: GfxOpt[] = ['pc', 'lite', 'licht', 'schatten', 'details'];
 

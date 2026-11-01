@@ -42,13 +42,11 @@ test('Stufe wechseln: Schalter, Sichtweite, Takt und Meldungen folgen', () => {
   G.setGfxLevel(1);
   assert.equal(G.gfxOn('lite'), true);
   assert.equal(G.gfxAA(), false);
-  assert.equal(G.gfxMinFps(), 30);
   assert.equal(viewRange().label, 'Einfach');
   assert.deepEqual(seen, ['lite=true', 'schatten=false', 'details=false']);
   G.setGfxLevel(10);
   assert.equal(G.gfxOn('pc'), true);
   assert.equal(G.gfxOn('licht'), true);
-  assert.equal(G.gfxMinFps(), 60);
   assert.equal(viewRange().id, 'extreme');
   G.setGfxLevel(10); // keine Änderung → keine Meldung
   assert.equal(any, 2);

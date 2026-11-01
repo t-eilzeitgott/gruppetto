@@ -18,7 +18,7 @@ import { HowTo } from './finale';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { EV, Perf3D, PLACES, SEC, type Report } from '../game/abfahrt/perf3d';
 import { viewRange } from '../game/abfahrt/viewRange';
-import { gfxAA, gfxDescribe, gfxLevel, gfxMinFps, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
+import { gfxAA, gfxDescribe, gfxLevel, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
 import { copyText, shareFile } from './admin/gpuKit';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
@@ -305,7 +305,6 @@ export function GamePage() {
       let lastPhase = '';
       let lastGfx = '';
       let lastPace = -1;
-      let clockPhase = '';
       const loop = (now: number) => {
         // fester Bildtakt (frameClock.ts): zu frühe Aufrufe auslassen – jedes Bild kommt im gleichen Abstand
         if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
@@ -322,9 +321,6 @@ export function GamePage() {
           return;
         }
         lostT = 0;
-        // unterste Grafikstufen: notfalls gleichmäßig 30 statt 60; neue Fahrt (bereit, Countdown): wieder mit 60 beginnen
-        clock.minFps = gfxMinFps();
-        if (eng.phase !== clockPhase) { clockPhase = eng.phase; if (clockPhase === 'ready' || clockPhase === 'countdown') clock.resetSlow(); }
         if (uiRef.current !== 'paused') eng.update(dt);
         if (rec) P.mark(SEC.spiel);
         renderer.prof = rec ? P : null;

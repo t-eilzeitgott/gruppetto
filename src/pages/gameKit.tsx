@@ -142,7 +142,7 @@ export function GfxSliders({ page }: { page?: boolean }) {
         <input type="range" className="gfx-sl__input" min={0} max={steps.length - 1} step={1} value={ri} style={pct(ri, steps.length - 1)}
           aria-valuetext={`${fmtX(d)} Pixeldichte, ${Math.round((d / dev) * 100)} Prozent`} onChange={(e) => onRes(Number(e.currentTarget.value))} />
         <span className="gfx-sl__ends" aria-hidden="true"><span>{fmtX(steps[0])}</span><span>{fmtX(steps[steps.length - 1])}</span></span>
-        <span className="gfx-sl__hint">{size}{size ? ' · ' : ''}unabhängig von der Grafikstufe, wird nie automatisch gesenkt</span>
+        <span className="gfx-sl__hint">{size}{size ? ' · ' : ''}unabhängig von der Grafikstufe, wird nie automatisch gesenkt{d > 2 ? ' · über 2× schaffen Handys meist keine 60 Bilder je Sekunde' : ''}</span>
       </label>
     </div>
   );

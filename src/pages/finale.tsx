@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/abfahrt/pool';
 import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock, paceText } from '../game/frameClock';
-import { gfxLevel, gfxMinFps, gfxRes } from '../game/abfahrt/gfxOpts';
+import { gfxLevel, gfxRes } from '../game/abfahrt/gfxOpts';
 import { EV, SEC, type Perf3D } from '../game/abfahrt/perf3d';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { viewRange } from '../game/abfahrt/viewRange';
@@ -121,7 +121,6 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       let lastPhase = '';
       let lastGfx = '';
       let lastPace = -1;
-      let clockPhase = '';
       const loop = (now: number) => {
         // fester Bildtakt (frameClock.ts): zu frühe Aufrufe auslassen – jedes Bild kommt im gleichen Abstand
         if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
@@ -139,9 +138,6 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           return;
         }
         lostT = 0;
-        // unterste Grafikstufen: notfalls gleichmäßig 30 statt 60; neue Fahrt (bereit, Countdown): wieder mit 60 beginnen
-        clock.minFps = gfxMinFps();
-        if (eng.phase !== clockPhase) { clockPhase = eng.phase; if (clockPhase === 'ready' || clockPhase === 'countdown') clock.resetSlow(); }
         if (uiRef.current !== 'paused') eng.update(dt);
         if (rec) P!.mark(SEC.spiel);
         renderer.prof = rec ? P : null;

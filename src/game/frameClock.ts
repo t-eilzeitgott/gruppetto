@@ -38,25 +38,6 @@ export class FrameClock {
   private measured = false;
   /** zählt bei jeder Änderung von Takt oder Takten je Bild hoch (für die Messfahrt) */
   changes = 0;
-  /**
-   * so viele Bilder je Sekunde mindestens im festen Takt (60). Einfache Grafik: 30 – schafft ein langsames Gerät 60
-   * nicht, kommt jedes Bild gleichmäßig nach 33 ms (auf 120 Hz erst nach 25), statt mal nach 17, mal nach 33
-   */
-  get minFps(): number { return this.floor; }
-  set minFps(v: number) {
-    if (v === this.floor) return;
-    this.floor = v;
-    // wieder schneller verlangt (einfache Grafik aus): nicht im langsameren Takt bleiben
-    const m = maxDiv(this.period, v);
-    if (this.div > m) { this.div = m; this.fn = 0; this.fk = 0; this.changes += 1; }
-  }
-  private floor = 60;
-
-  /** neue Fahrt: ein langsamerer Takt als 60 je Sekunde aus der letzten Fahrt (Nachladen, warmes Telefon) gilt nicht weiter */
-  resetSlow() {
-    const m = maxDiv(this.period, 60);
-    if (this.div > m) { this.div = m; this.fn = 0; this.fk = 0; this.changes += 1; }
-  }
 
   constructor(start = performance.now()) {
     this.prev = start;
@@ -111,9 +92,8 @@ export class FrameClock {
 
   /**
    * fester Bildtakt: verpasst mehr als jedes achte Bild seinen Takt, ein Takt mehr je Bild; zurückgenommen wird
-   * das nicht – ein Wechsel hin und her wäre selbst ein Ruckler. Unter 60 Bilder je Sekunde (nur mit einfacher
-   * Grafik erlaubt) erst, wenn mehr als jedes vierte Bild zu spät kommt: ein paar verpasste Takte bei 60 sind besser
-   * als gleichmäßige 40 oder 30.
+   * das nicht – ein Wechsel hin und her wäre selbst ein Ruckler. Nie seltener als 60 Bilder je Sekunde, in keiner
+   * Grafikstufe: der feste Takt glättet nur 120 Hz zu gleichmäßigen 60, er bremst nie darunter.
    */
   private learnPace(raw: number) {
     if (raw >= 100) return;
@@ -124,10 +104,9 @@ export class FrameClock {
     const T = this.target;
     let late = 0;
     for (let i = 0; i < this.fn; i++) if (this.frames[i] > T * 1.25 + 1) late += 1;
-    // nie seltener als 60 Bilder je Sekunde (auf 120 Hz also höchstens jeder zweite Takt) – reicht das nicht, ist es
-    // Sache der Auflösungsregelung
-    const slower = this.period * (this.div + 1) > 1000 / 60 + 1;
-    if (late > this.fn / (slower ? 4 : 8) && this.div + 1 <= maxDiv(this.period, this.minFps)) {
+    // nie seltener als 60 Bilder je Sekunde (auf 120 Hz also höchstens jeder zweite Takt) – schafft das Gerät das
+    // nicht, hilft eine kleinere Auflösung oder Grafikstufe
+    if (late > this.fn / 8 && this.div + 1 <= maxDiv(this.period)) {
       this.div += 1;
       this.changes += 1;
       this.fn = 0;
@@ -173,7 +152,7 @@ export class FrameClock {
       // nie seltener als 60 Bilder je Sekunde (wie in learnPace): eine Fehlerkennung (90 oder 240 statt 120 Hz)
       // ergab sonst einen Takt von 20–22 ms – auf dem 120-Hz-Schirm also 25 ms, 40 Bilder je Sekunde, und die
       // Auflösungsregelung senkte Auflösung und Sichtweite, obwohl das Gerät 60 schafft
-      this.div = this.measured ? Math.max(1, Math.min(maxDiv(best, this.minFps), Math.round(t / best))) : 1;
+      this.div = this.measured ? Math.max(1, Math.min(maxDiv(best), Math.round(t / best))) : 1;
       this.fn = 0;
       this.fk = 0;
       this.changes += 1;
@@ -187,8 +166,8 @@ export class FrameClock {
  * Springen zwischen 60 und 120 glätten – nie selbst bremsen: ein falsch erkannter Takt (90, 144 oder 240 statt
  * 120 Hz) mit einem Bildabstand zwischen 17 und 25 ms wird auf dem echten 120-Hz-Schirm zu 25 ms.
  */
-export function maxDiv(period: number, minFps = 60): number {
-  return Math.max(1, Math.floor((1000 / minFps + 1) / period));
+export function maxDiv(period: number): number {
+  return Math.max(1, Math.floor((1000 / 60 + 1) / period));
 }
 
 /** Takt in Worten (Messfahrt): „120 Hz, jeder 2. Takt → 16,7 ms“ */
