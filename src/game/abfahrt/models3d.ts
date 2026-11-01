@@ -163,12 +163,17 @@ export class FArr {
   take(): Float32Array { return this.a.slice(0, this.length); }
 }
 
+const QUAD_IDX = [0, 1, 2, 0, 2, 3];
+
 /** Baukasten für nicht-indizierte Geometrie mit Vertexfarben und optional UVs */
 export class GB {
   p = new FArr();
   c = new FArr();
   u = new FArr(128);
   uv = false;
+  /** Zusatzwert je Ecke (Attribut aX, vec4) – nur über quadX füllen */
+  x = new FArr(64);
+  xa = false;
   get empty() { return this.p.length === 0; }
   vert(x: number, y: number, z: number, col: RGBf, s = 0, t = 0) {
     this.p.push3(x, y, z);
@@ -209,6 +214,18 @@ export class GB {
     this.vert(a[0], a[1], a[2], ca, uvs[0][0], uvs[0][1]);
     this.vert(c[0], c[1], c[2], cc, uvs[2][0], uvs[2][1]);
     this.vert(d[0], d[1], d[2], cd, uvs[3][0], uvs[3][1]);
+  }
+  /** Viereck mit UV und Zusatzwert (aX) je Ecke, Farbe weiß */
+  quadX(a: number[], b: number[], c: number[], d: number[], uvs: number[][], xs: number[][]) {
+    const P = [a, b, c, d];
+    for (const i of QUAD_IDX) {
+      const q = P[i];
+      this.p.push3(q[0], q[1], q[2]);
+      this.c.push3(1, 1, 1);
+      if (this.uv) this.u.push2(uvs[i][0], uvs[i][1]);
+      const x = xs[i];
+      this.x.push4(x[0], x[1], x[2], x[3]);
+    }
   }
   /** Viereck a-b-c-d (gegen den Uhrzeigersinn von vorn gesehen) */
   quad(a: number[], b: number[], c: number[], d: number[], col: RGBf, uvs?: number[][]) {
@@ -285,6 +302,7 @@ export class GB {
     g.setAttribute('position', new THREE.BufferAttribute(p, 3));
     g.setAttribute('color', new THREE.BufferAttribute(this.c.take(), 3));
     if (this.uv) g.setAttribute('uv', new THREE.BufferAttribute(this.u.take(), 2));
+    if (this.xa) g.setAttribute('aX', new THREE.BufferAttribute(this.x.take(), 4));
     if (normals) g.setAttribute('normal', new THREE.BufferAttribute(flatNormals(p), 3));
     g.computeBoundingSphere();
     return g;

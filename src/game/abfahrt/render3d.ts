@@ -158,19 +158,27 @@ const WEAR_GLSL = `
 float wStripe(float d, float w) { float fw = max(fwidth(d), 1e-4); float h = fw * 0.5; return (clamp(d + w, -h, h) - clamp(d - w, -h, h)) / fw; }
 float wSpan(float x, float a, float b) { float fw = max(fwidth(x), 1e-4); return smoothstep(a - fw, a + fw, x) * (1.0 - smoothstep(b - fw, b + fw, x)); }
 float wH(float c, float seed, float k) { return h21(vec2(c, seed + k * 1.37)); }
+// Ränder, die nicht schnurgerade laufen: zwei Oktaven weiches Rauschen um 0
+float wWob(float t, float seed) { return vn1(t * 1.7, seed).x - 0.5 + (vn1(t * 6.1, seed + 3.0).x - 0.5) * 0.35; }
 // Flicken: (innen, Fuge, frisch?)
 vec3 wPatch(float u, float vm, float len, float seed, float chance) {
   float c = floor(vm / len);
   float on = step(1.0 - chance, wH(c, seed, 0.0));
   float h1 = wH(c, seed, 1.0);
-  float l = mix(2.2, len * 0.75, h1 * h1);
-  float v0 = c * len + wH(c, seed, 2.0) * (len - l);
+  // (mit Abstand zu den Zellgrenzen: dort würde der ausgefranste Rand gerade abgeschnitten)
+  float l = mix(2.2, len * 0.75 - 0.8, h1 * h1);
+  float v0 = c * len + 0.4 + wH(c, seed, 2.0) * (len - l - 0.8);
   float k = wH(c, seed, 3.0);
   float ua = k < 0.3 ? 0.5 : k < 0.55 ? 0.0 : k < 0.8 ? 0.12 + wH(c, seed, 4.0) * 0.5 : 0.0;
   float ub = k < 0.3 ? 1.0 : k < 0.55 ? 0.5 : k < 0.8 ? ua + 0.2 + wH(c, seed, 5.0) * 0.12 : 1.0;
+  // Ränder ausgefranst (sonst ein Rechteck wie mit dem Lineal): quer um bis zu ±12 cm, längs um bis zu ±30 cm
+  ua += wWob(vm, seed + 11.0) * 0.045;
+  ub += wWob(vm, seed + 13.0) * 0.045;
+  float va0 = v0 + wWob(u * 5.6, seed + 17.0) * 0.6;
+  float va1 = v0 + l + wWob(u * 5.6, seed + 19.0) * 0.6;
   float inU = wSpan(u, ua, ub);
-  float inV = wSpan(vm, v0, v0 + l);
-  float edge = min(max((wStripe(vm - v0, 0.035) + wStripe(vm - v0 - l, 0.035)) * inU, (wStripe((u - ua) * 5.6, 0.035) + wStripe((u - ub) * 5.6, 0.035)) * inV), 1.0) * on;
+  float inV = wSpan(vm, va0, va1);
+  float edge = min(max((wStripe(vm - va0, 0.035) + wStripe(vm - va1, 0.035)) * inU, (wStripe((u - ua) * 5.6, 0.035) + wStripe((u - ub) * 5.6, 0.035)) * inV), 1.0) * on;
   return vec3(inU * inV * on, edge, wH(c, seed, 6.0));
 }
 vec3 roadWear(vec3 col, float um, float vm, float e) {
@@ -180,10 +188,11 @@ vec3 roadWear(vec3 col, float um, float vm, float e) {
   float cc = floor(vm / 11.0);
   float vc = cc * 11.0 + h21(vec2(cc, 21.7)) * 11.0;
   float c1 = h21(vec2(cc, 23.81)), c2 = h21(vec2(cc, 25.92)), c3 = h21(vec2(cc, 28.03)), c4 = h21(vec2(cc, 30.14));
-  float wav = (vn1(um * 1.3, 17.0).x - 0.5) * 0.18 + (um - 2.8) * (c1 - 0.5) * 0.12;
+  // Querriss: schlängelt sich (zwei Oktaven) und läuft schräg
+  float wav = (vn1(um * 0.9, 17.0).x - 0.5) * 0.6 + (vn1(um * 3.7, 19.0).x - 0.5) * 0.16 + (um - 2.8) * (c1 - 0.5) * 0.3;
   float reach = smoothstep(c2 * 0.6, c2 * 0.6 + 0.1, c3 < 0.5 ? u : 1.0 - u);
   float crack = wStripe(vm - vc - wav, 0.018) * step(0.35, c4) * reach;
-  float joint = wStripe(um - 2.8 + (vn1(vm / 3.1, 29.0).x - 0.5) * 0.05, 0.02) * smoothstep(0.55, 0.65, vn1(vm / 23.0, 31.0).x);
+  float joint = wStripe(um - 2.8 + (vn1(vm / 3.1, 29.0).x - 0.5) * 0.14 + (vn1(vm / 0.8, 33.0).x - 0.5) * 0.04, 0.02) * smoothstep(0.55, 0.65, vn1(vm / 23.0, 31.0).x);
   // Alterung: ältere Abschnitte heller und grauer, neuere dunkler (50–300 m)
   float age = vn1(vm / 97.0, 43.0).x * 0.6 + vn1(vm / 271.0, 47.0).x * 0.4;
   col *= mix(0.86, 1.16, age);
@@ -1053,25 +1062,40 @@ export class Renderer3D {
     // in der Ferne geht die Textur in ihre Mittelfarbe über – kein Flimmern, keine Linien beim Fahren
     // feines Korn für die Nähe (ab Stufe 3): Splitt und Sand, in Weltkoordinaten (keine Kachel erkennbar)
     const grainMap = this.dataTex(grainTex(), 4);
-    const roadU = { uNoise: { value: this.noiseMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uGrain: { value: grainMap } };
+    const grass = this.grassTexture();
+    const roadU = { uNoise: { value: this.noiseMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uGrain: { value: grainMap }, uGrassE: { value: grass.tex }, uGrassEM: { value: grass.mean } };
     // wear: Flicken, Risse und Fugen (Asphalt; die Fahrbahn trägt dafür ihre Straßenmeter in aRoad: quer, längs,
-    // Mehrbreite); grain: Korn in der Nähe
-    const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number, wear = false, grain = 0) => {
+    // Mehrbreite); grain: Korn in der Nähe; warp: Koordinaten weich verbogen (keine Wiederholung der Kachel);
+    // edge: organischer Übergang am Rand (aX: Farbe des Bodens daneben, Anteil quer 0 … 1) – 'verge' innen zur
+    // Fahrbahn und außen zum Gelände, 'walk' außen zum Gelände
+    const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number, wear = false, grain = 0, warp = false, edge: '' | 'verge' | 'walk' = '') => {
       m.onBeforeCompile = (sh) => {
         const rich = !gfxOn('lite');
         Object.assign(sh.uniforms, roadU, { uLampP: LAMP_U.uLampP, uLampCol: LAMP_U.uLampCol });
         sh.vertexShader = sh.vertexShader
-          .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wear ? '\nattribute vec3 aRoad;\nvarying vec3 vRoad;' : ''}`)
-          .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wear ? '\nvRoad = aRoad;' : ''}`);
+          .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wear ? '\nattribute vec3 aRoad;\nvarying vec3 vRoad;' : ''}${edge ? '\nattribute vec4 aX;\nvarying vec4 vX;' : ''}`)
+          .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wear ? '\nvRoad = aRoad;' : ''}${edge ? '\nvX = aX;' : ''}`);
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', `#include <common>\n${rich ? '#define ROAD_RICH\n' : ''}uniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform sampler2D uGrain;\nuniform float uTime;\nvarying vec3 vWP;${wear ? `\nvarying vec3 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
+          .replace('#include <common>', `#include <common>\n${rich ? '#define ROAD_RICH\n' : ''}uniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform sampler2D uGrain;\nuniform float uTime;\nvarying vec3 vWP;${edge ? '\nuniform sampler2D uGrassE;\nuniform vec3 uGrassEM;\nvarying vec4 vX;' : ''}${wear ? `\nvarying vec3 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
           // Lichtkegel der Laternen auf Straße und Bankett
           .replace('#include <lights_fragment_end>', lampFrag('vWP'))
           .replace('#include <map_fragment>', `
             #ifdef USE_MAP
-              ${wear ? `// Körnung ohne erkennbare Wiederholung (sonst alle 5 m dieselben Steine): Koordinaten weich verbogen
+              ${wear || warp ? `// Körnung ohne erkennbare Wiederholung (sonst alle 5 m dieselben Steine): Koordinaten weich verbogen
               vec2 mUv = vMapUv + (textureLod(uNoise, vMapUv * 0.137 + vec2(0.31, 0.77), 4.5).rb - 0.5) * 0.6;
               vec4 sampledDiffuseColor = textureGrad(map, mUv, dFdx(vMapUv), dFdy(vMapUv));` : 'vec4 sampledDiffuseColor = texture2D(map, vMapUv);'}
+              ${edge ? `{
+                // Rand: keine gerade Linie – Zungen und Flecken des Bodens daneben greifen herein (Rauschen in Weltlage)
+                float en = texture2D(uNoise, vWP.xz / 3.3).g * 0.62 + texture2D(uNoise, vWP.xz / 0.9 + 0.43).r * 0.38;
+                float mo = smoothstep(${edge === 'verge' ? '0.42, 0.97' : '0.3, 0.97'}, vX.w + (en - 0.5) * ${edge === 'verge' ? '0.75' : '0.6'});
+                vec3 gt = texture2D(uGrassE, vWP.xz / 4.2).rgb / uGrassEM;
+                vec3 edgeC = vX.rgb * mix(vec3(1.0), gt, 0.75) * (0.88 + 0.24 * en);
+                sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, edgeC, mo);
+                ${edge === 'verge' ? `// innen: Brocken und Krümel der Asphaltkante auf dem Bankett
+                float en2 = texture2D(uNoise, vWP.xz / 1.3 + 0.71).b;
+                float mi = smoothstep(0.26, 0.02, vX.w + (en2 - 0.5) * 0.3);
+                sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, vec3(0.055, 0.055, 0.06) * (0.75 + 0.6 * en), mi * 0.8);` : ''}
+              }` : ''}
               // Mittelfarbe der Textur (kleinste Mipmap-Stufe)
               vec3 avgC = textureLod(map, vMapUv, 12.0).rgb;
               float rd = distance(vWP, cameraPosition);
@@ -1091,15 +1115,15 @@ export class Renderer3D {
               ${gfxOn('details') ? CLOUD('vWP.xz') : ''}
             #endif`);
       };
-      m.customProgramCacheKey = () => `road-${key}${wear ? 'w' : ''}${grain > 0 ? 'k' : ''}${dk()}${gfxOn('lite') ? '' : '+r'}|L`;
+      m.customProgramCacheKey = () => `road-${key}${wear ? 'w' : ''}${grain > 0 ? 'k' : ''}${warp ? 'p' : ''}${edge}${dk()}${gfxOn('lite') ? '' : '+r'}|L`;
     };
     roadify(this.mats.asphalt, 'a', 0.34, true, 0.45);
     roadify(this.mats.fresh, 'f', 0.18, true, 0.35);
     roadify(this.mats.cobble, 'c', 0.36);
     roadify(this.mats.gravel, 'g', 0.4, false, 0.3);
-    roadify(this.mats.verge, 'v', 0.45, false, 0.3);
-    roadify(this.mats.walk, 'wk', 0.3);
-    roadify(this.mats.walk2, 'wk2', 0.3);
+    roadify(this.mats.verge, 'v', 0.45, false, 0.3, true, 'verge');
+    roadify(this.mats.walk, 'wk', 0.3, false, 0, false, 'walk');
+    roadify(this.mats.walk2, 'wk2', 0.3, false, 0, false, 'walk');
     roadify(this.mats.curb, 'cb', 0.22);
     roadify(this.mats.gutter, 'gt', 0.3);
     roadify(this.mats.covers, 'cv', 0.12);
@@ -1110,7 +1134,6 @@ export class Renderer3D {
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
     // Weltkoordinaten statt UV – waagrechte Lagen laufen so über alle Flächen hinweg
     const rockMap = this.tex(rockTex());
-    const grass = this.grassTexture();
     const grassU = { uGrass: { value: grass.tex }, uGrassMean: { value: grass.mean } };
     const rockU = { uRock: { value: rockMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uCanD: this.canU, ...grassU };
     const rockify = (sh: THREE.WebGLProgramParametersWithUniforms) => {
@@ -1139,7 +1162,11 @@ export class Renderer3D {
             // Hänge neben der Straße: grüne Flächen (Eckpunktfarbe deutlich grün) bekommen dieselbe Wiese wie
             // die Landschaft dahinter – Flecken, Büschel, Blüten; Fels, Schnee, Felder und Kies bleiben
             // (Texturen immer lesen – in einer Verzweigung stimmten die Mipmaps an ihrem Rand nicht)
-            float gw = smoothstep(0.012, 0.05, vColor.g - max(vColor.r, vColor.b));
+            // Grenze zwischen grünen und anderen Bändern (Rinne, Kies, Fels, Feld): die Eckfarben gehen dort ineinander
+            // über (terrainSide) – Rauschen macht aus dem Verlauf Zungen und Flecken statt einer geraden Linie
+            float gg = vColor.g - max(vColor.r, vColor.b);
+            float gn = texture2D(uRelief, vRockP.xz / 2.7).g * 0.7 + texture2D(uRelief, vRockP.xz / 0.85 + 0.3).g * 0.3;
+            float gw = smoothstep(0.012, 0.05, gg + (gn - 0.5) * 0.07 * smoothstep(0.003, 0.02, gg));
             vec3 nzg = texture2D(uRelief, vRockP.xz / 33.0).rgb;
             vec3 gm = mix(vec3(0.92, 0.98, 1.04), vec3(1.06, 1.02, 0.92), smoothstep(0.3, 0.72, nzg.r)) * (0.92 + 0.16 * nzg.g);
             // wie die Landschaft dahinter: Wiesenarten, Gras ohne Kachelmuster, Korn, Trittpfade
@@ -4002,11 +4029,14 @@ export class Renderer3D {
     for (const b of Object.values(surf)) b.uv = true;
     const verge = new GB();
     verge.uv = true;
+    verge.xa = true;
     // Böden der Orte: zwei Gehwege (je Ort einer), Bordstein, Rinne, Schachtdeckel und Abläufe
     const walk = new GB();
     walk.uv = true;
+    walk.xa = true;
     const walk2 = new GB();
     walk2.uv = true;
+    walk2.xa = true;
     const curb = new GB();
     curb.uv = true;
     const gutter = new GB();
@@ -4082,8 +4112,45 @@ export class Renderer3D {
         const da = EDGE - GUTTER_W - ROAD_HALF;
         const town = (sg: number) => { const x = sg < 0 ? s.L : s.R; const y = sg < 0 ? b.seg.L : b.seg.R; return x.ground === 'pavement' && y.ground === 'pavement' && !(s.bridge > 0); };
         const pl = town(-1) ? da : 0, pr = town(1) ? da : 0;
-        surf[s.surface].quadC(P0(a, -ha, 0), P0(a, ha, 0), P0(b, hb, 0), P0(b, -hb, 0), [-a.e, za0, a.e + pl], [2 * ROAD_HALF + a.e, za0, a.e + pr], [2 * ROAD_HALF + b.e, zb0, b.e + pr], [-b.e, zb0, b.e + pl],
-          [[-ha / tl, va], [ha / tl, va], [hb / tl, vb], [-hb / tl, vb]]);
+        // Ränder: die Asphaltkante schwankt (asphEdge), wo kein Gehweg ist
+        const wLa = this.asphEdge(a, -1), wRa = this.asphEdge(a, 1), wLb = this.asphEdge(b, -1), wRb = this.asphEdge(b, 1);
+        const nx = t.seg(s.i + 1);
+        if (nx.tunnel || nx.surface === s.surface || !surf[nx.surface]) {
+          surf[s.surface].quadC(P0(a, -ha - wLa, 0), P0(a, ha + wRa, 0), P0(b, hb + wRb, 0), P0(b, -hb - wLb, 0),
+            [-a.e - wLa, za0, a.e + pl], [2 * ROAD_HALF + a.e + wRa, za0, a.e + pr], [2 * ROAD_HALF + b.e + wRb, zb0, b.e + pr], [-b.e - wLb, zb0, b.e + pl],
+            [[-(ha + wLa) / tl, va], [(ha + wRa) / tl, va], [(hb + wRb) / tl, vb], [-(hb + wLb) / tl, vb]]);
+        } else {
+          // Belag wechselt (alt – neu – Pflaster – Schotter): die Grenze läuft nicht als Lineal quer über die Straße,
+          // sondern unregelmäßig innerhalb dieses Stücks (je 12 Spalten ein eigener Abstand, weich verbunden)
+          const N = 12;
+          const tlB = this.gsz[nx.surface] ?? 5;
+          const voB = Math.floor((i0 * SEG) / tlB);
+          const fq: number[] = [];
+          for (let c = 0; c <= N; c++) fq.push(Math.max(0.08, Math.min(0.92, 0.5 + along(c, s.i * 7 + 3, 1.6) * 0.9 + (hash(s.i * 41 + c * 13) - 0.5) * 0.18)));
+          const xl = (wl: number, wr: number, hh: number, f: number) => -hh - wl + (2 * hh + wl + wr) * f;
+          const rl = (r: Row, wl: number, wr: number, f: number) => -r.e - wl + (2 * ROAD_HALF + 2 * r.e + wl + wr) * f;
+          const pt = (f: number, q: number) => {
+            const A = P0(a, xl(wLa, wRa, ha, f), 0), B = P0(b, xl(wLb, wRb, hb, f), 0);
+            return [A[0] + (B[0] - A[0]) * q, A[1] + (B[1] - A[1]) * q, A[2] + (B[2] - A[2]) * q];
+          };
+          const ro = (f: number, q: number): RGBf => {
+            const xa = rl(a, wLa, wRa, f), xb = rl(b, wLb, wRb, f);
+            const ea = a.e + pl + (pr - pl) * f, eb = b.e + pl + (pr - pl) * f;
+            return [xa + (xb - xa) * q, za0 + (zb0 - za0) * q, ea + (eb - ea) * q];
+          };
+          const uvA = (f: number, q: number, tt: number, vo2: number) => {
+            const lat = xl(wLa, wRa, ha, f) * (1 - q) + xl(wLb, wRb, hb, f) * q;
+            return [lat / tt, (za + (zb - za) * q) / tt - vo2];
+          };
+          for (let c = 0; c < N; c++) {
+            const f0 = c / N, f1 = (c + 1) / N;
+            const q0 = fq[c], q1 = fq[c + 1];
+            surf[s.surface].quadC(pt(f0, 0), pt(f1, 0), pt(f1, q1), pt(f0, q0), ro(f0, 0), ro(f1, 0), ro(f1, q1), ro(f0, q0),
+              [uvA(f0, 0, tl, vo), uvA(f1, 0, tl, vo), uvA(f1, q1, tl, vo), uvA(f0, q0, tl, vo)]);
+            surf[nx.surface].quadC(pt(f0, q0), pt(f1, q1), pt(f1, 1), pt(f0, 1), ro(f0, q0), ro(f1, q1), ro(f1, 1), ro(f0, 1),
+              [uvA(f0, q0, tlB, voB), uvA(f1, q1, tlB, voB), uvA(f1, 1, tlB, voB), uvA(f0, 1, tlB, voB)]);
+          }
+        }
         for (const sg of [-1, 1]) {
           if (town(sg)) {
             // im Ort: die Fahrbahn reicht bis zur Rinne (gleicher Belag), dann die Rinne vor dem Bordstein
@@ -4570,9 +4637,26 @@ export class Renderer3D {
     for (let k = 0; k < pa.length - 1; k++) {
       const A0 = P(a, sg * pa[k][0], pa[k][1]), A1 = P(a, sg * pa[k + 1][0], pa[k + 1][1]);
       const B0 = P(b, sg * pb[k][0], pb[k][1]), B1 = P(b, sg * pb[k + 1][0], pb[k + 1][1]);
+      if (gb.xa) {
+        // Zusatzwert je Punkt (Spalten 3–6: Farbe daneben, Anteil quer)
+        const X = (q: number[]) => [q[3] ?? 1, q[4] ?? 1, q[5] ?? 1, q[6] ?? 0];
+        if (sg > 0) gb.quadX(A0, A1, B1, B0, [[ua, pa[k][2]], [ua, pa[k + 1][2]], [ub, pb[k + 1][2]], [ub, pb[k][2]]], [X(pa[k]), X(pa[k + 1]), X(pb[k + 1]), X(pb[k])]);
+        else gb.quadX(A1, A0, B0, B1, [[ua, pa[k + 1][2]], [ua, pa[k][2]], [ub, pb[k][2]], [ub, pb[k + 1][2]]], [X(pa[k + 1]), X(pa[k]), X(pb[k]), X(pb[k + 1])]);
+        continue;
+      }
       if (sg > 0) gb.quad(A0, A1, B1, B0, col, [[ua, pa[k][2]], [ua, pa[k + 1][2]], [ub, pb[k + 1][2]], [ub, pb[k][2]]]);
       else gb.quad(A1, A0, B0, B1, col, [[ua, pa[k + 1][2]], [ua, pa[k][2]], [ub, pb[k][2]], [ub, pb[k + 1][2]]]);
     }
+  }
+
+  /**
+   * Asphaltkante nicht als Lineal: wie weit der Belag über die Normalbreite hinaus reicht (0 … 12 cm, weich längs
+   * der Strecke); im Ort (Gehweg) gerade – dort geht die Fahrbahn bis zur Rinne
+   */
+  private asphEdge(r: Row, sg: number): number {
+    const side = sg < 0 ? r.seg.L : r.seg.R;
+    if (side.ground === 'pavement' || r.seg.tunnel) return 0;
+    return 0.06 + along(r.seg.i, sg > 0 ? 91 : 97, 1.5) * 0.12;
   }
 
   /**
@@ -4583,16 +4667,22 @@ export class Renderer3D {
     const sz = this.gsz.verge;
     const vo = Math.floor((i0 * SEG) / sz);
     const k0 = sg > 0 ? 40 : 0;
-    const prof = (r: Row): number[][] => [
-      [ROAD_HALF, -0.03, ROAD_HALF / sz],
-      [ROAD_HALF + 0.3, -0.042 + along(r.seg.i, k0 + 1, 3) * 0.045, (ROAD_HALF + 0.3) / sz],
-      [ROAD_HALF + 0.66, -0.05 + along(r.seg.i, k0 + 2, 4) * 0.06, (ROAD_HALF + 0.66) / sz],
-      [EDGE, -0.04, EDGE / sz],
-    ];
+    const prof = (r: Row): number[][] => {
+      // Farbe des Geländes daneben (für den Übergang im Shader) und wo die Asphaltkante liegt
+      const c = this.profile(sg < 0 ? r.seg.L : r.seg.R, r.seg, sg).cols[0];
+      const w = this.asphEdge(r, sg);
+      const pt = (lat: number, h: number): number[] => [lat, h, lat / sz, c[0], c[1], c[2], (lat - ROAD_HALF) / (EDGE - ROAD_HALF)];
+      return [
+        pt(ROAD_HALF + w, -0.03),
+        pt(ROAD_HALF + 0.3, -0.042 + along(r.seg.i, k0 + 1, 3) * 0.045),
+        pt(ROAD_HALF + 0.66, -0.05 + along(r.seg.i, k0 + 2, 4) * 0.06),
+        pt(EDGE, -0.04),
+      ];
+    };
     this.profQuads(gb, a, b, sg, P, prof(a), prof(b), za / sz - vo, zb / sz - vo);
     // Asphaltkante: Stufe von der Fahrbahn hinunter aufs Bankett
-    const lip: number[][] = [[ROAD_HALF, 0, 0], [ROAD_HALF, -0.03, 0]];
-    this.profQuads(marks, a, b, sg, P, lip, lip, 0, 0, ASPH_EDGE);
+    const wa = this.asphEdge(a, sg), wb = this.asphEdge(b, sg);
+    this.profQuads(marks, a, b, sg, P, [[ROAD_HALF + wa, 0, 0], [ROAD_HALF + wa, -0.03, 0]], [[ROAD_HALF + wb, 0, 0], [ROAD_HALF + wb, -0.03, 0]], 0, 0, ASPH_EDGE);
   }
 
   /**
@@ -4637,6 +4727,9 @@ export class Renderer3D {
         out.push([mid, hm, mid / ws]);
       }
     }
+    // Übergang zum Gelände dahinter: auf dem letzten Stück greift es organisch herein (Shader, aX)
+    const c = pr.cols[Math.min(pr.cols.length - 1, w)];
+    for (let i = 0; i < out.length; i++) out[i].push(c[0], c[1], c[2], i === out.length - 1 ? 1 : 0);
     return out;
   }
 
@@ -4762,6 +4855,15 @@ export class Renderer3D {
         continue;
       }
       const uv = (v: number[]) => [(v[0] + v[1] * 0.7) / 6, (v[2] - v[1] * 0.7) / 6];
+      // grün neben nicht grün (Rinne → Wiese, Fels → Grasnarbe, Kies → Wiese): innen die Farbe des vorigen Bands, der
+      // Shader macht daraus einen ausgefransten Übergang (im Ort übernimmt das der Gehweg)
+      const green = (c: RGBf) => c[1] - Math.max(c[0], c[2]) > 0.012;
+      if (k > 0 && sa.ground !== 'pavement' && green(pa.cols[k]) !== green(pa.cols[k - 1])) {
+        const ca = pa.cols[k - 1], cb = pb.cols[k - 1] ?? ca, cob = pb.cols[k] ?? col;
+        if (sg > 0) terr.quadC(A0, A1, B1, B0, ca, col, cob, cb, [uv(A0), uv(A1), uv(B1), uv(B0)]);
+        else terr.quadC(A1, A0, B0, B1, col, ca, cb, cob, [uv(A1), uv(A0), uv(B0), uv(B1)]);
+        continue;
+      }
       if (sg > 0) terr.quad(A0, A1, B1, B0, col, [uv(A0), uv(A1), uv(B1), uv(B0)]);
       else terr.quad(A1, A0, B0, B1, col, [uv(A1), uv(A0), uv(B0), uv(B1)]);
     }
