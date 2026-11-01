@@ -5,7 +5,7 @@
  * Mannschaftszeitfahren fahren drei Teamkollegen hinterher.
  */
 import { demoRace } from '../schedule';
-import { at, bezier, h, ROLL, wordCover, type Ctx, type Variant } from '../engine';
+import { at, bezier, h, ROLL, wordCover, wordCoverBox, type Ctx, type Variant } from '../engine';
 
 const KIND: Record<string, string> = { flat: 'Flachetappe', hilly: 'Hügelig', mountain: 'Bergetappe', itt: 'Einzelzeitfahren', ttt: 'Mannschaftszeitfahren' };
 const START: Record<string, string> = { giro: 'Grande Partenza', tour: 'Grand Départ', vuelta: 'La Salida' };
@@ -66,7 +66,18 @@ export const renntag: Variant = (c) => {
   const prof = stageProfile(race.k, race.n);
   const x0 = vw * 0.1, x1 = vw * 0.9;
   const baseY = dot.base + fs * 1.65;
-  const hMax = fs * (race.k === 'flat' || tt ? 0.9 : race.k === 'mountain' ? 1.5 : 1.25);
+  const sw = Math.max(2, fs * 0.055);
+  let hMax = fs * (race.k === 'flat' || tt ? 0.9 : race.k === 'mountain' ? 1.5 : 1.25);
+  // Unter dem Wort bleibt das Profil (samt Linienbreite) unter dessen Abdeckung: was sie verdeckt, wäre bis zum
+  // Aufdecken des Worts abgeschnitten – der Gipfel stünde flach da. Wie tief sie reicht, hängt von der Schrift ab
+  // (auf dem iPhone tiefer); notfalls wird das ganze Profil etwas flacher.
+  const wb = wordCoverBox(c);
+  let vUnder = 0;
+  for (const [u, v] of prof) {
+    const x = x0 + (x1 - x0) * u;
+    if (x > wb.left - sw * 2 && x < wb.right + sw * 2) vUnder = Math.max(vUnder, v);
+  }
+  if (vUnder > 0) hMax = Math.max(fs * 0.3, Math.min(hMax, (baseY - wb.bottom - sw - 3) / vUnder));
   const P = prof.map(([u, v]) => [x0 + (x1 - x0) * u, baseY - v * hMax] as [number, number]);
   const line = P.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join('');
   const area = `${line}L${x1.toFixed(1)} ${baseY.toFixed(1)}L${x0.toFixed(1)} ${baseY.toFixed(1)}Z`;
@@ -75,14 +86,13 @@ export const renntag: Variant = (c) => {
 <defs><linearGradient id="ixRp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".26"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs>
 <path d="M${x0} ${baseY}H${x1}" stroke="var(--muted)" stroke-opacity=".35" stroke-width="1"/>
 <path d="${area}" fill="url(#ixRp)"/>
-<path d="${line}" fill="none" stroke="currentColor" stroke-width="${Math.max(2, fs * 0.055)}" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="${line}" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>`);
   // Das Profil steht fest und ist von Anfang an ganz gezeichnet. Aufgedeckt wird es von einer Abdeckung in
   // Hintergrundfarbe, die von rechts her schmaler wird (scaleX einer einfarbigen Fläche – läuft im Compositor und
   // kann nichts abschneiden). (Früher: clip-path, in jedem Bild neu gezeichnet; dann ein wanderndes Fenster mit
   // gegenläufigem Inhalt – das zeichnete Safari nur teilweise, das Profil erschien erst am Ende ganz.)
   c.back.appendChild(box);
-  const sw = Math.max(2, fs * 0.055);
   let yTop = Infinity;
   for (const [, y] of P) yTop = Math.min(yTop, y);
   const cx0 = x0 - sw * 2, cx1 = x1 + sw * 2 + 2;

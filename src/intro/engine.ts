@@ -17,9 +17,11 @@ export interface Geo {
   shift: number;
   /** Tinte des Punkts relativ zum Kasten .intro__dot: Mitte, Radius, Grundlinie */
   pc: { x: number; y: number; r: number; base: number };
-  /** Bildschirmlage am Ende der Sequenz: Punktmitte und Grundlinie, Kasten des Worts */
+  /** Lage am Ende der Sequenz auf der Bühne (Ebenen back/front; Ursprung oben links): Punktmitte und Grundlinie,
+   *  Kasten des Worts */
   dot: { x: number; y: number; base: number };
   word: { left: number; right: number; top: number; bottom: number };
+  /** Größe der Bühne */
   vw: number;
   vh: number;
 }
@@ -43,6 +45,8 @@ export interface Ctx {
   pick: IntroPick;
   A(n: Element, k: Keyframe[], o: KeyframeEffectOptions): Animation;
   F(n: Element, k: Keyframe[], o: KeyframeEffectOptions): Animation;
+  /** Kasten eines Elements auf der Bühne (wie geo) – jetzt gemessen */
+  box(n: Element | Range): { left: number; top: number; right: number; bottom: number; width: number; height: number };
   /** bei Zeit ms der Sequenz */
   at(ms: number, f: () => void): void;
   css(s: string): void;
@@ -167,16 +171,29 @@ export function rollOut(c: Ctx, o: RollOpts = {}): { land: number } {
  * Wort von links aufdecken, ohne clip-path (das zeichnet der Browser in jedem Bild auf dem Hauptfaden neu – beim
  * App-Start ruckelt es dann): eine Abdeckung in Hintergrundfarbe über dem Wort, die von rechts her schmaler wird
  * (scaleX, läuft im Compositor). Der Punkt liegt darüber (eigenes Element nach dem Wort). edge(x): Anteil der
- * Abdeckung, der bei der Aufdeckkante x (Bildschirm) noch steht.
+ * Abdeckung, der bei der Aufdeckkante x (Bühne) noch steht.
  */
 export function wordCover(c: Ctx, over = 0.04): { el: HTMLElement; edge: (x: number) => number } {
   // over: so weit (em) reicht die Abdeckung rechts über das Wort (gestreckte Buchstaben ragen hinaus)
-  const { fs, word } = c.geo;
-  const padL = fs * 0.3, padR = fs * over;
-  const el = h('span', '', `position:absolute;left:${-padL}px;right:${-padR}px;top:-0.12em;bottom:-0.14em;background:var(--bg);transform-origin:100% 50%;pointer-events:none`);
+  const { fs } = c.geo;
+  const k = COVER;
+  const el = h('span', '', `position:absolute;left:${-fs * k.left}px;right:${-fs * over}px;top:${-k.top}em;bottom:${-k.bottom}em;background:var(--bg);transform-origin:100% 50%;pointer-events:none`);
   c.word.appendChild(el);
-  const right = word.right + padR, width = word.right - word.left + padL + padR;
-  return { el, edge: (x: number) => Math.max(0, Math.min(1, (right - x) / width)) };
+  const b = wordCoverBox(c, over);
+  return { el, edge: (x: number) => Math.max(0, Math.min(1, (b.right - x) / (b.right - b.left))) };
+}
+
+/** wie weit die Abdeckung des Worts über dessen Kasten reicht (em) – links, oben, unten */
+const COVER = { left: 0.3, top: 0.12, bottom: 0.14 };
+
+/**
+ * Fläche, die wordCover verdeckt (Bühne), bevor sie schmaler wird – was dort hinter dem Wort liegt, ist bis zum
+ * Aufdecken des Worts nicht zu sehen. (Wie tief der Kasten des Worts reicht, hängt von der Schrift ab: auf dem
+ * iPhone tiefer als in Chrome unter Linux.)
+ */
+export function wordCoverBox(c: Ctx, over = 0.04): { left: number; right: number; top: number; bottom: number } {
+  const { fs, word } = c.geo;
+  return { left: word.left - fs * COVER.left, right: word.right + fs * over, top: word.top - fs * COVER.top, bottom: word.bottom + fs * COVER.bottom };
 }
 
 /** Zufall (für Teilchen) */
@@ -215,7 +232,7 @@ export interface Letter {
   /** äußere Hülle (Fahrt), innere (Hüpfen, Strecken) */
   el: HTMLElement;
   inner: HTMLElement;
-  /** Mitte und Breite am Ende (Bildschirm) */
+  /** Mitte und Breite am Ende (Bühne) */
   x: number;
   w: number;
 }
@@ -234,13 +251,13 @@ export function letters(c: Ctx): Letter[] {
     out.push({ el, inner, x: 0, w: 0 });
   }
   for (const l of out) {
-    const r = l.el.getBoundingClientRect();
+    const r = c.box(l.el);
     l.x = r.left + r.width / 2;
     l.w = r.width;
   }
   // ohne Unterschneidung zwischen den Buchstaben ändert sich die Breite minimal: Punkt und Wort neu messen
-  const dr = c.dot.getBoundingClientRect();
-  const wr = c.word.getBoundingClientRect();
+  const dr = c.box(c.dot);
+  const wr = c.box(c.word);
   const { pc } = c.geo;
   c.geo.dot = { x: dr.left + pc.x, y: dr.top + pc.y, base: dr.top + pc.base };
   c.geo.word = { left: wr.left, right: wr.right, top: wr.top, bottom: wr.bottom };

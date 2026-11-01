@@ -112,17 +112,37 @@ function start(el: HTMLElement, pick: IntroPick) {
       pc.x = pcx; pc.y = pcy; pc.r = rr; pc.base = base;
     }
   } catch { /* Schätzwerte */ }
+  // Bühne: Wortmarke und die Ebenen der Varianten (dahinter, davor) in einem gemeinsamen Kasten – so groß wie das
+  // Intro beim Messen und mittig darin; die Wortmarke steht darauf fest, wo sie gemessen wurde. Alle Maße gelten auf
+  // der Bühne. Ändert sich danach die Größe des Schirms, verschiebt sich die Bühne als Ganzes: Wortmarke und
+  // Schmuck bleiben zueinander, wie gemessen. (Als Web-App vom Home-Bildschirm misst iOS beim Start erst ohne die
+  // Statusleiste – 793 statt 852 px hoch –, bis zum ersten Bild ist es der ganze Schirm. Die mittige Wortmarke rückte
+  // dabei 28 px tiefer, alles fest Platzierte nicht: der Punkt fuhr unter dem Profil des Renntags, das Wort deckte
+  // dessen Gipfel ab, Zielstrich und Blitz im Zielsprint standen zu hoch.)
+  const er = el.getBoundingClientRect();
+  const mr = mark.getBoundingClientRect();
+  const stage = h('div', '', `position:absolute;left:50%;top:50%;width:${er.width}px;height:${er.height}px;margin:${-er.height / 2}px 0 0 ${-er.width / 2}px`);
+  bg.after(stage);
+  mark.style.position = 'absolute';
+  mark.style.margin = '0';
+  mark.style.left = `${mr.left - er.left}px`;
+  mark.style.top = `${mr.top - er.top}px`;
+  // (Schmuck darf über die Bühne hinausragen – abgeschnitten wird am Rand des Intros)
+  const back = h('div', 'intro__fx', 'overflow:visible');
+  const front = h('div', 'intro__fx', 'overflow:visible');
+  stage.append(back, mark, front);
+  const box = (n: Element | Range) => {
+    const s = stage.getBoundingClientRect();
+    const b = n.getBoundingClientRect();
+    return { left: b.left - s.left, top: b.top - s.top, right: b.right - s.left, bottom: b.bottom - s.top, width: b.width, height: b.height };
+  };
   // Maße: Breite des „g" und des ganzen Worts, Lage am Ende (noch ohne Animation gemessen)
   const r = document.createRange();
   r.setStart(word.firstChild!, 0); r.setEnd(word.firstChild!, 1);
   const gW = r.getBoundingClientRect().width;
-  const wr = word.getBoundingClientRect();
+  const wr = box(word);
   const hidden = wr.width - gW;
-  const dr = dot.getBoundingClientRect();
-  const back = h('div', 'intro__fx');
-  bg.after(back);
-  const front = h('div', 'intro__fx');
-  el.appendChild(front);
+  const dr = box(dot);
   const ctx: Ctx = {
     el, mark, word, roll, cover, dot, dotin, ping, bg, back, front, calm,
     dark: d.dataset.theme !== 'light',
@@ -131,8 +151,9 @@ function start(el: HTMLElement, pick: IntroPick) {
       fs, gW, hidden, shift: hidden / 2, pc,
       dot: { x: dr.left + pc.x, y: dr.top + pc.y, base: dr.top + pc.base },
       word: { left: wr.left, right: wr.right, top: wr.top, bottom: wr.bottom },
-      vw: window.innerWidth, vh: window.innerHeight,
+      vw: er.width, vh: er.height,
     },
+    box,
     A: (n, k, o) => { const a = n.animate(k, o); seq.push(a); return a; },
     F: (n, k, o) => n.animate(k, o),
     at: (t, f) => { ats.push({ t, f }); },
