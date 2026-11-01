@@ -46,7 +46,7 @@ export function fold(s: string): string {
 }
 
 /** kein Profi-Rennsport: Tests, Angebote, Kaufberatung, Training, Technik für Hobbyfahrer */
-const OFF = /\b(product review|tested|first ride|first look|deal|deals|sale|discount|black friday|cyber monday|buyer'?s? guide|best [a-z ]*(bikes?|wheels?|helmets?|shoes|lights|jerseys?|bib)|how to|workout|training plan|nutrition|recipe|kaufberatung|im test|test:|angebot|rabatt|gutschein|gewinnspiel|e-?bike|gravel bike|bikepacking|commut\w*|zwift|indoor trainer|smart trainer|podcast|quiz|crossword|horoscope|groupset|wheelset|tyres?|tires?|saddle|power meter|bike computer|frameset|unboxing|gear guide)\b/;
+const OFF = /\b(product review|tested|first ride|first look|deal|deals|sale|discount|black friday|cyber monday|buyer'?s? guide|best [a-z ]*(bikes?|wheels?|helmets?|shoes|lights|jerseys?|bib)|how to|workout|training plan|nutrition|recipe|kaufberatung|im test|test:|angebot|rabatt|gutschein|gewinnspiel|e-?bike|gravel bike|bikepacking|commut\w*|zwift|indoor trainer|smart trainer|podcast|quiz|crossword|horoscope|hallenrad\w*|hallen-wm|kunstrad\w*|radball\w*|einrad\w*|groupset|wheelset|tyres?|tires?|saddle|power meter|bike computer|frameset|unboxing|gear guide)\b/;
 
 // (auf gefalteten Text: ohne Umlaute und Akzente)
 const TOPIC_WORDS: Record<Topic, RegExp> = {

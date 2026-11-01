@@ -15,7 +15,8 @@ export const SOURCE_NAMES: Record<string, string> = {
   escape: 'Escape Collective',
   beispiel: 'Beispiel',
 };
-export const sourceName = (id: string) => SOURCE_NAMES[id] ?? id.replace(/(^|-)(\w)/g, (_, d: string, c: string) => `${d ? ' ' : ''}${c.toUpperCase()}`);
+/** Anzeigename der Quelle: gespeichert ist meist schon der Name („Radsport-News“), sonst die Kennung */
+export const sourceName = (id: string) => SOURCE_NAMES[id] ?? (/[A-Z ]/.test(id) ? id : id.replace(/(^|-)(\w)/g, (_, d: string, c: string) => `${d ? ' ' : ''}${c.toUpperCase()}`));
 
 export type NewsFilter = 'alle' | 'runde' | 'rennen' | 'transfer' | 'verletzung';
 export const NEWS_FILTERS: { id: NewsFilter; label: string }[] = [
@@ -65,6 +66,55 @@ export function topStory(items: FeedNews[], now: number): FeedNews | null {
     if (rank > bestRank) { best = it; bestRank = rank; }
   }
   return best;
+}
+
+/** wichtig: viel beachtet (mehrere Quellen, große Namen, Verletzung oder Wechsel eines Stars) */
+export const IMPORTANT = 2;
+export const isImportant = (it: FeedNews) => it.score >= IMPORTANT;
+
+/**
+ * Das Wichtigste der letzten Tage: nach Gewicht, das nur langsam mit dem Alter sinkt (Halbwertszeit 36 Stunden) –
+ * eine große Meldung von gestern bleibt oben, bis Größeres kommt. Höchstens drei Tage alt.
+ */
+export function mostImportant(items: FeedNews[], now: number, n = 4): FeedNews[] {
+  return items
+    .map((it) => {
+      const age = Math.max(0, (now - Date.parse(it.published_at)) / 3600e3);
+      return { it, age, rank: it.score * Math.pow(0.5, age / 36) };
+    })
+    .filter((x) => x.age <= 72 && x.it.score >= 1.3)
+    .sort((a, b) => b.rank - a.rank)
+    .slice(0, n)
+    .map((x) => x.it);
+}
+
+export type StoryKind = 'sieg' | 'rennen' | 'verletzung' | 'transfer' | 'team' | 'szene';
+const WIN = /\b(gewinnt|gewonnen|siegt|siegen|sieg|triumph\w*|wins|won|victory|claims|conquers?)\b/i;
+/** Art der Meldung fürs Bild: Verletzung und Wechsel zuerst, dann Sieg, Rennen, Team */
+export function storyKind(it: Pick<FeedNews, 'topics' | 'title'>): StoryKind {
+  if (it.topics.includes('verletzung')) return 'verletzung';
+  if (it.topics.includes('transfer')) return 'transfer';
+  if (WIN.test(it.title)) return 'sieg';
+  if (it.topics.includes('rennen')) return 'rennen';
+  if (it.topics.includes('team')) return 'team';
+  return 'szene';
+}
+export const KIND_LABEL: Record<StoryKind, string> = {
+  sieg: 'Sieg', rennen: 'Rennen', verletzung: 'Verletzung', transfer: 'Transfer', team: 'Teams', szene: 'Szene',
+};
+
+/** Anzahl je Filter (für die Chips) */
+export function filterCounts(items: FeedNews[]): Record<NewsFilter, number> {
+  const c: Record<NewsFilter, number> = { alle: items.length, runde: 0, rennen: 0, transfer: 0, verletzung: 0 };
+  for (const it of items) for (const t of it.topics) if (t in c && t !== 'alle' && t !== 'runde') c[t as NewsFilter] += 1;
+  return c;
+}
+
+/** Zahl aus einer Kennung (für gleichbleibende Bilder je Meldung) */
+export function seedOf(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
 }
 
 export function matches(item: FeedNews, filter: NewsFilter): boolean {

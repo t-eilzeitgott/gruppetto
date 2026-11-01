@@ -2,10 +2,11 @@ name: News
 
 # Nachrichten aus der Szene für die Startseite (Tab „News“): Feeds der Radsport-Medien lesen, auf Profi-Radsport
 # filtern, gleiche Meldungen bündeln, gewichten und in public.news schreiben (scripts/news).
-# Viermal am Tag; nach Änderungen am Abruf ein Probelauf (zeigt, welche Quellen antworten), per Hand beides.
+# Tagsüber jede Stunde (UTC 4–22 Uhr, also etwa 5–23 Uhr bei uns; GitHub startet geplante Läufe manchmal etwas
+# später); nach Änderungen am Abruf ein Probelauf (zeigt, welche Quellen antworten), per Hand beides.
 on:
   schedule:
-    - cron: '17 4,9,14,19 * * *'
+    - cron: '7 4-22 * * *'
   workflow_dispatch:
     inputs:
       probelauf:

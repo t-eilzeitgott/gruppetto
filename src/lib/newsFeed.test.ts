@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, bundle, byDay, dayLabel, highlight, nameMarks, sourceName, topStory, type FeedEntry } from './newsFeed';
+import { ago, bundle, byDay, dayLabel, filterCounts, highlight, mostImportant, nameMarks, sourceName, storyKind, topStory, type FeedEntry } from './newsFeed';
 import type { NewsItem } from './types';
 
 const item = (id: string, h: number, over: Partial<NewsItem> = {}): NewsItem => ({
@@ -14,6 +14,30 @@ test('Quellen: bekannte Namen, sonst lesbar gemacht', () => {
   assert.equal(sourceName('inrng'), 'The Inner Ring');
   assert.equal(sourceName('radsport-news'), 'Radsport-News');
   assert.equal(sourceName('neue-quelle'), 'Neue Quelle');
+  // gespeichert ist meist schon der Anzeigename
+  assert.equal(sourceName('Radsport-News'), 'Radsport-News');
+  assert.equal(sourceName('Cycling Weekly'), 'Cycling Weekly');
+});
+
+test('Das Wichtigste: große Meldung von gestern bleibt vor kleiner von eben', () => {
+  const list = bundle([
+    item('gross', 27, { score: 3.05 }),
+    item('mittel', 2.5, { score: 2.55 }),
+    item('klein', 0.5, { score: 1.2 }),
+    item('alt', 80, { score: 5 }),
+    item('team', 10, { score: 2.25 }),
+  ]);
+  assert.deepEqual(mostImportant(list, NOW, 3).map((x) => x.id), ['mittel', 'team', 'gross']);
+  assert.ok(!mostImportant(list, NOW, 9).some((x) => x.id === 'alt' || x.id === 'klein'));
+});
+
+test('Art der Meldung und Anzahl je Filter', () => {
+  assert.equal(storyKind({ topics: ['verletzung', 'rennen'], title: 'Pogačar wins after crash' }), 'verletzung');
+  assert.equal(storyKind({ topics: ['rennen'], title: 'Brand gewinnt Koppenbergcross' }), 'sieg');
+  assert.equal(storyKind({ topics: ['rennen'], title: 'Vorschau auf den Giro' }), 'rennen');
+  assert.equal(storyKind({ topics: [], title: 'Interview' }), 'szene');
+  const c = filterCounts(bundle([item('a', 1, { topics: ['rennen'] }), item('b', 2, { topics: ['rennen', 'transfer'] }), item('c', 3)]));
+  assert.deepEqual(c, { alle: 3, runde: 0, rennen: 2, transfer: 1, verletzung: 0 });
 });
 
 test('Bündel: deutsche Fassung vorn, Zeit der ersten Meldung, übrige Quellen', () => {

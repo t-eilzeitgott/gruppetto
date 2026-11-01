@@ -604,7 +604,8 @@ function demoProfile(stage: Stage): ProfilePoint[] | null {
 const DEMO_NEWS: [number, 'de' | 'en', string[], number, number, string, string | null][] = [
   [1.2, 'de', ['rennen'], 3, 2.6, 'Königsetappe am Passo San Marco: Die Favoriten belauern sich bis zum Schlussanstieg', 'Vor der ersten großen Bergankunft halten sich die Kapitäne bedeckt – die Teams rechnen mit einer Vorentscheidung im Gesamtklassement.'],
   [2.5, 'en', ['rennen'], 1, 1.6, 'Stage preview: why the breakaway may finally get its chance', 'Rolling terrain, a late climb and tired sprint teams – the ingredients for a day for the opportunists.'],
-  [4, 'de', ['verletzung'], 2, 1.9, 'Sturz im Finale: Mehrere Fahrer mit Prellungen, Rennarzt gibt Entwarnung', 'Auf nasser Straße kam es drei Kilometer vor dem Ziel zu einem Massensturz. Alle Beteiligten konnten weiterfahren.'],
+  [4, 'de', ['verletzung'], 2, 2.3, 'Sturz im Finale: Mehrere Fahrer mit Prellungen, Rennarzt gibt Entwarnung', 'Auf nasser Straße kam es drei Kilometer vor dem Ziel zu einem Massensturz. Alle Beteiligten konnten weiterfahren.'],
+  [5, 'de', ['rennen'], 1, 1.5, 'Ausreißer gewinnt am Colle di Zambla – Favoriten kommen gemeinsam ins Ziel', 'Nach 180 Kilometern in der Spitzengruppe setzte sich der Ausreißer am letzten Anstieg ab und rettete 25 Sekunden ins Ziel.'],
   [6, 'de', ['transfer'], 1, 1.4, 'Transfermarkt: Zwei WorldTour-Teams werben um junges Klassikertalent', 'Der Vertrag des U23-Siegers läuft aus – die Entscheidung soll noch vor der Tour fallen.'],
   [9, 'en', ['team'], 1, 1.1, 'Team doctors warn of heat as the race heads south', null],
   [20, 'de', ['rennen'], 2, 1.8, 'Etappensieg aus der Fluchtgruppe – die Favoriten sparen Kräfte', 'Die Ausreißer retteten 40 Sekunden ins Ziel, im Feld blieb es bis zum Schluss ruhig.'],
