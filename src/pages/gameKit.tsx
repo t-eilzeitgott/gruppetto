@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
-import { GFX_LEVELS, GFX_MAX, GFX_MIN, gfxLevel, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxLevel, setGfxRes } from '../game/abfahrt/gfxOpts';
+import { GFX_LEVELS, GFX_MAX, GFX_MIN, gfxLevel, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxLevel, setGfxRes, stageAA } from '../game/abfahrt/gfxOpts';
 import { cx } from '../ui/kit';
 import { healFixedSoon } from '../ui/fixedHeal';
 
@@ -195,10 +195,12 @@ export function GfxSliders({ page }: { page?: boolean }) {
   const [ri, setRi] = useState(() => idxOf(cur.res));
   useEffect(() => { setLv(cur.level); }, [cur.level]);
   useEffect(() => { setRi(idxOf(cur.res)); }, [cur.res]); // eslint-disable-line react-hooks/exhaustive-deps
-  // PC-Grafik gehört zur Bühne: sie wechselt erst mit dem nächsten Spiel (alles andere sofort)
+  // PC-Grafik gehört zur Bühne: sie wechselt erst mit dem nächsten Spiel; die Kantenglättung (aus in Stufe 1–2)
+  // gehört zum Grafikkontext und kommt erst mit dem nächsten Start der App (alles andere sofort)
   const start = useRef({ pc: gfxOn('pc') });
   const L = GFX_LEVELS[lv - 1];
-  const later = L.pc !== start.current.pc;
+  const aaNow = stageAA();
+  const later = L.pc !== start.current.pc ? 'ab dem nächsten Start' : aaNow !== null && L.aa !== aaNow ? 'Kantenglättung nach App-Neustart' : '';
   const d = steps[ri];
   // am Telefon über doppelter Dichte: getönt (selten noch 60 Bilder je Sekunde)
   const phone = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
@@ -211,7 +213,7 @@ export function GfxSliders({ page }: { page?: boolean }) {
         <SnapSlider count={GFX_MAX - GFX_MIN + 1} value={cur.level - GFX_MIN} label="Grafikstufe"
           valueText={(i) => `${GFX_LEVELS[i].name}, Stufe ${i + GFX_MIN} von ${GFX_MAX}`}
           onPreview={(i) => setLv(i + GFX_MIN)} onCommit={(i) => { setLv(i + GFX_MIN); setGfxLevel(i + GFX_MIN); }} />
-        <div className="gfx-sl__ends" aria-hidden="true"><span>Low</span>{later ? <span className="gfx-sl__note">ab dem nächsten Start</span> : null}<span>PC</span></div>
+        <div className="gfx-sl__ends" aria-hidden="true"><span>Low</span>{later ? <span className="gfx-sl__note">{later}</span> : null}<span>PC</span></div>
       </div>
       <div className="gfx-sl__row">
         <div className="gfx-sl__head" aria-hidden="true"><span className="gfx-sl__label">Auflösung</span><span className={cx('gfx-sl__val', warnFrom !== undefined && ri > warnFrom && 'is-warn')}>{fmtX(d)}</span></div>

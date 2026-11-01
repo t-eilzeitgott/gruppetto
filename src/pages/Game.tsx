@@ -582,7 +582,7 @@ export function GamePage() {
       aufloesung: r ? `${String(gfxRes()).replace('.', ',')}-fach (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
       sichtweite: viewRange().label,
       // (PC-Grafik und Kantenglättung gehören zur Bühne: nach einem Wechsel gelten sie erst im nächsten Spiel)
-      grafik: `${gfxDescribe()}${r && (r.pc !== gfxOn('pc') || r.aa !== gfxAA()) ? ' – PC-Grafik/Kantenglättung erst ab dem nächsten Spiel' : ''}`,
+      grafik: `${gfxDescribe()}${r && r.pc !== gfxOn('pc') ? ' – PC-Grafik erst ab dem nächsten Spiel' : ''}${r && r.aa !== gfxAA() ? ` – Kantenglättung ${r.aa ? 'noch an' : 'noch aus'} bis zum nächsten App-Start` : ''}`,
     };
   };
   const startMeasure = () => {

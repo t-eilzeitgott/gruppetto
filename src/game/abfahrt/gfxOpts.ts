@@ -6,9 +6,11 @@
  * Was die Stufen schalten (die Bausteine lesen weiter einzelne Schalter, gfxOn):
  *  - Sichtweite: Einfach (Minimal) · Kurz · Normal · Weit · Max · Ultra · Extrem (viewRange.ts)
  *  - lite (Stufe 1–2): schlichte Fahrer (eigener in einfacher Detailstufe, weniger 3D-Modelle), ruhiger Himmel ohne
- *    Wolkentürme und Vögel, ohne Weichzeichner unter Namensschildern
- *  - Kantenglättung: in allen Stufen an. Sie gehört zum Grafikkontext; wechselte sie mit der Stufe, entstünde bei
- *    jedem Wechsel über die Grenze ein neuer Kontext – auf dem iPhone blieb danach das Bild manchmal schwarz.
+ *    Wolkentürme und Vögel, ohne Weichzeichner unter Namensschildern; schlichte Böden (Wiese ohne Wiesenarten und
+ *    zweiten Maßstab, Fels ohne Relief, Straße ohne Flicken, Risse und Glanz – die Grafik ist dort am Limit)
+ *  - Kantenglättung: ab Stufe 3 (in Stufe 1–2 spart das Grafik, die dort am Limit ist). Sie gehört zum
+ *    Grafikkontext und wird nur beim Bau der Bühne gewählt (App-Start): ein Wechsel über die Grenze baut keinen neuen
+ *    Kontext – das ließ auf dem iPhone das Bild schwarz (stageAA). Sie folgt beim nächsten App-Start.
  *  - schatten (ab 6): Sonnenschatten (ein zweiter Zeichendurchgang je Bild)
  *  - details (ab 7): feine Landschafts-Shader – Relief im Licht, Baumkronen mit Licht und Schatten, Felsstruktur,
  *    Rinnen und Schichten, ziehende Wolkenschatten, Flecken im Straßenbelag (siehe render3d.ts)
@@ -41,8 +43,8 @@ const L = (name: string, range: GfxRange, o: Partial<GfxLevel> = {}): GfxLevel =
 
 /** Stufe 1 … 10 (Index 0 … 9) */
 export const GFX_LEVELS: GfxLevel[] = [
-  L('Minimal', 'lite', { lite: true }),
-  L('Sehr niedrig', 'eco', { lite: true }),
+  L('Minimal', 'lite', { lite: true, aa: false }),
+  L('Sehr niedrig', 'eco', { lite: true, aa: false }),
   L('Niedrig', 'eco'),
   L('Mittel', 'normal'),
   L('Gut', 'far'),
@@ -61,7 +63,7 @@ const RANGE_LABEL: Record<GfxRange, string> = { lite: 'kürzeste Sicht', eco: 'k
 export function gfxLevelText(n: number): string {
   const l = GFX_LEVELS[clampLevel(n) - 1];
   const parts = [RANGE_LABEL[l.range]];
-  if (l.lite) parts.push('schlichte Fahrer und Himmel');
+  if (l.lite) parts.push('schlichte Fahrer, Himmel und Böden');
   if (!l.aa) parts.push('ohne Kantenglättung');
   if (l.schatten) parts.push('Sonnenschatten');
   if (l.details) parts.push('Landschaftsdetails');
@@ -221,6 +223,15 @@ export function gfxOn(k: GfxOpt): boolean {
 }
 /** Kantenglättung (für die nächste Bühne) */
 export function gfxAA(): boolean { return cur().aa; }
+
+let liveAA: boolean | null = null;
+/**
+ * Kantenglättung des laufenden Grafikkontexts (null: noch keine 3D-Bühne). Sie gilt für die ganze Sitzung: ein Wechsel
+ * der Stufe über die Grenze baut keinen neuen Kontext (das ließ auf dem iPhone das Bild schwarz) – die gewählte
+ * Kantenglättung kommt mit dem nächsten Start der App. Gesetzt von der Bühne (pool.ts).
+ */
+export function stageAA(): boolean | null { return liveAA; }
+export function setStageAA(on: boolean) { liveAA = on; }
 /** Sichtweite der Stufe */
 export function gfxRange(): GfxRange { return cur().range; }
 /** Stufe 1 … 10 */

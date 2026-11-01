@@ -54,7 +54,8 @@ import { gfxAA, gfxOn, gfxRes, onGfxChange, onGfxSettings } from './gfxOpts';
 import { buildHouse, rowUnits, roofColor, roofKind, wallSet, type At, type Town } from './house3d';
 
 /** Kennung der feinen Landschafts-Shader (gfxOpts „details“) im Programmschlüssel */
-const dk = () => (gfxOn('details') ? '+d' : '');
+/** Schlüssel der Bodenshader: Details (ab Stufe 7) und schlichte Böden (Stufe 1–2) übersetzen eigene Fassungen */
+const dk = () => (gfxOn('details') ? '+d' : '') + (gfxOn('lite') ? '+l' : '');
 
 /**
  * Bäume lösen sich zwischen TREE_FADE und TREE_GONE weich auf; das Kronendach der Landschaft hebt sich schon
@@ -1076,20 +1077,23 @@ export class Renderer3D {
     const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number, wear = false, grain = 0, warp = false, edge: '' | 'verge' | 'walk' = '', sheen = 0) => {
       m.onBeforeCompile = (sh) => {
         const rich = !gfxOn('lite');
+        // schlichte Böden (Stufe 1–2): ohne Flicken und Risse, ohne verbogene Koordinaten, ohne Glanz – die Grafik
+        // ist dort am Limit, die Straße füllt ein Drittel des Bilds
+        const wr = wear && rich, wp = warp && rich, sn = rich ? sheen : 0;
         Object.assign(sh.uniforms, roadU, { uLampP: LAMP_U.uLampP, uLampCol: LAMP_U.uLampCol });
         sh.vertexShader = sh.vertexShader
-          .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wear ? '\nattribute vec3 aRoad;\nvarying vec3 vRoad;' : ''}${edge ? '\nattribute vec4 aX;\nvarying vec4 vX;' : ''}`)
-          .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wear ? '\nvRoad = aRoad;' : ''}${edge ? '\nvX = aX;' : ''}`);
+          .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wr ? '\nattribute vec3 aRoad;\nvarying vec3 vRoad;' : ''}${edge ? '\nattribute vec4 aX;\nvarying vec4 vX;' : ''}`)
+          .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wr ? '\nvRoad = aRoad;' : ''}${edge ? '\nvX = aX;' : ''}`);
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', `#include <common>\n${rich ? '#define ROAD_RICH\n' : ''}uniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform sampler2D uGrain;\nuniform float uTime;\nvarying vec3 vWP;${edge ? '\nuniform sampler2D uGrassE;\nuniform vec3 uGrassEM;\nvarying vec4 vX;' : ''}${wear ? `\nvarying vec3 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
+          .replace('#include <common>', `#include <common>\n${rich ? '#define ROAD_RICH\n' : ''}uniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform sampler2D uGrain;\nuniform float uTime;\nvarying vec3 vWP;${edge ? '\nuniform sampler2D uGrassE;\nuniform vec3 uGrassEM;\nvarying vec4 vX;' : ''}${wr ? `\nvarying vec3 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
           // Lichtkegel der Laternen auf Straße und Bankett
           .replace('#include <lights_fragment_end>', lampFrag('vWP'))
           // matter Glanz bei flachem Blick: der Himmel (Farbe des Dunstes) spiegelt sich auf dem Belag – so zeichnen
           // sich Wellen, Dach und Querneigung der Fahrbahn in der Ferne ab wie auf einer echten Straße
-          .replace('#include <envmap_fragment>', sheen > 0 ? `#include <envmap_fragment>
+          .replace('#include <envmap_fragment>', sn > 0 ? `#include <envmap_fragment>
             {
               float sNv = clamp(dot(normal, geometryViewDir), 0.0, 1.0);
-              float sFr = pow(1.0 - sNv, 5.0) * ${sheen.toFixed(2)};
+              float sFr = pow(1.0 - sNv, 5.0) * ${sn.toFixed(2)};
               #ifdef USE_FOG
                 vec3 sSky = fogColor;
               #else
@@ -1099,7 +1103,7 @@ export class Renderer3D {
             }` : '#include <envmap_fragment>')
           .replace('#include <map_fragment>', `
             #ifdef USE_MAP
-              ${wear || warp ? `// Körnung ohne erkennbare Wiederholung (sonst alle 5 m dieselben Steine): Koordinaten weich verbogen
+              ${wr || wp ? `// Körnung ohne erkennbare Wiederholung (sonst alle 5 m dieselben Steine): Koordinaten weich verbogen
               vec2 mUv = vMapUv + (textureLod(uNoise, vMapUv * 0.137 + vec2(0.31, 0.77), 4.5).rb - 0.5) * 0.6;
               vec4 sampledDiffuseColor = textureGrad(map, mUv, dFdx(vMapUv), dFdy(vMapUv));` : 'vec4 sampledDiffuseColor = texture2D(map, vMapUv);'}
               ${edge ? `{
@@ -1128,7 +1132,7 @@ export class Renderer3D {
               sampledDiffuseColor.rgb *= 1.0 + ${patch.toFixed(2)} * ((mn.r * 0.6 + mn.g * 0.4) - 0.5) + ${(patch * 0.45).toFixed(2)} * (mn2.g - 0.5);
               sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);
               #endif
-              ${wear ? 'sampledDiffuseColor.rgb = roadWear(sampledDiffuseColor.rgb, vRoad.x, vRoad.y, vRoad.z);' : ''}
+              ${wr ? 'sampledDiffuseColor.rgb = roadWear(sampledDiffuseColor.rgb, vRoad.x, vRoad.y, vRoad.z);' : ''}
               diffuseColor *= sampledDiffuseColor;
               ${gfxOn('details') ? CLOUD('vWP.xz') : ''}
             #endif`);
@@ -1183,6 +1187,11 @@ export class Renderer3D {
             // Grenze zwischen grünen und anderen Bändern (Rinne, Kies, Fels, Feld): die Eckfarben gehen dort ineinander
             // über (terrainSide) – Rauschen macht aus dem Verlauf Zungen und Flecken statt einer geraden Linie
             float gg = vColor.g - max(vColor.r, vColor.b);
+            ${gfxOn('lite') ? `// schlichte Böden (Stufe 1–2): nur das Gras, ohne Flecken, Wiesenarten und zweiten Maßstab
+            float gw = smoothstep(0.012, 0.05, gg);
+            vec4 g1 = texture2D(uGrass, vRockP.xz / 4.2);
+            sampledDiffuseColor.rgb *= mix(vec3(1.0), g1.rgb / uGrassMean, gw);
+            sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, g1.rgb * 0.5 / max(vColor.rgb, vec3(0.02)), g1.a * 0.75 * gw);` : `
             float gn = texture2D(uRelief, vRockP.xz / 2.7).g * 0.7 + texture2D(uRelief, vRockP.xz / 0.85 + 0.3).g * 0.3;
             float gw = smoothstep(0.012, 0.05, gg + (gn - 0.5) * 0.07 * smoothstep(0.003, 0.02, gg));
             vec3 nzg = texture2D(uRelief, vRockP.xz / 33.0).rgb;
@@ -1197,7 +1206,7 @@ export class Renderer3D {
             gm = mix(gm, gm * vec3(0.64, 0.58, 0.48), cattleTracks(vRockP, normalize((vec4(vNormal, 0.0) * viewMatrix).xyz).y, nzg.r, mz) * 0.8);` : ''}
             sampledDiffuseColor.rgb *= mix(vec3(1.0), gm, gw);
             // Blüten: Farbe statt Tönung (geteilt durch die Eckpunktfarbe, die danach noch multipliziert wird)
-            sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, g1.rgb * 0.5 / max(vColor.rgb, vec3(0.02)), g1.a * 0.75 * gw);
+            sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, g1.rgb * 0.5 / max(vColor.rgb, vec3(0.02)), g1.a * 0.75 * gw);`}
           }
           #endif
           ${gfxOn('details') ? `{
@@ -1289,7 +1298,7 @@ export class Renderer3D {
           #endif
           vTW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${MD}${gfxOn('details') ? '#define TDETAIL\n' : ''}#define TLV ${lv}\n#define SPLAT_U\nuniform vec4 uCanD;\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nuniform float uWoods;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif\n${NOISE_GLSL}\n${RELIEF_GLSL}\n${MEADOW_GLSL}`)
+        .replace('#include <common>', `#include <common>\n${MD}${gfxOn('details') ? '#define TDETAIL\n' : ''}${gfxOn('lite') ? '#define TLITE\n' : ''}#define TLV ${lv}\n#define SPLAT_U\nuniform vec4 uCanD;\nuniform float uTime;\nuniform vec3 uSunDir;\nuniform sampler2D uRelief;\nuniform sampler2D uCanopy;\nuniform sampler2D uGrass;\nuniform vec3 uGrassMean;\nuniform vec3 uForA;\nuniform vec3 uForB;\nuniform vec3 uSnow;\nuniform float uWoods;\nvarying vec4 vMat;\nvarying vec3 vRk;\nvarying vec3 vTW;\nvarying vec2 vNz;\n#ifdef TMORPH\nvarying float vMk;\n#endif\n${NOISE_GLSL}\n${RELIEF_GLSL}\n${MEADOW_GLSL}`)
         .replace('#include <color_fragment>', `
           // Relief für die Beleuchtung als Steigung in Weltkoordinaten (m/m): Rinnen im Fels, Buckel in der Wiese.
           // Die Steigung kommt aus einer Textur mit Mipmaps (in der Ferne glatt) statt aus Bildschirm-Ableitungen.
@@ -1316,7 +1325,12 @@ export class Renderer3D {
             vec3 tCol = vColor.rgb * (0.92 + 0.16 * big);
             tCol = mix(tCol, tCol * vec3(1.08, 1.02, 0.9), smoothstep(0.55, 0.85, big) * 0.5);
             // Wiesenarten (Flecken von 30–130 m): auf allen Stufen gleich gelesen – an der Stufengrenze ändert sich nichts
-            vec3 mz = meadowZones(vTW.xz);
+            // (schlichte Böden: ihr Mittel statt dreier Texturen je Bildpunkt)
+            #ifdef TLITE
+              vec3 mz = vec3(0.5);
+            #else
+              vec3 mz = meadowZones(vTW.xz);
+            #endif
             tCol *= meadowTint(mz);
             // Wiese aus der Nähe: Büschel, Flecken, Erde, Blüten (zwei Maßstäbe, gedreht gegeneinander – kein
             // sichtbares Kachelmuster); in der Ferne mitteln die Mipmaps die Textur zu 1
@@ -1324,6 +1338,7 @@ export class Renderer3D {
             {
               // mittelgroße Flecken (33 m): mal satter und kühler, mal trockener und gelber
               tCol *= mix(vec3(0.92, 0.98, 1.04), vec3(1.06, 1.02, 0.92), smoothstep(0.3, 0.72, nz2.r)) * (0.92 + 0.16 * nz2.g);
+              #ifndef TLITE
               // (Gras ohne Kachelmuster: Koordinaten weich verbogen)
               vec4 g1 = grassTex(uGrass, uRelief, vTW.xz / 4.2);
               vec3 g2 = texture2D(uGrass, mat2(0.8, -0.6, 0.6, 0.8) * vTW.xz / 21.0 + 0.37).rgb;
@@ -1340,6 +1355,7 @@ export class Renderer3D {
                 // nah: unregelmäßige Helligkeit über einen halben Meter und feines Korn; Viehgangeln an steilen Weiden
                 tCol *= grainF(vTW.xz, 0.55, 0.11) * grainF(vTW.xz + 17.3, 0.13, 0.12);
                 tCol = mix(tCol, tCol * vec3(0.64, 0.58, 0.48), cattleTracks(vTW, fnT.y, nz2.r, mz) * 0.8);
+              #endif
               #endif
             }
             #endif
@@ -1379,6 +1395,7 @@ export class Renderer3D {
             // großflächig hellere und dunklere Partien (Gesteinswechsel, Flechten) – vor allem in der Ferne
             rc *= 0.86 + 0.3 * nzF;
             // Felsrelief (wie in der WebGPU-Welt): Rinnen, Rippen, Bänke und Wasserstreifen – Helligkeit und Normale
+            #ifndef TLITE
             {
               float rkR = rk * (1.0 - smoothstep(0.8, 0.97, fnT.y));
               if (rkR > 0.003) {
@@ -1388,6 +1405,7 @@ export class Renderer3D {
                 tGrad += rg * rkR;
               }
             }
+            #endif
             // auf Absätzen (weniger steil) Gras und Geröll
             rc = mix(rc, vColor.rgb * 0.8, smoothstep(0.62, 0.8, fnT.y) * smoothstep(0.5, 0.72, big) * 0.6);
             // Felsflecken an bloß steilen Hängen (keine Wand): dunkler und mit Bewuchs durchsetzt – ein heller grauer

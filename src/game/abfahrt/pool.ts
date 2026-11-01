@@ -8,7 +8,7 @@ import { Renderer3D } from './render3d';
 import { attachWeather, type WeatherFx } from './weather';
 import type { RaceView } from './engine';
 import { uiBusy } from '../uiBusy';
-import { gfxAA, gfxOn } from './gfxOpts';
+import { gfxOn, setStageAA } from './gfxOpts';
 
 export interface Stage {
   renderer: Renderer3D; canvas: HTMLCanvasElement; overlay: HTMLCanvasElement; weather: WeatherFx | null;
@@ -31,15 +31,17 @@ function makeStage(): Stage {
   overlay.className = 'abf__overlay';
   overlay.setAttribute('aria-hidden', 'true');
   const renderer = new Renderer3D(canvas, overlay);
+  setStageAA(renderer.aa);
   // Wetter (Schatten, Licht, Nachbearbeitung) vor dem ersten Bild anhängen – so übersetzt das Vorwärmen gleich die richtigen Shader
   return { renderer, canvas, overlay, weather: attachWeather(renderer), game: null };
 }
 
 /**
- * passt die Bühne zur Grafikstufe? Nur die PC-Grafik entsteht mit dem Renderer (Kantenglättung ist in allen Stufen
- * gleich) – nach einem Wechsel darüber hinweg baut das nächste Spiel eine neue Bühne
+ * passt die Bühne zur Grafikstufe? Nur die PC-Grafik entsteht mit dem Renderer – nach einem Wechsel darüber hinweg
+ * baut das nächste Spiel eine neue Bühne. Die Kantenglättung zählt nicht (sie bleibt bis zum nächsten App-Start,
+ * siehe gfxOpts.stageAA)
  */
-const fits = (s: Stage) => !s.broken && !s.renderer.lost && s.renderer.pc === gfxOn('pc') && s.renderer.aa === gfxAA();
+const fits = (s: Stage) => !s.broken && !s.renderer.lost && s.renderer.pc === gfxOn('pc');
 
 function drop(s: Stage) {
   s.weather?.dispose();
