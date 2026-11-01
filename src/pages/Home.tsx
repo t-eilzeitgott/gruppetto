@@ -447,9 +447,11 @@ function NextStageCard({ stage, data, me, members, now }: {
   stage: Stage; data: TourData; me: Profile; members: Profile[]; now: number;
 }) {
   const myTip = data.tips.find((t) => t.stage_id === stage.id && t.user_id === me.id);
+  // getippter Fahrer ausgestiegen: schon hier sichtbar (wie fehlender Tipp hervorgehoben), nicht erst in der Etappe
+  const out = !!myTip && data.riders.find((r) => r.id === myTip.rider_id)?.status === 'out';
   const route = stageRoute(stage);
   return (
-    <section className={cx('card tip-card', !myTip && 'card--accent')} aria-labelledby={`next-${stage.id}`}>
+    <section className={cx('card tip-card', (!myTip || out) && 'card--accent')} aria-labelledby={`next-${stage.id}`}>
       <div className="card__row">
         <span className="eyebrow">{dayLabel(stage, now)}</span>
         <span className="time-chip" title="Tippschluss"><Icon name="clock" size={15} /><Countdown to={stage.starts_at} now={now} prefix="" /></span>
@@ -465,9 +467,14 @@ function NextStageCard({ stage, data, me, members, now }: {
         <TipCount stage={stage} members={members} />
       </div>
       {myTip ? (
-        <Link to={`/tipp/${stage.id}`} className="my-tip" ariaLabel={`Dein Tipp: ${riderName(data, myTip.rider_id)} – ändern`}>
-          <Icon name="check" size={18} />
-          <strong className="my-tip__name">{riderName(data, myTip.rider_id)}</strong>
+        <Link to={`/tipp/${stage.id}`} className={cx('my-tip', out && 'my-tip--out')} ariaLabel={`Dein Tipp: ${riderName(data, myTip.rider_id)}${out ? ' – ausgestiegen, neu tippen' : ' – ändern'}`}>
+          <Icon name={out ? 'info' : 'check'} size={18} />
+          {out ? (
+            <span className="my-tip__text">
+              <strong className="my-tip__name">{riderName(data, myTip.rider_id)}</strong>
+              <span className="my-tip__warn">ausgestiegen – bitte neu tippen</span>
+            </span>
+          ) : <strong className="my-tip__name">{riderName(data, myTip.rider_id)}</strong>}
           <Icon name="pencil" size={17} className="muted" />
         </Link>
       ) : (
