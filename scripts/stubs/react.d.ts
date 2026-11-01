@@ -45,7 +45,9 @@ declare module 'react' {
 }
 
 declare module 'react-dom' {
+  import type { ReactNode, ReactElement } from 'react';
   export function flushSync<R>(fn: () => R): R;
+  export function createPortal(children: ReactNode, container: Element | DocumentFragment, key?: string | null): ReactElement;
 }
 
 declare module 'react-dom/server' {

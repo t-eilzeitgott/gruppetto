@@ -12,6 +12,7 @@ import { lastName } from '../ui/bits';
 import { InstallSteps } from '../ui/InstallSteps';
 import { useInstall } from '../lib/install';
 import { GfxSliders } from './gameKit';
+import { EmblemCase } from '../ui/Emblems';
 
 /** Spielgrafik für alle 3D-Spiele: dieselben Schieberegler wie im Pausenmenü */
 function GameGfx() {
@@ -66,6 +67,8 @@ export function Profile() {
             </div>
           )}
         </section>
+
+        <EmblemCase me={me} />
 
         <ProCard />
 
