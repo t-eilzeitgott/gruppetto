@@ -77,11 +77,20 @@ export const renntag: Variant = (c) => {
 <path d="${area}" fill="url(#ixRp)"/>
 <path d="${line}" fill="none" stroke="currentColor" stroke-width="${Math.max(2, fs * 0.055)}" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>`);
-  // Fenster zum Aufdecken: es wandert nach rechts, das Profil darin gegenläufig – nur transform, das Profil wird
-  // einmal gezeichnet und im Compositor verschoben (clip-path zeichnete es in jedem Bild neu)
-  const win = h('div', '', 'position:absolute;inset:0;overflow:hidden');
-  win.appendChild(box);
-  c.back.appendChild(win);
+  // Das Profil steht fest und ist von Anfang an ganz gezeichnet. Aufgedeckt wird es von einer Abdeckung in
+  // Hintergrundfarbe, die von rechts her schmaler wird (scaleX einer einfarbigen Fläche – läuft im Compositor und
+  // kann nichts abschneiden). (Früher: clip-path, in jedem Bild neu gezeichnet; dann ein wanderndes Fenster mit
+  // gegenläufigem Inhalt – das zeichnete Safari nur teilweise, das Profil erschien erst am Ende ganz.)
+  c.back.appendChild(box);
+  const sw = Math.max(2, fs * 0.055);
+  let yTop = Infinity;
+  for (const [, y] of P) yTop = Math.min(yTop, y);
+  const cx0 = x0 - sw * 2, cx1 = x1 + sw * 2 + 2;
+  const cy0 = yTop - sw * 2 - 2, cy1 = baseY + sw + 2;
+  const cover = h('div', '', `position:absolute;left:${cx0.toFixed(1)}px;top:${cy0.toFixed(1)}px;width:${(cx1 - cx0).toFixed(1)}px;height:${(cy1 - cy0).toFixed(1)}px;background:var(--bg);transform-origin:100% 50%;pointer-events:none`);
+  c.back.appendChild(cover);
+  /** Anteil der Abdeckung, der bei Aufdeckkante x noch steht */
+  const coverAt = (x: number) => Math.max(0, Math.min(1, (cx1 - x) / (cx1 - cx0)));
   // Ziel: kleine karierte Fahne am Ende
   const [ex, ey] = P[P.length - 1];
   const flag = at(c.back, h('div', '', 'opacity:0', `<svg viewBox="0 0 24 34" width="100%" height="100%" style="display:block;overflow:visible">
@@ -118,17 +127,14 @@ export const renntag: Variant = (c) => {
   // Profil wird hinter dem Punkt sichtbar, der Punkt fährt auf der Linie
   const N = 36;
   const ride: Keyframe[] = [];
-  const revealWin: Keyframe[] = [];
-  const revealBox: Keyframe[] = [];
+  const reveal: Keyframe[] = [];
   for (let i = 0; i <= N; i++) {
     const u = i / N;
     const [x, y] = pointAt(ease.y(u));
     const off = (u * RIDE) / D;
     ride.push({ offset: off, transform: `translate(${(x - dot.x).toFixed(1)}px,${(y - r * 1.1 - dot.y).toFixed(1)}px)` });
-    // (am Ende ein paar Pixel weiter: die runde Linienkappe)
-    const edge = Math.min(W, x + (i === N ? 6 : 0));
-    revealWin.push({ offset: u, transform: `translateX(${(edge - W).toFixed(1)}px)` });
-    revealBox.push({ offset: u, transform: `translateX(${(W - edge).toFixed(1)}px)` });
+    // (am Ende ganz weg: auch die runde Linienkappe)
+    reveal.push({ offset: u, transform: `scaleX(${(i === N ? 0 : coverAt(x)).toFixed(4)})` });
   }
   // Sprung vom Ziel hinter das Wort
   for (let i = 1; i <= 8; i++) {
@@ -138,8 +144,7 @@ export const renntag: Variant = (c) => {
     ride.push({ offset: (RIDE + JUMP * u) / D, transform: `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)` });
   }
   c.A(c.dot, ride, { duration: D, delay: t0, easing: 'linear', fill: 'both' });
-  c.A(win, revealWin, { duration: RIDE, delay: t0, easing: 'linear', fill: 'both' });
-  c.A(box, revealBox, { duration: RIDE, delay: t0, easing: 'linear', fill: 'both' });
+  c.A(cover, reveal, { duration: RIDE, delay: t0, easing: 'linear', fill: 'both' });
   c.A(flag, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 400, delay: 60, easing: 'ease-out', fill: 'both' });
   // Wort erscheint von links, während der Punkt hinüberspringt
   const wc = wordCover(c);
