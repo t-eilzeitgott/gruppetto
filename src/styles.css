@@ -1763,7 +1763,10 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf-rank__bar b { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--accent); animation: abf-grow 1.2s ease-out both; }
 @keyframes abf-grow { from { opacity: 0.4; } to { opacity: 1; } }
 .abf-board { display: flex; flex-direction: column; gap: 12px; }
-.abf-list .person-row { padding-left: 4px; padding-right: 4px; }
+/* im Spielblatt schneidet der Inhalt seitlich ab (overflow-x: hidden) – Zeilen deshalb ohne negativen Rand,
+   sonst verschwinden die letzten Ziffern der Zeiten rechts */
+.abf-list .person-row { margin: 0; padding-left: 10px; padding-right: 10px; }
+.abf-list .points { font-variant-numeric: tabular-nums; }
 
 .abf-summary { display: flex; flex-direction: column; gap: 12px; }
 .abf-sum-top { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left; }
