@@ -14,7 +14,9 @@ import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
 import { mistTexture, waterTexture } from './falls3d';
-import { adCell, adsTex, AD_COUNT, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, cobbleTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex, vergeTex } from './tex3d';
+import { adCell, adsTex, AD_COUNT, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex } from './tex3d';
+import { CURB_CHAMFER, CURB_FACE, CURB_TOP, CURB_V, COVER_PATCH, GUTTER_W, asphaltTex as groundAsphalt, cobbleTex, coverAtlas, curbTex, grainTex, groundCached, gutterTex, vergeTex, walkTex, type GroundTex } from './groundTex';
+import { GROUND_STYLES, coverLang } from './groundStyle';
 import { SkyLife } from './sky3d';
 import { landmarkGeometries, type Landmark } from './landmarks3d';
 import { buildPeaks, buildPeaksSteps, isPcPeaks, peakKeepers, peakLight, peakSunUpdate, setPeakOpacity } from './peaks3d';
@@ -171,7 +173,7 @@ vec3 wPatch(float u, float vm, float len, float seed, float chance) {
   float edge = min(max((wStripe(vm - v0, 0.035) + wStripe(vm - v0 - l, 0.035)) * inU, (wStripe((u - ua) * 5.6, 0.035) + wStripe((u - ub) * 5.6, 0.035)) * inV), 1.0) * on;
   return vec3(inU * inV * on, edge, wH(c, seed, 6.0));
 }
-vec3 roadWear(vec3 col, float um, float vm) {
+vec3 roadWear(vec3 col, float um, float vm, float e) {
   float u = um / 5.6;
   vec3 A = wPatch(u, vm, 13.0, 3.1, 0.45);
   vec3 B = wPatch(u, vm, 37.0, 8.3, 0.5);
@@ -190,7 +192,30 @@ vec3 roadWear(vec3 col, float um, float vm) {
   col = mix(col, col * 0.28, B.y * 0.85);
   col = mix(col, A.z < 0.55 ? col * 0.42 : col * 1.3, A.x);
   col = mix(col, col * 0.28, A.y * 0.85);
-  return mix(col, col * 0.24, max(crack, joint) * 0.9);
+  col = mix(col, col * 0.24, max(crack, joint) * 0.9);
+#ifdef ROAD_RICH
+  // Fahrspuren: je Spur zwei glattgefahrene, hellere Radspuren, dazwischen ein dunkler Ölstreifen (stärker und
+  // schwächer über die Strecke)
+  float lane = mod(um, 2.8);
+  float wheel = smoothstep(0.42, 0.0, abs(lane - 0.65)) + smoothstep(0.42, 0.0, abs(lane - 2.15));
+  float oil = smoothstep(0.5, 0.0, abs(lane - 1.4));
+  float lm = vn1(vm / 41.0, 53.0).x;
+  col *= 1.0 + wheel * 0.11 * (0.4 + lm) - oil * 0.12 * (1.3 - lm);
+  // vergossene Risse (Bitumen): wellige, schwarz glänzende Linien schräg über die Fahrbahn
+  float tc = floor(vm / 13.0);
+  float tv0 = tc * 13.0 + h21(vec2(tc, 63.1)) * 4.0;
+  float tlen = 4.0 + h21(vec2(tc, 65.7)) * 8.0;
+  float tpath = h21(vec2(tc, 67.9)) * 5.6 + (vm - tv0) * (h21(vec2(tc, 69.2)) - 0.5) * 1.1 + (vn1(vm * 1.7, 71.0).x - 0.5) * 0.4;
+  float tar = wStripe(um - tpath, 0.02) * wSpan(vm, tv0, tv0 + tlen) * step(0.4, h21(vec2(tc, 61.3)));
+  col = mix(col, vec3(0.04, 0.038, 0.04), tar * 0.72);
+  // ausgefranster Rand: die letzten Dezimeter bröckeln – heller Splitt, dunkle Löcher, unregelmäßig breit
+  float ed = min(um + e, 5.6 + e - um) + (vn1(vm * 2.3, 73.0).x - 0.5) * 0.24;
+  float rav = smoothstep(0.34, 0.02, ed);
+  float pit = step(0.6, vn2(vec2(um * 9.0, vm * 7.0)));
+  col = mix(col, col * vec3(1.2, 1.14, 1.02), rav * 0.6);
+  col = mix(col, col * 0.42, rav * pit * 0.7);
+#endif
+  return col;
 }
 `;
 
@@ -225,6 +250,9 @@ const FALL_MORPH = `float fallMorph(vec3 p, vec2 d) {
   return d.x * smoothstep(uMorph0.z, uMorph0.w, max(abs(p.x - uMorph0.x), abs(p.z - uMorph0.y)))
     + d.y * smoothstep(uMorph.z, uMorph.w, max(abs(p.x - uMorph.x), abs(p.z - uMorph.y)));
 }`;
+/** Böden mit Relief (ab Stufe 7) und die Stärke ihres Reliefs (Höhenunterschied je Bildpunkt; zu viel flimmert) */
+const GROUND_BUMP = ['asphalt', 'fresh', 'cobble', 'verge', 'walk', 'walk2', 'curb', 'gutter'] as const;
+const BUMP_SCALE: Record<(typeof GROUND_BUMP)[number], number> = { asphalt: 0.35, fresh: 0.25, cobble: 0.9, verge: 0.5, walk: 0.55, walk2: 0.55, curb: 0.5, gutter: 0.7 };
 const CAM_BACK = 6.2;
 const CAM_UP = 2.75;
 const SPRINT_BACK = 7.4;
@@ -294,6 +322,27 @@ const hash = (n: number) => {
 };
 const shadeF = (c: RGBf, f: number): RGBf => [c[0] * f, c[1] * f, c[2] * f];
 const rgbLin = (c: RGB): RGBf => lin255(c[0], c[1], c[2]);
+
+/** Netze für die Böden der Orte in einem Abschnitt (Gehwege, Bordstein, Rinne, Deckel) */
+interface PaveGB { walk: GB; walk2: GB; curb: GB; gutter: GB; covers: GB }
+type PFn = (r: Row, x: number, h: number) => number[];
+/** Querprofil neben dem Bankett: Abstände, Höhen, Farben der Bänder; w: bis zu diesem Punkt Gehweg (Ort) */
+interface Profile { o: number[]; h: number[]; cols: RGBf[]; w?: number }
+const WHITE: RGBf = [1, 1, 1];
+/** dunkle Stufe der Asphaltkante zum Bankett */
+const ASPH_EDGE: RGBf = lin255(40, 41, 45);
+/** weiches Rauschen entlang der Strecke (−0,5 … 0,5) je Segment i und Kanal k – keine Zacken von Segment zu Segment */
+const along = (i: number, k: number, per = 5) => {
+  const f = i / per;
+  const i0 = Math.floor(f);
+  let t = f - i0;
+  t = t * t * (3 - 2 * t);
+  const h0 = hash(i0 * 7919 + k * 131);
+  const h1 = hash((i0 + 1) * 7919 + k * 131);
+  return h0 + (h1 - h0) * t - 0.5;
+};
+/** Rinne vor dem Bordstein (innen → außen: Abstand zur Mitte, Höhe, v der Textur): leicht gemuldet */
+const GUTTER_PROF: [number, number, number][] = [[EDGE - GUTTER_W, 0, 0], [EDGE - GUTTER_W * 0.45, -0.022, 0.55], [EDGE, -0.032, 1]];
 
 /** Straßenquerschnitt an einem Segmentanfang; e: zusätzliche halbe Fahrbahnbreite (Straße mal breiter, mal enger) */
 interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg; e: number }
@@ -463,7 +512,15 @@ export class Renderer3D {
 
     tiles: THREE.MeshLambertMaterial; sign: THREE.MeshLambertMaterial; bulb: THREE.PointsMaterial; lantern: THREE.PointsMaterial;
     props: THREE.MeshLambertMaterial; ads: THREE.MeshLambertMaterial; billboard: THREE.MeshLambertMaterial; glow: THREE.PointsMaterial; lampGlow: THREE.MeshBasicMaterial;
+    /** Böden der Orte (groundTex.ts): zwei Gehwege, Bordstein, Rinne, Schachtdeckel */
+    walk: THREE.MeshLambertMaterial; walk2: THREE.MeshLambertMaterial; curb: THREE.MeshLambertMaterial; gutter: THREE.MeshLambertMaterial; covers: THREE.MeshLambertMaterial;
   };
+  /** Größe einer Kachel (m) der Bodentexturen der aktuellen Gegend */
+  private gsz = { asphalt: 5, fresh: 5, cobble: 2.2, gravel: 5, walk: 2, walk2: 2, curb: 8, gutter: 2, verge: 3 };
+  /** Böden der Orte im Abschnitt, der gerade entsteht */
+  private paveGB: PaveGB | null = null;
+  private groundKey = '';
+  private groundTexs: THREE.Texture[] = [];
   private props!: Partial<Record<Prop3D, THREE.BufferGeometry>>;
   private markGeo!: Record<Landmark, THREE.BufferGeometry>;
   private markMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
@@ -748,9 +805,15 @@ export class Renderer3D {
     // neue Auflösung (Schieberegler): wirkt direkt vor dem nächsten Bild
     this.offRes = onGfxSettings(() => this.requestResize());
     this.offGfx = onGfxChange((k) => {
+      if (k === 'details' || k === 'lite') {
+        const { asphalt, fresh, cobble, gravel, verge, terrain, portal, walk, walk2, curb, gutter, covers } = this.mats;
+        for (const m of [asphalt, fresh, cobble, gravel, verge, terrain, portal, walk, walk2, curb, gutter, covers, ...this.terrMats]) m.needsUpdate = true;
+      }
       if (k === 'details') {
-        const { asphalt, fresh, cobble, gravel, verge, terrain, portal } = this.mats;
-        for (const m of [asphalt, fresh, cobble, gravel, verge, terrain, portal, ...this.terrMats]) m.needsUpdate = true;
+        // Relief an oder aus: Höhenkarten neu (ein kurzer Halt im Menü)
+        for (const g of GROUND_BUMP) this.mats[g].bumpMap = gfxOn('details') ? this.placeholder(true) : null;
+        this.groundKey = '';
+        if (this.track) this.applyGround(this.track);
       }
       // (nach den anderen Empfängern: das Wetter schaltet die Schatten erst noch um)
       if (k !== 'licht') queueMicrotask(() => this.rewarm());
@@ -785,6 +848,61 @@ export class Renderer3D {
     // (PC-Grafik: volle anisotrope Filterung – Straße und Hänge bis in die Ferne scharf)
     t.anisotropy = Math.min(this.pc ? Math.max(aniso, 16) : aniso, this.gl.capabilities.getMaxAnisotropy());
     return t;
+  }
+
+  private ph: THREE.DataTexture[] = [];
+  /** 1 × 1 Stellvertreter (Farbe sRGB, Höhe ohne Farbraum) – bis die Texturen der Gegend da sind */
+  private placeholder(data = false): THREE.DataTexture {
+    const i = data ? 1 : 0;
+    if (!this.ph[i]) {
+      const t = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1, THREE.RGBAFormat);
+      t.colorSpace = data ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.needsUpdate = true;
+      this.ph[i] = t;
+    }
+    return this.ph[i];
+  }
+
+  /**
+   * Böden der Gegend (groundStyle.ts): Asphalt im Ton der Region, Pflaster, zwei Gehwege, Bordstein, Rinne,
+   * Bankett und Schachtdeckel in der Landessprache. Einmal je Strecke (beim Laden), die Materialien bleiben –
+   * nur ihre Texturen wechseln. Mit Relief (Stufe 7+) auch die Höhenkarten.
+   */
+  private applyGround(track: Track) {
+    const st = GROUND_STYLES[track.region] ?? GROUND_STYLES.dolomiten;
+    const bump = gfxOn('details');
+    const key = `${track.region}|${track.lang}|${bump ? 1 : 0}`;
+    if (key === this.groundKey) return;
+    this.groundKey = key;
+    for (const t of this.groundTexs) t.dispose();
+    this.groundTexs = [];
+    const put = (k: keyof typeof this.gsz, g: GroundTex, aniso = 8) => {
+      const m = this.mats[k as keyof typeof this.mats] as THREE.MeshLambertMaterial;
+      const t = this.tex(g.color, true, aniso);
+      m.map = t;
+      this.groundTexs.push(t);
+      if (bump && g.height && m.bumpMap) {
+        const h = this.dataTex(g.height, 4);
+        m.bumpMap = h;
+        this.groundTexs.push(h);
+      }
+      this.gsz[k] = g.size;
+    };
+    const b = bump ? '+b' : '';
+    const C = groundCached;
+    put('asphalt', C(`a:${st.asphalt}${b}`, () => groundAsphalt(false, st.asphalt, bump)));
+    put('fresh', C(`f:${st.asphalt}${b}`, () => groundAsphalt(true, st.asphalt, bump)));
+    put('cobble', C(`c:${st.cobble}${b}`, () => cobbleTex(st.cobble, bump)));
+    put('verge', C(`v:${st.verge}${b}`, () => vergeTex(st.verge, bump)), 4);
+    put('walk', C(`w:${st.walk[0]}${b}`, () => walkTex(st.walk[0], bump)), 4);
+    put('walk2', C(`w:${st.walk[1]}${b}`, () => walkTex(st.walk[1], bump)), 4);
+    put('curb', C(`k:${st.curb}${b}`, () => curbTex(st.curb, bump)), 4);
+    put('gutter', C(`g:${st.gutter}${b}`, () => gutterTex(st.gutter, bump)), 4);
+    const lang = coverLang(track.lang);
+    const cv = this.tex(C(`d:${lang}`, () => coverAtlas(lang)), false, 4);
+    this.mats.covers.map = cv;
+    this.groundTexs.push(cv);
   }
 
   private noiseMap!: THREE.CanvasTexture;
@@ -884,11 +1002,18 @@ export class Renderer3D {
     this.shadowTex = alphaTex(roundTex('rgba(0,0,0,0.75)', 'rgba(0,0,0,0)', 64), [0, 0, 0]);
     const glowMap = new THREE.CanvasTexture(glowTex(255, 205, 135));
     this.mats = {
-      asphalt: L({ map: this.tex(asphaltTex(false), true, 8) }),
-      fresh: L({ map: this.tex(asphaltTex(true), true, 8) }),
-      cobble: L({ map: this.tex(cobbleTex(), true, 8) }),
+      // Beläge, Gehwege, Bordstein, Rinne und Deckel bekommen ihre Texturen je Gegend (applyGround); bis dahin
+      // ein Stellvertreter (dieselben Shader – der Tausch der Textur übersetzt nichts neu)
+      asphalt: L({ map: this.placeholder() }),
+      fresh: L({ map: this.placeholder() }),
+      cobble: L({ map: this.placeholder() }),
       gravel: L({ map: this.tex(gravelTex(), true, 8) }),
-      verge: L({ map: this.tex(vergeTex()) }),
+      verge: L({ map: this.placeholder() }),
+      walk: L({ map: this.placeholder() }),
+      walk2: L({ map: this.placeholder() }),
+      curb: L({ map: this.placeholder() }),
+      gutter: L({ map: this.placeholder() }),
+      covers: L({ map: this.placeholder(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
       marks: L({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
       terrain: L({ vertexColors: true, map: detail }),
       portal: L({ vertexColors: true, side: THREE.DoubleSide }),
@@ -914,16 +1039,20 @@ export class Renderer3D {
     };
     // Straßenbeläge und Bankett: großflächige Flecken (Flickstellen, Abrieb, Staub) brechen das Kachelmuster auf,
     // in der Ferne geht die Textur in ihre Mittelfarbe über – kein Flimmern, keine Linien beim Fahren
-    const roadU = { uNoise: { value: this.noiseMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time };
-    // wear: Flicken, Risse und Fugen (Asphalt; die Fahrbahn trägt dafür ihre Straßenmeter in aRoad)
-    const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number, wear = false) => {
+    // feines Korn für die Nähe (ab Stufe 3): Splitt und Sand, in Weltkoordinaten (keine Kachel erkennbar)
+    const grainMap = this.dataTex(grainTex(), 4);
+    const roadU = { uNoise: { value: this.noiseMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uGrain: { value: grainMap } };
+    // wear: Flicken, Risse und Fugen (Asphalt; die Fahrbahn trägt dafür ihre Straßenmeter in aRoad: quer, längs,
+    // Mehrbreite); grain: Korn in der Nähe
+    const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number, wear = false, grain = 0) => {
       m.onBeforeCompile = (sh) => {
+        const rich = !gfxOn('lite');
         Object.assign(sh.uniforms, roadU, { uLampP: LAMP_U.uLampP, uLampCol: LAMP_U.uLampCol });
         sh.vertexShader = sh.vertexShader
-          .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wear ? '\nattribute vec3 aRoad;\nvarying vec2 vRoad;' : ''}`)
-          .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wear ? '\nvRoad = aRoad.xy;' : ''}`);
+          .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wear ? '\nattribute vec3 aRoad;\nvarying vec3 vRoad;' : ''}`)
+          .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wear ? '\nvRoad = aRoad;' : ''}`);
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', `#include <common>\nuniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform float uTime;\nvarying vec3 vWP;${wear ? `\nvarying vec2 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
+          .replace('#include <common>', `#include <common>\n${rich ? '#define ROAD_RICH\n' : ''}uniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform sampler2D uGrain;\nuniform float uTime;\nvarying vec3 vWP;${wear ? `\nvarying vec3 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
           // Lichtkegel der Laternen auf Straße und Bankett
           .replace('#include <lights_fragment_end>', lampFrag('vWP'))
           .replace('#include <map_fragment>', `
@@ -935,21 +1064,35 @@ export class Renderer3D {
               vec3 avgC = textureLod(map, vMapUv, 12.0).rgb;
               float rd = distance(vWP, cameraPosition);
               sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, avgC, smoothstep(28.0, 95.0, rd) * 0.8);
-              ${gfxOn('details') ? `vec3 mn = texture2D(uNoise, vWP.xz / 26.0).rgb;
-              sampledDiffuseColor.rgb *= 1.0 + ${patch.toFixed(2)} * ((mn.r * 0.6 + mn.g * 0.4) - 0.5);
-              sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);` : ''}
-              ${wear ? 'sampledDiffuseColor.rgb = roadWear(sampledDiffuseColor.rgb, vRoad.x, vRoad.y);' : ''}
+              ${grain > 0 ? `#ifdef ROAD_RICH
+              sampledDiffuseColor.rgb *= mix(1.0, texture2D(uGrain, vWP.xz / 0.7).r * 2.0, ${grain.toFixed(2)} * smoothstep(16.0, 3.0, rd));
+              #endif` : ''}
+              #ifdef ROAD_RICH
+              // großflächige Flecken (Staub, Nässe, Ausbleichen) über die Kachel hinweg: keine Wiederholung sichtbar
+              vec3 mn = texture2D(uNoise, vWP.xz / 26.0).rgb;
+              vec3 mn2 = texture2D(uNoise, vWP.xz / 7.3 + 0.37).rgb;
+              sampledDiffuseColor.rgb *= 1.0 + ${patch.toFixed(2)} * ((mn.r * 0.6 + mn.g * 0.4) - 0.5) + ${(patch * 0.45).toFixed(2)} * (mn2.g - 0.5);
+              sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);
+              #endif
+              ${wear ? 'sampledDiffuseColor.rgb = roadWear(sampledDiffuseColor.rgb, vRoad.x, vRoad.y, vRoad.z);' : ''}
               diffuseColor *= sampledDiffuseColor;
               ${gfxOn('details') ? CLOUD('vWP.xz') : ''}
             #endif`);
       };
-      m.customProgramCacheKey = () => `road-${key}${wear ? 'w' : ''}${dk()}|L`;
+      m.customProgramCacheKey = () => `road-${key}${wear ? 'w' : ''}${grain > 0 ? 'k' : ''}${dk()}${gfxOn('lite') ? '' : '+r'}|L`;
     };
-    roadify(this.mats.asphalt, 'a', 0.34, true);
-    roadify(this.mats.fresh, 'f', 0.18, true);
+    roadify(this.mats.asphalt, 'a', 0.34, true, 0.45);
+    roadify(this.mats.fresh, 'f', 0.18, true, 0.35);
     roadify(this.mats.cobble, 'c', 0.36);
-    roadify(this.mats.gravel, 'g', 0.4);
-    roadify(this.mats.verge, 'v', 0.45);
+    roadify(this.mats.gravel, 'g', 0.4, false, 0.3);
+    roadify(this.mats.verge, 'v', 0.45, false, 0.3);
+    roadify(this.mats.walk, 'wk', 0.3);
+    roadify(this.mats.walk2, 'wk2', 0.3);
+    roadify(this.mats.curb, 'cb', 0.22);
+    roadify(this.mats.gutter, 'gt', 0.3);
+    roadify(this.mats.covers, 'cv', 0.12);
+    // Relief im Licht (ab Stufe 7): Höhenkarten der Böden als Bump-Map (Stellvertreter, bis die Gegend feststeht)
+    if (gfxOn('details')) for (const k of GROUND_BUMP) { const m = this.mats[k]; m.bumpMap = this.placeholder(true); m.bumpScale = BUMP_SCALE[k]; }
     this.props = propGeometries();
     this.markGeo = landmarkGeometries();
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
@@ -1868,6 +2011,7 @@ export class Renderer3D {
 
   private reset(track: Track) {
     this.track = track;
+    this.applyGround(track);
     // Abfahrt: ein fester Abendhimmel (dramatischer Himmel, sky.ts) statt der Stimmung des Tages
     this.mood = track.kind === 'descent' ? { ...DESCENT_SKY } : dailyMood(track.seed);
     this.skyMat.uniforms.uSeed.value = (hash(track.seed + 3) - 0.5) * 40;
@@ -3809,6 +3953,19 @@ export class Renderer3D {
     for (const b of Object.values(surf)) b.uv = true;
     const verge = new GB();
     verge.uv = true;
+    // Böden der Orte: zwei Gehwege (je Ort einer), Bordstein, Rinne, Schachtdeckel und Abläufe
+    const walk = new GB();
+    walk.uv = true;
+    const walk2 = new GB();
+    walk2.uv = true;
+    const curb = new GB();
+    curb.uv = true;
+    const gutter = new GB();
+    gutter.uv = true;
+    const covers = new GB();
+    covers.uv = true;
+    const ground: PaveGB = { walk, walk2, curb, gutter, covers };
+    this.paveGB = ground;
     const marks = new GB();
     const terr = new GB();
     terr.uv = true;
@@ -3861,7 +4018,7 @@ export class Renderer3D {
       const zb = za + SEG;
       // --- Fahrbahn
       if (!s.tunnel) {
-        const tl = s.surface === 'cobble' ? 2.2 : 5;
+        const tl = this.gsz[s.surface] ?? 5;
         // Texturkoordinaten ab einem ganzzahligen Versatz je Abschnitt: kleine Zahlen bleiben auf Handys genau
         const vo = Math.floor((i0 * SEG) / tl);
         const va = za / tl - vo;
@@ -3869,18 +4026,33 @@ export class Renderer3D {
         // breitere oder engere Stelle: die Textur bleibt in Metern (nicht gestreckt)
         const ha = ROAD_HALF + a.e;
         const hb = ROAD_HALF + b.e;
-        // Straßenmeter je Ecke (für Flicken und Risse im Shader, als aRoad statt der ungenutzten Farbe): quer ab dem
-        // linken Rand der Normalbreite, längs ab einem Vielfachen von 4096 m (kleine Zahlen)
+        // Straßenmeter je Ecke (für Flicken, Risse, Fahrspuren und den bröckelnden Rand im Shader, als aRoad statt
+        // der ungenutzten Farbe): quer ab dem linken Rand der Normalbreite, längs ab einem Vielfachen von 4096 m
+        // (kleine Zahlen), dazu die Mehrbreite (wo der Rand liegt)
         const za0 = za - wBase, zb0 = zb - wBase;
-        surf[s.surface].quadC(P0(a, -ha, 0), P0(a, ha, 0), P0(b, hb, 0), P0(b, -hb, 0), [-a.e, za0, 1], [2 * ROAD_HALF + a.e, za0, 1], [2 * ROAD_HALF + b.e, zb0, 1], [-b.e, zb0, 1],
+        const da = EDGE - GUTTER_W - ROAD_HALF;
+        const town = (sg: number) => { const x = sg < 0 ? s.L : s.R; const y = sg < 0 ? b.seg.L : b.seg.R; return x.ground === 'pavement' && y.ground === 'pavement' && !(s.bridge > 0); };
+        const pl = town(-1) ? da : 0, pr = town(1) ? da : 0;
+        surf[s.surface].quadC(P0(a, -ha, 0), P0(a, ha, 0), P0(b, hb, 0), P0(b, -hb, 0), [-a.e, za0, a.e + pl], [2 * ROAD_HALF + a.e, za0, a.e + pr], [2 * ROAD_HALF + b.e, zb0, b.e + pr], [-b.e, zb0, b.e + pl],
           [[-ha / tl, va], [ha / tl, va], [hb / tl, vb], [-hb / tl, vb]]);
         for (const sg of [-1, 1]) {
-          const x0 = sg * ROAD_HALF;
-          const x1 = sg * EDGE;
-          const q = sg < 0 ? [P(a, x1, -0.04), P(a, x0, 0), P(b, x0, 0), P(b, x1, -0.04)] : [P(a, x0, 0), P(a, x1, -0.04), P(b, x1, -0.04), P(b, x0, 0)];
-          const ul = sg < 0 ? [x1, x0] : [x0, x1];
-          const vv = Math.floor((i0 * SEG) / 3);
-          verge.quad(q[0], q[1], q[2], q[3], [1, 1, 1], [[ul[0] / 3, za / 3 - vv], [ul[1] / 3, za / 3 - vv], [ul[1] / 3, zb / 3 - vv], [ul[0] / 3, zb / 3 - vv]]);
+          if (town(sg)) {
+            // im Ort: die Fahrbahn reicht bis zur Rinne (gleicher Belag), dann die Rinne vor dem Bordstein
+            const xg = EDGE - GUTTER_W;
+            const ua = sg * (ha + da) / tl, ub = sg * (hb + da) / tl;
+            const ra0 = sg < 0 ? -a.e - da : 2 * ROAD_HALF + a.e, ra1 = sg < 0 ? -a.e : 2 * ROAD_HALF + a.e + da;
+            const rb0 = sg < 0 ? -b.e - da : 2 * ROAD_HALF + b.e, rb1 = sg < 0 ? -b.e : 2 * ROAD_HALF + b.e + da;
+            const L0a = P(a, sg < 0 ? -xg : ROAD_HALF, 0), L1a = P(a, sg < 0 ? -ROAD_HALF : xg, 0);
+            const L0b = P(b, sg < 0 ? -xg : ROAD_HALF, 0), L1b = P(b, sg < 0 ? -ROAD_HALF : xg, 0);
+            const uL = sg < 0 ? [ua, -ha / tl] : [ha / tl, ua], uLb = sg < 0 ? [ub, -hb / tl] : [hb / tl, ub];
+            surf[s.surface].quadC(L0a, L1a, L1b, L0b, [ra0, za0, a.e + da], [ra1, za0, a.e + da], [rb1, zb0, b.e + da], [rb0, zb0, b.e + da],
+              [[uL[0], va], [uL[1], va], [uLb[1], vb], [uLb[0], vb]]);
+            const gs = this.gsz.gutter;
+            const go = Math.floor((i0 * SEG) / gs);
+            this.profQuads(gutter, a, b, sg, P, GUTTER_PROF, GUTTER_PROF, za / gs - go, zb / gs - go);
+          } else {
+            this.vergeStrip(verge, marks, a, b, sg, P, za, zb, i0);
+          }
         }
         // Markierungen
         const lines = s.surface === 'asphalt' || s.surface === 'fresh';
@@ -3915,6 +4087,8 @@ export class Renderer3D {
           this.decal(group, disp, marks, rows, r, d, P0);
         }
       }
+      // --- Schachtdeckel, Abläufe, Schieberkappen (im Ort dicht, auf dem Land selten)
+      if (!s.tunnel && !(s.bridge > 0)) this.coverDecals(covers, a, b, s);
       // --- Häuser (je Haus viele Teile: auch erst mit frischem Budget)
       for (const sg of [-1, 1]) {
         const bld = sg < 0 ? s.bL : s.bR;
@@ -4023,6 +4197,11 @@ export class Renderer3D {
       () => addRoad(surf.cobble, this.mats.cobble),
       () => addRoad(surf.gravel, this.mats.gravel),
       () => add(verge, this.mats.verge),
+      () => add(walk, this.mats.walk),
+      () => add(walk2, this.mats.walk2),
+      () => add(curb, this.mats.curb),
+      () => add(gutter, this.mats.gutter),
+      () => add(covers, this.mats.covers, 1),
       () => add(marks, this.mats.marks, 1),
       // Gelände neben der Straße weich schattiert (keine harten Kanten zwischen den Bändern)
       () => {
@@ -4181,7 +4360,7 @@ export class Renderer3D {
   }
 
   /** Querprofil des Geländes neben dem Bankett: Abstände ab Bankettkante und Höhen */
-  private profile(side: Side, s: Seg, sg: number, lim = LIM_MAX): { o: number[]; h: number[]; cols: RGBf[] } {
+  private profile(side: Side, s: Seg, sg: number, lim = LIM_MAX): Profile {
     const pr = this.rawProfile(side, s, sg);
     // am Korridorrand abschneiden – dahinter geht die Landschaft mit demselben Querprofil weiter
     const maxO = Math.max(1.5, lim - EDGE);
@@ -4209,7 +4388,7 @@ export class Renderer3D {
     return pr.h[pr.h.length - 1];
   }
 
-  private rawProfile(side: Side, s: Seg, sg: number): { o: number[]; h: number[]; cols: RGBf[] } {
+  private rawProfile(side: Side, s: Seg, sg: number): Profile {
     const t = this.track!;
     const pal = BIOME_PALETTES[t.sections[s.sec].biome];
     // weiches Rauschen entlang der Strecke (keine Zacken von Segment zu Segment)
@@ -4298,17 +4477,21 @@ export class Renderer3D {
       // Piazza (und der Startort der Abfahrt bis hinter die Piazza): eben gepflastert bis zu den Häusern
       const sec = this.track!.sections[s.sec];
       const pz = sec?.piazza;
+      // Bordstein (Ansicht, Fase, Oberseite – siehe paveSide), dahinter der Gehweg, zur Straße hin leicht geneigt
+      const hc = CURB_FACE + CURB_CHAMFER;
       if (pz && (s.i >= pz[0] - 1 && s.i <= pz[1] + 1 || sec.role === 'top' && s.i <= pz[1] + 3)) {
         return {
-          o: [0, 0.01, 0.02, 1.2, 3.5, 8, 18, 26, 34],
-          h: [0, 0.07, 0.13, 0.13, 0.13, 0.13, 0.13, 0.13, 0.5],
+          o: [0, 0.005, CURB_TOP, 1.2, 3.5, 8, 18, 26, 34],
+          h: [0, hc, hc, hc + 0.015, hc + 0.04, hc + 0.05, hc + 0.05, hc + 0.05, 0.5],
           cols: [cu, cu, pv, pv, pv, pv, pv, shadeF(pv, 0.96)],
+          w: 7,
         };
       }
       return {
-        o: [0, 0.01, 0.02, 1.2, 3.5, 8, 18, 26, 34],
-        h: [0, 0.07, 0.13, 0.13, 0.13, 0.4, 1.5, 2.2, 3],
+        o: [0, 0.005, CURB_TOP, 1.2, 3.5, 8, 18, 26, 34],
+        h: [0, hc, hc, hc + 0.015, hc + 0.045, 0.4, 1.5, 2.2, 3],
         cols: [cu, cu, pv, pv, gcol('meadow', 2), gcol('meadow', 3), gcol('meadow', 4), gcol('meadow', 4)],
+        w: 4,
       };
     }
     const tl = side.tilt;
@@ -4330,6 +4513,176 @@ export class Renderer3D {
     return { o, h, cols: [gcol(g, 0), gcol(g, 0), gcol(g, 1), gcol(g, 1), gcol(g, 1), gcol(g, 2), gcol(g, 3), gcol(g, 5)] };
   }
 
+  /**
+   * Querprofil (innen → außen: Abstand zur Straßenmitte, Höhe, v der Textur) zwischen zwei Querschnitten als
+   * Vierecke, u längs der Strecke. Für Rinne, Bordstein, Gehweg und Bankett.
+   */
+  private profQuads(gb: GB, a: Row, b: Row, sg: number, P: PFn, pa: number[][], pb: number[][], ua: number, ub: number, col: RGBf = WHITE) {
+    for (let k = 0; k < pa.length - 1; k++) {
+      const A0 = P(a, sg * pa[k][0], pa[k][1]), A1 = P(a, sg * pa[k + 1][0], pa[k + 1][1]);
+      const B0 = P(b, sg * pb[k][0], pb[k][1]), B1 = P(b, sg * pb[k + 1][0], pb[k + 1][1]);
+      if (sg > 0) gb.quad(A0, A1, B1, B0, col, [[ua, pa[k][2]], [ua, pa[k + 1][2]], [ub, pb[k + 1][2]], [ub, pb[k][2]]]);
+      else gb.quad(A1, A0, B0, B1, col, [[ua, pa[k + 1][2]], [ua, pa[k][2]], [ub, pb[k][2]], [ub, pb[k + 1][2]]]);
+    }
+  }
+
+  /**
+   * Bankett neben der Fahrbahn (außerhalb der Orte): die Asphaltkante als kleine dunkle Stufe, dahinter Splitt,
+   * Erde und Gras – uneben (zwei Zwischenpunkte steigen und fallen weich längs der Strecke)
+   */
+  private vergeStrip(gb: GB, marks: GB, a: Row, b: Row, sg: number, P: PFn, za: number, zb: number, i0: number) {
+    const sz = this.gsz.verge;
+    const vo = Math.floor((i0 * SEG) / sz);
+    const k0 = sg > 0 ? 40 : 0;
+    const prof = (r: Row): number[][] => [
+      [ROAD_HALF, -0.03, ROAD_HALF / sz],
+      [ROAD_HALF + 0.3, -0.042 + along(r.seg.i, k0 + 1, 3) * 0.045, (ROAD_HALF + 0.3) / sz],
+      [ROAD_HALF + 0.66, -0.05 + along(r.seg.i, k0 + 2, 4) * 0.06, (ROAD_HALF + 0.66) / sz],
+      [EDGE, -0.04, EDGE / sz],
+    ];
+    this.profQuads(gb, a, b, sg, P, prof(a), prof(b), za / sz - vo, zb / sz - vo);
+    // Asphaltkante: Stufe von der Fahrbahn hinunter aufs Bankett
+    const lip: number[][] = [[ROAD_HALF, 0, 0], [ROAD_HALF, -0.03, 0]];
+    this.profQuads(marks, a, b, sg, P, lip, lip, 0, 0, ASPH_EDGE);
+  }
+
+  /**
+   * Bordstein und Gehweg (beide Querschnitte im Ort): Ansicht, Fase und Oberseite des Bordsteins aus einer
+   * Steintextur (Steine mit Fugen, Reifenspuren an der Ansicht), dahinter der Gehweg mit dem Belag des Orts –
+   * leicht uneben (Platten heben und senken sich), auf dem Platz bis zu den Häusern. Gibt zurück, ab welchem Band
+   * das Gelände weitergeht.
+   */
+  private paveSide(G: PaveGB, a: Row, b: Row, sg: number, P: PFn, pa: Profile, pb: Profile): number {
+    const y0 = -0.04;
+    const hT = CURB_FACE + CURB_CHAMFER;
+    const cs = this.gsz.curb;
+    const co = Math.floor((a.seg.i * SEG) / cs / 64) * 64;
+    const curbP: number[][] = [
+      [EDGE, y0, 0], [EDGE, y0 + CURB_FACE, CURB_FACE / CURB_V],
+      [EDGE + CURB_CHAMFER, y0 + hT, (CURB_FACE + CURB_CHAMFER * 1.41) / CURB_V], [EDGE + CURB_TOP, y0 + hT, 1],
+    ];
+    this.profQuads(G.curb, a, b, sg, P, curbP, curbP, (a.seg.i * SEG) / cs - co, (b.seg.i * SEG) / cs - co);
+    // Gehweg: welcher der beiden Beläge, entscheidet der Ort (Abschnitt)
+    const two = hash(a.seg.sec * 977 + 13) < 0.5;
+    const gb = two ? G.walk2 : G.walk;
+    const ws = two ? this.gsz.walk2 : this.gsz.walk;
+    const wo = Math.floor((a.seg.i * SEG) / ws / 64) * 64;
+    const wa = this.walkProf(a, sg, pa, ws), wb = this.walkProf(b, sg, pb, ws);
+    this.profQuads(gb, a, b, sg, P, wa, wb, (a.seg.i * SEG) / ws - wo, (b.seg.i * SEG) / ws - wo);
+    return pa.w ?? 4;
+  }
+
+  /** Querschnitt des Gehwegs (Abstand zur Mitte, Höhe mit −0,04 wie die Bänder, v = Abstand in Kacheln) */
+  private walkProf(r: Row, sg: number, pr: Profile, ws: number): number[][] {
+    const w = pr.w ?? 4;
+    const k = sg > 0 ? 60 : 20;
+    const out: number[][] = [];
+    for (let q = 2; q <= w; q++) {
+      const lat = EDGE + pr.o[q];
+      // die äußerste Ecke bleibt auf dem Profil (dort geht das Gelände weiter), innen sanfte Unebenheiten
+      const bump = q > 2 && q < w ? along(r.seg.i, k + q, 3) * 0.028 : 0;
+      out.push([lat, pr.h[q] - 0.04 + bump, lat / ws]);
+      if (q < w) {
+        const mid = EDGE + (pr.o[q] + pr.o[q + 1]) / 2;
+        const hm = (pr.h[q] + pr.h[q + 1]) / 2 - 0.04 + along(r.seg.i, k + q + 30, 2) * 0.022;
+        out.push([mid, hm, mid / ws]);
+      }
+    }
+    return out;
+  }
+
+  /** Höhe des Gehwegs an Abstand lat von der Mitte (wie walkProf), für Deckel darauf */
+  private walkHeight(r: Row, sg: number, lat: number): number {
+    const pr = this.profile(sg < 0 ? r.seg.L : r.seg.R, r.seg, sg);
+    const pts = this.walkProf(r, sg, pr, 1);
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (lat <= pts[i + 1][0]) {
+        const t = Math.max(0, Math.min(1, (lat - pts[i][0]) / Math.max(1e-6, pts[i + 1][0] - pts[i][0])));
+        return pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t;
+      }
+    }
+    return pts[pts.length - 1][1];
+  }
+
+  /**
+   * Schachtdeckel, Abläufe und Schieberkappen: im Ort etwa alle 25 m ein Deckel in einer Fahrspur, alle 18 m ein
+   * Ablauf in der Rinne, hin und wieder eine Schieberkappe am Rand und ein Deckel im Gehweg; auf dem Land selten
+   * ein Deckel. Nicht in Schriften und Zebrastreifen.
+   */
+  private coverDecals(gb: GB, a: Row, b: Row, s: Seg) {
+    if (s.decals?.some((d) => d.k !== 'manhole' && d.k !== 'patch')) return;
+    const h = (k: number) => hash(s.i * 131 + k * 7919 + 3);
+    const lanes = [-1.4, 1.4, -0.75, 0.75];
+    const townL = s.L.ground === 'pavement' && b.seg.L.ground === 'pavement';
+    const townR = s.R.ground === 'pavement' && b.seg.R.ground === 'pavement';
+    if (townL || townR) {
+      if (h(1) < 1 / 12) this.roundCover(gb, a, b, lanes[Math.floor(h(2) * 4)] + (h(3) - 0.5) * 0.3, 0.5 + h(4), Math.floor(h(5) * 4));
+      if (h(6) < 1 / 30) this.roundCover(gb, a, b, (h(7) < 0.5 ? -1 : 1) * (ROAD_HALF - 0.35), 0.5 + h(8), 6, 0.4);
+      for (const sg of [-1, 1]) {
+        if (!(sg < 0 ? townL : townR)) continue;
+        if (h(10 + sg) < 1 / 9) this.grate(gb, a, b, sg, 0.45 + h(12 + sg) * 1.1);
+        if (h(20 + sg) < 1 / 24) this.walkCover(gb, a, b, sg, EDGE + 0.75 + h(22 + sg) * 1.4, 0.5 + h(24 + sg), h(26 + sg) < 0.5 ? 4 : 7);
+      }
+    } else if (s.surface !== 'gravel' && h(1) < 1 / 160) {
+      this.roundCover(gb, a, b, lanes[Math.floor(h(2) * 4)], 1, Math.floor(h(5) * 4));
+    }
+  }
+
+  /** Punkt auf der Fahrbahnebene: quer lat (ohne Verbreiterung), längs al ab dem Querschnitt a (Steigung zu b) */
+  private onRoad(a: Row, b: Row, lat: number, al: number, hh: number): number[] {
+    const fx = Math.sin(a.th), fz = -Math.cos(a.th);
+    return [a.x + a.rx * lat + fx * al, a.y + (b.y - a.y) * (al / SEG) + hh, a.z + a.rz * lat + fz * al];
+  }
+
+  /** runder Deckel (Zelle 0–3, 6 im Atlas) mit Rahmen und Flicken rundum, k: Größe */
+  private roundCover(gb: GB, a: Row, b: Row, lat: number, al: number, cell: number, k = 1) {
+    const R = COVER_PATCH * k;
+    const cu = ((cell % 4) + 0.5) * 0.25, cv = 1 - (Math.floor(cell / 4) + 0.5) * 0.5;
+    const rot = hash(a.seg.i * 17 + cell) * Math.PI * 2;
+    const C = this.onRoad(a, b, lat, al, 0.006);
+    const N = 16;
+    for (let q = 0; q < N; q++) {
+      const t0 = (q / N) * Math.PI * 2, t1 = ((q + 1) / N) * Math.PI * 2;
+      const p0 = this.onRoad(a, b, lat + Math.cos(t0) * R, al + Math.sin(t0) * R, 0.006);
+      const p1 = this.onRoad(a, b, lat + Math.cos(t1) * R, al + Math.sin(t1) * R, 0.006);
+      // (gedreht: nicht jeder Deckel zeigt seine Schrift in Fahrtrichtung)
+      gb.tri(C, p0, p1, WHITE, [cu, cv], [cu + Math.cos(t0 + rot) * 0.125, cv + Math.sin(t0 + rot) * 0.25], [cu + Math.cos(t1 + rot) * 0.125, cv + Math.sin(t1 + rot) * 0.25]);
+    }
+  }
+
+  /** Straßenablauf in der Rinne: Gitter längs (folgt der Mulde) */
+  private grate(gb: GB, a: Row, b: Row, sg: number, al: number) {
+    const L = 0.62;
+    // Ausschnitt der Zelle 5 (Bildpunkte in der 128er-Zelle): x längs, y quer
+    const u0 = (128 + 4) / 512, u1 = (128 + 124) / 512;
+    const v0 = 1 - (128 + 20) / 256, v1 = 1 - (128 + 108) / 256;
+    const G = GUTTER_PROF;
+    const lat = (k: number) => sg * (G[0][0] + (G[2][0] - G[0][0]) * (0.08 + 0.84 * k / 2));
+    const hAt = (k: number) => { const t = 0.08 + 0.84 * k / 2; const x = t * 2; const i = Math.min(1, Math.floor(x)); const f = x - i; return G[i][1] + (G[i + 1][1] - G[i][1]) * f + 0.004; };
+    for (let k = 0; k < 2; k++) {
+      const A0 = this.onRoad(a, b, widen(lat(k), a.e), al, hAt(k)), A1 = this.onRoad(a, b, widen(lat(k + 1), a.e), al, hAt(k + 1));
+      const B0 = this.onRoad(a, b, widen(lat(k), a.e), al + L, hAt(k)), B1 = this.onRoad(a, b, widen(lat(k + 1), a.e), al + L, hAt(k + 1));
+      const va = v0 + (v1 - v0) * (k / 2), vb = v0 + (v1 - v0) * ((k + 1) / 2);
+      if (sg > 0) gb.quad(A0, A1, B1, B0, WHITE, [[u0, va], [u0, vb], [u1, vb], [u1, va]]);
+      else gb.quad(A1, A0, B0, B1, WHITE, [[u0, vb], [u0, va], [u1, va], [u1, vb]]);
+    }
+  }
+
+  /** Deckel im Gehweg: quadratisch (Zelle 4) oder Kabelschacht (Zelle 7) */
+  private walkCover(gb: GB, a: Row, b: Row, sg: number, latAbs: number, al: number, cell: number) {
+    const sq = cell === 4;
+    const L = sq ? 0.7 : 0.9, D = sq ? 0.7 : 0.55;
+    const cx = (cell % 4) * 128, cy = Math.floor(cell / 4) * 128;
+    const [px0, py0, px1, py1] = sq ? [8, 8, 120, 120] : [6, 24, 122, 104];
+    const u0 = (cx + px0) / 512, u1 = (cx + px1) / 512, v0 = 1 - (cy + py0) / 256, v1 = 1 - (cy + py1) / 256;
+    const l0 = latAbs - D / 2, l1 = latAbs + D / 2;
+    const h0 = this.walkHeight(a, sg, l0) + 0.005, h1 = this.walkHeight(a, sg, l1) + 0.005;
+    const A0 = this.onRoad(a, b, widen(sg * l0, a.e), al, h0), A1 = this.onRoad(a, b, widen(sg * l1, a.e), al, h1);
+    const B0 = this.onRoad(a, b, widen(sg * l0, a.e), al + L, h0), B1 = this.onRoad(a, b, widen(sg * l1, a.e), al + L, h1);
+    if (sg > 0) gb.quad(A0, A1, B1, B0, WHITE, [[u0, v0], [u0, v1], [u1, v1], [u1, v0]]);
+    else gb.quad(A1, A0, B0, B1, WHITE, [[u0, v1], [u0, v0], [u1, v0], [u1, v1]]);
+  }
+
   private terrainSide(terr: GB, mas: GB, a: Row, b: Row, sg: number, P: (r: Row, x: number, h: number) => number[], limA: number, limB: number) {
     const sa = sg < 0 ? a.seg.L : a.seg.R;
     // am Tunnelportal läuft das Profil des Einschnitts bis an die Felswand
@@ -4337,7 +4690,9 @@ export class Renderer3D {
     const sb = bt ? sa : sg < 0 ? b.seg.L : b.seg.R;
     const pa = this.profile(sa, a.seg, sg, limA);
     const pb = this.profile(sb, bt ? a.seg : b.seg, sg, bt ? limA : limB);
-    for (let k = 0; k < pa.o.length - 1; k++) {
+    // im Ort (beide Querschnitte): Bordstein und Gehweg als eigene Netze mit Texturen, das Gelände erst dahinter
+    const k0 = sa.ground === 'pavement' && sb.ground === 'pavement' && pa.w !== undefined && pa.w === pb.w && this.paveGB ? this.paveSide(this.paveGB, a, b, sg, P, pa, pb) : 0;
+    for (let k = k0; k < pa.o.length - 1; k++) {
       const xa0 = sg * (EDGE + pa.o[k]);
       const xa1 = sg * (EDGE + pa.o[k + 1]);
       const xb0 = sg * (EDGE + pb.o[k]);
@@ -5391,13 +5746,8 @@ export class Renderer3D {
         const B0 = P(b, -ROAD_HALF - b.e, H);
         const B1 = P(b, ROAD_HALF + b.e, H);
         marks.quad(mid(A0, B0, t0), mid(A1, B1, t0), mid(A1, B1, t0 + 0.12), mid(A0, B0, t0 + 0.12), lin('#bfc3c8'));
-      } else if (d.k === 'manhole' && k === 0) {
-        const c = P(a, d.x, H);
-        for (let q = 0; q < 8; q++) {
-          const t0 = (q / 8) * Math.PI * 2;
-          const t1 = ((q + 1) / 8) * Math.PI * 2;
-          marks.tri(c, P(a, d.x + Math.cos(t1) * 0.35, H), P(a, d.x + Math.cos(t0) * 0.35, H), lin('#3a3c40'));
-        }
+      } else if (d.k === 'manhole' && k === 0 && this.paveGB) {
+        this.roundCover(this.paveGB.covers, a, b, d.x, 1, Math.floor(hash(a.seg.i * 7 + 1) * 4));
       }
     }
   }
