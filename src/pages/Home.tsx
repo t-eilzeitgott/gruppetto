@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject, type TouchEvent as ReactTouchEvent } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
@@ -22,13 +22,52 @@ import { NewsPeek, NewsTab, hasUnread, markNewsSeen, newestAt, useNewsItems, use
 type HomeTab = 'heute' | 'news';
 const TAB_KEY = 'gruppetto.home.tab';
 let homeTab: HomeTab | null = null;
+/** schon einmal zwischen den Tabs gewechselt: dann übernimmt die Wechsel-Animation das Einblenden */
+let switched = false;
 function initialTab(): HomeTab {
   if (homeTab) return homeTab;
   try { return sessionStorage.getItem(TAB_KEY) === 'news' ? 'news' : 'heute'; } catch { return 'heute'; }
 }
 
-/** „Heute | News“ als große Überschriften; Punkt am News-Tab, wenn es Neues gibt */
+/** „Heute | News“ als große Überschriften; Punkt am News-Tab, wenn es Neues gibt; darunter eine kleine
+ *  Akzentlinie, die beim Wechsel elastisch zum anderen Titel läuft (erst lang, dann wieder kurz) */
 function HomeTabs({ tab, onTab, unread }: { tab: HomeTab; onTab: (t: HomeTab) => void; unread: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
+  const ink = useRef<HTMLSpanElement>(null);
+  const last = useRef<{ x: number; w: number } | null>(null);
+  useLayoutEffect(() => {
+    const place = (animate: boolean) => {
+      const b = box.current;
+      const el = ink.current;
+      const on = b?.querySelector<HTMLElement>('.home-tab.is-on');
+      if (!b || !el || !on) return;
+      // Linie: ein gutes Drittel des Titels, linksbündig unter dem Wort
+      const w = Math.round(Math.min(34, on.offsetWidth * 0.36));
+      const x = on.offsetLeft;
+      const from = last.current;
+      last.current = { x, w };
+      el.style.width = `${w}px`;
+      el.style.transform = `translateX(${x}px)`;
+      el.style.opacity = '1';
+      if (!animate || !from || from.x === x || calm()) return;
+      // dehnen bis zum Ziel, dann zusammenziehen (Breite nur dieser einen kleinen Linie – kostet nichts)
+      const lo = Math.min(from.x, x);
+      const hi = Math.max(from.x + from.w, x + w);
+      try {
+        el.animate([
+          { transform: `translateX(${from.x}px)`, width: `${from.w}px` },
+          { transform: `translateX(${lo}px)`, width: `${hi - lo}px`, offset: 0.45 },
+          { transform: `translateX(${x}px)`, width: `${w}px` },
+        ], { duration: 460, easing: 'cubic-bezier(0.3, 0.7, 0.2, 1)' });
+      } catch { /* ohne Animation */ }
+    };
+    place(true);
+    const onResize = () => place(false);
+    // Schrift nachgeladen: Titel sind dann etwas anders breit
+    document.fonts?.ready.then(onResize).catch(() => undefined);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [tab]);
   const item = (id: HomeTab, label: string) => (
     <button
       type="button" role="tab" id={`home-tab-${id}`} aria-selected={tab === id} aria-controls="home-panel"
@@ -38,7 +77,107 @@ function HomeTabs({ tab, onTab, unread }: { tab: HomeTab; onTab: (t: HomeTab) =>
       {id === 'news' && unread && tab !== 'news' ? <span className="home-tab__dot" aria-label="neue Meldungen" /> : null}
     </button>
   );
-  return <div className="home-tabs" role="tablist" aria-label="Startseite">{item('heute', 'Heute')}{item('news', 'News')}</div>;
+  return (
+    <div className="home-tabs" role="tablist" aria-label="Startseite" ref={box}>
+      {item('heute', 'Heute')}{item('news', 'News')}
+      <span className="home-tabs__ink" ref={ink} aria-hidden="true" />
+    </div>
+  );
+}
+
+const calm = () => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+const ORDER: HomeTab[] = ['heute', 'news'];
+const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
+
+/**
+ * Weicher Wechsel zwischen „Heute“ und „News“: die alte Seite gleitet ein Stück zur Seite und blendet aus (kurz),
+ * die neue kommt aus der Richtung des Wechsels nach (etwas länger, weich ankommend). Nur Transform und Deckkraft –
+ * das läuft auf der Grafikkarte, ohne Ruckeln. Die neue Seite steht schon, bevor das erste Bild gezeichnet wird.
+ */
+function useTabMotion(tab: HomeTab, setTabState: (t: HomeTab) => void, panel: RefObject<HTMLDivElement | null>) {
+  const out = useRef<Animation | null>(null);
+  const enter = useRef(0);
+  const busy = useRef<HomeTab | null>(null);
+  // Ziel des laufenden Wechsels: Titel und Linie springen sofort beim Tippen um, nicht erst nach dem Ausblenden
+  const [aim, setAim] = useState<HomeTab | null>(null);
+  const shown = useRef(tab);
+  shown.current = tab;
+  const slideIn = (el: HTMLElement, dir: number) => el.animate(
+    [{ opacity: 0, transform: `translateX(${dir * 28}px)` }, { opacity: 1, transform: 'none' }],
+    { duration: 380, easing: EASE_OUT },
+  );
+  const go = (t: HomeTab) => {
+    if (t === (busy.current ?? tab)) return;
+    const dir = ORDER.indexOf(t) > ORDER.indexOf(busy.current ?? tab) ? 1 : -1;
+    switched = true;
+    const commit = () => {
+      busy.current = null;
+      setAim(null);
+      if (t === shown.current) {
+        // schnell hin und zurück getippt: die Seite ist schon die richtige – nur wieder hereingleiten
+        out.current?.cancel();
+        out.current = null;
+        const el = panel.current;
+        if (el && typeof el.animate === 'function') slideIn(el, dir);
+        return;
+      }
+      enter.current = dir;
+      setTabState(t);
+      window.scrollTo({ top: 0 });
+    };
+    const el = panel.current;
+    if (!el || calm() || typeof el.animate !== 'function') { commit(); return; }
+    busy.current = t;
+    setAim(t);
+    out.current?.cancel();
+    const a = el.animate(
+      [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateX(${-dir * 18}px)` }],
+      { duration: 120, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
+    );
+    out.current = a;
+    a.finished.then(() => { if (out.current === a && busy.current === t) commit(); }, () => undefined);
+  };
+  useLayoutEffect(() => {
+    const dir = enter.current;
+    enter.current = 0;
+    out.current?.cancel();
+    out.current = null;
+    const el = panel.current;
+    if (!dir || !el || typeof el.animate !== 'function') return;
+    slideIn(el, dir);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, panel]);
+  return { go, aim: aim ?? tab };
+}
+
+/** Wischen nach links/rechts wechselt den Tab – nicht in Bereichen, die selbst seitlich scrollen (Spielkarte,
+ *  Tabellen), nicht vom linken Rand (dort ist die Zurück-Geste des Systems) */
+function useSwipe(onSwipe: (dir: 1 | -1) => void) {
+  const start = useRef<{ x: number; y: number; t: number } | null>(null);
+  const scrollsX = (el: Element | null) => {
+    for (let e = el; e && e !== document.body; e = e.parentElement) {
+      if (e.matches('input, textarea, select, [role=slider]')) return true;
+      const ox = getComputedStyle(e).overflowX;
+      if ((ox === 'auto' || ox === 'scroll') && e.scrollWidth > e.clientWidth + 1) return true;
+    }
+    return false;
+  };
+  return {
+    onTouchStart: (e: ReactTouchEvent) => {
+      const p = e.touches[0];
+      start.current = e.touches.length === 1 && p.clientX > 28 && !scrollsX(e.target as Element) ? { x: p.clientX, y: p.clientY, t: performance.now() } : null;
+    },
+    onTouchEnd: (e: ReactTouchEvent) => {
+      const s = start.current;
+      start.current = null;
+      const p = e.changedTouches[0];
+      if (!s || !p) return;
+      const dx = p.clientX - s.x;
+      const dy = p.clientY - s.y;
+      const dt = performance.now() - s.t;
+      if (Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy) * 1.8 && dt < 700) onSwipe(dx < 0 ? 1 : -1);
+    },
+  };
 }
 
 /** Kopf der Startseite: Wortmarke und Profilbild */
@@ -64,14 +203,14 @@ export function Home() {
   const latest = newestAt(news.items, rounds);
   // im News-Tab gilt alles Angezeigte als gelesen
   useEffect(() => { if (tab === 'news' && latest) markNewsSeen(latest); }, [tab, latest]);
+  const panel = useRef<HTMLDivElement>(null);
+  const { go: move, aim } = useTabMotion(tab, setTabState, panel);
   const setTab = (t: HomeTab) => {
     homeTab = t;
     try { sessionStorage.setItem(TAB_KEY, t); } catch { /* egal */ }
-    if (t !== tab) {
-      setTabState(t);
-      window.scrollTo({ top: 0 });
-    }
+    move(t);
   };
+  const swipe = useSwipe((d) => setTab(d > 0 ? 'news' : 'heute'));
   useRefreshAtStart(data?.stages, now);
   // Inhalt, der erst während dieses Besuchs kommt, weich einblenden (aus dem Zwischenspeicher: sofort da)
   const waited = useRef(false);
@@ -86,7 +225,7 @@ export function Home() {
   const header = (
     <>
       <HomeHead me={me} />
-      <HomeTabs tab={tab} onTab={setTab} unread={unread} />
+      <HomeTabs tab={aim} onTab={setTab} unread={unread} />
     </>
   );
   // Intro beenden, sobald die Startseite mit Inhalt steht (oder es nichts zu laden gibt)
@@ -99,7 +238,7 @@ export function Home() {
     return (
       <>
         {header}
-        <div className="stack reveal" id="home-panel" role="tabpanel" aria-labelledby="home-tab-news">
+        <div className="stack home-panel" id="home-panel" role="tabpanel" aria-labelledby="home-tab-news" ref={panel} {...swipe}>
           <NewsTab data={tour && !error ? data ?? null : null} members={members ?? null} now={now} />
         </div>
       </>
@@ -110,20 +249,20 @@ export function Home() {
     return (
       <>
         {header}
-        <div className="stack">
+        <div className="stack home-panel" ref={panel} {...swipe}>
           <Empty title="Noch keine Rundfahrt">Sobald der Admin eine Rundfahrt anlegt, kannst du hier tippen.</Empty>
           <GamesCard />
         </div>
       </>
     );
   }
-  if (error) return <>{header}<ErrorBox error={error} onRetry={reload} /></>;
-  if (loading || !data || !members) return <>{header}<HomeSkeleton /></>;
+  if (error) return <>{header}<div className="home-panel" ref={panel} {...swipe}><ErrorBox error={error} onRetry={reload} /></div></>;
+  if (loading || !data || !members) return <>{header}<div className="home-panel" ref={panel} {...swipe}><HomeSkeleton /></div></>;
 
   return (
     <>
       {header}
-      <div className={cx('stack', (waited.current || homeTab) && 'reveal')} id="home-panel" role="tabpanel" aria-labelledby="home-tab-heute">
+      <div className={cx('stack home-panel', waited.current && !switched && 'reveal')} id="home-panel" role="tabpanel" aria-labelledby="home-tab-heute" ref={panel} {...swipe}>
         <TourPicker tour={tour} tours={tours} />
         <HomeBody data={data} members={members} me={me} now={now} onNews={() => setTab('news')} />
       </div>
