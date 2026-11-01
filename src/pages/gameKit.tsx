@@ -2,11 +2,10 @@
  * Leichte Bausteine der Minispiele ohne 3D-Abhängigkeiten (für Spiele, die schnell laden sollen):
  * Gestensperre, hochzählende Punkte, lokaler Speicher, Pause-Symbole.
  */
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
-import {
-  GFX_LEVELS, GFX_MAX, GFX_MIN, deviceDensity, gfxAA, gfxLevel, gfxLevelText, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxLevel, setGfxRes,
-} from '../game/abfahrt/gfxOpts';
+import { GFX_LEVELS, GFX_MAX, GFX_MIN, gfxAA, gfxLevel, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxLevel, setGfxRes } from '../game/abfahrt/gfxOpts';
+import { cx } from '../ui/kit';
 
 export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 export const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
@@ -92,58 +91,135 @@ function useGfxSettings(): { level: number; res: number } {
 
 const fmtX = (d: number) => `${String(Math.round(d * 100) / 100).replace('.', ',')}×`;
 
+/** ein leiser Tick je Stufe beim Ziehen (wo das Gerät vibrieren kann) */
+function tick() {
+  try { navigator.vibrate?.(5); } catch { /* egal */ }
+}
+
+/**
+ * Schieberegler mit Rasterpunkten: folgt dem Finger stufenlos, zeigt unterwegs die Stufe unter dem Daumen (mit einem
+ * Tick je Stufe) und rastet beim Loslassen weich ein – erst dann wird übernommen. Tippen auf die Leiste springt
+ * dorthin; Pfeiltasten, Pos1 und Ende gehen auch.
+ */
+function SnapSlider({ count, value, label, valueText, onPreview, onCommit, warnFrom }: {
+  count: number;
+  /** Stufe 0 … count−1 */
+  value: number;
+  label: string;
+  valueText: (i: number) => string;
+  /** unterwegs (ohne Übernahme) */
+  onPreview: (i: number) => void;
+  onCommit: (i: number) => void;
+  /** ab dieser Stufe (halbe Stufen erlaubt) ist die Leiste als „anspruchsvoll“ getönt */
+  warnFrom?: number;
+}) {
+  const track = useRef<HTMLDivElement | null>(null);
+  const [drag, setDrag] = useState<number | null>(null);
+  const shown = useRef(value);
+  const max = Math.max(1, count - 1);
+  const pos = drag ?? value;
+  const near = Math.round(pos);
+  const at = (x: number) => {
+    const r = track.current?.getBoundingClientRect();
+    if (!r || r.width <= 0) return pos;
+    return Math.max(0, Math.min(1, (x - r.left) / r.width)) * max;
+  };
+  const show = (p: number) => {
+    const i = Math.round(p);
+    if (i === shown.current) return;
+    shown.current = i;
+    tick();
+    onPreview(i);
+  };
+  const end = () => {
+    if (drag === null) return;
+    const i = Math.round(drag);
+    setDrag(null);
+    shown.current = i;
+    onCommit(i);
+  };
+  const key = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1, PageUp: 2, PageDown: -2 }[e.key];
+    const to = e.key === 'Home' ? 0 : e.key === 'End' ? max : step !== undefined ? Math.max(0, Math.min(max, value + step)) : null;
+    if (to === null) return;
+    e.preventDefault();
+    if (to === value) return;
+    shown.current = to;
+    onPreview(to);
+    onCommit(to);
+  };
+  const pct = (v: number) => `${(v / max) * 100}%`;
+  return (
+    <div
+      className={cx('snap', drag !== null && 'is-drag')}
+      role="slider" tabIndex={0} aria-label={label}
+      aria-valuemin={0} aria-valuemax={max} aria-valuenow={near} aria-valuetext={valueText(near)}
+      onPointerDown={(e: ReactPointerEvent<HTMLDivElement>) => {
+        if (e.button !== 0) return;
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        const p = at(e.clientX);
+        setDrag(p);
+        show(p);
+      }}
+      onPointerMove={(e: ReactPointerEvent<HTMLDivElement>) => {
+        if (drag === null) return;
+        const p = at(e.clientX);
+        setDrag(p);
+        show(p);
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onKeyDown={key}
+    >
+      <div className="snap__track" ref={track}>
+        {warnFrom !== undefined && warnFrom <= max ? <i className="snap__warn" style={{ left: pct(warnFrom) }} /> : null}
+        <i className="snap__fill" style={{ width: pct(pos) }} />
+        {count <= 16 ? Array.from({ length: count }, (_, i) => <i key={i} className={cx('snap__tick', i <= pos + 0.01 && 'is-on')} style={{ left: pct(i) }} />) : null}
+        <i className="snap__thumb" style={{ left: pct(pos) }} />
+      </div>
+    </div>
+  );
+}
+
 /**
  * Grafik als zwei Schieberegler (Pausenmenü aller 3D-Spiele und Profil): die Stufe von Low bis PC – sie fasst
  * Sichtweite, Schatten, Details, Licht & Wetter, Kantenglättung und PC-Grafik zusammen – und ganz getrennt davon die
- * Auflösung (Pixeldichte, fest). Übernommen wird kurz nach dem Loslassen (eine neue Stufe übersetzt Shader neu).
+ * Auflösung (Pixeldichte, fest). Übernommen wird beim Loslassen (eine neue Stufe übersetzt Shader neu).
  */
 export function GfxSliders({ page }: { page?: boolean }) {
   const cur = useGfxSettings();
-  const [level, setLevel] = useState(cur.level);
   const steps = resSteps();
   const idxOf = (d: number) => steps.reduce((bi, x, i) => (Math.abs(x - d) < Math.abs(steps[bi] - d) ? i : bi), 0);
+  // unterwegs gezeigte Stufe (beim Ziehen), sonst die gültige
+  const [lv, setLv] = useState(cur.level);
   const [ri, setRi] = useState(() => idxOf(cur.res));
-  // von anderswo geändert: mitziehen
-  useEffect(() => { setLevel(cur.level); }, [cur.level]);
+  useEffect(() => { setLv(cur.level); }, [cur.level]);
   useEffect(() => { setRi(idxOf(cur.res)); }, [cur.res]); // eslint-disable-line react-hooks/exhaustive-deps
-  const lt = useRef(0);
-  const rt = useRef(0);
-  useEffect(() => () => { window.clearTimeout(lt.current); window.clearTimeout(rt.current); }, []);
   // PC-Grafik und Kantenglättung gehören zur Bühne: sie wechseln erst mit dem nächsten Spiel
   const start = useRef({ pc: gfxOn('pc'), aa: gfxAA() });
-  const L = GFX_LEVELS[level - 1];
+  const L = GFX_LEVELS[lv - 1];
   const later = L.pc !== start.current.pc || L.aa !== start.current.aa;
   const d = steps[ri];
-  const dev = deviceDensity();
-  let size = '';
-  try { size = `${Math.round(window.innerWidth * d)} × ${Math.round(window.innerHeight * d)} Bildpunkte`; } catch { /* egal */ }
-  const onLevel = (n: number) => {
-    setLevel(n);
-    window.clearTimeout(lt.current);
-    lt.current = window.setTimeout(() => setGfxLevel(n), 220);
-  };
-  const onRes = (i: number) => {
-    setRi(i);
-    window.clearTimeout(rt.current);
-    rt.current = window.setTimeout(() => setGfxRes(steps[i]), 120);
-  };
-  const pct = (v: number, max: number) => ({ '--p': `${(v / Math.max(1, max)) * 100}%` }) as CSSProperties;
+  // am Telefon über doppelter Dichte: getönt (selten noch 60 Bilder je Sekunde)
+  const phone = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
+  const w2 = steps.findIndex((x) => x > 2 + 1e-6);
+  const warnFrom = phone && w2 > 0 ? w2 - 0.5 : undefined;
   return (
-    <div className={`gfx-sl${page ? ' gfx-sl--page' : ''}`}>
-      <label className="gfx-sl__row">
-        <span className="gfx-sl__head"><span className="gfx-sl__label">Grafik</span><span className="gfx-sl__val">{level} · {L.name}</span></span>
-        <input type="range" className="gfx-sl__input" min={GFX_MIN} max={GFX_MAX} step={1} value={level} style={pct(level - GFX_MIN, GFX_MAX - GFX_MIN)}
-          aria-valuetext={`Stufe ${level}: ${L.name}`} onChange={(e) => onLevel(Number(e.currentTarget.value))} />
-        <span className="gfx-sl__ends" aria-hidden="true"><span>Low</span><span>PC</span></span>
-        <span className="gfx-sl__hint">{gfxLevelText(level)}{later ? ' – Kantenglättung und PC-Grafik wechseln mit dem nächsten Spielstart' : ''}</span>
-      </label>
-      <label className="gfx-sl__row">
-        <span className="gfx-sl__head"><span className="gfx-sl__label">Auflösung</span><span className="gfx-sl__val">{fmtX(d)} · {Math.round((d / dev) * 100)} %</span></span>
-        <input type="range" className="gfx-sl__input" min={0} max={steps.length - 1} step={1} value={ri} style={pct(ri, steps.length - 1)}
-          aria-valuetext={`${fmtX(d)} Pixeldichte, ${Math.round((d / dev) * 100)} Prozent`} onChange={(e) => onRes(Number(e.currentTarget.value))} />
-        <span className="gfx-sl__ends" aria-hidden="true"><span>{fmtX(steps[0])}</span><span>{fmtX(steps[steps.length - 1])}</span></span>
-        <span className="gfx-sl__hint">{size}{size ? ' · ' : ''}unabhängig von der Grafikstufe, wird nie automatisch gesenkt{d > 2 ? ' · über 2× schaffen Handys meist keine 60 Bilder je Sekunde' : ''}</span>
-      </label>
+    <div className={cx('gfx-sl', page && 'gfx-sl--page')}>
+      <div className="gfx-sl__row">
+        <div className="gfx-sl__head" aria-hidden="true"><span className="gfx-sl__label">Grafik</span><span className="gfx-sl__val">{L.name}</span></div>
+        <SnapSlider count={GFX_MAX - GFX_MIN + 1} value={cur.level - GFX_MIN} label="Grafikstufe"
+          valueText={(i) => `${GFX_LEVELS[i].name}, Stufe ${i + GFX_MIN} von ${GFX_MAX}`}
+          onPreview={(i) => setLv(i + GFX_MIN)} onCommit={(i) => { setLv(i + GFX_MIN); setGfxLevel(i + GFX_MIN); }} />
+        <div className="gfx-sl__ends" aria-hidden="true"><span>Low</span>{later ? <span className="gfx-sl__note">ab dem nächsten Start</span> : null}<span>PC</span></div>
+      </div>
+      <div className="gfx-sl__row">
+        <div className="gfx-sl__head" aria-hidden="true"><span className="gfx-sl__label">Auflösung</span><span className={cx('gfx-sl__val', warnFrom !== undefined && ri > warnFrom && 'is-warn')}>{fmtX(d)}</span></div>
+        <SnapSlider count={steps.length} value={idxOf(cur.res)} label="Auflösung" warnFrom={warnFrom}
+          valueText={(i) => `${fmtX(steps[i])} Pixeldichte${warnFrom !== undefined && i > warnFrom ? ', kostet viel Bildrate' : ''}`}
+          onPreview={setRi} onCommit={(i) => { setRi(i); setGfxRes(steps[i]); }} />
+        <div className="gfx-sl__ends" aria-hidden="true"><span>{fmtX(steps[0])}</span><span>{fmtX(steps[steps.length - 1])}</span></div>
+      </div>
     </div>
   );
 }

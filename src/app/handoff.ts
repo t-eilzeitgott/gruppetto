@@ -151,10 +151,18 @@ export function endHandoff(head: HTMLElement, sheet: HTMLElement): boolean {
 }
 
 /** Spiel ohne Übergang betreten (direkte Adresse, Zurück): nur das Blatt einblenden */
+/**
+ * Spielmenüs als Seitenleiste statt Blatt am unteren Rand: Querformat am Telefon und große Bildschirme (gleich in
+ * styles.css, .abf-layer--sheet) – dort gleiten sie von links herein
+ */
+export const SIDE_MQ = '(orientation: landscape) and (max-height: 560px), (min-width: 900px)';
+const side = () => { try { return window.matchMedia(SIDE_MQ).matches; } catch { return false; } };
+
 export function sheetIn(sheet: HTMLElement) {
   if (calm()) return;
   try {
-    sheet.animate([{ transform: 'translateY(28px)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: HANDOFF_EASE, fill: 'backwards' });
+    const from = side() ? 'translateX(-28px)' : 'translateY(28px)';
+    sheet.animate([{ transform: from, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: HANDOFF_EASE, fill: 'backwards' });
   } catch { /* ohne Animation */ }
 }
 
@@ -162,8 +170,9 @@ export function sheetIn(sheet: HTMLElement) {
 export function sheetOut(sheet: HTMLElement, layer: HTMLElement | null): Promise<void> {
   if (calm()) return Promise.resolve();
   try {
-    const a = sheet.animate([{ transform: 'none', opacity: 1 }, { transform: 'translateY(60px)', opacity: 0 }], { duration: 260, easing: 'cubic-bezier(0.4, 0, 0.7, 0.2)', fill: 'forwards' });
-    layer?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: 'ease', fill: 'forwards' });
+    const to = side() ? 'translateX(-48px)' : 'translateY(60px)';
+    const a = sheet.animate([{ transform: 'none', opacity: 1 }, { transform: to, opacity: 0 }], { duration: 240, easing: 'cubic-bezier(0.4, 0, 0.7, 0.2)', fill: 'forwards' });
+    layer?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 240, easing: 'ease', fill: 'forwards' });
     return a.finished.then(() => undefined, () => undefined);
   } catch { return Promise.resolve(); }
 }

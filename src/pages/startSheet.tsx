@@ -1,8 +1,12 @@
 /**
- * Startbildschirm der Minispiele: ein Blatt am unteren Rand über der 3D-Welt – Kopf des Spiels (Symbol, Name,
- * Strecke), darunter das Nötigste zum Spiel, unten der Startknopf. Kommt man von der Startseite, fliegt der Kopf
- * der Spielkarte hierher (handoff.ts); beim Losfahren gleitet das Blatt weg, dann beginnt der Countdown.
- * Dazu der Countdown selbst: ein Ring, der je Sekunde abläuft, die Zahl in der Mitte.
+ * Menüs der Minispiele – Start, Pause und Ende in derselben Hülle: ein Blatt am unteren Rand über der 3D-Welt, im
+ * Querformat und auf großen Bildschirmen eine Leiste links (die Welt bleibt zu sehen). Je Menü eine Hauptaktion,
+ * sonst wenig Text.
+ *  - Start: Kopf des Spiels (Symbol, Name, Strecke), das Nötigste, unten der Startknopf. Kommt man von der
+ *    Startseite, fliegt der Kopf der Spielkarte hierher (handoff.ts); beim Losfahren gleitet das Blatt weg.
+ *  - Pause: Weiter, Beenden, Grafik.
+ *  - Ende: das Ergebnis unter einem Band wie die Ziellinie.
+ * Dazu der Countdown: ein Ring, der je Sekunde abläuft, die Zahl in der Mitte.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { HANDOFF_MS, endHandoff, sheetIn, sheetOut } from '../app/handoff';
@@ -13,6 +17,7 @@ import type { Profile } from '../lib/types';
 import { GameHead } from '../ui/GameHead';
 import { Icon } from '../ui/Icon';
 import { Avatar, cx } from '../ui/kit';
+import { FpsSwitch, GfxSliders, PlayIcon } from './gameKit';
 
 export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losfahren', onStart, onClose, plain, after }: {
   game: GameId;
@@ -69,6 +74,66 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Pause: Weiter (Hauptaktion), Beenden, Grafik; extra: Messmodus (eingeklappt) */
+export function PauseSheet({ game, onResume, onQuit, extra }: {
+  game: string;
+  onResume: () => void;
+  onQuit: () => void;
+  extra?: ReactNode;
+}) {
+  const layer = useRef<HTMLDivElement | null>(null);
+  const sheet = useRef<HTMLDivElement | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  useLayoutEffect(() => { if (sheet.current) sheetIn(sheet.current); }, []);
+  const resume = () => {
+    if (leaving) return;
+    setLeaving(true);
+    const s = sheet.current;
+    (s ? sheetOut(s, layer.current) : Promise.resolve()).then(onResume);
+  };
+  return (
+    <div ref={layer} className={cx('abf-layer abf-layer--sheet abf-layer--pause', leaving && 'is-leaving')}>
+      <div className="abf-sheet abf-sheet--pause" ref={sheet} role="dialog" aria-modal="true" aria-labelledby="abf-pause-title">
+        <div className="abf-pause__head">
+          <h2 id="abf-pause-title" className="abf-pause__title">Pause</h2>
+          <span className="abf-pause__game">{game}</span>
+        </div>
+        <div className="abf-pause__actions">
+          {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+          <button type="button" className="btn btn--primary abf-pause__go" onClick={resume} disabled={leaving} autoFocus><PlayIcon /><span>Weiter</span></button>
+          <button type="button" className="btn btn--secondary abf-pause__quit" onClick={onQuit}><span>Beenden</span></button>
+        </div>
+        <div className="abf-sheet__body abf-scroll">
+          <div className="abf-set">
+            <GfxSliders />
+            <FpsSwitch />
+          </div>
+          {extra ? (
+            <details className="abf-more">
+              <summary>Messmodus<Icon name="chevron" size={14} /></summary>
+              <div className="abf-more__body">{extra}</div>
+            </details>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Ende: das Ergebnis (Inhalt je Spiel) unter dem Zielband; Schließen oben rechts */
+export function OverSheet({ onClose, children, plain }: { onClose: () => void; children: ReactNode; plain?: boolean }) {
+  const sheet = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => { if (sheet.current) sheetIn(sheet.current); }, []);
+  return (
+    <div className="abf-layer abf-layer--sheet abf-layer--over">
+      <button type="button" className="abf-round abf-close" onClick={onClose} aria-label="Schließen"><Icon name="x" size={20} /></button>
+      <div className={cx('abf-sheet abf-sheet--over', plain && 'is-plain')} ref={sheet} role="dialog" aria-modal="true" aria-label="Ergebnis">
+        <div className="abf-sheet__body abf-scroll">{children}</div>
       </div>
     </div>
   );

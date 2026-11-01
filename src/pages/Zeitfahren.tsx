@@ -20,11 +20,10 @@ import { useBikes, type Bikes } from '../ui/useBikes';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { Skel, SkelText } from '../ui/skeleton';
-import { BoardLink, Countdown, StartSheet } from './startSheet';
+import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent } from './Game';
-import { FpsSwitch, GfxSliders } from './gameKit';
 import {
   FinaleBoard, HowTo, dist, lsGet, lsSet, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
@@ -375,17 +374,7 @@ export function ZeitfahrenPage() {
       {ui === 'countdown' ? <Countdown count={count} step={0.6} /> : null}
 
       {ui === 'paused' ? (
-        <div className="abf-layer">
-          <div className="abf-card abf-card--small abf-scroll">
-            <h2 className="abf-title">Pause</h2>
-            <p className="abf-muted">Die Uhr steht – die Geister warten mit.</p>
-            <button type="button" className="btn btn--primary btn--full" onClick={() => setUi('playing')}><span>Weiterfahren</span></button>
-            <button type="button" className="btn btn--secondary btn--full" onClick={() => navigate('/')}><span>Aufhören</span></button>
-            <GfxSliders />
-            <FpsSwitch />
-            {meas.menu(() => engineRef.current)}
-          </div>
-        </div>
+        <PauseSheet game="Zeitfahren" onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={meas.menu(() => engineRef.current)} />
       ) : null}
 
       {meas.overlays(ui === 'paused')}
@@ -407,24 +396,21 @@ export function ZeitfahrenPage() {
       ) : null}
 
       {ui === 'over' && result ? (
-        <div className="abf-layer">
-          <button type="button" className="abf-round abf-close" onClick={() => navigate('/')} aria-label="Schließen"><Icon name="x" size={20} /></button>
-          <div className="abf-card abf-scroll">
-            {showBoard ? boardView : (
-              <TtSummary
-                bikes={bikes}
-                result={result}
-                today={today.data ?? []}
-                season={season.data ?? []}
-                meId={me.id}
-                hadBest={bestAtStart.current !== null}
-                saveFailed={saveFailed}
-                onAgain={start}
-                onBoard={() => setShowBoard(true)}
-              />
-            )}
-          </div>
-        </div>
+        <OverSheet onClose={() => navigate('/')} plain={showBoard}>
+          {showBoard ? boardView : (
+            <TtSummary
+              bikes={bikes}
+              result={result}
+              today={today.data ?? []}
+              season={season.data ?? []}
+              meId={me.id}
+              hadBest={bestAtStart.current !== null}
+              saveFailed={saveFailed}
+              onAgain={start}
+              onBoard={() => setShowBoard(true)}
+            />
+          )}
+        </OverSheet>
       ) : null}
     </div>
   );
@@ -549,7 +535,7 @@ export function GhostRow({ ghosts, members, me, loading }: { ghosts: GhostRider[
       </div>
     );
   }
-  if (!ghosts.length) return <p className="abf-muted tt-ghosts">Noch niemand auf der Strecke – du fährst allein gegen die Uhr.</p>;
+  if (!ghosts.length) return <p className="abf-muted tt-ghosts">Noch niemand unterwegs</p>;
   // heute zuerst (nach Zeit), dann die älteren Geister
   const sorted = [...ghosts].sort((a, b) => Number(!!a.old) - Number(!!b.old) || a.timeMs - b.timeMs);
   return (
@@ -593,6 +579,8 @@ function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, on
   const myCum = [...r.splits, r.timeMs];
   const names = ['1 km', '2 km', 'Ziel'];
   const secNames = ['Tal', 'Côte', 'Abfahrt & Ziel'];
+  // ein kurzer Hinweis, was beim nächsten Mal geht (oder wen man überholt hat)
+  const tip = r.reserve > 0.15 ? `${Math.round(r.reserve * 100)} % Kraft übrig` : r.slides > 0 ? `${r.slides}× abgerutscht` : r.passed.length ? `Überholt: ${r.passed.map(firstName).join(', ')}` : null;
   return (
     <section className="abf-summary" aria-label="Ergebnis">
       <div className="abf-sum-top">
@@ -609,15 +597,12 @@ function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, on
           <span><Icon name="clock" size={15} />{gapText}</span>
           <span><Icon name="zap" size={15} />Ø {r.avgKmh.toLocaleString('de-DE', { maximumFractionDigits: 1 })}&nbsp;km/h</span>
         </div>
-        <p className="abf-muted">
-          {r.reserve > 0.15 ? `Noch ${Math.round(r.reserve * 100)} % Vorrat im Ziel – da war mehr drin.` : r.slides > 0 ? `${r.slides}× abgerutscht – vor engen Kurven loslassen.` : r.passed.length ? `Überholt: ${r.passed.map(firstName).join(', ')}` : `Spitze ${r.topKmh} km/h – alles gegeben.`}
-          {r.slides > 0 && r.reserve > 0.15 ? ` ${r.slides}× abgerutscht.` : ''}
-        </p>
+        {tip ? <p className="abf-tip">{tip}</p> : null}
         <div className="abf-places">
           <span><Icon name="podium" size={15} /><b>{placeIn(today, meId, score)}.</b>&nbsp;heute</span>
           <span><Icon name="trophy" size={15} /><b>{placeIn(season, meId, score)}.</b>&nbsp;Saison</span>
         </div>
-        {saveFailed ? <p className="tt-warn">Die Zeit konnte nicht gespeichert werden – Verbindung oder Datenbank prüfen.</p> : null}
+        {saveFailed ? <p className="tt-warn">Nicht gespeichert – keine Verbindung</p> : null}
       </div>
       <dl className="tt-splits" aria-label="Zwischenzeiten">
         {myCum.map((t, i) => {

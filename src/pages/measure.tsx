@@ -96,19 +96,14 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
     /** Abschnitt im Pausenmenü */
     menu: (eng: () => RaceView | null) => (can ? (
       <div className="abf-gfx">
-        <span className="abf-range__label">Messmodus</span>
-        <span className="abf-range__hint">
-          Messfahrt: zeichnet jedes Bild auf – Bildzeit, Rechenzeit je Baustein, Grafikzeit, Auflösung und Sichtweite. Endet mit dem Rennen oder mit Stopp.
-          Kostenanalyse: misst genau hier, was jede Ebene kostet (gut eine Minute, das Spiel bleibt in der Pause).
-        </span>
         <div className="race-row">
           {measuring
             ? <button type="button" className="btn btn--secondary btn--sm" onClick={stop}>Messung beenden</button>
             : <button type="button" className="btn btn--secondary btn--sm" onClick={start} disabled={!!cost}>Messfahrt starten</button>}
-          <button type="button" className="btn btn--secondary btn--sm" onClick={() => runCost(eng())} disabled={!!cost || measuring}>{cost ? `Messe ${cost.i + 1}/${cost.n} …` : 'Kostenanalyse hier'}</button>
+          <button type="button" className="btn btn--secondary btn--sm" onClick={() => runCost(eng())} disabled={!!cost || measuring}>{cost ? `Messe ${cost.i + 1}/${cost.n} …` : 'Kostenanalyse'}</button>
         </div>
         {cost ? <span className="abf-range__hint">{cost.label}</span> : null}
-        {lastReport ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { void copyText(lastReport).then((ok) => setCopied(ok)); }}>{copied ? 'Kopiert ✓' : 'Letzten Messbericht kopieren'}</button> : null}
+        {lastReport ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { void copyText(lastReport).then((ok) => setCopied(ok)); }}>{copied ? 'Kopiert ✓' : 'Letzten Bericht kopieren'}</button> : null}
       </div>
     ) : null),
     /** Aufnahme-Anzeige, fertige Berichte */

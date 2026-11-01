@@ -27,9 +27,9 @@ import { useBikes, type Bikes } from '../ui/useBikes';
 import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
-import { BoardLink, Countdown, StartSheet } from './startSheet';
+import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
-import { FpsSwitch, GfxSliders, PauseIcon, PlayIcon, useCountUp } from './gameKit';
+import { PauseIcon, PlayIcon, useCountUp } from './gameKit';
 
 export { PauseIcon, PlayIcon, useCountUp };
 
@@ -700,33 +700,18 @@ export function GamePage() {
       {ui === 'countdown' ? <Countdown count={count} /> : null}
 
       {ui === 'paused' ? (
-        <div className="abf-layer">
-          <div className="abf-card abf-card--small abf-scroll">
-            <h2 className="abf-title">Pause</h2>
-            <button type="button" className="btn btn--primary btn--full" onClick={() => setUi('playing')}><span>Weiterfahren</span></button>
-            <button type="button" className="btn btn--secondary btn--full" onClick={() => navigate('/')}><span>Aufhören</span></button>
-            <GfxSliders />
-            <FpsSwitch />
-            {canMeasure ? (
-              <div className="abf-gfx">
-                <span className="abf-range__label">Messmodus</span>
-                <span className="abf-range__hint">
-                  Messfahrt: zeichnet jedes Bild auf – Bildzeit, CPU je Baustein, Grafikzeit (Probebild alle 1,5 s), Auflösung und Sichtweite
-                  (was der Regler tut), Ortsdurchfahrten und Dörfer getrennt, Nachladen, neue Shader. Endet mit der Fahrt oder mit Stopp.
-                  Kostenanalyse: misst genau hier, was jede Ebene kostet (gut eine Minute, das Spiel bleibt in der Pause) – am besten mitten im Ort anhalten.
-                </span>
-                <div className="race-row">
-                  {measuring
-                    ? <button type="button" className="btn btn--secondary btn--sm" onClick={stopMeasure}>Messung beenden</button>
-                    : <button type="button" className="btn btn--secondary btn--sm" onClick={startMeasure} disabled={!!cost}>Messfahrt starten</button>}
-                  <button type="button" className="btn btn--secondary btn--sm" onClick={runCost} disabled={!!cost || measuring}>{cost ? `Messe ${cost.i + 1}/${cost.n} …` : 'Kostenanalyse hier'}</button>
-                </div>
-                {cost ? <span className="abf-range__hint">{cost.label}</span> : null}
-                {lastReport ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { void copyText(lastReport).then((ok) => setCopied(ok)); }}>{copied ? 'Kopiert ✓' : 'Letzten Messbericht kopieren'}</button> : null}
-              </div>
-            ) : null}
+        <PauseSheet game="Abfahrt" onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={canMeasure ? (
+          <div className="abf-gfx">
+            <div className="race-row">
+              {measuring
+                ? <button type="button" className="btn btn--secondary btn--sm" onClick={stopMeasure}>Messung beenden</button>
+                : <button type="button" className="btn btn--secondary btn--sm" onClick={startMeasure} disabled={!!cost}>Messfahrt starten</button>}
+              <button type="button" className="btn btn--secondary btn--sm" onClick={runCost} disabled={!!cost || measuring}>{cost ? `Messe ${cost.i + 1}/${cost.n} …` : 'Kostenanalyse'}</button>
+            </div>
+            {cost ? <span className="abf-range__hint">{cost.label}</span> : null}
+            {lastReport ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { void copyText(lastReport).then((ok) => setCopied(ok)); }}>{copied ? 'Kopiert ✓' : 'Letzten Bericht kopieren'}</button> : null}
           </div>
-        </div>
+        ) : null} />
       ) : null}
 
       {measuring && ui !== 'paused' ? (
@@ -808,29 +793,26 @@ export function GamePage() {
       ) : null}
 
       {ui === 'over' && result ? (
-        <div className="abf-layer">
-          <button type="button" className="abf-round abf-close" onClick={() => navigate('/')} aria-label="Schließen"><Icon name="x" size={20} /></button>
-          <div className="abf-card abf-scroll">
-            {showBoard ? (
-              <BoardView rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} />
-            ) : (
-              <Summary
-                bikes={bikes}
-                result={result}
-                record={!cruiseRef.current && result.score >= myBest && result.score > 0}
-                prevRank={prevRank}
-                today={today.data ?? []}
-                season={season.data ?? []}
-                meId={me.id}
-                totalM={(mine?.total_m ?? 0)}
-                missions={missions}
-                done={doneIds}
-                onAgain={() => start(cruiseRef.current)}
-                onBoard={() => setShowBoard(true)}
-              />
-            )}
-          </div>
-        </div>
+        <OverSheet onClose={() => navigate('/')} plain={showBoard}>
+          {showBoard ? (
+            <BoardView rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} />
+          ) : (
+            <Summary
+              bikes={bikes}
+              result={result}
+              record={!cruiseRef.current && result.score >= myBest && result.score > 0}
+              prevRank={prevRank}
+              today={today.data ?? []}
+              season={season.data ?? []}
+              meId={me.id}
+              totalM={(mine?.total_m ?? 0)}
+              missions={missions}
+              done={doneIds}
+              onAgain={() => start(cruiseRef.current)}
+              onBoard={() => setShowBoard(true)}
+            />
+          )}
+        </OverSheet>
       ) : null}
     </div>
   );
@@ -863,7 +845,7 @@ function DebugBar({ eng }: { eng: () => Abfahrt | null }) {
 function Missions({ missions, done, compact }: { missions: Mission[]; done: string[]; compact?: boolean }) {
   return (
     <section className={cx('abf-missions', compact && 'abf-missions--compact')} aria-label="Aufgaben heute">
-      {compact ? null : <h2 className="abf-eyebrow">Aufgaben heute</h2>}
+      {compact ? null : <h2 className="abf-eyebrow">Aufgaben</h2>}
       <ul>
         {missions.map((m) => {
           const ok = done.includes(m.id);

@@ -20,11 +20,10 @@ import { useBikes, type Bikes } from '../ui/useBikes';
 import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
-import { BoardLink, Countdown, StartSheet } from './startSheet';
+import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
-import { FpsSwitch, GfxSliders } from './gameKit';
 import {
   FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
@@ -313,16 +312,7 @@ export function BergPage() {
       {ui === 'countdown' ? <Countdown count={count} /> : null}
 
       {ui === 'paused' ? (
-        <div className="abf-layer">
-          <div className="abf-card abf-card--small abf-scroll">
-            <h2 className="abf-title">Pause</h2>
-            <button type="button" className="btn btn--primary btn--full" onClick={() => setUi('playing')}><span>Weiterfahren</span></button>
-            <button type="button" className="btn btn--secondary btn--full" onClick={() => navigate('/')}><span>Aufhören</span></button>
-            <GfxSliders />
-            <FpsSwitch />
-            {meas.menu(() => engineRef.current)}
-          </div>
-        </div>
+        <PauseSheet game="Bergfinale" onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={meas.menu(() => engineRef.current)} />
       ) : null}
 
       {meas.overlays(ui === 'paused')}
@@ -347,25 +337,22 @@ export function BergPage() {
       ) : null}
 
       {ui === 'over' && result ? (
-        <div className="abf-layer">
-          <button type="button" className="abf-round abf-close" onClick={() => navigate('/')} aria-label="Schließen"><Icon name="x" size={20} /></button>
-          <div className="abf-card abf-scroll">
-            {showBoard ? boardView : (
-              <BergSummary
-                bikes={bikes}
-                result={result}
-                rider={chosen}
-                record={result.score >= myBest && result.score > 0}
-                today={today.data ?? []}
-                season={season.data ?? []}
-                meId={me.id}
-                onAgain={start}
-                onRider={() => { setResult(null); setUi('ready'); }}
-                onBoard={() => setShowBoard(true)}
-              />
-            )}
-          </div>
-        </div>
+        <OverSheet onClose={() => navigate('/')} plain={showBoard}>
+          {showBoard ? boardView : (
+            <BergSummary
+              bikes={bikes}
+              result={result}
+              rider={chosen}
+              record={result.score >= myBest && result.score > 0}
+              today={today.data ?? []}
+              season={season.data ?? []}
+              meId={me.id}
+              onAgain={start}
+              onRider={() => { setResult(null); setUi('ready'); }}
+              onBoard={() => setShowBoard(true)}
+            />
+          )}
+        </OverSheet>
       ) : null}
     </div>
   );
@@ -432,9 +419,7 @@ function BergSummary({ bikes, result, rider, record, today, season, meId, onAgai
           <span><Icon name="clock" size={15} />{gapText}</span>
           <span><Icon name="zap" size={15} />{result.topKmh}&nbsp;km/h</span>
         </div>
-        <p className="abf-muted">
-          Bergwertung: {result.gpmPlace}.{result.slides > 0 ? ` · ${result.slides}× abgerutscht` : ''}
-        </p>
+        <p className="abf-tip">Bergwertung {result.gpmPlace}.{result.slides > 0 ? `, ${result.slides}× abgerutscht` : ''}</p>
         <div className="abf-places">
           <span><Icon name="podium" size={15} /><b>{placeIn(today, meId, result.score)}.</b>&nbsp;heute</span>
           <span><Icon name="trophy" size={15} /><b>{placeIn(season, meId, result.score)}.</b>&nbsp;Saison</span>

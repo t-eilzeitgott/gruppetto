@@ -283,8 +283,7 @@ export function RiderPicker({ options, chosen, onChoose, info, bars }: {
   return (
     <section className="spr-pick" aria-label="Fahrer auswählen">
       <div className="spr-pick__head">
-        <h2 className="spr-pick__title">Wähle deinen Fahrer</h2>
-        <span className="spr-pick__hint">Jeder fährt anders</span>
+        <h2 className="spr-pick__title">Fahrer</h2>
       </div>
       <div className="spr-pick__list" role="radiogroup" aria-label="Fahrer">
         {options.map((o) => {
