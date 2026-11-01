@@ -88,7 +88,7 @@ void main(){
 	vec3 c = h > 0.0 ? mix( hz, zen * 0.92, pow( e, mix( 0.42, 0.3, uDrama ) ) ) : mix( hz, below, clamp( - h * 6.0, 0.0, 1.0 ) );
 	/* Abendrot: zur Sonne hin färbt sich der Horizont in ihrer Farbe, gegenüber bleibt er kühl; unter einer Front glüht es */
 	float toSun = pow( s, 2.0 ) * ( 1.0 - smoothstep( 0.0, 0.5, e ) );
-	c += sunCol * toSun * ( 0.12 + 0.5 * dusk + 0.35 * storm ) * sunUp;
+	c += sunCol * toSun * ( 0.08 + 0.32 * dusk + 0.25 * storm ) * sunUp;
 
 	/* --- dramatischer Himmel (Abfahrt, wie in der WebGPU-Abfahrt): Farben wie bei gemalten Wolken – Licht in der Farbe
 	   der Sonne, Schatten schieferblau; Helligkeit aus dem blanken Himmel */
@@ -226,7 +226,8 @@ void main(){
 
 	/* --- Sonne: Scheibe, Hof, Glühen – hinter Wolken verdeckt, vor dem Abendrot weit leuchtend */
 	float occ = ( 1.0 - alpha * ( 0.92 - storm * 0.3 ) ) * ( 1.0 - towerA * 0.95 );
-	c += sunCol * ( pow( s, 900.0 ) * 3.0 * sunSize * occ + pow( s, 24.0 ) * ( 0.35 + 0.45 * dusk ) * ( 0.5 + 0.5 * occ ) + pow( s, 4.0 ) * ( 0.12 + 0.3 * dusk ) ) * sunUp;
+	// (gedämpft: Scheibe, enger und weiter Schein blendeten zu sehr)
+	c += sunCol * ( pow( s, 900.0 ) * 1.9 * sunSize * occ + pow( s, 24.0 ) * ( 0.18 + 0.24 * dusk ) * ( 0.5 + 0.5 * occ ) + pow( s, 4.0 ) * ( 0.06 + 0.15 * dusk ) ) * sunUp;
 
 	/* --- Sterne */
 	if ( uStars > 0.01 ) {

@@ -31,8 +31,8 @@ export class SunsetGlow {
         void main() {
           vec2 dd = (vUv - uSun) * vec2(uAspect, 1.0);
           float r = length(dd);
-          float halo = exp(-r * 2.4) * 0.35 + exp(-r * 9.0) * 0.3;
-          float streak = exp(-abs(dd.y) * 46.0) * exp(-abs(dd.x) * 1.4) * 0.22;
+          float halo = exp(-r * 2.8) * 0.2 + exp(-r * 10.0) * 0.17;
+          float streak = exp(-abs(dd.y) * 46.0) * exp(-abs(dd.x) * 1.6) * 0.12;
           gl_FragColor = vec4(vec3(1.0, 0.6, 0.3) * (halo + streak) * uK * 0.2 + vec3(0.012, 0.004, 0.0) * uK, 1.0);
         }`,
       depthTest: false,

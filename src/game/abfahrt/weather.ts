@@ -280,10 +280,10 @@ void main() {
 	vec3 wp = worldAt( uv, d );
 	vec3 col = sceneAt( tScene, uv );
 	if ( ! sky ) {
-		if ( uAO > 0.0 ) col *= mix( 1.0, texture2D( tAO, uv ).r, uAO );
+		if ( uAO > 0.0 ) col *= mix( 1.0, texture2D( tAO, uv ).r, uAO * 0.65 );
 		if ( uClouds > 0.0 ) {
 			float n = fbm( wp.xz * 0.0026 + uTime * vec2( 0.011, 0.006 ) );
-			col *= 1.0 - uClouds * 0.55 * smoothstep( 0.42, 0.66, n );
+			col *= 1.0 - uClouds * 0.36 * smoothstep( 0.42, 0.66, n );
 		}
 		if ( uFogBank > 0.0 ) {
 			float h = wp.y - ( uCamPos.y - uFogBankH );
@@ -294,18 +294,21 @@ void main() {
 		}
 	}
 	col += texture2D( tBloom, uv ).rgb * uBloom;
-	col += texture2D( tRays, uv ).r * uRays * uSunCol * uSunVis;
-	col *= uExposure;
+	col += texture2D( tRays, uv ).r * uRays * 0.6 * uSunCol * uSunVis;
+	// (heller als früher: Fahrbahn, Berge und Wälder wirkten in den hohen Stufen zu dunkel)
+	col *= uExposure * 1.2;
 	col = toneMapping( col );
 	col = sRGBTransferOETF( vec4( col, 1.0 ) ).rgb;
 	// Farbkorrektur im Anzeigeraum
 	float l = dot( col, vec3( 0.2126, 0.7152, 0.0722 ) );
 	col = mix( vec3( l ), col, uSat );
-	col = ( col - 0.5 ) * uContrast + 0.5;
+	// Kontrast um einen tieferen Punkt: Mitten werden heller statt die Schatten abzusaufen
+	col = ( col - 0.38 ) * uContrast + 0.38;
+	col += ( 1.0 - col ) * sqrt( max( col, 0.0 ) ) * 0.16;
 	col *= vec3( 1.0 + uWarm * 0.09, 1.0 + uWarm * 0.02, 1.0 - uWarm * 0.1 );
-	col = mix( col, col * mix( uSplitS, uSplitH, smoothstep( 0.12, 0.78, l ) ), uSplit );
+	col = mix( col, col * mix( mix( vec3( 1.0 ), uSplitS, 0.6 ), uSplitH, smoothstep( 0.12, 0.78, l ) ), uSplit );
 	float v = smoothstep( 1.25, 0.4, length( ( uv - 0.5 ) * vec2( 1.0, 1.3 ) ) );
-	col *= mix( 1.0, v, uVignette );
+	col *= mix( 1.0, v, uVignette * 0.55 );
 	float g = hash21( uv * uRes + fract( uTime ) * vec2( 31.7, 17.3 ) ) - 0.5;
 	col += g * uGrain * 0.09 * ( 1.0 - l * 0.6 );
 	gl_FragColor = vec4( clamp( col, 0.0, 1.0 ), 1.0 );
