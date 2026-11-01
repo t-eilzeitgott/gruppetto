@@ -1,0 +1,44 @@
+name: News
+
+# Nachrichten aus der Szene für die Startseite (Tab „News“): Feeds der Radsport-Medien lesen, auf Profi-Radsport
+# filtern, gleiche Meldungen bündeln, gewichten und in public.news schreiben (scripts/news).
+# Viermal am Tag; nach Änderungen am Abruf ein Probelauf (zeigt, welche Quellen antworten), per Hand beides.
+on:
+  schedule:
+    - cron: '17 4,9,14,19 * * *'
+  workflow_dispatch:
+    inputs:
+      probelauf:
+        description: Probelauf (nur anzeigen, nichts speichern)
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ['scripts/news/**', '.github/workflows/news.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  news:
+    name: Nachrichten holen
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: news
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Abrufen
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          EVENT: ${{ github.event_name }}
+          PROBE: ${{ inputs.probelauf }}
+        run: |
+          args=()
+          if [ "$EVENT" = "push" ] || [ "$PROBE" = "true" ]; then args+=(--probelauf); fi
+          node --no-warnings scripts/news/run.ts "${args[@]}"

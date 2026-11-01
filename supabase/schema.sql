@@ -1018,3 +1018,30 @@ create policy world_edits_select on public.world_edits
 drop policy if exists world_edits_admin on public.world_edits;
 create policy world_edits_admin on public.world_edits
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- ---------------------------------------------------------------------
+-- 9. Nachrichten aus der Szene (Startseite → News): mehrmals täglich aus Feeds der Radsport-Medien geholt
+-- (scripts/news, Workflow „News“) – Überschrift, kurzer Anriss, Quelle, Link aufs Original. Mitglieder lesen;
+-- geschrieben wird nur mit dem Secret Key (der Abruf), alte Meldungen löscht er selbst.
+-- id = Kurzform der Original-Adresse; cluster = gleiche Meldung bei mehreren Quellen; score = Wichtigkeit
+-- ---------------------------------------------------------------------
+create table if not exists public.news (
+  id           text primary key,
+  source       text not null,
+  lang         text not null check (lang in ('de', 'en', 'fr', 'it', 'es', 'nl')),
+  title        text not null check (length(title) between 1 and 400),
+  summary      text check (summary is null or length(summary) <= 600),
+  url          text not null check (url ~ '^https?://'),
+  published_at timestamptz not null,
+  fetched_at   timestamptz not null default now(),
+  topics       text[] not null default '{}',
+  cluster      text,
+  sources      int not null default 1,
+  score        real not null default 0
+);
+create index if not exists news_published_idx on public.news (published_at desc);
+alter table public.news enable row level security;
+revoke insert, update, delete on public.news from anon, authenticated;
+drop policy if exists news_select on public.news;
+create policy news_select on public.news
+  for select to authenticated using (public.is_member() or public.is_admin());
