@@ -2999,10 +2999,27 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 .emb-test__btn:hover { background: var(--surface2); }
 .emb-test__btn:disabled { opacity: 0.45; }
 
-/* Startseite: Akzentlinie unter dem aktiven Tab (läuft beim Wechsel elastisch mit, Home.tsx) und die Seite darunter */
-.home-tabs { position: relative; }
-.home-tabs__ink {
-  position: absolute; left: 0; bottom: -2px; height: 3px; width: 100px; border-radius: 999px; transform-origin: 0 50%;
-  background: var(--accent); opacity: 0; pointer-events: none; will-change: transform;
+/* Startseite: Heute | News als Pager (Home.tsx) – wie in nativen Apps: Kopf steht, die Seiten liegen randlos
+   nebeneinander auf einer Schiene und gleiten nur per transform. Die Schiene reicht bis an den Bildschirmrand
+   (die Seiten bringen den Seitenrand selbst mit); seitlich abgeschnitten mit clip, nicht hidden – sonst kleben die
+   Tagesköpfe der News nicht mehr. */
+.home-pager {
+  margin: 0 calc(-16px - var(--safe-r)) 0 calc(-16px - var(--safe-l));
+  overflow-x: hidden; overflow-x: clip; overflow-y: visible; touch-action: pan-y;
 }
-.home-tab { transition: color 0.28s ease; }
+.home-track { display: flex; align-items: flex-start; }
+.home-page {
+  flex: 0 0 100%; min-width: 0; box-sizing: border-box;
+  padding: 0 calc(16px + var(--safe-r)) 0 calc(16px + var(--safe-l));
+}
+/* die gerade nicht sichtbare Seite: zusammengeklappt, damit die Seite nur so lang ist wie die sichtbare */
+.home-page.is-away { height: 0; overflow: hidden; visibility: hidden; }
+@media (min-width: 900px) { .home-pager { margin: 0 -40px; } .home-page { padding: 0 40px; } }
+
+/* Titel: hell = aktiv, gedämpft = daneben – stufenlos nach --p (0 Heute … 1 News), gesetzt vom Pager */
+.home-tabs { --p: 0; --tab-dim: color-mix(in srgb, var(--muted) 70%, transparent); }
+@supports (color: color-mix(in srgb, red calc(50%), blue)) {
+  .home-tabs > .home-tab { transition: none; color: color-mix(in srgb, var(--text) calc(var(--k) * 100%), var(--tab-dim)); }
+  .home-tabs > #home-tab-heute { --k: calc(1 - var(--p)); }
+  .home-tabs > #home-tab-news { --k: var(--p); }
+}

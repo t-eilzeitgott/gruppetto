@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
@@ -29,173 +29,262 @@ function initialTab(): HomeTab {
   try { return sessionStorage.getItem(TAB_KEY) === 'news' ? 'news' : 'heute'; } catch { return 'heute'; }
 }
 
-/** „Heute | News“ als große Überschriften; Punkt am News-Tab, wenn es Neues gibt; darunter eine kleine
- *  Akzentlinie, die beim Wechsel elastisch zum anderen Titel läuft (erst lang, dann wieder kurz) */
-function HomeTabs({ tab, onTab, unread }: { tab: HomeTab; onTab: (t: HomeTab) => void; unread: boolean }) {
+/** „Heute | News“ als große Überschriften; Punkt am News-Tab, wenn es Neues gibt. Wie hell welcher Titel ist,
+ *  steuert der Pager über --p (0 = Heute, 1 = News): beim Wischen folgt das dem Finger, sonst der Bewegung. */
+type TabsCtl = { set: (p: number) => void };
+function HomeTabs({ tab, onTab, unread, ctl }: { tab: HomeTab; onTab: (t: HomeTab) => void; unread: boolean; ctl: RefObject<TabsCtl | null> }) {
   const box = useRef<HTMLDivElement>(null);
-  const ink = useRef<HTMLSpanElement>(null);
-  const last = useRef<{ x: number; w: number } | null>(null);
   useLayoutEffect(() => {
-    // Linie fest 100 px breit, Länge und Lage nur über transform (scaleX, translateX) – läuft auf der Grafikkarte,
-    // auch wenn die Seite gerade die neue Ansicht aufbaut
-    const place = (animate: boolean) => {
-      const b = box.current;
-      const el = ink.current;
-      const on = b?.querySelector<HTMLElement>('.home-tab.is-on');
-      if (!b || !el || !on) return;
-      const w = Math.min(34, on.offsetWidth * 0.36);
-      const x = on.offsetLeft;
-      const from = last.current;
-      last.current = { x, w };
-      const tf = (px: number, len: number) => `translateX(${px.toFixed(1)}px) scaleX(${(len / INK_W).toFixed(4)})`;
-      el.style.transform = tf(x, w);
-      el.style.opacity = '1';
-      if (!animate || !from || from.x === x || calm()) return;
-      // dehnen bis zum Ziel, dann zusammenziehen
-      const lo = Math.min(from.x, x);
-      const hi = Math.max(from.x + from.w, x + w);
-      try {
-        el.animate([
-          { transform: tf(from.x, from.w) },
-          { transform: tf(lo, hi - lo), offset: 0.42 },
-          { transform: tf(x, w) },
-        ], { duration: 520, easing: 'cubic-bezier(0.3, 0.75, 0.2, 1)' });
-      } catch { /* ohne Animation */ }
+    let last = -1;
+    ctl.current = {
+      set: (p) => {
+        const k = Math.round(Math.max(0, Math.min(1, p)) * 1000) / 1000;
+        if (k === last) return;
+        last = k;
+        box.current?.style.setProperty('--p', String(k));
+      },
     };
-    place(true);
-    const onResize = () => place(false);
-    // Schrift nachgeladen: Titel sind dann etwas anders breit
-    document.fonts?.ready.then(onResize).catch(() => undefined);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [tab]);
+    ctl.current.set(ORDER.indexOf(tab));
+    // nur beim Einhängen; danach steuert der Pager
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const item = (id: HomeTab, label: string) => (
     <button
-      type="button" role="tab" id={`home-tab-${id}`} aria-selected={tab === id} aria-controls="home-panel"
+      type="button" role="tab" id={`home-tab-${id}`} aria-selected={tab === id} aria-controls={`home-panel-${id}`}
       className={cx('home-tab', tab === id && 'is-on')} onClick={() => onTab(id)}
     >
       {label}
       {id === 'news' && unread && tab !== 'news' ? <span className="home-tab__dot" aria-label="neue Meldungen" /> : null}
     </button>
   );
-  return (
-    <div className="home-tabs" role="tablist" aria-label="Startseite" ref={box}>
-      {item('heute', 'Heute')}{item('news', 'News')}
-      <span className="home-tabs__ink" ref={ink} aria-hidden="true" />
-    </div>
-  );
+  return <div className="home-tabs" role="tablist" aria-label="Startseite" ref={box}>{item('heute', 'Heute')}{item('news', 'News')}</div>;
 }
 
 const calm = () => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
 const ORDER: HomeTab[] = ['heute', 'news'];
-/** Grundbreite der Akzentlinie (px) – gezeichnet wird sie über scaleX */
-const INK_W = 100;
-const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
-const SHIFT = 56;
+/** Einrasten wie ein iOS-Pager: sehr schnell los, lang und weich auslaufend (gut 90 % des Wegs im ersten Drittel) */
+const SNAP_MS = 380;
 
-/**
- * Weicher Wechsel zwischen „Heute“ und „News“ – ohne leeres Bild dazwischen: Beim Tippen wird die alte Seite als
- * Abbild (Kopie) an ihrer Stelle festgehalten, die neue Seite steht sofort darunter. Dann gleiten beide gleichzeitig
- * in Wechselrichtung: das Abbild hinaus und blasser, die neue Seite herein und deckend – wie ein weiches Schieben.
- * Nur Transform und Deckkraft, beides auf der Grafikkarte.
- */
-function useTabMotion(tab: HomeTab, setTabState: (t: HomeTab) => void, panel: RefObject<HTMLDivElement | null>) {
-  const pending = useRef<{ dir: number; ghost: HTMLElement | null } | null>(null);
-  const ghosts = useRef<HTMLElement[]>([]);
-  const go = (t: HomeTab) => {
-    if (t === tab) return;
-    switched = true;
-    const dir = ORDER.indexOf(t) > ORDER.indexOf(tab) ? 1 : -1;
-    const el = panel.current;
-    let ghost: HTMLElement | null = null;
-    if (el && !calm() && typeof el.animate === 'function') {
-      try {
-        // ältere Abbilder (schnelles Hin und Her) sofort weg
-        for (const g of ghosts.current) g.remove();
-        ghosts.current = [];
-        const r = el.getBoundingClientRect();
-        const docTop = r.top + window.scrollY;
-        ghost = el.cloneNode(true) as HTMLElement;
-        ghost.removeAttribute('id');
-        ghost.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
-        ghost.setAttribute('aria-hidden', 'true');
-        ghost.classList.add('home-ghost');
-        ghost.classList.remove('reveal');
-        ghost.querySelectorAll('.reveal').forEach((n) => n.classList.remove('reveal'));
-        // springt die Seite gleich nach oben, beginnt die neue Seite unter dem Kopf: das Abbild darüber abschneiden
-        const clip = window.scrollY > docTop ? window.scrollY : 0;
-        ghost.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;margin:0;`
-          + `pointer-events:none;z-index:5;clip-path:inset(${clip}px 0 0 0);`;
-        // im selben Rahmen wie die Seite (gleiche Schrift und Abstände)
-        (el.parentElement ?? document.body).append(ghost);
-        // seitlich gescrollte Bereiche (Spielkarte) an derselben Stelle zeigen
-        const src = el.querySelectorAll<HTMLElement>('*');
-        const dst = ghost.querySelectorAll<HTMLElement>('*');
-        for (let i = 0; i < src.length && i < dst.length; i++) if (src[i].scrollLeft) dst[i].scrollLeft = src[i].scrollLeft;
-        ghosts.current.push(ghost);
-      } catch { ghost = null; }
-    }
-    pending.current = { dir, ghost };
-    setTabState(t);
-  };
-  useLayoutEffect(() => {
-    const p = pending.current;
-    pending.current = null;
-    if (!p) return;
-    // neue Seite oben beginnen – aber den Kopf nicht wegscrollen, wenn man ohnehin oben war
-    const el = panel.current;
-    if (el) {
-      const top = el.getBoundingClientRect().top + window.scrollY;
-      if (window.scrollY > top) window.scrollTo({ top: 0 });
-    }
-    if (!el || !p.ghost || typeof el.animate !== 'function') { p.ghost?.remove(); return; }
-    const g = p.ghost;
-    el.animate(
-      [{ opacity: 0, transform: `translateX(${p.dir * SHIFT}px)` }, { opacity: 1, transform: 'none' }],
-      { duration: 440, delay: 40, easing: EASE_OUT, fill: 'backwards' },
-    );
-    const a = g.animate(
-      [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateX(${-p.dir * SHIFT * 0.8}px)` }],
-      { duration: 260, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' },
-    );
-    const done = () => { g.remove(); ghosts.current = ghosts.current.filter((x) => x !== g); };
-    a.finished.then(done, done);
-  }, [tab, panel]);
-  useEffect(() => () => { for (const g of ghosts.current) g.remove(); }, []);
-  return go;
+/** liegt der Finger auf etwas, das selbst seitlich scrollt (Spielkarte, Tabellen) oder auf einem Eingabefeld? */
+function scrollsX(el: Element | null) {
+  for (let e = el; e && e !== document.body; e = e.parentElement) {
+    if (e.matches('input, textarea, select, [role=slider]')) return true;
+    const ox = getComputedStyle(e).overflowX;
+    if ((ox === 'auto' || ox === 'scroll') && e.scrollWidth > e.clientWidth + 1) return true;
+  }
+  return false;
 }
 
-/** Wischen nach links/rechts wechselt den Tab – nicht in Bereichen, die selbst seitlich scrollen (Spielkarte,
- *  Tabellen), nicht vom linken Rand (dort ist die Zurück-Geste des Systems) */
-type Pt = { clientX: number; clientY: number };
-type TouchLike = { touches: { length: number; [i: number]: Pt }; changedTouches: { length: number; [i: number]: Pt }; target: EventTarget | null };
+/**
+ * Heute und News als Pager wie in nativen Apps: beide Seiten liegen randlos nebeneinander auf einer Schiene und
+ * bleiben geladen; der Kopf mit den Titeln steht still. Beim Wischen folgt die Schiene dem Finger 1:1, beim Loslassen
+ * (oder Tippen auf einen Titel) rastet sie mit einer schnellen, weich auslaufenden Bewegung ein – die Kurve setzt mit
+ * dem Tempo des Fingers an, ohne Ruck. Keine Blende, kein Abbild, kein Neuaufbau: nur ein transform auf der
+ * Grafikkarte. Die Titel hellen dabei stufenlos auf bzw. ab. Der React-Zustand (Titel der Seite, gelesen-Markierung)
+ * wechselt erst, wenn die Bewegung steht – so rechnet während des Gleitens nichts dazwischen.
+ * Die gerade nicht sichtbare Seite ist zusammengeklappt (Höhe 0, unsichtbar), die Seite ist nur so lang wie die sichtbare.
+ */
+function usePager(tab: HomeTab, commit: (t: HomeTab) => void, tabs: RefObject<TabsCtl | null>, wantNews: () => void) {
+  const pager = useRef<HTMLDivElement>(null);
+  const track = useRef<HTMLDivElement>(null);
+  const idx = useRef(ORDER.indexOf(tab));
+  const run = useRef<{ raf: number; timer: number; t: HTMLElement | null; onEnd: ((e: TransitionEvent) => void) | null } | null>(null);
+  const pages = () => Array.from(track.current?.children ?? []) as HTMLElement[];
+  const width = () => pager.current?.clientWidth || window.innerWidth;
 
-function useSwipe(onSwipe: (dir: 1 | -1) => void) {
-  const start = useRef<{ x: number; y: number; t: number } | null>(null);
-  const scrollsX = (el: Element | null) => {
-    for (let e = el; e && e !== document.body; e = e.parentElement) {
-      if (e.matches('input, textarea, select, [role=slider]')) return true;
-      const ox = getComputedStyle(e).overflowX;
-      if ((ox === 'auto' || ox === 'scroll') && e.scrollWidth > e.clientWidth + 1) return true;
+  const show = (i: number, on: boolean) => {
+    const el = pages()[i];
+    if (!el) return;
+    el.classList.toggle('is-away', !on);
+    if (on) { el.removeAttribute('aria-hidden'); el.removeAttribute('inert'); } else { el.setAttribute('aria-hidden', 'true'); el.setAttribute('inert', ''); }
+  };
+  const place = (x: number, ms = 0, ease = '') => {
+    const t = track.current;
+    if (!t) return;
+    t.style.transition = ms > 0 ? `transform ${ms}ms ${ease}` : 'none';
+    // in Ruhe auf der ersten Seite ganz ohne transform: sonst wären feste Ebenen darin an der Schiene statt am Schirm
+    const rest = ms === 0 && Math.abs(x) < 0.01;
+    t.style.transform = rest ? '' : `translate3d(${x.toFixed(2)}px, 0, 0)`;
+    t.style.willChange = rest ? '' : 'transform';
+  };
+  /** wo die Schiene gerade wirklich steht (auch mitten in der Bewegung) */
+  const now = () => {
+    const t = track.current;
+    if (!t) return -idx.current * width();
+    try { return new DOMMatrixReadOnly(getComputedStyle(t).transform).m41; } catch { return -idx.current * width(); }
+  };
+  const stop = () => {
+    const r = run.current;
+    if (!r) return;
+    cancelAnimationFrame(r.raf);
+    window.clearTimeout(r.timer);
+    if (r.t && r.onEnd) r.t.removeEventListener('transitionend', r.onEnd);
+    run.current = null;
+  };
+
+  // Ausgangslage beim Einhängen
+  useLayoutEffect(() => {
+    idx.current = ORDER.indexOf(tab);
+    ORDER.forEach((_, i) => show(i, i === idx.current));
+    place(-idx.current * width());
+    const onResize = () => { if (!run.current) place(-idx.current * width()); };
+    window.addEventListener('resize', onResize);
+    return () => { window.removeEventListener('resize', onResize); stop(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Bewegung beendet: alte Seite zuklappen, Zustand übernehmen */
+  const settle = (i: number) => {
+    stop();
+    pages().forEach((el) => { el.style.transform = ''; });
+    ORDER.forEach((_, k) => show(k, k === i));
+    place(-i * width());
+    tabs.current?.set(i);
+    commit(ORDER[i]);
+  };
+
+  /**
+   * Zur Seite i gleiten, von der Stelle x aus, mit dem Fingertempo v (px/ms, Vorzeichen wie die Bewegung). Die Kurve
+   * (cubic-bezier) beginnt mit genau diesem Tempo und läuft weich aus.
+   */
+  const snap = (i: number, x: number, v: number) => {
+    stop();
+    const w = width();
+    const target = -i * w;
+    const dist = target - x;
+    idx.current = i;
+    if (calm() || Math.abs(dist) < 0.5) { settle(i); return; }
+    // Dauer nach Restweg: ganze Seite ≈ SNAP_MS, kurze Wege kürzer
+    const ms = Math.round(Math.max(220, Math.min(SNAP_MS, SNAP_MS * Math.sqrt(Math.abs(dist) / w))));
+    // Anfangssteigung der Kurve = Fingertempo (in Anteilen der Strecke je Anteil der Zeit); ohne Finger: zügiger Start
+    const along = Math.sign(dist) === Math.sign(v) ? Math.abs(v) : 0;
+    const slope = along > 0 ? (along * ms) / Math.abs(dist) : 3.2;
+    const x1 = 0.2;
+    const y1 = Math.max(0.5, Math.min(1, slope * x1));
+    const ease = `cubic-bezier(${x1}, ${y1.toFixed(3)}, 0.24, 1)`;
+    place(x);
+    const t = track.current;
+    const r: { raf: number; timer: number; t: HTMLElement | null; onEnd: ((e: TransitionEvent) => void) | null } = { raf: 0, timer: 0, t, onEnd: null };
+    run.current = r;
+    const follow = () => {
+      // Titel hellen mit der tatsächlichen Lage auf
+      tabs.current?.set(-now() / w);
+      r.raf = requestAnimationFrame(follow);
+    };
+    // Stil erst im nächsten Bild ändern, damit der Startpunkt gezeichnet ist (sonst springt die Bewegung)
+    r.raf = requestAnimationFrame(() => {
+      if (run.current !== r) return;
+      place(target, ms, ease);
+      r.raf = requestAnimationFrame(follow);
+      r.onEnd = (e) => { if (e.target === t && e.propertyName === 'transform') settle(i); };
+      t?.addEventListener('transitionend', r.onEnd);
+      r.timer = window.setTimeout(() => { if (run.current === r) settle(i); }, ms + 150);
+    });
+  };
+
+  /** beide Seiten zeigen (vor einer Bewegung); war man weit unten, den Kopf wieder ins Bild holen, ohne dass die
+   *  aktuelle Seite dabei optisch springt */
+  const open = (towards: number) => {
+    const all = pages();
+    const cur = all[idx.current];
+    ORDER.forEach((_, k) => show(k, true));
+    const head = document.querySelector<HTMLElement>('.home-tabs');
+    if (!head || !cur || towards === idx.current) return;
+    const keep = Math.max(0, head.getBoundingClientRect().top + window.scrollY - 12);
+    const lift = window.scrollY - keep;
+    if (lift > 0) {
+      window.scrollTo(0, keep);
+      cur.style.transform = `translate3d(0, ${-lift}px, 0)`;
     }
-    return false;
   };
-  return {
-    onTouchStart: (e: TouchLike) => {
+
+  const go = (t: HomeTab) => {
+    const i = ORDER.indexOf(t);
+    if (i === idx.current && !run.current) return;
+    if (t === 'news') wantNews();
+    const moving = !!run.current;
+    const x = now();
+    stop();
+    if (!moving) open(i);
+    snap(i, x, 0);
+  };
+
+  // Wischen: folgt dem Finger, rastet nach Weg (über die Hälfte) oder Tempo ein
+  useEffect(() => {
+    const el = pager.current;
+    if (!el) return;
+    let s: { x0: number; y0: number; base: number; lock: 0 | 1 | 2; pts: { x: number; t: number }[] } | null = null;
+    const down = (e: TouchEvent) => {
       const p = e.touches[0];
-      start.current = e.touches.length === 1 && p.clientX > 28 && !scrollsX(e.target as Element) ? { x: p.clientX, y: p.clientY, t: performance.now() } : null;
-    },
-    onTouchEnd: (e: TouchLike) => {
-      const s = start.current;
-      start.current = null;
-      const p = e.changedTouches[0];
-      if (!s || !p) return;
-      const dx = p.clientX - s.x;
-      const dy = p.clientY - s.y;
-      const dt = performance.now() - s.t;
-      if (Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy) * 1.8 && dt < 700) onSwipe(dx < 0 ? 1 : -1);
-    },
-  };
+      if (e.touches.length !== 1 || p.clientX < 14 || scrollsX(e.target as Element)) { s = null; return; }
+      // in eine laufende Bewegung greifen: dort festhalten, wo die Schiene gerade ist
+      let base = -idx.current * width();
+      if (run.current) { base = now(); stop(); place(base); }
+      s = { x0: p.clientX, y0: p.clientY, base, lock: 0, pts: [{ x: p.clientX, t: e.timeStamp }] };
+    };
+    const move = (e: TouchEvent) => {
+      if (!s) return;
+      const p = e.touches[0];
+      const dx = p.clientX - s.x0;
+      const dy = p.clientY - s.y0;
+      if (s.lock === 0) {
+        if (Math.abs(dx) < 7 && Math.abs(dy) < 7) return;
+        s.lock = Math.abs(dx) > Math.abs(dy) * 1.1 ? 1 : 2;
+        if (s.lock === 2) {
+          // senkrecht: normal scrollen; hatte man in eine Bewegung gegriffen, sauber zu Ende einrasten
+          const w = width();
+          if (Math.abs(s.base + idx.current * w) > 0.5) snap(Math.round(-s.base / w), s.base, 0);
+          s = null;
+          return;
+        }
+        wantNews();
+        const i = idx.current;
+        open(i === 0 && dx < 0 ? 1 : i === ORDER.length - 1 && dx > 0 ? i - 1 : i);
+        // ab hier zählt der Weg ab dem Einrasten der Achse – kein Sprung um die ersten Pixel
+        s.x0 = p.clientX - Math.sign(dx);
+      }
+      if (e.cancelable) e.preventDefault();
+      const w = width();
+      const min = -(ORDER.length - 1) * w;
+      let x = s.base + (p.clientX - s.x0);
+      // über den Rand hinaus gummiartig nachgeben
+      if (x > 0) x *= 0.3;
+      else if (x < min) x = min + (x - min) * 0.3;
+      place(x);
+      tabs.current?.set(-x / w);
+      s.pts.push({ x: p.clientX, t: e.timeStamp });
+      if (s.pts.length > 6) s.pts.shift();
+    };
+    const up = (e: TouchEvent) => {
+      const st = s;
+      s = null;
+      if (!st || st.lock !== 1) return;
+      const w = width();
+      const x = now();
+      // Tempo aus den letzten ~100 ms
+      const end = e.timeStamp;
+      const pts = st.pts.filter((q) => end - q.t < 100);
+      const v = pts.length > 1 ? (pts[pts.length - 1].x - pts[0].x) / Math.max(8, pts[pts.length - 1].t - pts[0].t) : 0;
+      const pos = -x / w; // 0 … 1: wie weit Richtung News
+      let to = Math.round(pos);
+      if (Math.abs(v) > 0.3) to = v < 0 ? Math.ceil(pos - 0.02) : Math.floor(pos + 0.02);
+      to = Math.max(0, Math.min(ORDER.length - 1, to));
+      snap(to, x, v);
+    };
+    el.addEventListener('touchstart', down, { passive: true });
+    el.addEventListener('touchmove', move, { passive: false });
+    el.addEventListener('touchend', up);
+    el.addEventListener('touchcancel', up);
+    return () => {
+      el.removeEventListener('touchstart', down);
+      el.removeEventListener('touchmove', move);
+      el.removeEventListener('touchend', up);
+      el.removeEventListener('touchcancel', up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return { pager, track, go };
 }
 
 /** Kopf der Startseite: Wortmarke und Profilbild */
@@ -221,14 +310,16 @@ export function Home() {
   const latest = newestAt(news.items, rounds);
   // im News-Tab gilt alles Angezeigte als gelesen
   useEffect(() => { if (tab === 'news' && latest) markNewsSeen(latest); }, [tab, latest]);
-  const panel = useRef<HTMLDivElement>(null);
-  const move = useTabMotion(tab, setTabState, panel);
-  const setTab = (t: HomeTab) => {
+  // News-Seite: bei Bedarf bzw. im Leerlauf aufbauen – dann steht sie, bevor man hinwischt
+  const [newsOn, setNewsOn] = useState(tab === 'news');
+  const tabs = useRef<TabsCtl | null>(null);
+  const commit = (t: HomeTab) => {
     homeTab = t;
+    switched = true;
     try { sessionStorage.setItem(TAB_KEY, t); } catch { /* egal */ }
-    move(t);
+    setTabState(t);
   };
-  const swipe = useSwipe((d) => setTab(d > 0 ? 'news' : 'heute'));
+  const { pager, track, go } = usePager(tab, commit, tabs, () => setNewsOn(true));
   useRefreshAtStart(data?.stages, now);
   // Inhalt, der erst während dieses Besuchs kommt, weich einblenden (aus dem Zwischenspeicher: sofort da)
   const waited = useRef(false);
@@ -240,49 +331,48 @@ export function Home() {
     return () => { if (!idle) window.clearTimeout(id); };
   }, []);
 
-  const header = (
-    <>
-      <HomeHead me={me} />
-      <HomeTabs tab={tab} onTab={setTab} unread={unread} />
-    </>
-  );
   // Intro beenden, sobald die Startseite mit Inhalt steht (oder es nichts zu laden gibt)
   const shown = !tour || !!error || (!loading && !!data && !!members);
   useEffect(() => {
     if (shown) introReady('content');
   }, [shown]);
+  useEffect(() => {
+    if (!shown || newsOn) return;
+    const idle = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    const id = idle ? idle(() => setNewsOn(true), { timeout: 3000 }) : window.setTimeout(() => setNewsOn(true), 1500);
+    return () => { if (!idle) window.clearTimeout(id); };
+  }, [shown, newsOn]);
 
-  if (tab === 'news') {
-    return (
-      <>
-        {header}
-        <div className="stack home-panel" id="home-panel" role="tabpanel" aria-labelledby="home-tab-news" ref={panel} {...swipe}>
-          <NewsTab data={tour && !error ? data ?? null : null} members={members ?? null} now={now} />
-        </div>
-      </>
-    );
-  }
-
+  let today: ReactNode;
   if (!tour) {
-    return (
-      <>
-        {header}
-        <div className="stack home-panel" ref={panel} {...swipe}>
-          <Empty title="Noch keine Rundfahrt">Sobald der Admin eine Rundfahrt anlegt, kannst du hier tippen.</Empty>
-          <GamesCard />
-        </div>
-      </>
+    today = (
+      <div className="stack">
+        <Empty title="Noch keine Rundfahrt">Sobald der Admin eine Rundfahrt anlegt, kannst du hier tippen.</Empty>
+        <GamesCard />
+      </div>
+    );
+  } else if (error) today = <ErrorBox error={error} onRetry={reload} />;
+  else if (loading || !data || !members) today = <HomeSkeleton />;
+  else {
+    today = (
+      <div className={cx('stack', waited.current && !switched && 'reveal')}>
+        <TourPicker tour={tour} tours={tours} />
+        <HomeBody data={data} members={members} me={me} now={now} onNews={() => go('news')} />
+      </div>
     );
   }
-  if (error) return <>{header}<div className="home-panel" ref={panel} {...swipe}><ErrorBox error={error} onRetry={reload} /></div></>;
-  if (loading || !data || !members) return <>{header}<div className="home-panel" ref={panel} {...swipe}><HomeSkeleton /></div></>;
 
   return (
     <>
-      {header}
-      <div className={cx('stack home-panel', waited.current && !switched && 'reveal')} id="home-panel" role="tabpanel" aria-labelledby="home-tab-heute" ref={panel} {...swipe}>
-        <TourPicker tour={tour} tours={tours} />
-        <HomeBody data={data} members={members} me={me} now={now} onNews={() => setTab('news')} />
+      <HomeHead me={me} />
+      <HomeTabs tab={tab} onTab={go} unread={unread} ctl={tabs} />
+      <div className="home-pager" ref={pager}>
+        <div className="home-track" ref={track}>
+          <div className="home-page" id="home-panel-heute" role="tabpanel" aria-labelledby="home-tab-heute">{today}</div>
+          <div className="home-page" id="home-panel-news" role="tabpanel" aria-labelledby="home-tab-news">
+            {newsOn ? <div className="stack"><NewsTab data={tour && !error ? data ?? null : null} members={members ?? null} now={now} /></div> : null}
+          </div>
+        </div>
       </div>
     </>
   );
