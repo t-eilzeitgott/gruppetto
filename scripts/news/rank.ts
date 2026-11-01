@@ -138,8 +138,8 @@ const WIN = /\b(gewinnt|gewonnen|siegt|sieg|holt|triumph\w*|wins|won|victory|tak
  * keine Ketten über Zwischenschritte (sonst landen alle Meldungen über denselben Star in einem Bündel).
  * Passt: andere Quelle, höchstens 24 h auseinander und
  *  - gleiche Sprache: mindestens drei gleiche Inhaltswörter, gut die Hälfte der kürzeren Überschrift, oder
- *  - über die Sprache hinweg: derselbe Star und dazu ein weiterer Name, ein Rennen oder ein Team, dieselbe Art
- *    (Verletzung, Transfer, Sieg in demselben Rennen – „Rennen“ allein ist zu allgemein) oder drei gemeinsame
+ *  - über die Sprache hinweg: derselbe Star und dieselbe Art (Verletzung, Transfer, Sieg in demselben Rennen –
+ *    „Rennen“ allein ist zu allgemein), derselbe Star mit demselben Rennen oder Team binnen 12 h, oder drei gemeinsame
  *    Namen/Rennen/Teams
  */
 export function cluster(list: { id: string; source: string; title: string; published: Date; lang?: Lang }[]): Map<string, string> {
@@ -157,7 +157,12 @@ export function cluster(list: { id: string; source: string; title: string; publi
     const sk = [...a.k].filter((x) => b.k.has(x));
     if (sk.length >= 3) return true;
     const star = sk.some((x) => STARS.includes(x));
-    return star && sk.length >= 2 && a.t.some((t) => b.t.includes(t)) && (!a.t.includes('sieg') || sk.some((x) => RACES.includes(x)));
+    if (!star) return false;
+    // derselbe Star und dieselbe Art (Verletzung, Transfer; ein Sieg nur im selben Rennen)
+    const race = sk.some((x) => RACES.includes(x));
+    if (a.t.some((t) => b.t.includes(t) && (t !== 'sieg' || race))) return true;
+    // derselbe Star mit demselben Rennen oder Team am selben halben Tag
+    return sk.length >= 2 && Math.abs(a.published.getTime() - b.published.getTime()) <= 12 * 3600e3;
   };
   const roots: It[] = [];
   const out = new Map<string, string>();

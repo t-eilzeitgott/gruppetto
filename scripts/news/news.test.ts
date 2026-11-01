@@ -103,9 +103,11 @@ test('Bündeln: verschiedene Meldungen über denselben Star bleiben getrennt, di
     { id: 'esc', source: 'Escape Collective', lang: 'en', title: 'UAE Tour, Classics, then Tour – Pogačar lays out likely early-2027 plans', published: h(2) },
     { id: 'rn', source: 'Radsport-News', lang: 'de', title: 'Pogačar nach Vuelta-Sturz: drei Wirbel gebrochen', published: h(3) },
     { id: 'cw', source: 'Cycling Weekly', lang: 'en', title: 'Pogačar targets Tour de France again in 2027', published: h(4) },
+    { id: 'rn2', source: 'Sportschau', lang: 'de', title: 'Pogacar gibt ganzes Ausmaß der Verletzungen bekannt', published: h(5) },
   ]);
   assert.equal(cl.get('velo'), cl.get('cn'));
   assert.equal(cl.get('rn'), cl.get('cn'), 'Verletzung, Star und Rennen über die Sprache hinweg');
   assert.notEqual(cl.get('esc'), cl.get('cn'));
   assert.notEqual(cl.get('cw'), cl.get('cn'));
+  assert.equal(cl.get('rn2'), cl.get('cn'), 'derselbe Star, Verletzung');
 });
