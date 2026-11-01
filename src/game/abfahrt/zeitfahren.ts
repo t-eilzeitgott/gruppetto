@@ -650,7 +650,11 @@ export class TimeTrial {
       if (!o.passedBy && dz < -0.8 && Math.abs(o.x - p.x) < 2.5 && o.v < p.v + 6) {
         o.passedBy = true;
         o.passedMe = false;
-        if (!o.rider.me && !o.rider.old) this.passedNames.push(o.rider.name);
+        // in der Liste jeder nur einmal (wer zurückkommt und wieder überholt wird, stand sonst doppelt da)
+        if (!o.rider.me && !o.rider.old && !this.flags.has(`pb:${o.id}`)) {
+          this.flags.add(`pb:${o.id}`);
+          this.passedNames.push(o.rider.name);
+        }
         this.pop(o.rider.me ? (o.rider.old ? `${ghostName(o.rider)} überholt` : 'Schneller als dein Bestlauf') : `${ghostName(o.rider)} überholt`, o.rider.me && !o.rider.old ? 'gold' : 'accent', undefined, false, true);
       } else if (o.passedBy && dz > 2.5) {
         o.passedBy = false;
