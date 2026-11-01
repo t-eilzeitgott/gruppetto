@@ -341,7 +341,9 @@ export interface WeatherHost {
 export class WeatherFx {
   /** aktuelles Wetter (null = aus) */
   weather: Weather | null = null;
-  readonly tier: GfxTier;
+  /** Güte der Nachbearbeitung – folgt der Grafikstufe sofort (PC-Grafik: immer volle Güte) */
+  get tier(): GfxTier { return this.pc ? 'high' : gfxTier(); }
+  private rtTier: GfxTier | null = null;
   private rt: THREE.WebGLRenderTarget | null = null;
   private small: THREE.WebGLRenderTarget[] = [];
   private quad = new THREE.Scene();
@@ -370,7 +372,6 @@ export class WeatherFx {
 
   constructor(private host: WeatherHost) {
     this.env = host.weatherEnv;
-    this.tier = this.pc ? 'high' : gfxTier();
     this.fixed = weatherOverride();
     const geomU = () => ({
       uInvProj: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() },
@@ -497,12 +498,28 @@ export class WeatherFx {
     const k = Math.max(0, Math.min(1, g.p.z / fin));
     this.host.debugTod = L.tod[0] + (L.tod[1] - L.tod[0]) * k * k * (3 - 2 * k);
     // Nachbearbeitung nur mit genug Leistung (die Qualitätsregelung senkt die Auflösung, wenn es eng wird)
-    if (this.tier === 'low' || this.host.quality < 0.55) { draw(); return; }
+    if (this.tier === 'low' || this.host.quality < 0.55) {
+      // Stufe gesenkt: die großen Zwischenbilder freigeben (Grafikspeicher)
+      if (this.rt) this.freeTargets();
+      draw();
+      return;
+    }
     this.render(draw, L);
   }
 
+  private freeTargets() {
+    this.rt?.dispose();
+    this.rt = null;
+    for (const s of this.small) s.dispose();
+    this.small = [];
+    for (const a of this.aoRT) a.dispose();
+    this.aoRT = [];
+    this.rtTier = null;
+  }
+
   private ensure(w: number, h: number) {
-    if (this.rt && this.rt.width === w && this.rt.height === h) return;
+    if (this.rt && this.rt.width === w && this.rt.height === h && this.rtTier === this.tier) return;
+    this.rtTier = this.tier;
     this.rt?.dispose();
     for (const s of this.small) s.dispose();
     const depthTexture = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);

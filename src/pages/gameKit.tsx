@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
-import { GFX_LEVELS, GFX_MAX, GFX_MIN, gfxAA, gfxLevel, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxLevel, setGfxRes } from '../game/abfahrt/gfxOpts';
+import { GFX_LEVELS, GFX_MAX, GFX_MIN, gfxLevel, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxLevel, setGfxRes } from '../game/abfahrt/gfxOpts';
 import { cx } from '../ui/kit';
 
 export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -195,10 +195,10 @@ export function GfxSliders({ page }: { page?: boolean }) {
   const [ri, setRi] = useState(() => idxOf(cur.res));
   useEffect(() => { setLv(cur.level); }, [cur.level]);
   useEffect(() => { setRi(idxOf(cur.res)); }, [cur.res]); // eslint-disable-line react-hooks/exhaustive-deps
-  // PC-Grafik und Kantenglättung gehören zur Bühne: sie wechseln erst mit dem nächsten Spiel
-  const start = useRef({ pc: gfxOn('pc'), aa: gfxAA() });
+  // PC-Grafik gehört zur Bühne: sie wechselt erst mit dem nächsten Spiel (alles andere sofort)
+  const start = useRef({ pc: gfxOn('pc') });
   const L = GFX_LEVELS[lv - 1];
-  const later = L.pc !== start.current.pc || L.aa !== start.current.aa;
+  const later = L.pc !== start.current.pc;
   const d = steps[ri];
   // am Telefon über doppelter Dichte: getönt (selten noch 60 Bilder je Sekunde)
   const phone = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;

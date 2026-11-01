@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { acquireStage, hasWarmStage, prewarm, releaseStage, type Stage } from '../game/abfahrt/pool';
+import { acquireStage, hasWarmStage, prewarm, releaseStage, watchStage, type Stage } from '../game/abfahrt/pool';
 import type { WarmArgs } from '../app/warm';
 import { afterPaint } from '../lib/afterPaint';
 import { useApp } from '../app/context';
@@ -298,6 +298,8 @@ export function GamePage() {
       let rebuilt = false;
       let drawn = false;
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGlGen((x) => x + 1); } };
+      // Wächter: Leinwand eingehängt, Bild kommt an – sonst neue Bühne (pool.ts)
+      const watch = watchStage(st, stage);
       // Bildrate (im Pausenmenü einschaltbar)
       const fps = new FpsMeter(stage);
       // Messfahrt (perf3d.ts): Bausteine je Bild, Regler, Phasen
@@ -327,7 +329,8 @@ export function GamePage() {
         const c0 = performance.now();
         renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.target));
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt, raw);
-      if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
+        if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
+        if (!low && watch()) { rebuild(); return; }
         hudRef.current(eng, dt);
         fps.frame(raw * 1000, performance.now() - c0, gfxRes(), renderer.shaderErrors);
         // Bildrate beobachten und notfalls die Qualität senken

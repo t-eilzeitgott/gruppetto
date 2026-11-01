@@ -407,8 +407,16 @@ export class Renderer3D {
   quality = 1;
   /** PC-Grafik (gfxOpts „pc“, gilt ab dem Start): höhere Auflösung, feinere Berge, Gras, alle Fahrer voll detailliert */
   readonly pc = gfxOn('pc');
-  /** Kantenglättung (gehört zur Bühne: ab Grafikstufe 3, beim Wechsel baut das nächste Spiel eine neue Bühne) */
+  /** Kantenglättung (gehört zum Grafikkontext; in allen Stufen an, siehe gfxOpts) */
   readonly aa = gfxAA();
+  /** steht die Bühne gerade in einem Spiel (pool.ts)? Sonst wartet das Neuübersetzen nach einer Umschaltung */
+  active = false;
+  /** Shader nach einer Umschaltung neu anstoßen, sobald die Bühne wieder zeichnet */
+  private needWarm = false;
+  /** Startrampe, Torbögen und Schilder in einer neuen Farbe der Rundfahrt bauen (beim nächsten Bild) */
+  private recolor = false;
+  /** eben ein Bild auf den Bildschirm gezeichnet (für blank) */
+  private justDrew = false;
   dark = false;
   accent = '#ff5fa2';
   readonly gl: THREE.WebGLRenderer;
@@ -815,8 +823,12 @@ export class Renderer3D {
         this.groundKey = '';
         if (this.track) this.applyGround(this.track);
       }
-      // (nach den anderen Empfängern: das Wetter schaltet die Schatten erst noch um)
-      if (k !== 'licht') queueMicrotask(() => this.rewarm());
+      // (nach den anderen Empfängern: das Wetter schaltet die Schatten erst noch um). Im Spiel gleich (ein kurzer
+      // Halt im Pausenmenü), eine Bühne im Vorrat erst, wenn sie wieder gebraucht wird – sonst rechnet die Grafik
+      // beim Umstellen im Profil oder auf der Startseite im Hintergrund und alles stockt
+      if (k === 'licht') return;
+      if (this.active) queueMicrotask(() => this.rewarm());
+      else this.needWarm = true;
     });
   }
 
@@ -1547,8 +1559,33 @@ export class Renderer3D {
   }
 
   setTheme(accent: string, dark: boolean) {
-    this.accent = accent || '#ff5fa2';
+    const a = accent || '#ff5fa2';
+    // andere Farbe als beim Vorwärmen (das Intro färbt die Seite kurz in der Farbe des gezeigten Rennens): Rampe,
+    // Torbögen und Schilder beim nächsten Bild in der richtigen Farbe neu bauen
+    if (a !== this.accent && this.track) this.recolor = true;
+    this.accent = a;
     this.dark = dark;
+  }
+
+  /**
+   * Kommt das Bild an? Direkt nach dem Zeichnen einen Bildpunkt aus der Mitte lesen (selten – das wartet auf die
+   * Grafik). Lauter Nullen, auch im Alphakanal (die Leinwand ist deckend), heißt: der Kontext zeichnet ins Leere.
+   */
+  blank(): boolean {
+    if (this.lost) return true;
+    // nur direkt nach einem gezeichneten Bild aussagekräftig (danach ist der Bildpuffer schon wieder leer)
+    if (!this.justDrew) return false;
+    this.justDrew = false;
+    try {
+      const c = this.gl.getContext();
+      this.gl.setRenderTarget(null);
+      const px = this.px1;
+      px.fill(0);
+      c.readPixels(c.drawingBufferWidth >> 1, c.drawingBufferHeight >> 1, 1, 1, c.RGBA, c.UNSIGNED_BYTE, px);
+      return px[0] === 0 && px[1] === 0 && px[2] === 0 && px[3] === 0;
+    } catch {
+      return false;
+    }
   }
 
   warm() { /* Grafiken entstehen im Konstruktor */ }
@@ -1684,6 +1721,12 @@ export class Renderer3D {
         if (old.names.join('|') !== g.track.names.join('|')) this.clearChunks();
       } else this.reset(g.track);
     }
+    if (this.recolor && this.track) {
+      this.recolor = false;
+      this.buildStarts(this.track);
+      this.clearChunks();
+    }
+    if (this.needWarm) { this.needWarm = false; this.rewarm(); }
     // Änderungen aus dem Welt-Editor (Tagesstrecke und „überall“): sobald geladen, alles neu bauen
     if (worldStore.sync(g.track)) this.rebuildAll();
     const fk = g.friends.map((f) => `${f.userId}:${f.meters}`).join('|');
@@ -1778,6 +1821,7 @@ export class Renderer3D {
     if (probe) { tA = performance.now(); this.syncGl(); tB = performance.now(); }
     if (this.post) this.post(() => { this.gl.render(this.scene, this.camera); this.takeCounts(); }, g);
     else { this.gl.render(this.scene, this.camera); this.takeCounts(); }
+    this.justDrew = true;
     if (probe && P) {
       const tS = performance.now();
       this.syncGl();
@@ -2075,10 +2119,25 @@ export class Renderer3D {
     this.camReg = null;
     this.newSigns(track.names);
     this.clearChunks();
+    this.buildStarts(track);
+    if (this.grass) { this.scene.remove(this.grass.group); this.grass.dispose(); this.grass = null; }
+    if (this.pc) {
+      this.grassMat ??= grassMaterial(this.time);
+      this.grass = new Grass3D({ track, material: this.grassMat, verge: (i, sg) => this.grassVerge(i, sg) });
+      this.scene.add(this.grass.group);
+    }
+    this.cam.init = false;
+    this.resetDirector(false);
+    this.runners = [];
+    this.runNext = 0;
+  }
+
+  /** Startrampe (Zeitfahren, Rampenstart) und Start der Abfahrt – in der Farbe der Rundfahrt */
+  private buildStarts(track: Track) {
     this.ttStart?.dispose();
     this.ttStart = null;
-    if (track.kind === 'tt' || track.ramp) {
-      const T = this.terrain;
+    const T = this.terrain;
+    if (T && (track.kind === 'tt' || track.ramp)) {
       this.ttStart = new TtStart3D({
         f0: track.kind === 'tt' ? 0 : track.rampZ, flush: track.kind === 'descent', count: track.kind === 'tt' ? [5, 0.6] : [3, 0.75],
         track, props: this.mats.props, ads: this.mats.ads, gear: this.gearMat, shadow: this.shadowTex, glow: this.mats.lampGlow.map!,
@@ -2094,16 +2153,6 @@ export class Renderer3D {
     this.descStart?.dispose();
     this.descStart = null;
     this.makeDescStart(track);
-    if (this.grass) { this.scene.remove(this.grass.group); this.grass.dispose(); this.grass = null; }
-    if (this.pc) {
-      this.grassMat ??= grassMaterial(this.time);
-      this.grass = new Grass3D({ track, material: this.grassMat, verge: (i, sg) => this.grassVerge(i, sg) });
-      this.scene.add(this.grass.group);
-    }
-    this.cam.init = false;
-    this.resetDirector(false);
-    this.runners = [];
-    this.runNext = 0;
   }
 
   private makeDescStart(track: Track) {

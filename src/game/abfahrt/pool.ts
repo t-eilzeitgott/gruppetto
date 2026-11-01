@@ -14,10 +14,14 @@ export interface Stage {
   renderer: Renderer3D; canvas: HTMLCanvasElement; overlay: HTMLCanvasElement; weather: WeatherFx | null;
   /** welches Spiel zuletzt auf dieser Bühne stand (vorgewärmt oder gespielt) */
   game: string | null;
+  /** zeigt kein Bild mehr (Wächter, siehe watchStage) – nicht wieder verwenden */
+  broken?: boolean;
 }
 
 let spare: Stage | null = null;
 let inUse = 0;
+/** vom Wächter neu gebaute Bühnen (höchstens zwei je App-Start – falls ein Gerät den Bildpunkt nie lesen lässt) */
+let rescues = 0;
 let holder: HTMLDivElement | null = null;
 
 function makeStage(): Stage {
@@ -32,10 +36,10 @@ function makeStage(): Stage {
 }
 
 /**
- * passt die Bühne zur Grafikstufe? PC-Grafik und Kantenglättung entstehen mit dem Renderer – nach einem Wechsel
- * darüber hinweg baut das nächste Spiel eine neue Bühne
+ * passt die Bühne zur Grafikstufe? Nur die PC-Grafik entsteht mit dem Renderer (Kantenglättung ist in allen Stufen
+ * gleich) – nach einem Wechsel darüber hinweg baut das nächste Spiel eine neue Bühne
  */
-const fits = (s: Stage) => !s.renderer.lost && s.renderer.pc === gfxOn('pc') && s.renderer.aa === gfxAA();
+const fits = (s: Stage) => !s.broken && !s.renderer.lost && s.renderer.pc === gfxOn('pc') && s.renderer.aa === gfxAA();
 
 function drop(s: Stage) {
   s.weather?.dispose();
@@ -66,12 +70,14 @@ export function acquireStage(game: string): Stage {
     s.game = game;
     // jetzt sieht jemand zu: das Vorbauen der Welt tritt hinter ein flüssiges Bild zurück
     s.renderer.idleK = 0.3;
+    s.renderer.active = true;
     return s;
   }
   if (s) drop(s);
   const fresh = makeStage();
   fresh.game = game;
   fresh.renderer.idleK = 0.3;
+  fresh.renderer.active = true;
   inUse += 1;
   return fresh;
 }
@@ -79,10 +85,39 @@ export function acquireStage(game: string): Stage {
 /** Spiel verlassen: Leinwand aushängen und für das nächste Mal behalten */
 export function releaseStage(s: Stage) {
   inUse = Math.max(0, inUse - 1);
+  s.renderer.active = false;
   s.canvas.remove();
   s.overlay.remove();
-  if (spare || s.renderer.lost) drop(s);
+  if (spare || s.broken || s.renderer.lost) drop(s);
   else spare = s;
+}
+
+/**
+ * Wächter für die Bühne eines laufenden Spiels – direkt nach jedem Zeichnen aufrufen. Prüft am Anfang (nach 1, 3 und
+ * 6 Sekunden) und danach alle 20 Sekunden: hängt die Leinwand noch im Spiel und ist sie eingeblendet (sonst wieder
+ * einhängen)? Kommt das Bild an? Bleibt es zweimal hintereinander leer, obwohl gezeichnet wird (ein still
+ * gestorbener Grafikkontext – auf dem iPhone sah man dann nur noch Schwarz), meldet er true: neue Bühne bauen.
+ */
+export function watchStage(s: Stage, host: HTMLElement): () => boolean {
+  const t0 = performance.now();
+  const at = [1000, 3000, 6000];
+  let next = 0;
+  let blanks = 0;
+  return () => {
+    const t = performance.now() - t0;
+    const due = next < at.length ? at[next] : at[at.length - 1] + (next - at.length + 1) * 20000;
+    if (t < due) return false;
+    next += 1;
+    if (s.canvas.parentElement !== host) host.append(s.canvas, s.overlay);
+    if (!s.canvas.classList.contains('is-drawn')) s.canvas.classList.add('is-drawn');
+    if (document.visibilityState !== 'visible') return false;
+    blanks = s.renderer.blank() ? blanks + 1 : 0;
+    if (blanks < 2 || rescues >= 2) return false;
+    rescues += 1;
+    console.warn('Bühne zeigt kein Bild – neu gebaut');
+    s.broken = true;
+    return true;
+  };
 }
 
 interface WarmEngine extends RaceView { update(dt: number): void; setViewport(w: number): void }
@@ -99,6 +134,13 @@ export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: b
   // automatische Oberflächenprüfung: ohne Grafikchip würde das Vorwärmen die Seiten lange blockieren
   try { off = off || localStorage.getItem('gruppetto.nowarm') === '1'; } catch { /* egal */ }
   if (inUse > 0 || off || (spare && !reuse && fits(spare))) return Promise.resolve();
+  // die Bühne im Vorrat passt nicht mehr (PC-Grafik umgeschaltet, Kontext verloren): erst freigeben, dem Browser
+  // einen Moment zum Aufräumen lassen, dann eine neue anlegen (sofort hintereinander blieb das Bild manchmal schwarz)
+  if (spare && !fits(spare)) {
+    drop(spare);
+    spare = null;
+    return new Promise<void>((r) => window.setTimeout(r, 350)).then(() => prewarm(make, theme, game, reuse, frames));
+  }
   let s: Stage;
   // Umbau: die Bühne bleibt im Vorrat (ein Spiel darf sie jederzeit nehmen – dann hört der Umbau einfach auf)
   let held = false;
@@ -106,7 +148,6 @@ export function prewarm(make: () => WarmEngine, theme: { accent: string; dark: b
     s = spare;
     held = true;
   } else {
-    if (spare) { drop(spare); spare = null; }
     try {
       s = makeStage();
     } catch {

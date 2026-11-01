@@ -41,7 +41,9 @@ test('Stufe wechseln: Schalter, Sichtweite, Takt und Meldungen folgen', () => {
   const offAny = G.onGfxSettings(() => { any += 1; });
   G.setGfxLevel(1);
   assert.equal(G.gfxOn('lite'), true);
-  assert.equal(G.gfxAA(), false);
+  // Kantenglättung bleibt an: ein Stufenwechsel braucht nie einen neuen Grafikkontext
+  assert.equal(G.gfxAA(), true);
+  assert.ok(G.GFX_LEVELS.every((l) => l.aa));
   assert.equal(viewRange().label, 'Einfach');
   assert.deepEqual(seen, ['lite=true', 'schatten=false', 'details=false']);
   G.setGfxLevel(10);

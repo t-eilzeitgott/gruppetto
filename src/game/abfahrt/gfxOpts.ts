@@ -7,7 +7,8 @@
  *  - Sichtweite: Einfach (Minimal) · Kurz · Normal · Weit · Max · Ultra · Extrem (viewRange.ts)
  *  - lite (Stufe 1–2): schlichte Fahrer (eigener in einfacher Detailstufe, weniger 3D-Modelle), ruhiger Himmel ohne
  *    Wolkentürme und Vögel, ohne Weichzeichner unter Namensschildern
- *  - Kantenglättung (ab Stufe 3; gilt ab dem nächsten Spielstart, sie gehört zur Bühne)
+ *  - Kantenglättung: in allen Stufen an. Sie gehört zum Grafikkontext; wechselte sie mit der Stufe, entstünde bei
+ *    jedem Wechsel über die Grenze ein neuer Kontext – auf dem iPhone blieb danach das Bild manchmal schwarz.
  *  - schatten (ab 6): Sonnenschatten (ein zweiter Zeichendurchgang je Bild)
  *  - details (ab 7): feine Landschafts-Shader – Relief im Licht, Baumkronen mit Licht und Schatten, Felsstruktur,
  *    Rinnen und Schichten, ziehende Wolkenschatten, Flecken im Straßenbelag (siehe render3d.ts)
@@ -40,8 +41,8 @@ const L = (name: string, range: GfxRange, o: Partial<GfxLevel> = {}): GfxLevel =
 
 /** Stufe 1 … 10 (Index 0 … 9) */
 export const GFX_LEVELS: GfxLevel[] = [
-  L('Minimal', 'lite', { lite: true, aa: false }),
-  L('Sehr niedrig', 'eco', { lite: true, aa: false }),
+  L('Minimal', 'lite', { lite: true }),
+  L('Sehr niedrig', 'eco', { lite: true }),
   L('Niedrig', 'eco'),
   L('Mittel', 'normal'),
   L('Gut', 'far'),

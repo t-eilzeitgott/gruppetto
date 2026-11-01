@@ -3,7 +3,7 @@
  * Tastatur, Fahrerauswahl, Bestenlisten und Podium.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { acquireStage, hasWarmStage, releaseStage, type Stage } from '../game/abfahrt/pool';
+import { acquireStage, hasWarmStage, releaseStage, watchStage, type Stage } from '../game/abfahrt/pool';
 import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock, paceText } from '../game/frameClock';
 import { gfxLevel, gfxRes } from '../game/abfahrt/gfxOpts';
@@ -115,6 +115,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       let rebuilt = false;
       let drawn = false;
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGen((x) => x + 1); } };
+      // Wächter: Leinwand eingehängt, Bild kommt an – sonst neue Bühne (pool.ts)
+      const watch = watchStage(st, stage);
       // Bildrate für Admins (unauffällig unten links)
       const fps = new FpsMeter(stage);
       let lastDraw = 0;
@@ -153,7 +155,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         const c0 = performance.now();
         renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.target));
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : idle ? Math.min(0.1, idleT) : dt, raw);
-      if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
+        if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
+        if (!low && watch()) { rebuild(); return; }
         idleT = 0;
         cb.current.onFrame(eng, dt);
         fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0, gfxRes(), renderer.shaderErrors);
