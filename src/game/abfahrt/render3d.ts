@@ -94,6 +94,10 @@ function texMean(cv: HTMLCanvasElement, srgb: boolean, ch = 0): number {
 }
 
 const CH = 40;            // Segmente je Abschnitt (80 m)
+/** Spalten der Fahrbahn quer (für ihr Relief; je etwa 40 cm) */
+const ROAD_COLS = 14;
+/** so viel stärker zeichnet sich das Relief der Fahrbahn im Licht ab (nur die Normalen) */
+const ROAD_SHADE = 3;
 let AHEAD = VR0.ahead;        // so weit voraus wird gebaut (m, aus der Sichtweite)
 const BEHIND = 30;
 /** Wasserfälle liegen auf der feinen Stufe; weiter weg folgen sie der mittleren (aDy.x), dann der gröbsten (aDy.y) */
@@ -354,7 +358,8 @@ const along = (i: number, k: number, per = 5) => {
 const GUTTER_PROF: [number, number, number][] = [[EDGE - GUTTER_W, 0, 0], [EDGE - GUTTER_W * 0.45, -0.022, 0.55], [EDGE, -0.032, 1]];
 
 /** Straßenquerschnitt an einem Segmentanfang; e: zusätzliche halbe Fahrbahnbreite (Straße mal breiter, mal enger) */
-interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg; e: number }
+/** Querschnitt der Straße am Segmentanfang: Mitte (ohne Relief), Querrichtung, Streckenmeter m, Mehrbreite e */
+interface Row { x: number; y: number; z: number; rx: number; rz: number; th: number; seg: Seg; e: number; m: number }
 /** ab hier (|x|, m) gehört ein Punkt zum Fahrbahnrand und rückt mit der Breite nach außen; die Mitte bleibt */
 const EDGE_IN = ROAD_HALF - 0.5;
 /** Querlage x an einer Stelle mit zusätzlicher halber Breite e */
@@ -1068,7 +1073,7 @@ export class Renderer3D {
     // Mehrbreite); grain: Korn in der Nähe; warp: Koordinaten weich verbogen (keine Wiederholung der Kachel);
     // edge: organischer Übergang am Rand (aX: Farbe des Bodens daneben, Anteil quer 0 … 1) – 'verge' innen zur
     // Fahrbahn und außen zum Gelände, 'walk' außen zum Gelände
-    const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number, wear = false, grain = 0, warp = false, edge: '' | 'verge' | 'walk' = '') => {
+    const roadify = (m: THREE.MeshLambertMaterial, key: string, patch: number, wear = false, grain = 0, warp = false, edge: '' | 'verge' | 'walk' = '', sheen = 0) => {
       m.onBeforeCompile = (sh) => {
         const rich = !gfxOn('lite');
         Object.assign(sh.uniforms, roadU, { uLampP: LAMP_U.uLampP, uLampCol: LAMP_U.uLampCol });
@@ -1079,6 +1084,19 @@ export class Renderer3D {
           .replace('#include <common>', `#include <common>\n${rich ? '#define ROAD_RICH\n' : ''}uniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform sampler2D uGrain;\nuniform float uTime;\nvarying vec3 vWP;${edge ? '\nuniform sampler2D uGrassE;\nuniform vec3 uGrassEM;\nvarying vec4 vX;' : ''}${wear ? `\nvarying vec3 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
           // Lichtkegel der Laternen auf Straße und Bankett
           .replace('#include <lights_fragment_end>', lampFrag('vWP'))
+          // matter Glanz bei flachem Blick: der Himmel (Farbe des Dunstes) spiegelt sich auf dem Belag – so zeichnen
+          // sich Wellen, Dach und Querneigung der Fahrbahn in der Ferne ab wie auf einer echten Straße
+          .replace('#include <envmap_fragment>', sheen > 0 ? `#include <envmap_fragment>
+            {
+              float sNv = clamp(dot(normal, geometryViewDir), 0.0, 1.0);
+              float sFr = pow(1.0 - sNv, 5.0) * ${sheen.toFixed(2)};
+              #ifdef USE_FOG
+                vec3 sSky = fogColor;
+              #else
+                vec3 sSky = vec3(0.6);
+              #endif
+              outgoingLight = mix(outgoingLight, sSky * 0.8, sFr);
+            }` : '#include <envmap_fragment>')
           .replace('#include <map_fragment>', `
             #ifdef USE_MAP
               ${wear || warp ? `// Körnung ohne erkennbare Wiederholung (sonst alle 5 m dieselben Steine): Koordinaten weich verbogen
@@ -1115,12 +1133,12 @@ export class Renderer3D {
               ${gfxOn('details') ? CLOUD('vWP.xz') : ''}
             #endif`);
       };
-      m.customProgramCacheKey = () => `road-${key}${wear ? 'w' : ''}${grain > 0 ? 'k' : ''}${warp ? 'p' : ''}${edge}${dk()}${gfxOn('lite') ? '' : '+r'}|L`;
+      m.customProgramCacheKey = () => `road-${key}${wear ? 'w' : ''}${grain > 0 ? 'k' : ''}${warp ? 'p' : ''}${edge}${sheen > 0 ? 's' : ''}${dk()}${gfxOn('lite') ? '' : '+r'}|L`;
     };
-    roadify(this.mats.asphalt, 'a', 0.34, true, 0.45);
-    roadify(this.mats.fresh, 'f', 0.18, true, 0.35);
-    roadify(this.mats.cobble, 'c', 0.36);
-    roadify(this.mats.gravel, 'g', 0.4, false, 0.3);
+    roadify(this.mats.asphalt, 'a', 0.34, true, 0.45, false, '', 0.14);
+    roadify(this.mats.fresh, 'f', 0.18, true, 0.35, false, '', 0.17);
+    roadify(this.mats.cobble, 'c', 0.36, false, 0, false, '', 0.2);
+    roadify(this.mats.gravel, 'g', 0.4, false, 0.3, false, '', 0.06);
     roadify(this.mats.verge, 'v', 0.45, false, 0.3, true, 'verge');
     roadify(this.mats.walk, 'wk', 0.3, false, 0, false, 'walk');
     roadify(this.mats.walk2, 'wk2', 0.3, false, 0, false, 'walk');
@@ -1732,6 +1750,8 @@ export class Renderer3D {
     }
     this.time.value += dt;
     if (this.track !== g.track) {
+      // diese Welt baut die Fahrbahn mit Relief – alles auf der Straße folgt ihm (Track.lift)
+      g.track.relief = true;
       // gleiche Tagesstrecke (neuer Lauf, nachgeladene Namen): Landschaft behalten – sie ist identisch,
       // ein Neuaufbau würde ruckeln. Nur Namen auf Schildern und Straße ändern sich.
       const old = this.track;
@@ -2082,6 +2102,7 @@ export class Renderer3D {
 
   private reset(track: Track) {
     this.track = track;
+    track.relief = true;
     this.applyGround(track);
     // Abfahrt: ein fester Abendhimmel (dramatischer Himmel, sky.ts) statt der Stimmung des Tages
     this.mood = track.kind === 'descent' ? { ...DESCENT_SKY } : dailyMood(track.seed);
@@ -3060,7 +3081,9 @@ export class Renderer3D {
     const rk = this.revealK(track, p.z);
     const back = CAM_BACK + (SPRINT_BACK - CAM_BACK) * cam.pack + 3.2 * rk;
     const behindY = track.heightAt(Math.max(0, p.z - back));
-    const ty = Math.max(behindY, roadY) + CAM_UP + (SPRINT_UP - CAM_UP) * cam.pack + air * 0.35 + 4.2 * rk;
+    // die Kamera fährt wie auf dem Motorrad über dieselben Wellen (etwas gedämpft)
+    const bump = track.lift(Math.max(0, p.z - back), p.x) * 0.8;
+    const ty = Math.max(behindY, roadY) + bump + CAM_UP + (SPRINT_UP - CAM_UP) * cam.pack + air * 0.35 + 4.2 * rk;
     if (still) {
       cam.th = yaw;
       cam.y = ty;
@@ -3105,7 +3128,10 @@ export class Renderer3D {
     }
     const look = 15 + 2 * cam.pack + 12 * rk;
     const aheadY = track.heightAt(p.z + look);
-    A.look.set(rx + fx * look, roadY + (aheadY - roadY) * 0.55 + 0.9 + air * 0.4 + 2.2 * rk, rz + fz * look);
+    // der Steigung nur zum Teil nachschauen: der Horizont bleibt ruhiger, die Straße steigt sichtbar im Bild an
+    // (in der Abfahrt wie bisher – dort geht es um den Blick in die Kurven)
+    const follow = descent ? 0.55 : 0.3;
+    A.look.set(rx + fx * look, roadY + (aheadY - roadY) * follow + 0.9 + air * 0.4 + 2.2 * rk, rz + fz * look);
     cam.x = rx; cam.z = rz;
     // Sichtfeld: hochkant mehr Höhe, bei Tempo etwas weiter (Geschwindigkeitsgefühl)
     const aspect = this.W / this.H;
@@ -3954,8 +3980,9 @@ export class Renderer3D {
   }
 
   private row(z: number, seg: Seg): Row {
-    const w = this.track!.world(z, 0, 0, this.w);
-    return { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), th: w.th, seg, e: this.track!.extra(seg.i) };
+    // (ohne Relief: das kommt je Punkt quer dazu, siehe P in chunkSteps)
+    const w = this.track!.world(z, 0, 0, this.w, true);
+    return { x: w.x, y: w.y, z: w.z, rx: Math.cos(w.th), rz: Math.sin(w.th), th: w.th, seg, e: this.track!.extra(seg.i), m: z };
   }
 
   /**
@@ -4011,8 +4038,9 @@ export class Renderer3D {
     for (let r = 0; r <= CH; r++) rows.push(this.row((i0 + r) * SEG, t.seg(i0 + r)));
     // P: alles ab dem Fahrbahnrand (Randlinie, Bankett, Gelände, Begrenzungen) rückt mit der Breite nach außen;
     // P0: unverschoben (Mitte der Fahrbahn: Schriften, Schachtdeckel)
-    const P0 = (r: Row, x: number, h: number): number[] => [r.x + r.rx * x, r.y + h, r.z + r.rz * x];
-    const P = (r: Row, x: number, h: number): number[] => { const xx = widen(x, r.e); return [r.x + r.rx * xx, r.y + h, r.z + r.rz * xx]; };
+    // Höhe mit dem Relief der Fahrbahn (Dach, Querneigung, Wellen; daneben läuft es aus) – alles folgt ihm
+    const P0 = (r: Row, x: number, h: number): number[] => [r.x + r.rx * x, r.y + h + t.lift(r.m, x), r.z + r.rz * x];
+    const P = (r: Row, x: number, h: number): number[] => { const xx = widen(x, r.e); return [r.x + r.rx * xx, r.y + h + t.lift(r.m, xx), r.z + r.rz * xx]; };
     // Korridor (Gelände) ab dem verschobenen Bankett gemessen: um die Mehrbreite kürzer
     const lim = { L: [] as number[], R: [] as number[] };
     for (let r = 0; r <= CH; r++) { const [l, rr] = this.terrain!.lim(i0 + r); lim.L.push(l - rows[r].e); lim.R.push(rr - rows[r].e); }
@@ -4115,39 +4143,40 @@ export class Renderer3D {
         // Ränder: die Asphaltkante schwankt (asphEdge), wo kein Gehweg ist
         const wLa = this.asphEdge(a, -1), wRa = this.asphEdge(a, 1), wLb = this.asphEdge(b, -1), wRb = this.asphEdge(b, 1);
         const nx = t.seg(s.i + 1);
-        if (nx.tunnel || nx.surface === s.surface || !surf[nx.surface]) {
-          surf[s.surface].quadC(P0(a, -ha - wLa, 0), P0(a, ha + wRa, 0), P0(b, hb + wRb, 0), P0(b, -hb - wLb, 0),
-            [-a.e - wLa, za0, a.e + pl], [2 * ROAD_HALF + a.e + wRa, za0, a.e + pr], [2 * ROAD_HALF + b.e + wRb, zb0, b.e + pr], [-b.e - wLb, zb0, b.e + pl],
-            [[-(ha + wLa) / tl, va], [(ha + wRa) / tl, va], [(hb + wRb) / tl, vb], [-(hb + wLb) / tl, vb]]);
-        } else {
-          // Belag wechselt (alt – neu – Pflaster – Schotter): die Grenze läuft nicht als Lineal quer über die Straße,
-          // sondern unregelmäßig innerhalb dieses Stücks (je 12 Spalten ein eigener Abstand, weich verbunden)
-          const N = 12;
-          const tlB = this.gsz[nx.surface] ?? 5;
-          const voB = Math.floor((i0 * SEG) / tlB);
-          const fq: number[] = [];
-          for (let c = 0; c <= N; c++) fq.push(Math.max(0.08, Math.min(0.92, 0.5 + along(c, s.i * 7 + 3, 1.6) * 0.9 + (hash(s.i * 41 + c * 13) - 0.5) * 0.18)));
-          const xl = (wl: number, wr: number, hh: number, f: number) => -hh - wl + (2 * hh + wl + wr) * f;
-          const rl = (r: Row, wl: number, wr: number, f: number) => -r.e - wl + (2 * ROAD_HALF + 2 * r.e + wl + wr) * f;
-          const pt = (f: number, q: number) => {
-            const A = P0(a, xl(wLa, wRa, ha, f), 0), B = P0(b, xl(wLb, wRb, hb, f), 0);
-            return [A[0] + (B[0] - A[0]) * q, A[1] + (B[1] - A[1]) * q, A[2] + (B[2] - A[2]) * q];
-          };
-          const ro = (f: number, q: number): RGBf => {
-            const xa = rl(a, wLa, wRa, f), xb = rl(b, wLb, wRb, f);
-            const ea = a.e + pl + (pr - pl) * f, eb = b.e + pl + (pr - pl) * f;
-            return [xa + (xb - xa) * q, za0 + (zb0 - za0) * q, ea + (eb - ea) * q];
-          };
-          const uvA = (f: number, q: number, tt: number, vo2: number) => {
-            const lat = xl(wLa, wRa, ha, f) * (1 - q) + xl(wLb, wRb, hb, f) * q;
-            return [lat / tt, (za + (zb - za) * q) / tt - vo2];
-          };
-          for (let c = 0; c < N; c++) {
-            const f0 = c / N, f1 = (c + 1) / N;
-            const q0 = fq[c], q1 = fq[c + 1];
-            surf[s.surface].quadC(pt(f0, 0), pt(f1, 0), pt(f1, q1), pt(f0, q0), ro(f0, 0), ro(f1, 0), ro(f1, q1), ro(f0, q0),
-              [uvA(f0, 0, tl, vo), uvA(f1, 0, tl, vo), uvA(f1, q1, tl, vo), uvA(f0, q0, tl, vo)]);
-            surf[nx.surface].quadC(pt(f0, q0), pt(f1, q1), pt(f1, 1), pt(f0, 1), ro(f0, q0), ro(f1, q1), ro(f1, 1), ro(f0, 1),
+        // Fahrbahn in Spalten quer: das Relief (Dach, Querneigung, Wellen, Spurrinnen) braucht Punkte über die Breite.
+        // Wechselt der Belag (alt – neu – Pflaster – Schotter), läuft die Grenze nicht als Lineal quer über die Straße,
+        // sondern unregelmäßig innerhalb dieses Stücks (je Spalte ein eigener Abstand, weich verbunden).
+        // (Immer gleich viele Spalten an gleicher Stelle: die Kanten der Nachbarstücke treffen sich ohne Ritzen.)
+        const change = !(nx.tunnel || nx.surface === s.surface || !surf[nx.surface]);
+        const N = ROAD_COLS;
+        const tlB = change ? this.gsz[nx.surface] ?? 5 : tl;
+        const voB = Math.floor((i0 * SEG) / tlB);
+        const fq: number[] = [];
+        for (let c = 0; c <= N; c++) fq.push(change ? Math.max(0.08, Math.min(0.92, 0.5 + along(c, s.i * 7 + 3, 1.6) * 0.9 + (hash(s.i * 41 + c * 13) - 0.5) * 0.18)) : 1);
+        const xl = (wl: number, wr: number, hh: number, f: number) => -hh - wl + (2 * hh + wl + wr) * f;
+        const rl = (r: Row, wl: number, wr: number, f: number) => -r.e - wl + (2 * ROAD_HALF + 2 * r.e + wl + wr) * f;
+        const cA: number[][] = [], cB: number[][] = [];
+        for (let c = 0; c <= N; c++) { cA.push(P0(a, xl(wLa, wRa, ha, c / N), 0)); cB.push(P0(b, xl(wLb, wRb, hb, c / N), 0)); }
+        const pt = (c: number, q: number) => {
+          const A = cA[c], B = cB[c];
+          return q <= 0 ? A : q >= 1 ? B : [A[0] + (B[0] - A[0]) * q, A[1] + (B[1] - A[1]) * q, A[2] + (B[2] - A[2]) * q];
+        };
+        const ro = (f: number, q: number): RGBf => {
+          const xa = rl(a, wLa, wRa, f), xb = rl(b, wLb, wRb, f);
+          const ea = a.e + pl + (pr - pl) * f, eb = b.e + pl + (pr - pl) * f;
+          return [xa + (xb - xa) * q, za0 + (zb0 - za0) * q, ea + (eb - ea) * q];
+        };
+        const uvA = (f: number, q: number, tt: number, vo2: number) => {
+          const lat = xl(wLa, wRa, ha, f) * (1 - q) + xl(wLb, wRb, hb, f) * q;
+          return [lat / tt, (za + (zb - za) * q) / tt - vo2];
+        };
+        for (let c = 0; c < N; c++) {
+          const f0 = c / N, f1 = (c + 1) / N;
+          const q0 = fq[c], q1 = fq[c + 1];
+          surf[s.surface].quadC(pt(c, 0), pt(c + 1, 0), pt(c + 1, q1), pt(c, q0), ro(f0, 0), ro(f1, 0), ro(f1, q1), ro(f0, q0),
+            [uvA(f0, 0, tl, vo), uvA(f1, 0, tl, vo), uvA(f1, q1, tl, vo), uvA(f0, q0, tl, vo)]);
+          if (change) {
+            surf[nx.surface].quadC(pt(c, q0), pt(c + 1, q1), pt(c + 1, 1), pt(c, 1), ro(f0, q0), ro(f1, q1), ro(f1, 1), ro(f0, 1),
               [uvA(f0, q0, tlB, voB), uvA(f1, q1, tlB, voB), uvA(f1, 1, tlB, voB), uvA(f0, 1, tlB, voB)]);
           }
         }
@@ -4299,7 +4328,9 @@ export class Renderer3D {
     // Fahrbahn: die Eckfarbe trägt die Straßenmeter (aRoad)
     const addRoad = (gb: GB, m: THREE.Material) => {
       if (gb.empty) return;
-      const geo = gb.build();
+      // Normalen aus dem Relief (weich, im Licht verstärkt): Dach, Wellen und Querneigung zeichnen sich ab
+      const geo = gb.build(false);
+      this.roadNormals(geo, wBase);
       geo.setAttribute('aRoad', geo.getAttribute('color'));
       geo.deleteAttribute('color');
       disp.push(geo);
@@ -4773,7 +4804,7 @@ export class Renderer3D {
   /** Punkt auf der Fahrbahnebene: quer lat (ohne Verbreiterung), längs al ab dem Querschnitt a (Steigung zu b) */
   private onRoad(a: Row, b: Row, lat: number, al: number, hh: number): number[] {
     const fx = Math.sin(a.th), fz = -Math.cos(a.th);
-    return [a.x + a.rx * lat + fx * al, a.y + (b.y - a.y) * (al / SEG) + hh, a.z + a.rz * lat + fz * al];
+    return [a.x + a.rx * lat + fx * al, a.y + (b.y - a.y) * (al / SEG) + hh + this.track!.lift(a.m + al, lat), a.z + a.rz * lat + fz * al];
   }
 
   /** runder Deckel (Zelle 0–3, 6 im Atlas) mit Rahmen und Flicken rundum, k: Größe */
@@ -4945,8 +4976,8 @@ export class Renderer3D {
       for (let q = 0; q < N; q++) {
         const t0 = q / N;
         const t1 = (q + 1) / N;
-        const r0 = { ...a, x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0, z: a.z + (b.z - a.z) * t0, rx: a.rx + (b.rx - a.rx) * t0, rz: a.rz + (b.rz - a.rz) * t0 };
-        const r1 = { ...a, x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1, z: a.z + (b.z - a.z) * t1, rx: a.rx + (b.rx - a.rx) * t1, rz: a.rz + (b.rz - a.rz) * t1 };
+        const r0 = { ...a, m: a.m + (b.m - a.m) * t0, x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0, z: a.z + (b.z - a.z) * t0, rx: a.rx + (b.rx - a.rx) * t0, rz: a.rz + (b.rz - a.rz) * t0 };
+        const r1 = { ...a, m: a.m + (b.m - a.m) * t1, x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1, z: a.z + (b.z - a.z) * t1, rx: a.rx + (b.rx - a.rx) * t1, rz: a.rz + (b.rz - a.rz) * t1 };
         const h0 = arch(s.i, t0);
         const h1 = arch(s.i, t1);
         const A0 = P(r0, x, -0.02); const A1 = P(r0, x, h0); const B0 = P(r1, x, -0.02); const B1 = P(r1, x, h1);
@@ -4959,7 +4990,7 @@ export class Renderer3D {
         const g = Math.min(ground(a, x), ground(a, -x)) - 0.5;
         const top = arch(s.i, 0) + 0.3;
         const xi = sg * (EDGE + 0.25);
-        const corners = (dz: number, h: number) => { const r2 = { ...a, x: a.x + (b.x - a.x) * dz, y: a.y + (b.y - a.y) * dz, z: a.z + (b.z - a.z) * dz, rx: a.rx, rz: a.rz }; return P(r2, xi, h); };
+        const corners = (dz: number, h: number) => { const r2 = { ...a, m: a.m + (b.m - a.m) * dz, x: a.x + (b.x - a.x) * dz, y: a.y + (b.y - a.y) * dz, z: a.z + (b.z - a.z) * dz, rx: a.rx, rz: a.rz }; return P(r2, xi, h); };
         const d0 = -PIER / SEG; const d1 = PIER / SEG;
         // Außenfläche des Pfeilers (unter der Bogenwand) und seine beiden Flanken
         const F0 = corners(d0, top); const F1 = corners(d1, top); const G0 = corners(d0, g); const G1 = corners(d1, g);
@@ -4967,7 +4998,7 @@ export class Renderer3D {
         if (sg > 0) mas.quad(F0, G0, G1, F1, st, uvp); else mas.quad(G0, F0, F1, G1, st, [uvp[1], uvp[0], uvp[3], uvp[2]]);
         // Flanken quer zur Straße (zur Mitte hin bis zur anderen Seite)
         const xm = 0;
-        const Fi0 = (dz: number, h: number) => { const r2 = { ...a, x: a.x + (b.x - a.x) * dz, y: a.y + (b.y - a.y) * dz, z: a.z + (b.z - a.z) * dz, rx: a.rx, rz: a.rz }; return P(r2, xm, h); };
+        const Fi0 = (dz: number, h: number) => { const r2 = { ...a, m: a.m + (b.m - a.m) * dz, x: a.x + (b.x - a.x) * dz, y: a.y + (b.y - a.y) * dz, z: a.z + (b.z - a.z) * dz, rx: a.rx, rz: a.rz }; return P(r2, xm, h); };
         for (const [dz, flip] of [[d0, sg > 0], [d1, sg < 0]] as [number, boolean][]) {
           const o0 = corners(dz, top); const o1 = corners(dz, g); const m0 = Fi0(dz, top); const m1 = Fi0(dz, g);
           const uvf = [[0, top / uvS], [0, g / uvS], [EDGE / uvS, g / uvS], [EDGE / uvS, top / uvS]];
@@ -5758,6 +5789,8 @@ export class Renderer3D {
     const sx = widen(sp.x, a.e);
     const ex = Math.abs(sx) - ax;
     let h = sp.h;
+    // auf und neben der Fahrbahn: mit ihrem Relief (auf dem Gelände und dem See gilt deren Höhe)
+    let lift = this.track!.liftRow(a.seg.i, sx);
     const px = a.x + a.rx * sx;
     const pz = a.z + a.rz * sx;
     // nicht auf eine andere Straße stellen (Serpentinen liegen oft nur 40 m auseinander)
@@ -5767,15 +5800,17 @@ export class Renderer3D {
       if (side.ground === 'water' && ax > EDGE + 4) {
         if (sp.k !== 'boat') return;
         h = this.terrain!.lakeOf(s.sec) - a.y;            // Boote schwimmen auf dem See
+        lift = 0;
       } else if (ax > lim - 0.5) {
         h = this.terrain!.heightIn(this.region!, px, pz) - 0.3 - a.y;   // auf der Landschaft
+        lift = 0;
       } else {
         const gh = this.groundAt(side, s, sg, ax - EDGE, lim);
         if (gh === null) return;
         h = gh;
       }
     }
-    const py = a.y + h;
+    const py = a.y + h + lift;
     const fx = Math.sin(a.th);
     const fz = -Math.cos(a.th);
     if (PROP3D.has(sp.k)) {
@@ -5861,7 +5896,14 @@ export class Renderer3D {
         // engere Stelle: die Schrift bleibt auf der Fahrbahn
         const wa = d.w * Math.min(1, (ROAD_HALF + a.e) / ROAD_HALF);
         const wb = d.w * Math.min(1, (ROAD_HALF + b.e) / ROAD_HALF);
-        gb.quad(P(a, d.x - wa, H), P(a, d.x + wa, H), P(b, d.x + wb, H), P(b, d.x - wb, H), [1, 1, 1], [[0, v0], [1, v0], [1, v1], [0, v1]]);
+        // in Streifen quer, damit die Schrift dem Relief der Fahrbahn folgt (sonst taucht sie im Dach unter)
+        const M = Math.max(2, Math.ceil((2 * Math.max(wa, wb)) / 0.4));
+        for (let q = 0; q < M; q++) {
+          const u0 = q / M, u1 = (q + 1) / M;
+          const xa0 = d.x - wa + 2 * wa * u0, xa1 = d.x - wa + 2 * wa * u1;
+          const xb0 = d.x - wb + 2 * wb * u0, xb1 = d.x - wb + 2 * wb * u1;
+          gb.quad(P(a, xa0, H), P(a, xa1, H), P(b, xb1, H), P(b, xb0, H), [1, 1, 1], [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+        }
       }
       const key = `${d.k}:${d.text}`;
       let tex = this.labelTex.get(key);
@@ -5892,11 +5934,14 @@ export class Renderer3D {
         const t0 = q / 4;
         const mid = (u: number[], v: number[], t: number) => [u[0] + (v[0] - u[0]) * t, u[1] + (v[1] - u[1]) * t, u[2] + (v[2] - u[2]) * t];
         // über die ganze (auch breitere) Fahrbahn
-        const A0 = P(a, -ROAD_HALF - a.e, H);
-        const A1 = P(a, ROAD_HALF + a.e, H);
-        const B0 = P(b, -ROAD_HALF - b.e, H);
-        const B1 = P(b, ROAD_HALF + b.e, H);
-        marks.quad(mid(A0, B0, t0), mid(A1, B1, t0), mid(A1, B1, t0 + 0.12), mid(A0, B0, t0 + 0.12), lin('#bfc3c8'));
+        // (in Stücken quer: folgt dem Relief der Fahrbahn)
+        const Q = ROAD_COLS;
+        for (let c = 0; c < Q; c++) {
+          const xa0 = -ROAD_HALF - a.e + (2 * (ROAD_HALF + a.e) * c) / Q, xa1 = -ROAD_HALF - a.e + (2 * (ROAD_HALF + a.e) * (c + 1)) / Q;
+          const xb0 = -ROAD_HALF - b.e + (2 * (ROAD_HALF + b.e) * c) / Q, xb1 = -ROAD_HALF - b.e + (2 * (ROAD_HALF + b.e) * (c + 1)) / Q;
+          const A0 = P(a, xa0, H), A1 = P(a, xa1, H), B0 = P(b, xb0, H), B1 = P(b, xb1, H);
+          marks.quad(mid(A0, B0, t0), mid(A1, B1, t0), mid(A1, B1, t0 + 0.12), mid(A0, B0, t0 + 0.12), lin('#bfc3c8'));
+        }
       } else if (d.k === 'manhole' && k === 0 && this.paveGB) {
         this.roundCover(this.paveGB.covers, a, b, d.x, 1, Math.floor(hash(a.seg.i * 7 + 1) * 4));
       }
@@ -6475,6 +6520,14 @@ export class Renderer3D {
     track.world(p.z, p.x, 0, w);
     pm.group.position.set(w.x, w.y + air, w.z);
     pm.group.rotation.y = -w.th;
+    // Rad und Fahrer neigen sich mit der Straße (bergauf vorn höher, über Bodenwellen ein wenig) – nicht im Sturz
+    // (im Sprung über eine Kuppe weich zurück in die Waagrechte statt auf einen Schlag)
+    // (am Start wartet das Rad waagrecht auf dem Podest – erst mit „Los“ geht es auf die Rampe)
+    const down = g.wreck || g.phase === 'crash' || g.phase === 'over';
+    const wait = g.phase === 'ready' || g.phase === 'countdown';
+    const wantPitch = down || wait || air > 0.05 ? 0 : this.pitchAt(track, p.z, p.x);
+    this.playerPitch = down || wait ? wantPitch : this.playerPitch + (wantPitch - this.playerPitch) * (1 - Math.exp(-this.lastDt * 12));
+    pm.group.rotation.x = this.playerPitch;
     pm.shadow.position.y = 0.03 - air;
     (pm.shadow.material as THREE.MeshBasicMaterial).opacity = 0.3 / (1 + air * 2);
     // Massensturz: Rad nach wreck.ts, Körper als Ragdoll (der Schatten bliebe sonst liegen, wo der Körper nicht ist)
@@ -6827,12 +6880,71 @@ export class Renderer3D {
     m.ragdollPose(D.d.p);
   }
 
+  /**
+   * Normalen der Fahrbahn aus ihrem Relief (statt aus den Dreiecken): weich über die Spalten hinweg und ohne Naht
+   * zwischen den Abschnitten. Die Neigung durch das Relief wird fürs Licht verstärkt (ROAD_SHADE) – sonst sähe man
+   * ein paar Zentimeter Welle auf einer Straße so wenig wie in Wirklichkeit; die Steigung selbst bleibt echt.
+   * Lage je Ecke aus den Straßenmetern (Farbe = aRoad: quer ab dem linken Rand der Normalbreite, längs ab wBase).
+   */
+  private roadNormals(geo: THREE.BufferGeometry, wBase: number) {
+    const t = this.track!;
+    const col = geo.getAttribute('color');
+    const n = col.count;
+    const out = new Float32Array(n * 3);
+    const w = this.w2;
+    const K = ROAD_SHADE;
+    // jede Ecke kommt in bis zu sechs Dreiecken vor: je Lage nur einmal rechnen
+    const seen = new Map<number, number>();
+    let lm = NaN, sx = 0, sz = 0, rx = 0, rz = 0, dy = 0;
+    for (let i = 0; i < n; i++) {
+      const um = col.getX(i), vm = col.getY(i);
+      const key = Math.round(vm * 16) * 8192 + Math.round((um + 20) * 64);
+      const hit = seen.get(key);
+      if (hit !== undefined) { out[i * 3] = out[hit * 3]; out[i * 3 + 1] = out[hit * 3 + 1]; out[i * 3 + 2] = out[hit * 3 + 2]; continue; }
+      seen.set(key, i);
+      const x = um - ROAD_HALF;
+      const m = vm + wBase;
+      if (m !== lm) {
+        lm = m;
+        t.world(m, 0, 0, w, true);
+        sx = Math.sin(w.th); sz = -Math.cos(w.th); rx = Math.cos(w.th); rz = Math.sin(w.th);
+        dy = (t.heightAt(m + 0.5) - t.heightAt(Math.max(0, m - 0.5))) / 1;
+      }
+      // (Abstände so, dass meist genau Segmentanfänge abgefragt werden – das ist am schnellsten)
+      const gx = Math.max(-0.3, Math.min(0.3, ((t.lift(m, x + 0.2) - t.lift(m, x - 0.2)) / 0.4) * K));
+      const gz = Math.max(-0.3, Math.min(0.3, ((t.lift(m + SEG, x) - t.lift(Math.max(0, m - SEG), x)) / (2 * SEG)) * K));
+      // Querrichtung R = (rx, gx, rz), Fahrtrichtung F = (sx, dy + gz, sz), Normale = R × F
+      const fy = dy + gz;
+      let nx = gx * sz - rz * fy, ny = rz * sx - rx * sz, nz = rx * fy - gx * sx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      nx /= l; ny /= l; nz /= l;
+      out[i * 3] = nx; out[i * 3 + 1] = ny; out[i * 3 + 2] = nz;
+    }
+    geo.setAttribute('normal', new THREE.BufferAttribute(out, 3));
+  }
+
+  private playerPitch = 0;
+  /** Neigung des Rads in Fahrtrichtung (rad, + = vorn höher): Steigung, wie sie zu sehen ist, und Relief unter den Rädern */
+  private pitchAt(t: Track, z: number, x: number): number {
+    const f = t.heightAt(z + 0.5) + t.lift(z + 0.5, x);
+    const b = t.heightAt(Math.max(0, z - 0.5)) + t.lift(Math.max(0, z - 0.5), x);
+    return Math.atan(f - b);
+  }
+
+  /** flach auf die Fahrbahn legen (Pfützen, Schlaglöcher): Neigung längs und quer wie die Fahrbahn darunter */
+  private onSurface(o: THREE.Object3D, t: Track, z: number, x: number, th: number) {
+    const l = t.lift(z, x - 0.4), r = t.lift(z, x + 0.4);
+    o.rotation.order = 'YXZ';
+    o.rotation.set(this.pitchAt(t, z, x), -th, Math.atan((r - l) / 0.8));
+  }
+
   /** Gegner an seinen Ort setzen; liefert die (gefederte) Pose des Bildes – angewendet nur, wenn der 3D-Fahrer zu sehen ist */
   private placeOpp(m: RiderModel, o: Opp, track: Track, pose = true): RiderPose {
     const w = this.w;
     track.world(o.z, o.x, 0, w);
     m.group.position.set(w.x, w.y, w.z);
     m.group.rotation.y = -w.th;
+    m.group.rotation.x = o.wreck ? 0 : this.pitchAt(track, o.z, o.x);
     // die Federn laufen auch, solange nur das Bild zu sehen ist (kein Nachschwingen, wenn der 3D-Fahrer wiederkommt);
     // die Haltung selbst wird dann nicht gerechnet
     let an = this.anims.get(o.id);
@@ -6961,14 +7073,14 @@ export class Renderer3D {
             m.children[1].scale.set(o.r * 1.05, 1, o.r * 0.8);
             m.children[1].position.set(0, 0.025, 0.04);
             m.position.set(w.x, w.y, w.z);
-            m.rotation.y = -th;
+            this.onSurface(m, track, o.z, o.x, th);
             break;
           }
           case 'puddle': {
             const m = this.poolGet('puddle', () => new THREE.Mesh(geo.disc, mat.puddle));
             m.scale.set(o.r * 1.2, 1, o.r * 1.6);
             m.position.set(w.x, w.y + 0.02, w.z);
-            m.rotation.y = -th;
+            this.onSurface(m, track, o.z, o.x, th);
             break;
           }
           case 'rock': {

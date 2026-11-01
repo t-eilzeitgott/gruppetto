@@ -872,7 +872,7 @@ function DescentProfile({ track, friends, members, max }: { track: Track; friend
   const pts = useMemo(() => {
     const n = 48;
     const ys: number[] = [];
-    for (let i = 0; i <= n; i++) ys.push(track.heightAt((i / n) * max));
+    for (let i = 0; i <= n; i++) ys.push(track.realHeightAt((i / n) * max));
     const top = Math.max(...ys);
     const low = Math.min(...ys);
     return ys.map((y, i) => [(i / n) * W, 8 + ((top - y) / Math.max(1, top - low)) * (H - 22)] as [number, number]);

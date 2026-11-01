@@ -27,10 +27,13 @@ test('Zeitfahrstrecke: Startort, Tal, Côte, Abfahrt, Zielort – Banner an ihre
     assert.ok(!s.tunnel);
     assert.ok(!s.objs?.length, 'keine Hindernisse');
   }
-  // Höhenprofil: Kuppe ist der höchste Punkt, Ziel etwa auf Starthöhe
+  // Höhenprofil: Kuppe ist der höchste Punkt (echt und im Bild), Ziel etwa auf Starthöhe (echt; im Bild sind die
+  // Steigungen überhöht)
   const top = t.heightAt(TT_TOP);
   for (let z = 0; z < TT_FINISH; z += 10) assert.ok(t.heightAt(z) <= top + 0.01);
-  assert.ok(Math.abs(t.heightAt(TT_FINISH) - t.heightAt(0)) < 12);
+  const topR = t.realHeightAt(TT_TOP);
+  for (let z = 0; z < TT_FINISH; z += 10) assert.ok(t.realHeightAt(z) <= topR + 0.01);
+  assert.ok(Math.abs(t.realHeightAt(TT_FINISH) - t.realHeightAt(0)) < 12);
   assert.match(t.title, /→|Zeitfahren in/);
 });
 

@@ -227,7 +227,8 @@ export class Grass3D {
           const lx = sg * (EDGE + e0 + (e1 - e0) * f + dx);
           const px = ax + arx * lx + (bx + brx * lx - ax - arx * lx) * f;
           const pz = az + arz * lx + (bz + brz * lx - az - arz * lx) * f;
-          const py = y0 + (y1 - y0) * f + ha.h + (hb.h - ha.h) * f - 0.03;
+          // (dazu das Relief der Fahrbahn, das neben ihr ausläuft – wie das Bankett darunter)
+          const py = y0 + (y1 - y0) * f + ha.h + (hb.h - ha.h) * f - 0.03 + t.lift((i + f) * SEG, lx);
           const sc = (0.7 + r() * 0.6) * (0.55 + 0.45 * edgeK);
           const yaw = r() * Math.PI * 2;
           const cs = Math.cos(yaw), sn = Math.sin(yaw);

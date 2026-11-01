@@ -365,7 +365,7 @@ function BergProfile({ track }: { track: Track }) {
   const pts = useMemo(() => {
     const n = 60;
     const ys: number[] = [];
-    for (let i = 0; i <= n; i++) ys.push(track.heightAt((i / n) * MOUNTAIN_FINISH));
+    for (let i = 0; i <= n; i++) ys.push(track.realHeightAt((i / n) * MOUNTAIN_FINISH));
     const top = Math.max(...ys);
     const low = Math.min(...ys);
     return ys.map((y, i) => [(i / n) * W, 4 + ((top - y) / Math.max(1, top - low)) * (H - 10)] as [number, number]);

@@ -504,8 +504,11 @@ export class Terrain {
     const hit = this.lakeCache.get(secIndex);
     if (hit !== undefined) return hit;
     const sec = this.track.sections[secIndex];
+    // tiefste Stelle des Abschnitts (wellige Seestraße: auch in einer Senke nicht unter Wasser)
     const last = this.track.seg(sec.end - 1);
-    const y = last.y + last.grade * SEG - 1.6;
+    let low = last.y + last.dy * SEG;
+    for (let i = Math.max(this.track.first, sec.start); i < sec.end; i += 2) low = Math.min(low, this.track.seg(i).y);
+    const y = low - 1.6;
     this.lakeCache.set(secIndex, y);
     return y;
   }
@@ -921,7 +924,7 @@ export class Terrain {
           tun = deep ? 1 : 2;
         }
         if (len + SEGW > list.length) { const nb = new Float64Array(list.length * 2); nb.set(list); list = this.segBuf = nb; }
-        list[len] = s.wx; list[len + 1] = s.wz; list[len + 2] = Math.min(s.y, s.y + s.grade * SEG); list[len + 3] = Math.cos(s.th); list[len + 4] = Math.sin(s.th);
+        list[len] = s.wx; list[len + 1] = s.wz; list[len + 2] = Math.min(s.y, s.y + s.dy * SEG); list[len + 3] = Math.cos(s.th); list[len + 4] = Math.sin(s.th);
         list[len + 5] = tun; list[len + 6] = s.portal; list[len + 7] = lL; list[len + 8] = lR;
         list[len + 9] = s.bridge;
         // Ortszone links/rechts: Häuser hier oder in der Nähe (Lücken zwischen Häusern gehören dazu)

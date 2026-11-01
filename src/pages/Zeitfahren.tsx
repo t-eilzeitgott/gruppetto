@@ -426,7 +426,7 @@ type Strip = { ys: number[]; n: number };
 function stripPoints(track: Track): Strip {
   const n = 100;
   const hs: number[] = [];
-  for (let i = 0; i <= n; i++) hs.push(track.heightAt((i / n) * TT_FINISH));
+  for (let i = 0; i <= n; i++) hs.push(track.realHeightAt((i / n) * TT_FINISH));
   const top = Math.max(...hs);
   const low = Math.min(...hs);
   return { ys: hs.map((h) => 5 + ((top - h) / Math.max(1, top - low)) * (STRIP_H - 10)), n };
@@ -464,7 +464,7 @@ function TtProfile({ track, ref_ }: { track: Track; ref_: StageRef | null }) {
   const pts = useMemo(() => {
     const n = 90;
     const ys: number[] = [];
-    for (let i = 0; i <= n; i++) ys.push(track.heightAt((i / n) * TT_FINISH));
+    for (let i = 0; i <= n; i++) ys.push(track.realHeightAt((i / n) * TT_FINISH));
     const top = Math.max(...ys);
     const low = Math.min(...ys);
     return ys.map((y, i) => [(i / n) * W, 4 + ((top - y) / Math.max(1, top - low)) * (H - 10)] as [number, number]);

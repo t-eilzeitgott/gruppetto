@@ -20,6 +20,34 @@ export const CAR_ZONE = 340;
 export const CAR_BLOCK = 2200;
 export const CAR_EXTRA = 1.9;
 
+/**
+ * Relief je Belag (m): Dach (Mitte über dem Rand), Bodenwellen (±), Absacken am Rand, lange Wellen längs (±).
+ * Leicht überzeichnet, damit es im Licht zu sehen ist.
+ */
+const RELIEF: Record<Surface, [number, number, number, number]> = {
+  asphalt: [0.07, 0.035, 0.06, 0.1],
+  fresh: [0.06, 0.01, 0, 0.045],
+  cobble: [0.15, 0.04, 0.03, 0.08],
+  gravel: [0.08, 0.05, 0.07, 0.12],
+};
+
+/** so weit (m) neben der Fahrbahn läuft ihr Relief aus */
+const RELIEF_FADE = 3.5;
+
+function rh2(a: number, b: number, seed: number): number {
+  let t = Math.imul(a, 374761393) + Math.imul(b, 668265263) + Math.imul(seed, 1442695041);
+  t = Math.imul(t ^ (t >>> 13), 1274126177);
+  return ((t ^ (t >>> 16)) >>> 0) / 2147483648 - 1;
+}
+/** weiches Wertrauschen −1 … 1 (für das Relief der Fahrbahn; ohne Hilfsfunktionen je Aufruf – läuft sehr oft) */
+function vnoise2(x: number, y: number, seed: number): number {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const fx = x - xi, fy = y - yi;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  const a = rh2(xi, yi, seed), b = rh2(xi + 1, yi, seed), c = rh2(xi, yi + 1, seed), d = rh2(xi + 1, yi + 1, seed);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
 export type BiomeId = 'pass' | 'alpine' | 'forest' | 'village' | 'lake' | 'vineyard';
 export type Ground = 'snow' | 'rock' | 'meadow' | 'forest' | 'pavement' | 'field' | 'water' | 'vines' | 'sunflower';
 export type Surface = 'asphalt' | 'fresh' | 'cobble' | 'gravel';
@@ -108,8 +136,14 @@ export interface Seg {
   wx: number;
   wz: number;
   th: number;
+  /** Höhe am Segmentanfang, wie sie zu sehen ist (mit überhöhten Steigungen, siehe Track.shown) */
   y: number;
+  /** echte Höhe am Segmentanfang (für Höhenprofile in den Karten) */
+  yr: number;
+  /** echte Steigung (Fahrphysik, Anzeige) */
   grade: number;
+  /** sichtbare Steigung (Geometrie): flache Steigungen überhöht, damit man 2 % auch sieht */
+  dy: number;
   curve: number;
   sec: number;
   surface: Surface;
@@ -303,6 +337,7 @@ export class Track {
   private passOrder: [string, number][];
   private descentNo = 0;
   private y = 0;
+  private yr = 0;
   private wx = 0;
   private wz = 0;
   private th = 0;
@@ -562,6 +597,142 @@ export class Track {
     return v;
   }
 
+  // ---------------------------------------------------------------- Relief der Fahrbahn (WebGL-Welt)
+
+  /**
+   * Fahrbahn mit Relief statt einer ebenen Platte: Dachprofil (die Mitte liegt höher, das Wasser läuft zum Rand),
+   * Querneigung in Kurven (innen tiefer, in Kehren deutlich), Bodenwellen je nach Belag (neuer Asphalt fast glatt,
+   * alter wellig mit Spurrinnen und abgesacktem Rand, Pflaster stark gewölbt und holprig, Schotter uneben) und lange
+   * flache Wellen in Fahrtrichtung. In Tunneln und auf der Startrampe bleibt sie eben (weich übergeblendet).
+   * Nur die WebGL-Welt baut die Fahrbahn so und schaltet es ein; dann folgt alles auf der Straße (world) dem Relief.
+   * Außerhalb der Fahrbahn gilt die Höhe ihres Randes (Bankett, Gelände, Häuser rücken nur mit).
+   */
+  relief = false;
+  private rfC = new Map<number, Float64Array>();
+  private rfRaw = new Map<number, Float64Array>();
+
+  /** Belag und Lage eines Segments: Dach, Wellen, Absacken am Rand, Längswelle, Spurrinnen, Stärke (0 = eben) */
+  private reliefRaw(i: number): Float64Array {
+    let v = this.rfRaw.get(i);
+    if (v) return v;
+    const s = this.seg(Math.max(this.first, i));
+    const R = RELIEF[s.surface];
+    const town = s.L.ground === 'pavement' && s.R.ground === 'pavement';
+    const bridge = s.bridge > 0;
+    v = new Float64Array([
+      R[0],
+      R[1],
+      town || bridge ? 0 : R[2],
+      bridge ? R[3] * 0.3 : R[3],
+      s.surface === 'asphalt' && !bridge ? 0.011 : 0,
+      s.tunnel ? 0 : 1,
+    ]);
+    this.rfRaw.set(i, v);
+    if (this.rfRaw.size > 30000) this.rfRaw.clear();
+    return v;
+  }
+
+  /**
+   * Kenngrößen des Reliefs am Anfang von Segment i (über die Nachbarn geglättet – kein Sprung, wo der Belag wechselt):
+   * [halbe Breite, Dach, Querneigung, Absacken, Wellen, Längswelle, Spurrinnen, Stärke, Höhe am linken, am rechten Rand]
+   */
+  private reliefOf(i: number): Float64Array {
+    i = Math.max(this.first, i);
+    let v = this.rfC.get(i);
+    if (v) return v;
+    v = new Float64Array(10);
+    // Belag: über ±3 Segmente gemittelt
+    for (let d = -3; d <= 3; d++) {
+      const r = this.reliefRaw(Math.max(this.first, i + d));
+      for (let q = 0; q < 5; q++) v[q + 1] += r[q] / 7;
+    }
+    // Stärke: in Tunneln 0, davor und danach über 14 m weich
+    let near = 8;
+    for (let d = 0; d < 8 && near === 8; d++) if (this.reliefRaw(i + d)[5] === 0 || (i - d >= this.first && this.reliefRaw(i - d)[5] === 0)) near = d;
+    let k = near / 8;
+    // Startrampe (Zeitfahren am Start, Abfahrt nach dem Startort): eben, dann über 30 m weich
+    const z = i * SEG;
+    const r0 = this.kind === 'tt' ? 0 : this.ramp ? this.rampZ : -1;
+    if (r0 >= 0) k = Math.min(k, Math.max(0, Math.min(1, (z - r0 - 40) / 30)));
+    k = k * k * (3 - 2 * k);
+    // Querneigung: in Kurven nach innen (Kurve über ±16 m gemittelt, rechts herum → rechts tiefer), dazu auf
+    // geraden Stücken mal zur einen, mal zur anderen Seite (wie eine Straße am Hang), höchstens 9 %
+    let c = 0;
+    for (let d = -8; d <= 8; d++) c += this.seg(Math.max(this.first, i + d)).curve;
+    const lean = vnoise2(z / 70, 2.5, (this.seed & 0xffff) + 13) * 0.03 + vnoise2(z / 29, 6.5, (this.seed & 0xffff) + 17) * 0.012;
+    const bank = Math.max(-0.09, Math.min(0.09, (c / 17) * 3.2 + lean));
+    // v[1..5] trägt noch Dach, Wellen, Absacken, Längswelle, Spurrinnen
+    const crown = v[1], amp = v[2], sag = v[3], swell = v[4], rut = v[5];
+    v[0] = ROAD_HALF + this.extra(i);
+    v[1] = crown * k;
+    v[2] = bank * k;
+    v[3] = sag * k;
+    v[4] = amp * k;
+    v[5] = swell * k;
+    v[6] = rut * k;
+    v[7] = k;
+    v[8] = this.liftRaw(v, z, -v[0]);
+    v[9] = this.liftRaw(v, z, v[0]);
+    this.rfC.set(i, v);
+    if (this.rfC.size > 30000) this.rfC.clear();
+    return v;
+  }
+
+  /** Höhe der Fahrbahn quer bei x (m, rechts +) gegenüber der Straßenmitte – am Segmentanfang mit Kenngrößen v */
+  private liftRaw(v: Float64Array, z: number, x: number): number {
+    if (v[7] === 0) return 0;
+    const half = v[0];
+    const xc = Math.max(-half, Math.min(half, x));
+    const u = xc / half;
+    const au = Math.abs(u);
+    const sd = this.seed & 0xffff;
+    let y = -v[1] * u * u - v[2] * xc;
+    // Bodenwellen: zwei Oktaven, längs gestreckt (Wellen quer über die Fahrbahn wie von Frost und schweren Lastern)
+    y += v[4] * (vnoise2(z / 6.5, xc / 2.2, sd) * 0.7 + vnoise2(z / 5.1 + 31.7, xc / 1.1 + 7.3, sd + 3) * 0.3);
+    // lange flache Wellen längs (die ganze Breite hebt und senkt sich)
+    y += v[5] * (vnoise2(z / 23, 0.5, sd + 7) * 0.75 + vnoise2(z / 11, 4.5, sd + 9) * 0.25);
+    // abgesackter Rand (alter Belag ohne Bordstein), unregelmäßig
+    if (v[3] > 0 && au > 0.7) {
+      const t = (au - 0.7) / 0.3;
+      y -= v[3] * t * t * (0.6 + 0.4 * vnoise2(z / 7.3, u < 0 ? 11.5 : 19.5, sd + 5));
+    }
+    // Spurrinnen in den Radspuren der Autos (wie die glatt gefahrenen Streifen im Asphalt)
+    if (v[6] > 0) {
+      const ax = Math.abs(xc);
+      const q1 = (ax - 0.65) / 0.3, q2 = (ax - 2.15) / 0.3;
+      y -= v[6] * (Math.exp(-q1 * q1) + Math.exp(-q2 * q2)) * (0.55 + 0.45 * vnoise2(z / 31, 23.5, sd + 11));
+    }
+    return y;
+  }
+
+  /**
+   * Relief der Fahrbahn am Segmentanfang i, quer bei x. Neben der Fahrbahn läuft die Höhe des Randes über
+   * RELIEF_FADE Meter weich aus (Bankett und Böschung gleichen aus) – dahinter beginnt das Gelände ohne Stufe.
+   */
+  liftRow(i: number, x: number): number {
+    if (!this.relief) return 0;
+    const v = this.reliefOf(i);
+    if (v[7] === 0) return 0;
+    const ax = Math.abs(x);
+    if (ax >= v[0]) {
+      const d = (ax - v[0]) / RELIEF_FADE;
+      if (d >= 1) return 0;
+      const t = 1 - d;
+      return (x < 0 ? v[8] : v[9]) * t * t * (3 - 2 * t);
+    }
+    return this.liftRaw(v, Math.max(this.first, i) * SEG, x);
+  }
+
+  /** Relief der Fahrbahn an z, quer bei x – zwischen den Segmentanfängen geradlinig wie das Netz der Fahrbahn */
+  lift(z: number, x: number): number {
+    if (!this.relief) return 0;
+    const f = Math.max(0, z / SEG);
+    const i = Math.floor(f);
+    const a = this.liftRow(i, x);
+    const t = f - i;
+    return t < 1e-6 ? a : a + (this.liftRow(i + 1, x) - a) * t;
+  }
+
   /** zusätzliche halbe Breite an der Stelle z (zwischen den Segmenten weich) */
   extraAt(z: number): number {
     if (!this.widthVar && !this.carZones) return 0;
@@ -571,16 +742,37 @@ export class Track {
     return a + (b - a) * (f - i);
   }
 
+  /** Höhe der Straßenmitte an z, wie sie zu sehen ist (ohne Relief der Fahrbahn) */
   heightAt(z: number): number {
     const i = Math.max(0, Math.floor(z / SEG));
     const s = this.seg(i);
-    return s.y + s.grade * (z - i * SEG);
+    return s.y + s.dy * (z - i * SEG);
+  }
+
+  /** echte Höhe an z (Höhenprofile in Start- und Rennkarten) */
+  realHeightAt(z: number): number {
+    const i = Math.max(0, Math.floor(z / SEG));
+    const s = this.seg(i);
+    return s.yr + s.grade * (z - i * SEG);
+  }
+
+  /**
+   * Sichtbare Steigung zur echten: in Wirklichkeit sieht man 2 % kaum – im Bild von hinten erst recht nicht, weil
+   * Straße, Wiesen und Wald gemeinsam steigen. Darum wird überhöht, flache Steigungen stark, steile kaum noch:
+   * 1 % sieht aus wie 2,6 %, 2 % wie 4,5 %, 4 % wie 7 %, 6 % wie 9 %, 9 % wie 11 % (Rampen werden keine Wand).
+   * Gleichmäßig steigend: eine steilere Stelle sieht immer steiler aus.
+   */
+  static shown(g: number): number {
+    const a = Math.abs(g);
+    const top = 0.065 * Math.log(1 + 0.12 / 0.02);
+    const v = a <= 0.12 ? 0.065 * Math.log(1 + a / 0.02) : top + (a - 0.12);
+    return g < 0 ? -v : v;
   }
 
   sectionOf(seg: Seg): Section { return this.sections[seg.sec]; }
 
   /** Weltposition eines Punktes: Strecke z, seitlich x (rechts +), Höhe h über der Straße */
-  world(z: number, x: number, h: number, out: { x: number; y: number; z: number; th: number }) {
+  world(z: number, x: number, h: number, out: { x: number; y: number; z: number; th: number }, bare = false) {
     const i = Math.max(0, Math.floor(z / SEG));
     const s = this.seg(i);
     const t = z - i * SEG;
@@ -588,7 +780,7 @@ export class Track {
     const thm = s.th + s.curve * t * 0.5;
     out.x = s.wx + Math.sin(thm) * t + Math.cos(th) * x;
     out.z = s.wz - Math.cos(thm) * t + Math.sin(th) * x;
-    out.y = s.y + s.grade * t + h;
+    out.y = s.y + s.dy * t + h + (this.relief && !bare ? this.lift(z, x) : 0);
     out.th = th;
     return out;
   }
@@ -782,6 +974,9 @@ export class Track {
         if (dz >= 0 && dz < 40) grade[k] = dz < 14 ? -0.09 : -0.09 + (grade[k] + 0.09) * ((dz - 14) / 26);
       }
     }
+    // sichtbare Steigung: in den Rennen überhöht (dort steht die Steigung im Bild), die Startrampe des Zeitfahrens
+    // bleibt echt (Podest und Rampe sind feste Modelle); die Abfahrt bleibt, wie sie ist (Sprünge über Kuppen)
+    const shown = grade.map((g, k) => (this.kind === 'descent' || (tt && (start + k) * SEG < 40) ? g : Track.shown(g)));
 
     // 2) Seiten, Beläge, Deko
     const tunnelLen = last ? Math.round(between(r, 70, 100)) : role === 'road' ? 65 : 0;
@@ -955,7 +1150,7 @@ export class Track {
         rr = cut;
       }
       const seg: Seg = {
-        i, wx: this.wx, wz: this.wz, th: this.th, y: this.y, grade: grade[k], curve: curve[k], sec: secIndex,
+        i, wx: this.wx, wz: this.wz, th: this.th, y: this.y, yr: this.yr, grade: grade[k], dy: shown[k], curve: curve[k], sec: secIndex,
         surface: inTunnel ? 'asphalt' : surface,
         L: l, R: rr,
         bL: buildings.L.find((b) => i >= b.start && i < b.start + b.len) ?? null,
@@ -966,7 +1161,8 @@ export class Track {
         lamp: false, crowd: false, crest: marks[k] === 2,
         bridge: bridge[k],
       };
-      this.y += grade[k] * SEG;
+      this.y += shown[k] * SEG;
+      this.yr += grade[k] * SEG;
       const thMid = this.th + curve[k] * SEG * 0.5;
       this.wx += Math.sin(thMid) * SEG;
       this.wz -= Math.cos(thMid) * SEG;

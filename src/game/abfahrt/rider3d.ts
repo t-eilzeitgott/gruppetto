@@ -992,9 +992,9 @@ export class RiderModel {
     let yaw = Math.atan2(lx, lz) - this.trailerOff;
     yaw = Math.max(-1.2, Math.min(1.2, yaw));
     const pitch = -Math.asin(Math.max(-0.25, Math.min(0.25, (ay - g.y) / Math.max(0.5, this.trailerAxle))));
-    // Kupplung folgt der Schräglage des Rads
+    // Kupplung folgt der Schräglage des Rads (das Rad selbst neigt sich schon mit der Steigung: nur der Rest)
     tr.position.copy(this.tv.copy(this.hitch).applyEuler(this.body.rotation));
-    tr.rotation.set(pitch, yaw, 0);
+    tr.rotation.set(pitch - this.group.rotation.x, yaw, 0);
   }
 
   /** Sturz: Rad und Fahrer kippen und überschlagen sich */
