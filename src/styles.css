@@ -400,12 +400,11 @@ a.card--row:hover, a.card:hover { background: var(--surface2); }
    wechselt sofort). Unscharfer Hintergrund lässt sich im Übergang nicht abbilden – solange er läuft, sind beide
    deckend in derselben Farbe, sonst scheint die überblendende Seite unscharf-los durch. */
 .tabbar { view-transition-name: tabbar; }
-.status-shade { view-transition-name: status-shade; }
-::view-transition-group(tabbar), ::view-transition-group(status-shade) { animation: none; }
-::view-transition-old(tabbar):not(:only-child), ::view-transition-old(status-shade):not(:only-child) { display: none; }
-::view-transition-new(tabbar):not(:only-child), ::view-transition-new(status-shade):not(:only-child) { animation: none; }
+::view-transition-group(tabbar) { animation: none; }
+::view-transition-old(tabbar):not(:only-child) { display: none; }
+::view-transition-new(tabbar):not(:only-child) { animation: none; }
 ::view-transition-old(tabbar):only-child, ::view-transition-new(tabbar):only-child { animation-duration: 0.22s; }
-html.vt .tabbar, html.vt .status-shade { background: linear-gradient(var(--header-bg), var(--header-bg)), var(--bg); }
+html.vt .tabbar { background: linear-gradient(var(--header-bg), var(--header-bg)), var(--bg); }
 @media (prefers-reduced-motion: reduce) {
   .skel, .skel-t::before, .tip-count__skel::before { animation: none; }
   .reveal { animation: none; }
@@ -564,9 +563,13 @@ a.my-tip:hover { filter: brightness(1.05); }
 .ring::before { content: ''; position: absolute; inset: 4px; border-radius: 50%; background: var(--surface); }
 .ring > * { position: relative; }
 /* Statusleiste in der Homescreen-App */
+/* klebt oben im Seitenfluss (sticky) statt fest über allem (fixed) und ohne unscharfen Hintergrund: als feste,
+   weichgezeichnete Ebene setzte das iPhone sie beim Scrollen gelegentlich an eine falsche Stelle – dann lag sie als
+   schwarzer Balken mitten auf der Seite. Der negative Rand unten nimmt ihr den Platz im Fluss. */
 .status-shade {
-  position: fixed; left: 0; right: 0; top: 0; z-index: 40; height: var(--safe-t); pointer-events: none;
-  background: var(--header-bg); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+  position: -webkit-sticky; position: sticky; top: 0; z-index: 40; height: var(--safe-t);
+  margin-bottom: calc(-1 * var(--safe-t)); pointer-events: none;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
 }
 
 .tippers { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-height: 40px; }
@@ -2999,7 +3002,7 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 /* Startseite: Akzentlinie unter dem aktiven Tab (läuft beim Wechsel elastisch mit, Home.tsx) und die Seite darunter */
 .home-tabs { position: relative; }
 .home-tabs__ink {
-  position: absolute; left: 0; bottom: -2px; height: 3px; width: 0; border-radius: 999px;
+  position: absolute; left: 0; bottom: -2px; height: 3px; width: 100px; border-radius: 999px; transform-origin: 0 50%;
   background: var(--accent); opacity: 0; pointer-events: none; will-change: transform;
 }
 .home-tab { transition: color 0.28s ease; }

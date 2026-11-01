@@ -36,29 +36,30 @@ function HomeTabs({ tab, onTab, unread }: { tab: HomeTab; onTab: (t: HomeTab) =>
   const ink = useRef<HTMLSpanElement>(null);
   const last = useRef<{ x: number; w: number } | null>(null);
   useLayoutEffect(() => {
+    // Linie fest 100 px breit, Länge und Lage nur über transform (scaleX, translateX) – läuft auf der Grafikkarte,
+    // auch wenn die Seite gerade die neue Ansicht aufbaut
     const place = (animate: boolean) => {
       const b = box.current;
       const el = ink.current;
       const on = b?.querySelector<HTMLElement>('.home-tab.is-on');
       if (!b || !el || !on) return;
-      // Linie: ein gutes Drittel des Titels, linksbündig unter dem Wort
-      const w = Math.round(Math.min(34, on.offsetWidth * 0.36));
+      const w = Math.min(34, on.offsetWidth * 0.36);
       const x = on.offsetLeft;
       const from = last.current;
       last.current = { x, w };
-      el.style.width = `${w}px`;
-      el.style.transform = `translateX(${x}px)`;
+      const tf = (px: number, len: number) => `translateX(${px.toFixed(1)}px) scaleX(${(len / INK_W).toFixed(4)})`;
+      el.style.transform = tf(x, w);
       el.style.opacity = '1';
       if (!animate || !from || from.x === x || calm()) return;
-      // dehnen bis zum Ziel, dann zusammenziehen (Breite nur dieser einen kleinen Linie – kostet nichts)
+      // dehnen bis zum Ziel, dann zusammenziehen
       const lo = Math.min(from.x, x);
       const hi = Math.max(from.x + from.w, x + w);
       try {
         el.animate([
-          { transform: `translateX(${from.x}px)`, width: `${from.w}px` },
-          { transform: `translateX(${lo}px)`, width: `${hi - lo}px`, offset: 0.45 },
-          { transform: `translateX(${x}px)`, width: `${w}px` },
-        ], { duration: 460, easing: 'cubic-bezier(0.3, 0.7, 0.2, 1)' });
+          { transform: tf(from.x, from.w) },
+          { transform: tf(lo, hi - lo), offset: 0.42 },
+          { transform: tf(x, w) },
+        ], { duration: 520, easing: 'cubic-bezier(0.3, 0.75, 0.2, 1)' });
       } catch { /* ohne Animation */ }
     };
     place(true);
@@ -87,67 +88,81 @@ function HomeTabs({ tab, onTab, unread }: { tab: HomeTab; onTab: (t: HomeTab) =>
 
 const calm = () => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
 const ORDER: HomeTab[] = ['heute', 'news'];
+/** Grundbreite der Akzentlinie (px) – gezeichnet wird sie über scaleX */
+const INK_W = 100;
 const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
+const SHIFT = 56;
 
 /**
- * Weicher Wechsel zwischen „Heute“ und „News“: die alte Seite gleitet ein Stück zur Seite und blendet aus (kurz),
- * die neue kommt aus der Richtung des Wechsels nach (etwas länger, weich ankommend). Nur Transform und Deckkraft –
- * das läuft auf der Grafikkarte, ohne Ruckeln. Die neue Seite steht schon, bevor das erste Bild gezeichnet wird.
+ * Weicher Wechsel zwischen „Heute“ und „News“ – ohne leeres Bild dazwischen: Beim Tippen wird die alte Seite als
+ * Abbild (Kopie) an ihrer Stelle festgehalten, die neue Seite steht sofort darunter. Dann gleiten beide gleichzeitig
+ * in Wechselrichtung: das Abbild hinaus und blasser, die neue Seite herein und deckend – wie ein weiches Schieben.
+ * Nur Transform und Deckkraft, beides auf der Grafikkarte.
  */
 function useTabMotion(tab: HomeTab, setTabState: (t: HomeTab) => void, panel: RefObject<HTMLDivElement | null>) {
-  const out = useRef<Animation | null>(null);
-  const enter = useRef(0);
-  const busy = useRef<HomeTab | null>(null);
-  // Ziel des laufenden Wechsels: Titel und Linie springen sofort beim Tippen um, nicht erst nach dem Ausblenden
-  const [aim, setAim] = useState<HomeTab | null>(null);
-  const shown = useRef(tab);
-  shown.current = tab;
-  const slideIn = (el: HTMLElement, dir: number) => el.animate(
-    [{ opacity: 0, transform: `translateX(${dir * 28}px)` }, { opacity: 1, transform: 'none' }],
-    { duration: 380, easing: EASE_OUT },
-  );
+  const pending = useRef<{ dir: number; ghost: HTMLElement | null } | null>(null);
+  const ghosts = useRef<HTMLElement[]>([]);
   const go = (t: HomeTab) => {
-    if (t === (busy.current ?? tab)) return;
-    const dir = ORDER.indexOf(t) > ORDER.indexOf(busy.current ?? tab) ? 1 : -1;
+    if (t === tab) return;
     switched = true;
-    const commit = () => {
-      busy.current = null;
-      setAim(null);
-      if (t === shown.current) {
-        // schnell hin und zurück getippt: die Seite ist schon die richtige – nur wieder hereingleiten
-        out.current?.cancel();
-        out.current = null;
-        const el = panel.current;
-        if (el && typeof el.animate === 'function') slideIn(el, dir);
-        return;
-      }
-      enter.current = dir;
-      setTabState(t);
-      window.scrollTo({ top: 0 });
-    };
+    const dir = ORDER.indexOf(t) > ORDER.indexOf(tab) ? 1 : -1;
     const el = panel.current;
-    if (!el || calm() || typeof el.animate !== 'function') { commit(); return; }
-    busy.current = t;
-    setAim(t);
-    out.current?.cancel();
-    const a = el.animate(
-      [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateX(${-dir * 18}px)` }],
-      { duration: 120, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
-    );
-    out.current = a;
-    a.finished.then(() => { if (out.current === a && busy.current === t) commit(); }, () => undefined);
+    let ghost: HTMLElement | null = null;
+    if (el && !calm() && typeof el.animate === 'function') {
+      try {
+        // ältere Abbilder (schnelles Hin und Her) sofort weg
+        for (const g of ghosts.current) g.remove();
+        ghosts.current = [];
+        const r = el.getBoundingClientRect();
+        const docTop = r.top + window.scrollY;
+        ghost = el.cloneNode(true) as HTMLElement;
+        ghost.removeAttribute('id');
+        ghost.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+        ghost.setAttribute('aria-hidden', 'true');
+        ghost.classList.add('home-ghost');
+        ghost.classList.remove('reveal');
+        ghost.querySelectorAll('.reveal').forEach((n) => n.classList.remove('reveal'));
+        // springt die Seite gleich nach oben, beginnt die neue Seite unter dem Kopf: das Abbild darüber abschneiden
+        const clip = window.scrollY > docTop ? window.scrollY : 0;
+        ghost.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;margin:0;`
+          + `pointer-events:none;z-index:5;clip-path:inset(${clip}px 0 0 0);`;
+        // im selben Rahmen wie die Seite (gleiche Schrift und Abstände)
+        (el.parentElement ?? document.body).append(ghost);
+        // seitlich gescrollte Bereiche (Spielkarte) an derselben Stelle zeigen
+        const src = el.querySelectorAll<HTMLElement>('*');
+        const dst = ghost.querySelectorAll<HTMLElement>('*');
+        for (let i = 0; i < src.length && i < dst.length; i++) if (src[i].scrollLeft) dst[i].scrollLeft = src[i].scrollLeft;
+        ghosts.current.push(ghost);
+      } catch { ghost = null; }
+    }
+    pending.current = { dir, ghost };
+    setTabState(t);
   };
   useLayoutEffect(() => {
-    const dir = enter.current;
-    enter.current = 0;
-    out.current?.cancel();
-    out.current = null;
+    const p = pending.current;
+    pending.current = null;
+    if (!p) return;
+    // neue Seite oben beginnen – aber den Kopf nicht wegscrollen, wenn man ohnehin oben war
     const el = panel.current;
-    if (!dir || !el || typeof el.animate !== 'function') return;
-    slideIn(el, dir);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (el) {
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      if (window.scrollY > top) window.scrollTo({ top: 0 });
+    }
+    if (!el || !p.ghost || typeof el.animate !== 'function') { p.ghost?.remove(); return; }
+    const g = p.ghost;
+    el.animate(
+      [{ opacity: 0, transform: `translateX(${p.dir * SHIFT}px)` }, { opacity: 1, transform: 'none' }],
+      { duration: 440, delay: 40, easing: EASE_OUT, fill: 'backwards' },
+    );
+    const a = g.animate(
+      [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateX(${-p.dir * SHIFT * 0.8}px)` }],
+      { duration: 260, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' },
+    );
+    const done = () => { g.remove(); ghosts.current = ghosts.current.filter((x) => x !== g); };
+    a.finished.then(done, done);
   }, [tab, panel]);
-  return { go, aim: aim ?? tab };
+  useEffect(() => () => { for (const g of ghosts.current) g.remove(); }, []);
+  return go;
 }
 
 /** Wischen nach links/rechts wechselt den Tab – nicht in Bereichen, die selbst seitlich scrollen (Spielkarte,
@@ -207,7 +222,7 @@ export function Home() {
   // im News-Tab gilt alles Angezeigte als gelesen
   useEffect(() => { if (tab === 'news' && latest) markNewsSeen(latest); }, [tab, latest]);
   const panel = useRef<HTMLDivElement>(null);
-  const { go: move, aim } = useTabMotion(tab, setTabState, panel);
+  const move = useTabMotion(tab, setTabState, panel);
   const setTab = (t: HomeTab) => {
     homeTab = t;
     try { sessionStorage.setItem(TAB_KEY, t); } catch { /* egal */ }
@@ -228,7 +243,7 @@ export function Home() {
   const header = (
     <>
       <HomeHead me={me} />
-      <HomeTabs tab={aim} onTab={setTab} unread={unread} />
+      <HomeTabs tab={tab} onTab={setTab} unread={unread} />
     </>
   );
   // Intro beenden, sobald die Startseite mit Inhalt steht (oder es nichts zu laden gibt)
