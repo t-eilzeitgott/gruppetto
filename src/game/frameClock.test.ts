@@ -179,3 +179,129 @@ test('einzelne verpasste Takte (jedes zehnte Bild) senken nicht unter 60', () =>
   for (const x of stamps) if (clock.ready(x)) clock.tick(x);
   assert.equal(clock.div, 1);
 });
+
+// ---------------------------------------------------------------- Safari auf dem iPhone
+
+/**
+ * Safari auf dem 120-Hz-iPhone: Aufrufe nur zu Bildschirmtakten, aber der Zeitstempel ist die Zeit, zu der das
+ * Skript drankommt – auf ganze ms abgerundet, 0–3 ms nach dem Takt (tail: jeder 30. bis 5 ms; late: dieser Anteil
+ * 3–7 ms, der Hauptfaden war beschäftigt – der nächste kommt wieder pünktlich). Solange die Grafik am
+ * letzten Bild arbeitet, kommt kein Aufruf (Rückstau; inFlight: so viele Bilder dürfen unterwegs sein). Ein Bild
+ * braucht 2 ms Rechenzeit und gpu() ms Grafik (±8 %); gezeigt wird es zwei Takte nach seinem Aufruf oder, wenn die
+ * Grafik länger braucht, zum ersten Takt danach.
+ */
+function safari(o: { gpu: (v: number) => number; inFlight?: number; hz?: (v: number) => number; frames?: number; seed?: number; tail?: boolean; late?: number }) {
+  let seed = o.seed ?? 11;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const clock = new FrameClock(0, { apple: true });
+  const shown: number[] = [];
+  const dts: number[] = [];
+  const periods: number[] = [];
+  const flight: { done: number; show: number }[] = [];
+  let gpuFree = 0;
+  let t = 0;
+  for (let v = 1; v < (o.frames ?? 7200); v++) {
+    const P = 1000 / (o.hz ? o.hz(v) : 120);
+    t += P;
+    while (flight.length && flight[0].show <= t + 1e-6) shown.push(flight.shift()!.show);
+    if (flight.filter((f) => f.done > t).length >= (o.inFlight ?? 1)) continue;
+    const jit = o.late && rnd() < o.late ? 3 + rnd() * 4 : o.tail && rnd() < 0.03 ? 3 + rnd() * 2 : rnd() * 3;
+    const stamp = Math.floor(t + jit);
+    if (!clock.ready(stamp)) { periods.push(clock.period); continue; }
+    dts.push(clock.tick(stamp) * 1000);
+    periods.push(clock.period);
+    const done = Math.max(t + jit + 2, gpuFree) + o.gpu(v) * (0.92 + rnd() * 0.16);
+    gpuFree = done;
+    flight.push({ done, show: Math.max(t + 2 * P, Math.ceil(done / P - 1e-6) * P) });
+  }
+  const gaps = shown.slice(1).map((x, i) => x - shown[i]);
+  return { clock, gaps, dts, periods };
+}
+const share = (a: number[], f: (x: number) => boolean) => a.filter(f).length / Math.max(1, a.length);
+
+test('Safari, 120-Hz-iPhone, Grafik 11 ms: immer 120 Hz erkannt, gleichmäßig 60 Bilder je Sekunde, kein Ausfall', () => {
+  for (const inFlight of [1, 2]) {
+    const r = safari({ gpu: () => 11, inFlight });
+    // (mit nur einem Bild unterwegs kommt nie ein Aufruf nach 8,3 ms – dann sieht es aus wie ein 60-Hz-Schirm, und das
+    // ist dann auch richtig)
+    assert.ok(Math.abs(r.clock.target - P60) < 0.01, `Bildtakt ${r.clock.target.toFixed(1)} ms`);
+    if (inFlight > 1) assert.ok(r.periods.slice(60).every((p) => Math.abs(p - P120) < 0.01), `Takt ${[...new Set(r.periods.map((p) => Math.round(1000 / p)))].join('/')} Hz`);
+    const g = r.gaps.slice(120);
+    const even = share(g, (x) => Math.abs(x - P60) < 1);
+    assert.ok(even > 0.99, `${inFlight} unterwegs: ${Math.round(even * 100)} % gleichmäßig`);
+    assert.ok(g.every((x) => x < 2 * P60 - 1), `längste Lücke ${Math.max(...g).toFixed(1)} ms`);
+    if (inFlight > 1) for (const d of r.dts.slice(120)) assert.ok(Math.abs(d - P60) < 1.2, `Schritt ${d.toFixed(2)} ms`);
+  }
+});
+
+test('Safari: Aufrufe manchmal bis 5 ms spät dran – kein Bild fällt aus, fast alle gleichmäßig', () => {
+  for (const inFlight of [1, 2]) {
+    const r = safari({ gpu: () => 11, inFlight, tail: true });
+    const g = r.gaps.slice(120);
+    // (ein paar Bilder kommen einen Takt zu spät: der Aufruf kam spät dran und die Grafik wird nicht rechtzeitig fertig
+    // – das liegt nicht am Takt)
+    const even = share(g, (x) => Math.abs(x - P60) < 1);
+    assert.ok(even > 0.94, `${inFlight} unterwegs: ${Math.round(even * 100)} % gleichmäßig`);
+    assert.ok(g.every((x) => x < 2 * P60 - 1), `längste Lücke ${Math.max(...g).toFixed(1)} ms`);
+  }
+});
+
+test('Safari, 120-Hz-iPhone, leichte Grafik (5 ms): volle 120 Bilder je Sekunde', () => {
+  const r = safari({ gpu: () => 5, inFlight: 2 });
+  assert.equal(r.clock.div, 1);
+  assert.ok(Math.abs(r.clock.period - P120) < 0.01);
+  const even = share(r.gaps.slice(200), (x) => Math.abs(x - P120) < 1);
+  assert.ok(even > 0.97, `${Math.round(even * 100)} % im vollen Takt`);
+});
+
+test('Safari: erst schwer (nur Aufrufe alle 16,7 ms, sieht aus wie 60 Hz), dann leicht, dann wieder schwer – bleibt bei 120 Hz und gleichmäßigen 60', () => {
+  for (const inFlight of [1, 2]) {
+    const r = safari({ gpu: (v) => (v < 600 ? 11 : v < 1200 ? 5 : 11), inFlight });
+    const after = r.periods.slice(1300);
+    assert.ok(after.every((p) => Math.abs(p - P120) < 0.01), `${inFlight} unterwegs: zurück auf 60 Hz gefallen`);
+    const tail = r.gaps.slice(-1500);
+    const even = share(tail, (x) => Math.abs(x - P60) < 1);
+    assert.ok(even > 0.99, `${inFlight} unterwegs: ${Math.round(even * 100)} % gleichmäßig`);
+    assert.ok(r.gaps.slice(60).every((x) => x < 2 * P60 - 1), `${inFlight} unterwegs: längste Lücke ${Math.max(...r.gaps.slice(60)).toFixed(1)} ms`);
+  }
+});
+
+test('Safari: Stromsparmodus (Schirm fällt auf 60 Hz) – Bilder weiter alle 16,7 ms', () => {
+  const r = safari({ gpu: () => 9, hz: (v) => (v < 2400 ? 120 : 60), inFlight: 2 });
+  const tail = r.gaps.slice(-600);
+  const even = share(tail, (x) => Math.abs(x - P60) < 1);
+  assert.ok(even > 0.98, `${Math.round(even * 100)} % gleichmäßig`);
+  assert.ok(r.clock.target < P60 + 0.1, `Bildtakt ${r.clock.target.toFixed(1)} ms`);
+});
+
+test('Safari, 60-Hz-iPhone: 60 Hz, jeder Aufruf zeichnet', () => {
+  const r = safari({ gpu: () => 9, hz: () => 60 });
+  assert.ok(Math.abs(r.clock.period - P60) < 0.01, `Takt ${(1000 / r.clock.period).toFixed(0)} Hz`);
+  const even = share(r.gaps.slice(100), (x) => Math.abs(x - P60) < 1);
+  assert.ok(even > 0.98, `${Math.round(even * 100)} % gleichmäßig`);
+});
+
+test('Safari: Grafik schwankt um 14 ms – kein Bild fällt wegen des festen Takts aus', () => {
+  let s = 5;
+  const r = safari({ gpu: () => { s = (s * 16807) % 2147483647; return 12 + (s / 2147483647) * 3; } });
+  const g = r.gaps.slice(120);
+  assert.ok(g.every((x) => x < 2 * P60 - 1), `längste Lücke ${Math.max(...g).toFixed(1)} ms`);
+});
+
+test('Safari: jeder zwölfte Aufruf 3–7 ms spät (Hauptfaden beschäftigt) – Takt bleibt 120 Hz, kein Hin und Her, kein Ausfall', () => {
+  // früher: die kurzen Abstände danach lasen sich als 240 Hz – „jeder 4. Takt" mit nur 2 ms Spielraum ließ pünktliche
+  // Aufrufe aus (Bilder nach 33 ms), dazwischen 12,5 ms Bildtakt (mal ein, mal zwei Takte); bis zu 70 Wechsel
+  for (const gpu of [6, 11]) {
+    const r = safari({ gpu: () => gpu, inFlight: 2, late: 0.08 });
+    assert.ok(r.clock.changes <= 3, `${gpu} ms: ${r.clock.changes} Wechsel des Takts`);
+    assert.ok(r.periods.slice(60).every((p) => Math.abs(p - P120) < 0.01), `${gpu} ms: Takt verlassen`);
+    // 6 ms Grafik: volle 120 Bilder je Sekunde; 11 ms: gleichmäßige 60
+    const T = gpu < 8 ? P120 : P60;
+    assert.ok(Math.abs(r.clock.target - T) < 0.01, `${gpu} ms: Bildtakt ${r.clock.target.toFixed(1)} ms`);
+    const g = r.gaps.slice(120);
+    assert.ok(g.every((x) => x < 2 * P60 - 1), `${gpu} ms: längste Lücke ${Math.max(...g).toFixed(1)} ms`);
+    // (ein spät dran gekommenes Bild wird auch spät fertig – bei 11 ms Grafik manchmal; das liegt nicht am Takt)
+    const even = share(g, (x) => Math.abs(x - T) < 1);
+    assert.ok(even > 0.85, `${gpu} ms: ${Math.round(even * 100)} % gleichmäßig`);
+  }
+});

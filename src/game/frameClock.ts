@@ -8,12 +8,24 @@
  *    Darum der feste Bildtakt: schafft das Gerät den vollen Takt nicht, wird jeder zweite (dritte …) Takt
  *    ausgelassen (ready) – dann kommt jedes Bild genau nach 16,7 ms.
  * 2. Spielzeit, die nicht zur Anzeigezeit passt. Jedes Bild rückt die Welt genau um die Zeit vor, die es zu sehen
- *    sein wird: den Abstand zum vorigen Bild, auf ganze Bildschirmtakte gerundet. (Safari rundet die Zeitstempel
- *    auf ganze Millisekunden – 17, 17, 16 ms –, die Rundung auf den Takt nimmt dieses Rauschen heraus.) Fällt ein
- *    Bild aus, stand das alte doppelt so lange da – das nächste rückt dann auch doppelt so weit (die Bewegung bleibt
- *    gleichmäßig; ein „sanftes Nachholen“ über mehrere Bilder ließe die Welt erst hängen und dann eilen).
- *    Eine kleine Korrektur hält die Spielzeit auf Dauer genau bei der echten.
+ *    sein wird: den Abstand zum vorigen Bild in ganzen Bildschirmtakten. Fällt ein Bild aus, stand das alte doppelt so
+ *    lange da – das nächste rückt dann auch doppelt so weit (die Bewegung bleibt gleichmäßig; ein „sanftes Nachholen"
+ *    über mehrere Bilder ließe die Welt erst hängen und dann eilen). Eine kleine Korrektur hält die Spielzeit auf
+ *    Dauer genau bei der echten.
  * - Nach langen Pausen (App im Hintergrund) wird nichts nachgeholt.
+ *
+ * Safari auf dem iPhone liefert keine sauberen Takt-Zeitstempel: es ist die Zeit, zu der das Skript drankommt –
+ * auf ganze Millisekunden gerundet und oft ein paar Millisekunden nach dem Takt, mal zwei Aufrufe kurz
+ * hintereinander. Darum:
+ * - Bildschirmtakt auf Apple-Telefonen und -Tablets nur 60 oder 120 Hz (andere gibt es dort nicht). Früher lasen
+ *   sich die verrauschten Abstände als 240, 165, 144 oder 72 Hz: daraus wurden Bildtakte von 12,5 oder 13,9 ms, die
+ *   auf dem 120-Hz-Schirm mal ein, mal zwei Takte stehen (Mikroruckeln), und bei „240 Hz, jeder 4. Takt" fielen
+ *   ganze Bilder aus (33 ms).
+ * - Ein einmal erkannter schneller Takt bleibt. Wartet die Grafik, kommen auch auf dem 120-Hz-Schirm nur noch Aufrufe
+ *   alle 16,7 ms – das ist kein 60-Hz-Schirm (früher: Takt „60 Hz", fester Bildtakt aus, das Bild sprang wieder
+ *   zwischen 8,3 und 16,7 ms).
+ * - Wann ein Bild dran ist, misst sich am gleichmäßigen Raster der gezeichneten Bilder, nicht am verrauschten
+ *   Zeitstempel des letzten Bildes – mit einem halben Takt Spielraum.
  */
 export class FrameClock {
   /** Bildschirmtakt (ms): kürzester regelmäßiger Abstand der Aufrufe (60, 90, 120, 144 Hz …) */
@@ -22,26 +34,38 @@ export class FrameClock {
   div = 1;
   /** echter Abstand zum vorigen gezeichneten Bild (s) – für Bildraten-Anzeige und Qualitätsregelung */
   raw = 0;
+  /** fester Bildtakt eingeschaltet (ready lässt Aufrufe aus) */
+  pace = true;
+  /** zählt bei jeder Änderung von Takt oder Takten je Bild hoch (für die Messfahrt) */
+  changes = 0;
   /** echte Zeit, die das Spiel noch nachholen muss (ms; negativ: ist voraus) */
   private owed = 0;
   private prev: number;
-  /** Abstände der Aufrufe (für den Takt) und der gezeichneten Bilder (für den festen Bildtakt) */
+  /** Rasterzeit des letzten gezeichneten Bildes (geglättet: folgt den Zeitstempeln langsam, ohne ihr Rauschen) */
+  private due: number;
+  /** Abstände der Aufrufe (für den Takt) */
   private hist = new Float64Array(64);
   private n = 0;
   private k = 0;
-  private frames = new Float64Array(90);
-  private fn = 0;
-  private fk = 0;
   private lastCall: number;
-  /** fester Bildtakt eingeschaltet (ready lässt Aufrufe aus) */
-  pace = true;
   private measured = false;
-  /** zählt bei jeder Änderung von Takt oder Takten je Bild hoch (für die Messfahrt) */
-  changes = 0;
+  /** mögliche Takte (ms), längster zuerst */
+  private rates: number[];
+  private apple: boolean;
+  /** Messungen in Folge, die für einen anderen Takt sprechen */
+  private pendP = 0;
+  private pend = 0;
+  /** fester Bildtakt: verspätete Bilder im laufenden Fenster */
+  private seen = 0;
+  private late = 0;
+  private window = 30;
 
-  constructor(start = performance.now()) {
+  constructor(start = performance.now(), o: { apple?: boolean } = {}) {
     this.prev = start;
+    this.due = start;
     this.lastCall = start;
+    this.apple = o.apple ?? appleDevice();
+    this.rates = (this.apple ? [60, 120] : RATES_HZ).map((hz) => 1000 / hz);
   }
 
   /** Abstand der Bilder im festen Takt (ms) */
@@ -61,8 +85,8 @@ export class FrameClock {
       if ((this.k & 15) === 0 && this.n >= 16) this.measure();
     }
     if (!this.pace || this.div <= 1) return true;
-    // (halber Takt Spielraum: verrauschte Stempel lassen kein Bild fälschlich aus)
-    return now - this.prev >= this.target - this.period * 0.5;
+    // dran, sobald das nächste Bild im Raster näher liegt als das übernächste Takt-Ende (halber Takt Spielraum)
+    return now >= this.due + this.target - this.period * 0.5;
   }
 
   /** Zeitstempel des gezeichneten Bildes → Spielzeit für dieses Bild (s) */
@@ -71,15 +95,27 @@ export class FrameClock {
     this.prev = now;
     this.raw = Math.max(0, raw) / 1000;
     if (!(raw > 0)) return 0;
-    // lange Pause (Hintergrund, Ladepause): nichts nachholen
+    // lange Pause (Hintergrund, Ladepause): nichts nachholen, Raster neu beginnen
     if (raw > 250) {
       this.owed = 0;
+      this.due = now;
       return this.target / 1000;
     }
-    this.learnPace(raw);
-    // auf ganze Bildschirmtakte gerundet (mindestens der feste Bildtakt)
     const P = this.period;
-    const steps = Math.max(this.div, Math.round(raw / P));
+    // Aufrufe schneller als der angenommene Takt (er ist noch nicht erkannt): echte Zeit, Raster neu
+    if (raw < P * 0.7) {
+      this.due = now;
+      this.owed = 0;
+      return raw / 1000;
+    }
+    // ganze Bildschirmtakte seit dem letzten Bild im Raster (mindestens der feste Bildtakt)
+    const steps = Math.max(this.div, Math.round((now - this.due) / P));
+    this.due += steps * P;
+    // dem Zeitstempel langsam folgen (Lage des Takts, kleine Abweichung des Takts), sein Rauschen herausfiltern – nie
+    // voraus (sonst ließe ready danach zu viele Aufrufe aus)
+    this.due += (now - this.due) * 0.1;
+    if (this.due > now + 1) this.due = now;
+    this.learnPace(steps);
     let dt = steps * P;
     // auf Dauer genau mit der echten Zeit (kleine Korrektur, unmerklich)
     this.owed += raw - dt;
@@ -92,73 +128,121 @@ export class FrameClock {
 
   /**
    * fester Bildtakt: verpasst mehr als jedes achte Bild seinen Takt, ein Takt mehr je Bild; zurückgenommen wird
-   * das nicht – ein Wechsel hin und her wäre selbst ein Ruckler. Nie seltener als 60 Bilder je Sekunde, in keiner
-   * Grafikstufe: der feste Takt glättet nur 120 Hz zu gleichmäßigen 60, er bremst nie darunter.
+   * das nicht – ein Wechsel hin und her wäre selbst ein Ruckler. Das erste Fenster nach dem Erkennen des Takts ist
+   * kurz (30 Bilder: auf 120 Hz eine Viertelsekunde volle Rate versuchen), danach 90 Bilder. Nie seltener als 60
+   * Bilder je Sekunde, in keiner Grafikstufe: der feste Takt glättet nur 120 Hz zu gleichmäßigen 60, er bremst nie
+   * darunter.
    */
-  private learnPace(raw: number) {
-    if (raw >= 100) return;
-    this.frames[this.fk] = raw;
-    this.fk = (this.fk + 1) % this.frames.length;
-    if (this.fn < this.frames.length) this.fn += 1;
-    if (!this.pace || this.fn < this.frames.length || this.fk !== 0) return;
-    const T = this.target;
-    let late = 0;
-    for (let i = 0; i < this.fn; i++) if (this.frames[i] > T * 1.25 + 1) late += 1;
+  private learnPace(steps: number) {
+    if (!this.pace) return;
+    this.seen += 1;
+    if (steps > this.div) this.late += 1;
+    if (this.seen < this.window) return;
     // nie seltener als 60 Bilder je Sekunde (auf 120 Hz also höchstens jeder zweite Takt) – schafft das Gerät das
     // nicht, hilft eine kleinere Auflösung oder Grafikstufe
-    if (late > this.fn / 8 && this.div + 1 <= maxDiv(this.period)) {
+    if (this.late > this.seen / 8 && this.div + 1 <= maxDiv(this.period)) {
       this.div += 1;
       this.changes += 1;
-      this.fn = 0;
-      this.fk = 0;
     }
+    this.seen = 0;
+    this.late = 0;
+    this.window = 90;
   }
 
-  /**
-   * Bildschirmtakt aus den Abständen der Aufrufe: der längste übliche Takt (60, 75, 90, 120, 144 Hz …), zu dem fast
-   * alle Abstände als ganze Vielfache passen. Ein 120-Hz-Telefon, das nur jeden zweiten oder dritten Takt schafft,
-   * ruft im Abstand 16,7 und 25 ms auf – das passt nur zu 8,3 ms, nicht zu 16,7.
-   */
+  /** Bildschirmtakt aus den Abständen der Aufrufe (alle 16 Aufrufe über die letzten 64) */
   private measure() {
     const a = this.hist.subarray(0, this.n);
-    // je Takt: mittlere Abweichung zum nächsten Vielfachen und Anteil grober Abweichungen (> 4 ms – Rauschen der
-    // Stempel ist kleiner, ein falscher Takt liegt um einen halben daneben)
-    const errs: number[] = [];
-    const outs: number[] = [];
-    // Anteil einfacher Takte: ein Takt muss sich selbst zeigen – unter Last ruft Safari auf dem 120-Hz-iPhone auch
-    // nach 12,5 oder 21 ms auf; das passt zu 240 Hz (3 und 5 Takte), aber kein Aufruf kommt je nach 4 ms
-    const ones: number[] = [];
-    for (const P of RATES) {
-      let err = 0;
-      let out = 0;
-      let one = 0;
-      for (const x of a) { const e = Math.abs(x - Math.max(1, Math.round(x / P)) * P); err += e; if (e > 4) out += 1; if (x < P * 1.5) one += 1; }
-      errs.push(err / a.length);
-      outs.push(out / a.length);
-      ones.push(one / a.length);
+    const best = this.apple ? measureApple(a) : measureAny(a, this.rates);
+    if (best === null) return;
+    if (Math.abs(best - this.period) <= 0.08 * this.period) {
+      this.pend = 0;
+      this.measured = true;
+      return;
     }
-    // der längste, der zu fast allen Abständen passt, fast so gut wie der beste – und ein ganzes Vielfaches von ihm
-    // ist (60 Hz zu 240 Hz ja; 72 Hz zu 75 Hz nicht)
-    const emin = Math.min(...errs);
-    const Pb = RATES[errs.indexOf(emin)];
-    const i = errs.findIndex((e, k) => { const r = RATES[k] / Pb; return outs[k] < 0.06 && e < emin + 0.6 && Math.abs(r - Math.round(r)) < 0.03 && ones[k] >= 0.15; });
-    if (i < 0) return;
-    const best = RATES[i];
-    // anderer Takt erkannt: beim ersten Mal (statt der angenommenen 60 Hz) erst einmal jeden Takt versuchen; später
-    // (der Browser ruft mal in jedem, mal nur in jedem zweiten Takt auf) bleibt die Zeit je Bild, wie sie ist
-    if (Math.abs(best - this.period) > 0.08 * this.period) {
-      const t = this.target;
-      this.period = best;
-      // nie seltener als 60 Bilder je Sekunde (wie in learnPace): eine Fehlerkennung (90 oder 240 statt 120 Hz)
-      // ergab sonst einen Takt von 20–22 ms – auf dem 120-Hz-Schirm also 25 ms, 40 Bilder je Sekunde, und die
-      // Auflösungsregelung senkte Auflösung und Sichtweite, obwohl das Gerät 60 schafft
-      this.div = this.measured ? Math.max(1, Math.min(maxDiv(best), Math.round(t / best))) : 1;
-      this.fn = 0;
-      this.fk = 0;
-      this.changes += 1;
-    }
-    this.measured = true;
+    // beim ersten Mal (statt der angenommenen 60 Hz) gilt die Messung gleich
+    if (!this.measured) { this.adopt(best); return; }
+    // später: ein schnellerer Takt erst nach zwei Messungen in Folge; ein langsamerer nie auf Apple-Geräten (dort
+    // heißt das nur, dass die Grafik wartet) und sonst nur, wenn der bisherige Takt zu den Aufrufen gar nicht mehr
+    // passt (drei Messungen in Folge – anderer Schirm, Stromsparmodus mit anderem Takt)
+    const faster = best < this.period;
+    if (!faster && (this.apple || fits(a, this.period))) { this.pend = 0; return; }
+    if (this.pendP && Math.abs(this.pendP - best) <= 0.08 * best) this.pend += 1;
+    else { this.pendP = best; this.pend = 1; }
+    if (this.pend >= (faster ? 2 : 3)) this.adopt(best);
   }
+
+  private adopt(best: number) {
+    const t = this.target;
+    this.period = best;
+    // beim ersten Mal jeden Takt versuchen; später bleibt die Zeit je Bild, wie sie ist (nie seltener als 60 je s:
+    // eine Fehlerkennung ergab sonst Bildtakte von 20–25 ms)
+    this.div = this.measured ? Math.max(1, Math.min(maxDiv(best), Math.round(t / best))) : 1;
+    this.measured = true;
+    this.pend = 0;
+    this.pendP = 0;
+    this.seen = 0;
+    this.late = 0;
+    this.window = 30;
+    this.changes += 1;
+  }
+}
+
+/** Apple-Telefon oder -Tablet (auch ein iPad, das sich als Mac meldet): Schirm mit 60 oder 120 Hz */
+export function appleDevice(): boolean {
+  try {
+    const nav = (globalThis as { navigator?: { userAgent?: string; maxTouchPoints?: number } }).navigator;
+    const ua = nav?.userAgent ?? '';
+    return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && (nav?.maxTouchPoints ?? 0) > 1);
+  } catch { return false; }
+}
+
+/**
+ * Apple: 120 Hz, sobald ein guter Teil der Aufrufe im Abstand eines 120-Hz-Takts kommt (6,7 – 10 ms). Ein 60-Hz-Schirm
+ * ruft nur im Abstand von 16,7 ms auf (verrauscht um wenige ms) – so kurz nie in Menge.
+ */
+function measureApple(a: Float64Array): number {
+  const P = 1000 / 120;
+  let one = 0;
+  for (const x of a) if (Math.abs(x - P) <= 1.7) one += 1;
+  return one / a.length >= 0.15 ? P : 1000 / 60;
+}
+
+/** passen die Abstände zu ganzen Vielfachen von P? (höchstens ein Viertel daneben) */
+function fits(a: Float64Array, P: number): boolean {
+  const tol = Math.max(1.5, 0.2 * P);
+  let off = 0;
+  for (const x of a) if (Math.abs(x - Math.max(1, Math.round(x / P)) * P) > tol) off += 1;
+  return off / a.length <= 0.25;
+}
+
+/**
+ * Andere Geräte: der längste übliche Takt (60, 75, 90, 120, 144 Hz …), zu dem fast alle Abstände als ganze Vielfache
+ * passen. Ein 120-Hz-Schirm, der nur jeden zweiten oder dritten Takt schafft, ruft im Abstand 16,7 und 25 ms auf –
+ * das passt nur zu 8,3 ms, nicht zu 16,7.
+ */
+function measureAny(a: Float64Array, rates: number[]): number | null {
+  // je Takt: mittlere Abweichung zum nächsten Vielfachen und Anteil grober Abweichungen (> 4 ms – Rauschen der
+  // Stempel ist kleiner, ein falscher Takt liegt um einen halben daneben)
+  const errs: number[] = [];
+  const outs: number[] = [];
+  // Anteil einfacher Takte: ein Takt muss sich selbst zeigen – unter Last kommen Aufrufe auch nach 12,5 oder 21 ms;
+  // das passt zu 240 Hz (3 und 5 Takte), aber kein Aufruf kommt je nach 4 ms
+  const ones: number[] = [];
+  for (const P of rates) {
+    let err = 0;
+    let out = 0;
+    let one = 0;
+    for (const x of a) { const e = Math.abs(x - Math.max(1, Math.round(x / P)) * P); err += e; if (e > 4) out += 1; if (x < P * 1.5) one += 1; }
+    errs.push(err / a.length);
+    outs.push(out / a.length);
+    ones.push(one / a.length);
+  }
+  // der längste, der zu fast allen Abständen passt, fast so gut wie der beste – und ein ganzes Vielfaches von ihm
+  // ist (60 Hz zu 240 Hz ja; 72 Hz zu 75 Hz nicht)
+  const emin = Math.min(...errs);
+  const Pb = rates[errs.indexOf(emin)];
+  const i = errs.findIndex((e, k) => { const r = rates[k] / Pb; return outs[k] < 0.06 && e < emin + 0.6 && Math.abs(r - Math.round(r)) < 0.03 && ones[k] >= 0.15; });
+  return i < 0 ? null : rates[i];
 }
 
 /**
@@ -170,10 +254,10 @@ export function maxDiv(period: number): number {
   return Math.max(1, Math.floor((1000 / 60 + 1) / period));
 }
 
-/** Takt in Worten (Messfahrt): „120 Hz, jeder 2. Takt → 16,7 ms“ */
+/** Takt in Worten (Messfahrt): „120 Hz, jeder 2. Takt → 16,7 ms" */
 export function paceText(c: FrameClock): string {
   return `${Math.round(1000 / c.period)} Hz erkannt${c.div > 1 ? `, jeder ${c.div}. Takt` : ''} → Bild alle ${c.target.toFixed(1)} ms`;
 }
 
-/** übliche Bildschirmtakte (ms), längster zuerst */
-const RATES = [60, 72, 75, 90, 100, 120, 144, 165, 240].map((hz) => 1000 / hz);
+/** übliche Bildschirmtakte (Hz), längster Takt zuerst */
+const RATES_HZ = [60, 72, 75, 90, 100, 120, 144, 165, 240];
