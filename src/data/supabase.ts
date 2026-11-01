@@ -1,7 +1,7 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type { GameGhostRow, TtGhostRow } from '../game/tt';
 import type {
-  AdminUser, BonusCategory, BonusResult, BonusTip, PointScale, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
+  AdminUser, BonusCategory, BonusResult, BonusTip, NewsItem, PointScale, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
   Tour, TourData, StageSyncInfo, SyncLogEntry, SyncMode, SyncStatus,
 } from '../lib/types';
 import {
@@ -334,6 +334,16 @@ export class SupabaseSource implements DataSource {
       body: { user_id: this.me(), game: g.game, day: g.day, score: Math.max(0, Math.round(g.score)), meters: Math.max(0, Math.round(g.meters)), bike: g.bike, trace: g.trace, created_at: new Date().toISOString() },
       prefer: 'resolution=merge-duplicates,return=minimal',
     });
+  }
+
+  async loadNews(): Promise<NewsItem[]> {
+    // eine Woche, neueste zuerst; ohne Tabelle oder Netz: leer statt Fehler (die Startseite soll stehen)
+    const since = new Date(Date.now() - 7 * 864e5).toISOString();
+    try {
+      return await this.rest<NewsItem[]>(`news?select=id,source,lang,title,summary,url,published_at,topics,cluster,sources,score,fetched_at&published_at=gte.${encodeURIComponent(since)}&order=published_at.desc&limit=160`);
+    } catch {
+      return [];
+    }
   }
 
   async listFavorites(): Promise<number[]> {

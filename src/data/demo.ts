@@ -1,6 +1,6 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type {
-  AdminUser, BonusCategory, BonusResult, BonusTip, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData,
+  AdminUser, BonusCategory, BonusResult, BonusTip, NewsItem, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData,
   SyncLogEntry, SyncMode, SyncStatus, StageSyncInfo,
 } from '../lib/types';
 import { DEFAULT_SCALE, tipLimit } from '../lib/scoring';
@@ -307,6 +307,17 @@ export class DemoSource implements DataSource {
 
   private favorites = new Set<number>([1, 44]);
 
+  /** Beispielmeldungen (ausgedacht, ohne echte Personen) – Zeiten relativ zu „jetzt“ */
+  async loadNews(): Promise<NewsItem[]> {
+    await wait(120);
+    const now = this.now();
+    return DEMO_NEWS.map(([h, lang, topics, sources, score, title, summary], i) => ({
+      id: `demo-${i}`, source: 'beispiel', lang, title, summary, url: 'https://example.org/',
+      published_at: new Date(now - h * 3600e3).toISOString(), topics, cluster: sources > 1 ? `demo-${i}` : null, sources, score,
+      fetched_at: new Date(now - 0.4 * 3600e3).toISOString(),
+    }));
+  }
+
   async listFavorites(): Promise<number[]> {
     await wait(60);
     return [...this.favorites];
@@ -588,3 +599,17 @@ function demoProfile(stage: Stage): ProfilePoint[] | null {
   }
   return pts;
 }
+
+/** [vor Stunden, Sprache, Themen, Quellen, Gewicht, Überschrift, Anriss] – frei erfunden, ohne echte Personen */
+const DEMO_NEWS: [number, 'de' | 'en', string[], number, number, string, string | null][] = [
+  [1.2, 'de', ['rennen'], 3, 2.6, 'Königsetappe am Passo San Marco: Die Favoriten belauern sich bis zum Schlussanstieg', 'Vor der ersten großen Bergankunft halten sich die Kapitäne bedeckt – die Teams rechnen mit einer Vorentscheidung im Gesamtklassement.'],
+  [2.5, 'en', ['rennen'], 1, 1.6, 'Stage preview: why the breakaway may finally get its chance', 'Rolling terrain, a late climb and tired sprint teams – the ingredients for a day for the opportunists.'],
+  [4, 'de', ['verletzung'], 2, 1.9, 'Sturz im Finale: Mehrere Fahrer mit Prellungen, Rennarzt gibt Entwarnung', 'Auf nasser Straße kam es drei Kilometer vor dem Ziel zu einem Massensturz. Alle Beteiligten konnten weiterfahren.'],
+  [6, 'de', ['transfer'], 1, 1.4, 'Transfermarkt: Zwei WorldTour-Teams werben um junges Klassikertalent', 'Der Vertrag des U23-Siegers läuft aus – die Entscheidung soll noch vor der Tour fallen.'],
+  [9, 'en', ['team'], 1, 1.1, 'Team doctors warn of heat as the race heads south', null],
+  [20, 'de', ['rennen'], 2, 1.8, 'Etappensieg aus der Fluchtgruppe – die Favoriten sparen Kräfte', 'Die Ausreißer retteten 40 Sekunden ins Ziel, im Feld blieb es bis zum Schluss ruhig.'],
+  [23, 'en', ['rennen'], 1, 1.2, 'Analysis: the rest day could reshape the GC battle', 'Three teams, three plans – and one mountain stage that might decide everything.'],
+  [27, 'de', ['team'], 1, 1.0, 'Neues Material: Teams testen breitere Reifen für die Schotterpassage', null],
+  [44, 'en', ['transfer'], 1, 1.1, 'Rumours: Grand Tour contender weighing two-year deal', null],
+  [49, 'de', ['rennen'], 1, 1.0, 'Nachwuchs: Rundfahrt der U23 mit Rekordbeteiligung', 'Über 170 Fahrerinnen und Fahrer aus 24 Nationen stehen am Start.'],
+];

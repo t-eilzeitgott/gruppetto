@@ -187,6 +187,29 @@ export interface BonusResult {
   team: string | null;
 }
 
+export type NewsTopic = 'rennen' | 'transfer' | 'verletzung' | 'team';
+
+/** Meldung aus der Szene (Tab „News“), mehrmals täglich von den Radsport-Medien geholt (scripts/news) */
+export interface NewsItem {
+  id: string;
+  /** Kurzname der Quelle, z. B. radsport-news, cyclingnews */
+  source: string;
+  lang: 'de' | 'en' | 'fr' | 'it' | 'es' | 'nl';
+  title: string;
+  summary: string | null;
+  url: string;
+  published_at: string;
+  /** rennen, transfer, verletzung, team */
+  topics: string[];
+  /** gleiche Meldung bei mehreren Quellen: gemeinsame Kennung */
+  cluster: string | null;
+  /** bei wie vielen Quellen die Meldung lief */
+  sources: number;
+  /** Gewicht (Stars, Rennen, mehrere Quellen, Deutsch) */
+  score: number;
+  fetched_at?: string;
+}
+
 /** Alles, was für eine Rundfahrt geladen wird (sichtbar laut RLS). */
 export interface TourData {
   tour: Tour;

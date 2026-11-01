@@ -1,7 +1,7 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type { GameGhostRow, TtGhostRow } from '../game/tt';
 import type {
-  AdminUser, BonusCategory, BonusResult, Profile, Rider, Stage, Tour, TourData, StageKind, TourTheme,
+  AdminUser, BonusCategory, BonusResult, NewsItem, Profile, Rider, Stage, Tour, TourData, StageKind, TourTheme,
   SyncMode, SyncStatus,
 } from '../lib/types';
 
@@ -108,6 +108,8 @@ export interface DataSource {
   saveTtGhost(g: Omit<TtGhostRow, 'user_id' | 'created_at'>): Promise<void>;
   /** Lieblingsfahrer (IDs der Fahrer-Stammdaten) */
   listFavorites(): Promise<number[]>;
+  /** Meldungen aus der Szene der letzten Tage, neueste zuerst (leer, wenn nicht erreichbar) */
+  loadNews(): Promise<NewsItem[]>;
   setFavorite(cyclistId: number, on: boolean): Promise<void>;
 
   // Spieler

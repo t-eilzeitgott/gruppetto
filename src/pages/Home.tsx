@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
@@ -17,6 +17,29 @@ import { GamesCard } from '../ui/GamesCard';
 import { stageOfDay } from '../game/abfahrt/sprintRiders';
 import { berlinDayKey } from '../game/abfahrt/rng';
 import type { Profile } from '../lib/types';
+import { NewsPeek, NewsTab, hasUnread, markNewsSeen, newestAt, useNewsItems, useRoundNews } from '../ui/NewsFeed';
+
+type HomeTab = 'heute' | 'news';
+const TAB_KEY = 'gruppetto.home.tab';
+let homeTab: HomeTab | null = null;
+function initialTab(): HomeTab {
+  if (homeTab) return homeTab;
+  try { return sessionStorage.getItem(TAB_KEY) === 'news' ? 'news' : 'heute'; } catch { return 'heute'; }
+}
+
+/** „Heute | News“ als große Überschriften; Punkt am News-Tab, wenn es Neues gibt */
+function HomeTabs({ tab, onTab, unread }: { tab: HomeTab; onTab: (t: HomeTab) => void; unread: boolean }) {
+  const item = (id: HomeTab, label: string) => (
+    <button
+      type="button" role="tab" id={`home-tab-${id}`} aria-selected={tab === id} aria-controls="home-panel"
+      className={cx('home-tab', tab === id && 'is-on')} onClick={() => onTab(id)}
+    >
+      {label}
+      {id === 'news' && unread && tab !== 'news' ? <span className="home-tab__dot" aria-label="neue Meldungen" /> : null}
+    </button>
+  );
+  return <div className="home-tabs" role="tablist" aria-label="Startseite">{item('heute', 'Heute')}{item('news', 'News')}</div>;
+}
 
 /** Kopf der Startseite: Wortmarke und Profilbild */
 export function HomeHead({ me }: { me: Profile }) {
@@ -31,9 +54,24 @@ export function HomeHead({ me }: { me: Profile }) {
 }
 
 export function Home() {
-  useTitle('Heute');
+  const [tab, setTabState] = useState<HomeTab>(initialTab);
+  useTitle(tab === 'news' ? 'News' : 'Heute');
   const { me, tour, tours, data, members, loading, error, reload } = useTourContext();
   const now = useNow();
+  const news = useNewsItems();
+  const rounds = useRoundNews(data ?? null, members ?? null, now);
+  const unread = hasUnread(news.items, rounds);
+  const latest = newestAt(news.items, rounds);
+  // im News-Tab gilt alles Angezeigte als gelesen
+  useEffect(() => { if (tab === 'news' && latest) markNewsSeen(latest); }, [tab, latest]);
+  const setTab = (t: HomeTab) => {
+    homeTab = t;
+    try { sessionStorage.setItem(TAB_KEY, t); } catch { /* egal */ }
+    if (t !== tab) {
+      setTabState(t);
+      window.scrollTo({ top: 0 });
+    }
+  };
   useRefreshAtStart(data?.stages, now);
   // Inhalt, der erst während dieses Besuchs kommt, weich einblenden (aus dem Zwischenspeicher: sofort da)
   const waited = useRef(false);
@@ -45,12 +83,28 @@ export function Home() {
     return () => { if (!idle) window.clearTimeout(id); };
   }, []);
 
-  const header = <HomeHead me={me} />;
+  const header = (
+    <>
+      <HomeHead me={me} />
+      <HomeTabs tab={tab} onTab={setTab} unread={unread} />
+    </>
+  );
   // Intro beenden, sobald die Startseite mit Inhalt steht (oder es nichts zu laden gibt)
   const shown = !tour || !!error || (!loading && !!data && !!members);
   useEffect(() => {
     if (shown) introReady('content');
   }, [shown]);
+
+  if (tab === 'news') {
+    return (
+      <>
+        {header}
+        <div className="stack reveal" id="home-panel" role="tabpanel" aria-labelledby="home-tab-news">
+          <NewsTab data={tour && !error ? data ?? null : null} members={members ?? null} now={now} />
+        </div>
+      </>
+    );
+  }
 
   if (!tour) {
     return (
@@ -69,15 +123,15 @@ export function Home() {
   return (
     <>
       {header}
-      <div className={cx('stack', waited.current && 'reveal')}>
+      <div className={cx('stack', (waited.current || homeTab) && 'reveal')} id="home-panel" role="tabpanel" aria-labelledby="home-tab-heute">
         <TourPicker tour={tour} tours={tours} />
-        <HomeBody data={data} members={members} me={me} now={now} />
+        <HomeBody data={data} members={members} me={me} now={now} onNews={() => setTab('news')} />
       </div>
     </>
   );
 }
 
-function HomeBody({ data, members, me, now }: { data: TourData; members: Profile[]; me: Profile; now: number }) {
+function HomeBody({ data, members, me, now, onNews }: { data: TourData; members: Profile[]; me: Profile; now: number; onNews: () => void }) {
   const phase = tourPhase(data.tour, data.stages, now);
   const todayStage = stageOfDay(data.stages, berlinDayKey());
   const board = useMemo(() => leaderboard(data, members), [data, members]);
@@ -123,6 +177,8 @@ function HomeBody({ data, members, me, now }: { data: TourData; members: Profile
       ) : null}
 
       {last ? <LastResultCard stage={last} data={data} me={me} /> : null}
+
+      <NewsPeek data={data} members={members} now={now} onOpen={onNews} />
 
       {phase === 'finished' ? <FinalCard data={data} board={board} /> : null}
 
