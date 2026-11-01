@@ -93,3 +93,19 @@ test('Zeilen für die Datenbank: doppelte Links einmal, Bündel zählt Quellen, 
   assert.equal(rows.find((r) => r.url.endsWith('/3'))!.published_at, now.toISOString());
   assert.ok(importance('Pogačar und Vingegaard bei der Tour', ['rennen'], 1, 'en') > importance('Neues Team', ['team'], 1, 'en'));
 });
+
+test('Bündeln: verschiedene Meldungen über denselben Star bleiben getrennt, dieselbe wird erkannt', () => {
+  const t = new Date('2026-10-31T16:00:00Z');
+  const h = (n: number) => new Date(t.getTime() + n * 3600e3);
+  const cl = cluster([
+    { id: 'cn', source: 'Cyclingnews', lang: 'en', title: "'I'm just happy to be alive' - Tadej Pogačar reveals three fractured vertebrae after Vuelta crash", published: t },
+    { id: 'velo', source: 'Velo', lang: 'en', title: 'Tadej Pogačar ‘Happy to Be Alive’: More Spinal Injuries Revealed', published: h(1) },
+    { id: 'esc', source: 'Escape Collective', lang: 'en', title: 'UAE Tour, Classics, then Tour – Pogačar lays out likely early-2027 plans', published: h(2) },
+    { id: 'rn', source: 'Radsport-News', lang: 'de', title: 'Pogačar nach Vuelta-Sturz: drei Wirbel gebrochen', published: h(3) },
+    { id: 'cw', source: 'Cycling Weekly', lang: 'en', title: 'Pogačar targets Tour de France again in 2027', published: h(4) },
+  ]);
+  assert.equal(cl.get('velo'), cl.get('cn'));
+  assert.equal(cl.get('rn'), cl.get('cn'), 'Verletzung, Star und Rennen über die Sprache hinweg');
+  assert.notEqual(cl.get('esc'), cl.get('cn'));
+  assert.notEqual(cl.get('cw'), cl.get('cn'));
+});

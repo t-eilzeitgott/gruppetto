@@ -53,10 +53,10 @@ async function main() {
   for (const r of report) console.log(r);
   if (report.every((r) => r.includes('FEHLER'))) throw new Error('keine Quelle erreichbar');
 
-  let prior: { id: string; source: string; title: string; published_at: string }[] = [];
+  let prior: { id: string; source: string; title: string; published_at: string; lang?: 'de' | 'en' }[] = [];
   if (!dry) {
     const since = new Date(now.getTime() - 3 * 86400e3).toISOString();
-    prior = await db(`news?select=id,source,title,published_at&published_at=gte.${encodeURIComponent(since)}`);
+    prior = await db(`news?select=id,source,title,published_at,lang&published_at=gte.${encodeURIComponent(since)}`);
   }
   const rows: NewsRow[] = build(items, prior, now);
   rows.sort((a, b) => b.published_at.localeCompare(a.published_at));

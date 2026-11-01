@@ -46,11 +46,11 @@ export function fold(s: string): string {
 }
 
 /** kein Profi-Rennsport: Tests, Angebote, Kaufberatung, Training, Technik für Hobbyfahrer */
-const OFF = /\b(review|reviews|deal|deals|sale|discount|black friday|cyber monday|buyer'?s? guide|best [a-z ]*(bikes?|wheels?|helmets?|shoes|lights|jerseys?|bib)|how to|workout|training plan|nutrition|recipe|kaufberatung|im test|test:|angebot|rabatt|gutschein|gewinnspiel|e-?bike|gravel bike|bikepacking|commut|zwift|indoor trainer|smart trainer|podcast|quiz|crossword|horoscope)\b/;
+const OFF = /\b(product review|tested|first ride|first look|deal|deals|sale|discount|black friday|cyber monday|buyer'?s? guide|best [a-z ]*(bikes?|wheels?|helmets?|shoes|lights|jerseys?|bib)|how to|workout|training plan|nutrition|recipe|kaufberatung|im test|test:|angebot|rabatt|gutschein|gewinnspiel|e-?bike|gravel bike|bikepacking|commut\w*|zwift|indoor trainer|smart trainer|podcast|quiz|crossword|horoscope|groupset|wheelset|tyres?|tires?|saddle|power meter|bike computer|frameset|unboxing|gear guide)\b/;
 
 // (auf gefalteten Text: ohne Umlaute und Akzente)
 const TOPIC_WORDS: Record<Topic, RegExp> = {
-  transfer: /\b(wechsel\w*|vertrag\w*|verlanger\w*|unterschreib\w*|unterzeichn\w*|neuzugang|neuzugange|transfer\w*|signs?|signing|signed|contract|joins|joining|extension|extends|re-signs?|kader 20\d\d|roster)\b/,
+  transfer: /\b(wechsel\w*|vertrag\w*|verlanger\w*|unterschreib\w*|unterzeichn\w*|neuzugang|neuzugange|transfer\w*|signs?|signing|signed|contract|extension|extends|re-signs?|kader 20\d\d|roster)\b/,
   verletzung: /\b(sturz|sturze|gesturzt|verletz\w*|\w*bruch|gebrochen\w*|operation|operiert|krankenhaus|klinik|gehirnerschutterung|ausfall|fallt aus|crash\w*|injur\w*|fracture\w*|broken|surgery|hospital\w*|concussion|abandons?)\b/,
   rennen: /\b(etappe\w*|etappensieg|sieg|siegt|gewinnt|gewonnen|sprint\w*|zeitfahren|klassiker|rundfahrt|gesamtwertung|weltmeister\w*|wm|stage|wins?|won|victory|race|classic|gc|time trial|world championships?|worlds|olympi\w*|podium|results?|tour de france|giro|vuelta|roubaix|flandern|flanders|ronde|sanremo|lombard\w*|luttich|liege|strade bianche|amstel|wevelgem|dauphin\w*|tour de suisse|paris-nizza|paris-nice|tirreno|deutschland tour|cyclocross|querfeldein)\b/,
   team: /\b(team|teams|mannschaft|sponsor\w*|fusion|merger|lizenz|licen[cs]e|worldtour|pro ?team|teamchef|sportlicher leiter|directeur sportif|budget|ausrüster|kit|trikot)\b/,
@@ -99,7 +99,7 @@ const STOP = new Set(('der die das und oder aber mit von vom zum zur für auf au
 
 /** Inhaltswörter einer Überschrift (für das Bündeln in derselben Sprache) */
 export function words(title: string): Set<string> {
-  return new Set(fold(title).replace(/[^a-z0-9' -]/g, ' ').split(/[\s-]+/).filter((w) => w.length >= 4 && !STOP.has(w)));
+  return new Set(fold(title).replace(/['’‘`]/g, '').replace(/[^a-z0-9 -]/g, ' ').split(/[\s-]+/).filter((w) => w.length >= 4 && !STOP.has(w)));
 }
 
 export function topics(title: string, summary: string): Topic[] {
@@ -122,7 +122,8 @@ export function importance(title: string, tps: Topic[], sources: number, lang: L
   if (tps.includes('transfer')) s += 0.15;
   if (tps.includes('verletzung')) s += 0.2;
   s += Math.min(3, sources - 1) * 0.6;
-  if (lang === 'de') s += 0.15;
+  // die Runde liest Deutsch: deutschsprachige Meldungen etwas vorn
+  if (lang === 'de') s += 0.3;
   return Math.round(s * 100) / 100;
 }
 
@@ -130,32 +131,46 @@ export const idOf = (url: string) => createHash('sha1').update(url.replace(/[?#]
 
 export interface Scored { feed: Feed; item: RawItem }
 
-/** Meldungen bündeln: gleiche Namen/Rennen (mind. zwei, oder ein Star und ein Wort) bzw. viele gleiche Wörter, höchstens 36 h auseinander, verschiedene Quellen */
-export function cluster(list: { id: string; source: string; title: string; published: Date }[]): Map<string, string> {
-  const parent = new Map<string, string>(list.map((x) => [x.id, x.id]));
-  const find = (a: string): string => { let r = a; while (parent.get(r) !== r) r = parent.get(r)!; parent.set(a, r); return r; };
-  const k = list.map((x) => new Set(keys(x.title)));
-  const w = list.map((x) => words(x.title));
-  for (let i = 0; i < list.length; i++) {
-    for (let j = i + 1; j < list.length; j++) {
-      const a = list[i], b = list[j];
-      if (a.source === b.source) continue;
-      if (Math.abs(a.published.getTime() - b.published.getTime()) > 36 * 3600e3) continue;
-      const sharedK = [...k[i]].filter((x) => k[j].has(x));
-      const sharedW = [...w[i]].filter((x) => w[j].has(x));
-      const star = sharedK.some((x) => STARS.includes(x));
-      const same = sharedK.length >= 2 || (star && sharedW.filter((x) => !sharedK.some((y) => y.includes(x))).length >= 1)
-        || (sharedW.length >= 3 && sharedW.length / Math.min(w[i].size, w[j].size) >= 0.5);
-      if (same) parent.set(find(b.id), find(a.id));
-    }
-  }
+const WIN = /\b(gewinnt|gewonnen|siegt|sieg|holt|triumph\w*|wins|won|victory|takes)\b/;
+
+/**
+ * Meldungen bündeln: je Meldung (älteste zuerst) das erste Bündel suchen, zu dessen erster Meldung sie passt –
+ * keine Ketten über Zwischenschritte (sonst landen alle Meldungen über denselben Star in einem Bündel).
+ * Passt: andere Quelle, höchstens 24 h auseinander und
+ *  - gleiche Sprache: mindestens drei gleiche Inhaltswörter, gut die Hälfte der kürzeren Überschrift, oder
+ *  - über die Sprache hinweg: derselbe Star und dazu ein weiterer Name, ein Rennen oder ein Team, dieselbe Art
+ *    (Verletzung, Transfer, Sieg in demselben Rennen – „Rennen“ allein ist zu allgemein) oder drei gemeinsame
+ *    Namen/Rennen/Teams
+ */
+export function cluster(list: { id: string; source: string; title: string; published: Date; lang?: Lang }[]): Map<string, string> {
+  const items = [...list].sort((a, b) => a.published.getTime() - b.published.getTime()).map((x) => ({
+    ...x, k: new Set(keys(x.title)), w: words(x.title),
+    // Art der Meldung (über die Sprache hinweg vergleichbar): Verletzung, Transfer oder Sieg
+    t: [...topics(x.title, '').filter((t) => t === 'verletzung' || t === 'transfer'), ...(WIN.test(fold(x.title)) ? ['sieg'] : [])],
+  }));
+  type It = (typeof items)[number];
+  const match = (a: It, b: It) => {
+    if (a.source === b.source) return false;
+    if (Math.abs(a.published.getTime() - b.published.getTime()) > 24 * 3600e3) return false;
+    const sw = [...a.w].filter((x) => b.w.has(x));
+    if ((a.lang ?? 'de') === (b.lang ?? 'de') && sw.length >= 3 && sw.length / Math.min(a.w.size, b.w.size) >= 0.5) return true;
+    const sk = [...a.k].filter((x) => b.k.has(x));
+    if (sk.length >= 3) return true;
+    const star = sk.some((x) => STARS.includes(x));
+    return star && sk.length >= 2 && a.t.some((t) => b.t.includes(t)) && (!a.t.includes('sieg') || sk.some((x) => RACES.includes(x)));
+  };
+  const roots: It[] = [];
   const out = new Map<string, string>();
-  for (const x of list) out.set(x.id, find(x.id));
+  for (const it of items) {
+    const r = roots.find((x) => match(x, it));
+    if (r) out.set(it.id, r.id);
+    else { roots.push(it); out.set(it.id, it.id); }
+  }
   return out;
 }
 
 /** aus den Feeds die Zeilen für die Datenbank (prior: schon gespeicherte der letzten Tage – für das Bündeln) */
-export function build(items: Scored[], prior: { id: string; source: string; title: string; published_at: string }[], now = new Date()): NewsRow[] {
+export function build(items: Scored[], prior: { id: string; source: string; title: string; published_at: string; lang?: Lang }[], now = new Date()): NewsRow[] {
   const seen = new Set<string>();
   const fresh: { id: string; feed: Feed; item: RawItem }[] = [];
   for (const { feed, item } of items) {
@@ -165,8 +180,8 @@ export function build(items: Scored[], prior: { id: string; source: string; titl
     fresh.push({ id, feed, item });
   }
   const all = [
-    ...fresh.map((f) => ({ id: f.id, source: f.feed.name, title: f.item.title, published: f.item.published })),
-    ...prior.filter((p) => !seen.has(p.id)).map((p) => ({ id: p.id, source: p.source, title: p.title, published: new Date(p.published_at) })),
+    ...fresh.map((f) => ({ id: f.id, source: f.feed.name, title: f.item.title, published: f.item.published, lang: f.feed.lang })),
+    ...prior.filter((p) => !seen.has(p.id)).map((p) => ({ id: p.id, source: p.source, title: p.title, published: new Date(p.published_at), lang: p.lang })),
   ];
   const cl = cluster(all);
   const size = new Map<string, Set<string>>();
