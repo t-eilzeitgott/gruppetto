@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
 import { GFX_LEVELS, GFX_MAX, GFX_MIN, gfxLevel, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxLevel, setGfxRes } from '../game/abfahrt/gfxOpts';
 import { cx } from '../ui/kit';
+import { healFixedSoon } from '../ui/fixedHeal';
 
 export const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 export const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
@@ -13,9 +14,8 @@ export const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v
 /** Kein Zoomen, kein Scrollen, kein Zurückwischen während des Spiels */
 export function useGameLock() {
   useEffect(() => {
-    const meta = document.querySelector('meta[name=viewport]');
-    const before = meta?.getAttribute('content') ?? '';
-    meta?.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+    // Den Ansichtsbereich (meta viewport) nicht umschalten: das Umbauen beim Verlassen ließ auf dem iPhone die
+    // Statusleisten-Abdeckung als schwarzen Balken mitten auf der Seite hängen. Zoomen verhindern die Gesten unten.
     document.documentElement.classList.add('game-lock');
     const stop = (e: Event) => e.preventDefault();
     const touchMove = (e: TouchEvent) => {
@@ -40,8 +40,8 @@ export function useGameLock() {
     document.addEventListener('contextmenu', stop);
     window.scrollTo(0, 0);
     return () => {
-      if (meta) meta.setAttribute('content', before);
       document.documentElement.classList.remove('game-lock');
+      healFixedSoon();
       document.removeEventListener('gesturestart', stop);
       document.removeEventListener('gesturechange', stop);
       document.removeEventListener('touchmove', touchMove);

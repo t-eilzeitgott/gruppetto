@@ -30,6 +30,7 @@ import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
 import { PauseIcon, PlayIcon, useCountUp } from './gameKit';
+import { healFixedSoon } from '../ui/fixedHeal';
 
 export { PauseIcon, PlayIcon, useCountUp };
 
@@ -404,9 +405,8 @@ export function GamePage() {
 
   // Kein Zoomen, kein Scrollen, kein Zurückwischen während des Spiels
   useEffect(() => {
-    const meta = document.querySelector('meta[name=viewport]');
-    const before = meta?.getAttribute('content') ?? '';
-    meta?.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+    // Den Ansichtsbereich (meta viewport) nicht umschalten: das Umbauen beim Verlassen ließ auf dem iPhone die
+    // Statusleisten-Abdeckung als schwarzen Balken mitten auf der Seite hängen. Zoomen verhindern die Gesten unten.
     document.documentElement.classList.add('game-lock');
     const stop = (e: Event) => e.preventDefault();
     const touchMove = (e: TouchEvent) => {
@@ -430,8 +430,8 @@ export function GamePage() {
     document.addEventListener('contextmenu', stop);
     window.scrollTo(0, 0);
     return () => {
-      if (meta) meta.setAttribute('content', before);
       document.documentElement.classList.remove('game-lock');
+      healFixedSoon();
       document.removeEventListener('gesturestart', stop);
       document.removeEventListener('gesturechange', stop);
       document.removeEventListener('touchmove', touchMove);

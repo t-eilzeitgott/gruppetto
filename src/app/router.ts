@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { flushSync } from 'react-dom';
+import { healFixedSoon } from '../ui/fixedHeal';
 
 function current(): string {
   const raw = window.location.hash.replace(/^#/, '');
@@ -36,6 +37,7 @@ function fadeIn(update: () => void) {
   try {
     el?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'cubic-bezier(0.2, 0, 0.2, 1)' });
   } catch { /* egal */ }
+  healFixedSoon();
 }
 
 type VTDocument = Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void>; ready?: Promise<void> } };
@@ -70,6 +72,7 @@ function transition(update: () => void) {
     vt.finished.catch(() => undefined).finally(() => {
       running -= 1;
       if (running <= 0) { running = 0; root.classList.remove('vt'); }
+      healFixedSoon();
     });
   } catch {
     running = Math.max(0, running - 1);
