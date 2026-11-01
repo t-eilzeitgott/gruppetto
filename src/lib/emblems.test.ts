@@ -137,6 +137,14 @@ test('über Rundfahrten: Saisonkarte, Stammgast, Titelverteidigung, Triple, Trep
   assert.ok(!ben.includes('triple:2027'));
 });
 
+test('Wieder da: nur nach einer Durststrecke, nicht beim späten Einstieg', () => {
+  const zero = { order: [1, 2, 3], tips: { anna: 9, ben: 9 } };
+  const late = tour('giro-2026', 'giro', '2026-10-26', [zero, zero, zero, zero, { order: [1, 2, 3], tips: { anna: 1, ben: 9 } }], { total: 21 });
+  assert.ok(!keys(emblemsFor('anna', [late], ALL)).some((k) => k.startsWith('wieder')));
+  const back = tour('giro-2026', 'giro', '2026-10-26', [{ order: [1, 2, 3], tips: { anna: 1, ben: 9 } }, zero, zero, zero, zero, { order: [1, 2, 3], tips: { anna: 2, ben: 9 } }], { total: 21 });
+  assert.ok(keys(emblemsFor('anna', [back], ALL)).includes('wieder:giro-2026:6'));
+});
+
 test('Vitrine: Medaillen vorn, gleiche Abzeichen in einem Fach mit Anzahl', () => {
   const day = { order: [1, 2, 3], tips: { anna: 1, ben: 2, carl: 3 } };
   const g = tour('giro-2026', 'giro', '2026-10-26', [day, day], { final: true });

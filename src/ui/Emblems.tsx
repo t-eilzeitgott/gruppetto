@@ -7,9 +7,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '../app/query';
+import { useApp } from '../app/context';
+import { useRoute } from '../app/router';
 import { source } from '../app/config';
 import { EMBLEM_SINCE, RARITY_LABEL, emblemsFor, shelf, type Emblem, type ShelfItem } from '../lib/emblems';
-import type { Profile } from '../lib/types';
+import type { Profile, TourTheme } from '../lib/types';
 import { EmblemArt, TONES } from './EmblemArt';
 import { cx } from './kit';
 
@@ -157,12 +159,14 @@ function flyTo(from: DOMRect, to: DOMRect) {
   return { dx, dy, s: to.width / from.width };
 }
 
-function EmblemStage({ items, mode, onLand, onClose }: {
+function EmblemStage({ items, mode, onLand, onClose, probe }: {
   items: StageItem[];
   /** Verleihung (neu) oder Ansicht (aus der Vitrine geöffnet) */
   mode: 'award' | 'show';
   onLand: (item: StageItem) => void;
   onClose: () => void;
+  /** Probe-Verleihung (Admin-Test): nichts wird gespeichert */
+  probe?: boolean;
 }) {
   const [i, setI] = useState(0);
   const [phase, setPhase] = useState<'in' | 'idle' | 'out'>('in');
@@ -302,7 +306,7 @@ function EmblemStage({ items, mode, onLand, onClose }: {
         </div>
         <div className="emb-stage__copy" key={`copy${i}`} aria-live="polite">
           <span className="emb-stage__eyebrow">
-            {mode === 'award' ? (medal ? 'Neue Medaille' : 'Neues Emblem') : RARITY_LABEL[e.rarity]}
+            {probe ? 'Probe · ' : ''}{mode === 'award' ? (medal ? 'Neue Medaille' : 'Neues Emblem') : RARITY_LABEL[e.rarity]}
             {mode === 'award' && !medal && e.rarity !== 'klassisch' ? <span className={cx('emb-rarity', `emb-rarity--${e.rarity}`)}>{RARITY_LABEL[e.rarity]}</span> : null}
           </span>
           <h2 id="emb-stage-name" className="emb-stage__name">
@@ -323,16 +327,30 @@ function EmblemStage({ items, mode, onLand, onClose }: {
         </div>
         <div className="emb-stage__actions">
           <button ref={next} type="button" className="emb-stage__next" onClick={() => go(false)}>
-            {mode === 'show' ? 'Schließen' : last ? 'In die Vitrine' : 'Weiter'}
+            {mode === 'show' ? 'Schließen' : !last ? 'Weiter' : probe ? 'Fertig' : 'In die Vitrine'}
           </button>
           {mode === 'award' && items.length > 1 && !last ? (
-            <button type="button" className="emb-stage__skip" onClick={() => go(true)}>Alle einsortieren · {items.length - i}</button>
+            <button type="button" className="emb-stage__skip" onClick={() => go(true)}>{probe ? 'Überspringen' : 'Alle einsortieren'} · {items.length - i}</button>
           ) : null}
         </div>
       </div>
     </div>,
     document.body,
   );
+}
+
+// ------------------------------------------------------------------ Probe (Admin-Test)
+
+/** Probe-Verleihung mit Platzhaltern – zeigt Medaille und seltene Stufen, ohne den Katalog zu verraten */
+function probeItems(theme: TourTheme): StageItem[] {
+  const at = new Date().toISOString();
+  const text = 'Nur zum Testen der Verleihung – wird nicht gespeichert und erscheint nicht in der Vitrine.';
+  const list: Emblem[] = [
+    { key: 'probe:medaille', id: 'probe:medaille', name: 'Probemedaille', text, rarity: 'medaille', look: { shape: 'medal', tone: 'gold', glyph: '1', ribbon: theme }, at, tour: null },
+    { key: 'probe:episch', id: 'probe:episch', name: 'Probe-Emblem', text, rarity: 'episch', look: { shape: 'star', tone: 'violet', glyph: '?' }, at, tour: null },
+    { key: 'probe:legendaer', id: 'probe:legendaer', name: 'Probe-Emblem', text, rarity: 'legendaer', look: { shape: 'shield', tone: 'prism', glyph: 'sparkle' }, at, tour: null },
+  ];
+  return list.map((e) => ({ item: { id: e.id, latest: e, all: [e] }, fresh: [e] }));
 }
 
 // ------------------------------------------------------------------ Vitrine
@@ -372,6 +390,9 @@ function Tile({ item, shown, landing, index, onOpen, medal }: {
 
 export function EmblemCase({ me }: { me: Profile }) {
   const q = useEmblems(me);
+  const { tour } = useApp();
+  const route = useRoute();
+  const [probe, setProbe] = useState<StageItem[] | null>(null);
   const list = useMemo(() => q.data ?? [], [q.data]);
   const [seen, setSeen] = useState<Set<string>>(() => readSeen(me.id));
   const [queue, setQueue] = useState<StageItem[] | null>(null);
@@ -412,6 +433,22 @@ export function EmblemCase({ me }: { me: Profile }) {
 
   const shownCount = (item: ShelfItem) => item.all.filter((x) => seen.has(x.key)).length;
 
+  // Testen: eigene Verleihung wiederholen (vergisst auf diesem Gerät, was schon gezeigt wurde) oder Probe (nur Admins)
+  const replay = useCallback(() => {
+    writeSeen(me.id, new Set());
+    setSeen(new Set());
+    setQueue(null);
+  }, [me.id]);
+  const startProbe = useCallback(() => setProbe(probeItems(tour?.theme ?? 'giro')), [tour?.theme]);
+  // auch per Adresse: #/profil?embleme=neu bzw. #/profil?embleme=probe
+  const param = route.query.get('embleme');
+  const loaded = q.data !== undefined;
+  useEffect(() => {
+    if (!loaded) return;
+    if (param === 'neu') replay();
+    else if (param === 'probe' && me.is_admin) startProbe();
+  }, [param, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (q.loading) {
     return (
       <section className="card emb-case" aria-busy="true" aria-labelledby="emb-title">
@@ -448,10 +485,21 @@ export function EmblemCase({ me }: { me: Profile }) {
         </div>
       ) : null}
 
+      {me.is_admin ? (
+        <div className="emb-test">
+          <span className="emb-test__label">Admin-Test</span>
+          <button type="button" className="emb-test__btn" onClick={replay} disabled={!list.length || running}>Verleihung wiederholen</button>
+          <button type="button" className="emb-test__btn" onClick={startProbe} disabled={running || !!probe}>Probe mit Medaille</button>
+        </div>
+      ) : null}
+
       {running ? (
         <EmblemStage items={queue!} mode="award" onLand={land} onClose={() => setQueue([])} />
       ) : null}
-      {showing && !running ? (
+      {probe && !running ? (
+        <EmblemStage items={probe} mode="award" probe onLand={() => undefined} onClose={() => setProbe(null)} />
+      ) : null}
+      {showing && !running && !probe ? (
         <EmblemStage items={[showing]} mode="show" onLand={() => undefined} onClose={() => setShowing(null)} />
       ) : null}
     </section>

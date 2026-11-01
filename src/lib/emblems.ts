@@ -141,6 +141,7 @@ export function emblemsFor(me: string, datas: TourData[], members: Profile[]): E
     let soleLead = 0;
     let lastHit = -2;
     let dry = 0;
+    let scoredHere = false;
     let joinedHere = false;
 
     steps.forEach((step, i) => {
@@ -199,8 +200,10 @@ export function emblemsFor(me: string, datas: TourData[], members: Profile[]): E
       }
 
       // nach einer Durststrecke wieder gepunktet
-      if (myDay > 0 && dry >= 4) add({ key: `wieder:${tour.id}:${stage.number}`, id: 'wieder', name: 'Wieder da', text: `Nach ${dry} Etappen ohne Punkte wieder gepunktet: ${L}, ${E}.`, rarity: 'klassisch', look: { shape: 'round', tone: 'steel', glyph: 'refresh' }, at, tour: T });
+      // nur „wieder“, wenn man in dieser Rundfahrt schon einmal gepunktet hatte (nicht beim späten Einstieg)
+      if (myDay > 0 && dry >= 4 && scoredHere) add({ key: `wieder:${tour.id}:${stage.number}`, id: 'wieder', name: 'Wieder da', text: `Nach ${dry} Etappen ohne Punkte wieder gepunktet: ${L}, ${E}.`, rarity: 'klassisch', look: { shape: 'round', tone: 'steel', glyph: 'refresh' }, at, tour: T });
       dry = myDay > 0 ? 0 : dry + 1;
+      if (myDay > 0) scoredHere = true;
 
       // Tagesbeste (auch geteilt)
       const dayBest = best > 0 && myDay === best;
