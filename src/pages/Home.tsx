@@ -1,9 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
 import { bonusDeadline, fmtDay, lastPublishedStage, nextOpenStage, runningStages, tourPhase, dayDiff, fmtClock, fmtKm } from '../lib/time';
-import { BONUS_CATEGORIES, type Stage, type TourData } from '../lib/types';
+import { BONUS_CATEGORIES, type Stage, type Tour, type TourData } from '../lib/types';
 import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, cx, useTitle } from '../ui/kit';
 import { HomeSkeleton, Skel, firstContent } from '../ui/skeleton';
 import { prefetchGames } from '../app/pages';
@@ -18,19 +18,18 @@ import { stageOfDay } from '../game/abfahrt/sprintRiders';
 import { berlinDayKey } from '../game/abfahrt/rng';
 import type { Profile } from '../lib/types';
 import { NewsPeek, NewsTab, hasUnread, markNewsSeen, newestAt, useNewsItems, useRoundNews } from '../ui/NewsFeed';
+import { markUiBusy } from '../game/uiBusy';
 
 type HomeTab = 'heute' | 'news';
 const TAB_KEY = 'gruppetto.home.tab';
 let homeTab: HomeTab | null = null;
-/** schon einmal zwischen den Tabs gewechselt: dann übernimmt die Wechsel-Animation das Einblenden */
-let switched = false;
 function initialTab(): HomeTab {
   if (homeTab) return homeTab;
   try { return sessionStorage.getItem(TAB_KEY) === 'news' ? 'news' : 'heute'; } catch { return 'heute'; }
 }
 
 /** „Heute | News“ als große Überschriften; Punkt am News-Tab, wenn es Neues gibt. Wie hell welcher Titel ist,
- *  steuert der Pager über --p (0 = Heute, 1 = News): beim Wischen folgt das dem Finger, sonst der Bewegung. */
+ *  steuert der Pager über --p (0 = Heute, 1 = News) – stufenlos mit der Lage der Seiten. */
 type TabsCtl = { set: (p: number) => void };
 function HomeTabs({ tab, onTab, unread, ctl }: { tab: HomeTab; onTab: (t: HomeTab) => void; unread: boolean; ctl: RefObject<TabsCtl | null> }) {
   const box = useRef<HTMLDivElement>(null);
@@ -62,229 +61,127 @@ function HomeTabs({ tab, onTab, unread, ctl }: { tab: HomeTab; onTab: (t: HomeTa
 
 const calm = () => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
 const ORDER: HomeTab[] = ['heute', 'news'];
-/** Einrasten wie ein iOS-Pager: sehr schnell los, lang und weich auslaufend (gut 90 % des Wegs im ersten Drittel) */
-const SNAP_MS = 380;
-
-/** liegt der Finger auf etwas, das selbst seitlich scrollt (Spielkarte, Tabellen) oder auf einem Eingabefeld? */
-function scrollsX(el: Element | null) {
-  for (let e = el; e && e !== document.body; e = e.parentElement) {
-    if (e.matches('input, textarea, select, [role=slider]')) return true;
-    const ox = getComputedStyle(e).overflowX;
-    if ((ox === 'auto' || ox === 'scroll') && e.scrollWidth > e.clientWidth + 1) return true;
-  }
-  return false;
-}
 
 /**
- * Heute und News als Pager wie in nativen Apps: beide Seiten liegen randlos nebeneinander auf einer Schiene und
- * bleiben geladen; der Kopf mit den Titeln steht still. Beim Wischen folgt die Schiene dem Finger 1:1, beim Loslassen
- * (oder Tippen auf einen Titel) rastet sie mit einer schnellen, weich auslaufenden Bewegung ein – die Kurve setzt mit
- * dem Tempo des Fingers an, ohne Ruck. Keine Blende, kein Abbild, kein Neuaufbau: nur ein transform auf der
- * Grafikkarte. Die Titel hellen dabei stufenlos auf bzw. ab. Der React-Zustand (Titel der Seite, gelesen-Markierung)
- * wechselt erst, wenn die Bewegung steht – so rechnet während des Gleitens nichts dazwischen.
- * Die gerade nicht sichtbare Seite ist zusammengeklappt (Höhe 0, unsichtbar), die Seite ist nur so lang wie die sichtbare.
+ * Heute und News als Pager mit dem echten Scrollen des Systems (scroll-snap): Wischen, Mitziehen, Schwung,
+ * Einrasten und Nachfedern am Rand macht das iPhone selbst – mit voller Bildrate (120 Hz) und unabhängig davon, ob
+ * die Seite gerade rechnet. Genau so fühlen sich native Apps an. Tippen auf einen Titel scrollt weich dorthin.
+ *
+ * Drumherum nur Kleinigkeiten, nichts davon in der Bewegung selbst:
+ * - Die Titel hellen mit der Lage auf bzw. ab (--p, aus den Scroll-Ereignissen).
+ * - Die nicht sichtbare Seite ist auf Bildschirmhöhe gekürzt (die Seite ist so lang wie die sichtbare), aber
+ *   gezeichnet; ist man weit unten, steht ihr Anfang dort, wo er mit Kopf stünde (vorab versetzt, eigene Ebene).
+ * - Steht die Bewegung, werden die Seiten getauscht, ggf. der Kopf zurückgescrollt (Versatz und Scrollen im selben
+ *   Bild – kein Sprung) und der React-Zustand übernommen.
+ * - Solange sich etwas bewegt, gilt die Oberfläche als beschäftigt (uiBusy): Hintergrundarbeit wartet.
  */
 function usePager(tab: HomeTab, commit: (t: HomeTab) => void, tabs: RefObject<TabsCtl | null>, wantNews: () => void) {
   const pager = useRef<HTMLDivElement>(null);
-  const track = useRef<HTMLDivElement>(null);
   const idx = useRef(ORDER.indexOf(tab));
-  const run = useRef<{ raf: number; timer: number; t: HTMLElement | null; onEnd: ((e: TransitionEvent) => void) | null } | null>(null);
-  const pages = () => Array.from(track.current?.children ?? []) as HTMLElement[];
+  const pages = () => Array.from(pager.current?.children ?? []) as HTMLElement[];
   const width = () => pager.current?.clientWidth || window.innerWidth;
-
-  const show = (i: number, on: boolean) => {
-    const el = pages()[i];
-    if (!el) return;
-    el.classList.toggle('is-away', !on);
-    if (on) { el.removeAttribute('aria-hidden'); el.removeAttribute('inert'); } else { el.setAttribute('aria-hidden', 'true'); el.setAttribute('inert', ''); }
-  };
-  const place = (x: number, ms = 0, ease = '') => {
-    const t = track.current;
-    if (!t) return;
-    t.style.transition = ms > 0 ? `transform ${ms}ms ${ease}` : 'none';
-    // in Ruhe auf der ersten Seite ganz ohne transform: sonst wären feste Ebenen darin an der Schiene statt am Schirm
-    const rest = ms === 0 && Math.abs(x) < 0.01;
-    t.style.transform = rest ? '' : `translate3d(${x.toFixed(2)}px, 0, 0)`;
-    t.style.willChange = rest ? '' : 'transform';
-  };
-  /** wo die Schiene gerade wirklich steht (auch mitten in der Bewegung) */
-  const now = () => {
-    const t = track.current;
-    if (!t) return -idx.current * width();
-    try { return new DOMMatrixReadOnly(getComputedStyle(t).transform).m41; } catch { return -idx.current * width(); }
-  };
-  const stop = () => {
-    const r = run.current;
-    if (!r) return;
-    cancelAnimationFrame(r.raf);
-    window.clearTimeout(r.timer);
-    if (r.t && r.onEnd) r.t.removeEventListener('transitionend', r.onEnd);
-    run.current = null;
+  /** Scrollhöhe, bei der der Kopf (Titel) gerade noch oben im Bild steht */
+  const keep = () => {
+    const head = document.querySelector<HTMLElement>('.home-tabs');
+    return head ? Math.max(0, head.getBoundingClientRect().top + window.scrollY - 12) : 0;
   };
 
-  // Ausgangslage beim Einhängen
-  useLayoutEffect(() => {
-    idx.current = ORDER.indexOf(tab);
-    ORDER.forEach((_, i) => show(i, i === idx.current));
-    place(-idx.current * width());
-    const onResize = () => { if (!run.current) place(-idx.current * width()); };
-    window.addEventListener('resize', onResize);
-    return () => { window.removeEventListener('resize', onResize); stop(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /** Bewegung beendet: alte Seite zuklappen, Zustand übernehmen */
-  const settle = (i: number) => {
-    stop();
-    pages().forEach((el) => { el.style.transform = ''; });
-    ORDER.forEach((_, k) => show(k, k === i));
-    place(-i * width());
-    tabs.current?.set(i);
-    commit(ORDER[i]);
+  /** nicht sichtbare Seiten so versetzen, dass ihr Anfang beim Hereinwischen oben im Bild steht */
+  const align = () => {
+    const d = Math.max(0, Math.round(window.scrollY - keep()));
+    pages().forEach((el, k) => {
+      const tf = k === idx.current || d === 0 ? '' : `translate3d(0, ${d}px, 0)`;
+      if (el.style.transform !== tf) el.style.transform = tf;
+    });
   };
-
-  /**
-   * Zur Seite i gleiten, von der Stelle x aus, mit dem Fingertempo v (px/ms, Vorzeichen wie die Bewegung). Die Kurve
-   * (cubic-bezier) beginnt mit genau diesem Tempo und läuft weich aus.
-   */
-  const snap = (i: number, x: number, v: number) => {
-    stop();
-    const w = width();
-    const target = -i * w;
-    const dist = target - x;
-    idx.current = i;
-    if (calm() || Math.abs(dist) < 0.5) { settle(i); return; }
-    // Dauer nach Restweg: ganze Seite ≈ SNAP_MS, kurze Wege kürzer
-    const ms = Math.round(Math.max(220, Math.min(SNAP_MS, SNAP_MS * Math.sqrt(Math.abs(dist) / w))));
-    // Anfangssteigung der Kurve = Fingertempo (in Anteilen der Strecke je Anteil der Zeit); ohne Finger: zügiger Start
-    const along = Math.sign(dist) === Math.sign(v) ? Math.abs(v) : 0;
-    const slope = along > 0 ? (along * ms) / Math.abs(dist) : 3.2;
-    const x1 = 0.2;
-    const y1 = Math.max(0.5, Math.min(1, slope * x1));
-    const ease = `cubic-bezier(${x1}, ${y1.toFixed(3)}, 0.24, 1)`;
-    place(x);
-    const t = track.current;
-    const r: { raf: number; timer: number; t: HTMLElement | null; onEnd: ((e: TransitionEvent) => void) | null } = { raf: 0, timer: 0, t, onEnd: null };
-    run.current = r;
-    const follow = () => {
-      // Titel hellen mit der tatsächlichen Lage auf
-      tabs.current?.set(-now() / w);
-      r.raf = requestAnimationFrame(follow);
-    };
-    // Stil erst im nächsten Bild ändern, damit der Startpunkt gezeichnet ist (sonst springt die Bewegung)
-    r.raf = requestAnimationFrame(() => {
-      if (run.current !== r) return;
-      place(target, ms, ease);
-      r.raf = requestAnimationFrame(follow);
-      r.onEnd = (e) => { if (e.target === t && e.propertyName === 'transform') settle(i); };
-      t?.addEventListener('transitionend', r.onEnd);
-      r.timer = window.setTimeout(() => { if (run.current === r) settle(i); }, ms + 150);
+  /** welche Seite gilt (die andere: gekürzt und für Bildschirmleser stumm) */
+  const activate = (i: number) => {
+    pages().forEach((el, k) => {
+      const on = k === i;
+      el.classList.toggle('is-away', !on);
+      if (on) el.removeAttribute('aria-hidden'); else el.setAttribute('aria-hidden', 'true');
     });
   };
 
-  /** beide Seiten zeigen (vor einer Bewegung); war man weit unten, den Kopf wieder ins Bild holen, ohne dass die
-   *  aktuelle Seite dabei optisch springt */
-  const open = (towards: number) => {
-    const all = pages();
-    const cur = all[idx.current];
-    ORDER.forEach((_, k) => show(k, true));
-    const head = document.querySelector<HTMLElement>('.home-tabs');
-    if (!head || !cur || towards === idx.current) return;
-    const keep = Math.max(0, head.getBoundingClientRect().top + window.scrollY - 12);
-    const lift = window.scrollY - keep;
-    if (lift > 0) {
-      window.scrollTo(0, keep);
-      cur.style.transform = `translate3d(0, ${-lift}px, 0)`;
-    }
+  /** Bewegung steht auf Seite i: tauschen, Kopf zurückholen, Zustand übernehmen */
+  const settle = (i: number) => {
+    tabs.current?.set(i);
+    if (i === idx.current) return;
+    const k = keep();
+    const back = window.scrollY > k;
+    idx.current = i;
+    activate(i);
+    pages()[i].style.transform = '';
+    if (back) window.scrollTo(0, k);
+    align();
+    commit(ORDER[i]);
   };
 
-  const go = (t: HomeTab) => {
-    const i = ORDER.indexOf(t);
-    if (i === idx.current && !run.current) return;
-    if (t === 'news') wantNews();
-    const moving = !!run.current;
-    const x = now();
-    stop();
-    if (!moving) open(i);
-    snap(i, x, 0);
-  };
-
-  // Wischen: folgt dem Finger, rastet nach Weg (über die Hälfte) oder Tempo ein
-  useEffect(() => {
+  // Ausgangslage, Scrollen beobachten
+  useLayoutEffect(() => {
     const el = pager.current;
     if (!el) return;
-    let s: { x0: number; y0: number; base: number; lock: 0 | 1 | 2; pts: { x: number; t: number }[] } | null = null;
-    const down = (e: TouchEvent) => {
-      const p = e.touches[0];
-      if (e.touches.length !== 1 || p.clientX < 14 || scrollsX(e.target as Element)) { s = null; return; }
-      // in eine laufende Bewegung greifen: dort festhalten, wo die Schiene gerade ist
-      let base = -idx.current * width();
-      if (run.current) { base = now(); stop(); place(base); }
-      s = { x0: p.clientX, y0: p.clientY, base, lock: 0, pts: [{ x: p.clientX, t: e.timeStamp }] };
+    activate(idx.current);
+    el.scrollLeft = idx.current * width();
+    align();
+    let touching = false;
+    let timer = 0;
+    let raf = 0;
+    const check = () => {
+      window.clearTimeout(timer);
+      const p = el.scrollLeft / width();
+      const i = Math.round(p);
+      // noch am Finger oder noch nicht eingerastet: gleich noch einmal schauen
+      if (touching || Math.abs(p - i) > 0.01) { timer = window.setTimeout(check, 120); return; }
+      settle(Math.max(0, Math.min(ORDER.length - 1, i)));
     };
-    const move = (e: TouchEvent) => {
-      if (!s) return;
-      const p = e.touches[0];
-      const dx = p.clientX - s.x0;
-      const dy = p.clientY - s.y0;
-      if (s.lock === 0) {
-        if (Math.abs(dx) < 7 && Math.abs(dy) < 7) return;
-        s.lock = Math.abs(dx) > Math.abs(dy) * 1.1 ? 1 : 2;
-        if (s.lock === 2) {
-          // senkrecht: normal scrollen; hatte man in eine Bewegung gegriffen, sauber zu Ende einrasten
-          const w = width();
-          if (Math.abs(s.base + idx.current * w) > 0.5) snap(Math.round(-s.base / w), s.base, 0);
-          s = null;
-          return;
-        }
-        wantNews();
-        const i = idx.current;
-        open(i === 0 && dx < 0 ? 1 : i === ORDER.length - 1 && dx > 0 ? i - 1 : i);
-        // ab hier zählt der Weg ab dem Einrasten der Achse – kein Sprung um die ersten Pixel
-        s.x0 = p.clientX - Math.sign(dx);
-      }
-      if (e.cancelable) e.preventDefault();
-      const w = width();
-      const min = -(ORDER.length - 1) * w;
-      let x = s.base + (p.clientX - s.x0);
-      // über den Rand hinaus gummiartig nachgeben
-      if (x > 0) x *= 0.3;
-      else if (x < min) x = min + (x - min) * 0.3;
-      place(x);
-      tabs.current?.set(-x / w);
-      s.pts.push({ x: p.clientX, t: e.timeStamp });
-      if (s.pts.length > 6) s.pts.shift();
+    const onScroll = () => {
+      markUiBusy(350);
+      tabs.current?.set(el.scrollLeft / width());
+      window.clearTimeout(timer);
+      timer = window.setTimeout(check, 140);
     };
-    const up = (e: TouchEvent) => {
-      const st = s;
-      s = null;
-      if (!st || st.lock !== 1) return;
-      const w = width();
-      const x = now();
-      // Tempo aus den letzten ~100 ms
-      const end = e.timeStamp;
-      const pts = st.pts.filter((q) => end - q.t < 100);
-      const v = pts.length > 1 ? (pts[pts.length - 1].x - pts[0].x) / Math.max(8, pts[pts.length - 1].t - pts[0].t) : 0;
-      const pos = -x / w; // 0 … 1: wie weit Richtung News
-      let to = Math.round(pos);
-      if (Math.abs(v) > 0.3) to = v < 0 ? Math.ceil(pos - 0.02) : Math.floor(pos + 0.02);
-      to = Math.max(0, Math.min(ORDER.length - 1, to));
-      snap(to, x, v);
+    const onEnd = () => check();
+    const onDown = () => { touching = true; wantNews(); };
+    const onUp = () => { touching = false; };
+    const onWinScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; align(); });
     };
-    el.addEventListener('touchstart', down, { passive: true });
-    el.addEventListener('touchmove', move, { passive: false });
-    el.addEventListener('touchend', up);
-    el.addEventListener('touchcancel', up);
+    const onResize = () => { el.scrollLeft = idx.current * width(); align(); };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    el.addEventListener('scrollend', onEnd);
+    el.addEventListener('touchstart', onDown, { passive: true });
+    el.addEventListener('touchend', onUp, { passive: true });
+    el.addEventListener('touchcancel', onUp, { passive: true });
+    window.addEventListener('scroll', onWinScroll, { passive: true });
+    window.addEventListener('resize', onResize);
     return () => {
-      el.removeEventListener('touchstart', down);
-      el.removeEventListener('touchmove', move);
-      el.removeEventListener('touchend', up);
-      el.removeEventListener('touchcancel', up);
+      window.clearTimeout(timer);
+      cancelAnimationFrame(raf);
+      el.removeEventListener('scroll', onScroll);
+      el.removeEventListener('scrollend', onEnd);
+      el.removeEventListener('touchstart', onDown);
+      el.removeEventListener('touchend', onUp);
+      el.removeEventListener('touchcancel', onUp);
+      window.removeEventListener('scroll', onWinScroll);
+      window.removeEventListener('resize', onResize);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { pager, track, go };
+  /** Tippen auf einen Titel: weich hinscrollen (das System animiert) */
+  const go = (t: HomeTab) => {
+    const el = pager.current;
+    const i = ORDER.indexOf(t);
+    if (!el) return;
+    if (t === 'news') wantNews();
+    align();
+    markUiBusy(600);
+    el.scrollTo({ left: i * width(), behavior: calm() ? 'auto' : 'smooth' });
+  };
+
+  return { pager, go };
 }
 
 /** Kopf der Startseite: Wortmarke und Profilbild */
@@ -298,6 +195,34 @@ export function HomeHead({ me }: { me: Profile }) {
     </header>
   );
 }
+
+/** Inhalt der Seite „Heute“ – memo: Wechselt nur der Tab, wird hier nichts neu berechnet */
+const TodayPage = memo(function TodayPage({ tour, tours, data, members, me, now, error, loading, reveal, onRetry, onNews }: {
+  tour: Tour | null; tours: Tour[]; data: TourData | undefined; members: Profile[] | undefined; me: Profile; now: number;
+  error: unknown; loading: boolean; reveal: boolean; onRetry: () => void; onNews: () => void;
+}) {
+  if (!tour) {
+    return (
+      <div className="stack">
+        <Empty title="Noch keine Rundfahrt">Sobald der Admin eine Rundfahrt anlegt, kannst du hier tippen.</Empty>
+        <GamesCard />
+      </div>
+    );
+  }
+  if (error) return <ErrorBox error={error} onRetry={onRetry} />;
+  if (loading || !data || !members) return <HomeSkeleton />;
+  return (
+    <div className={cx('stack', reveal && 'reveal')}>
+      <TourPicker tour={tour} tours={tours} />
+      <HomeBody data={data} members={members} me={me} now={now} onNews={onNews} />
+    </div>
+  );
+});
+
+/** Inhalt der Seite „News“ – memo wie oben */
+const NewsPage = memo(function NewsPage({ data, members, now }: { data: TourData | null; members: Profile[] | null; now: number }) {
+  return <div className="stack"><NewsTab data={data} members={members} now={now} /></div>;
+});
 
 export function Home() {
   const [tab, setTabState] = useState<HomeTab>(initialTab);
@@ -315,11 +240,17 @@ export function Home() {
   const tabs = useRef<TabsCtl | null>(null);
   const commit = (t: HomeTab) => {
     homeTab = t;
-    switched = true;
     try { sessionStorage.setItem(TAB_KEY, t); } catch { /* egal */ }
     setTabState(t);
   };
-  const { pager, track, go } = usePager(tab, commit, tabs, () => setNewsOn(true));
+  const { pager, go } = usePager(tab, commit, tabs, () => setNewsOn(true));
+  // gleichbleibende Rückrufe für die memo-Seiten
+  const goRef = useRef(go);
+  goRef.current = go;
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+  const onNews = useCallback(() => goRef.current('news'), []);
+  const onRetry = useCallback(() => reloadRef.current(), []);
   useRefreshAtStart(data?.stages, now);
   // Inhalt, der erst während dieses Besuchs kommt, weich einblenden (aus dem Zwischenspeicher: sofort da)
   const waited = useRef(false);
@@ -343,35 +274,19 @@ export function Home() {
     return () => { if (!idle) window.clearTimeout(id); };
   }, [shown, newsOn]);
 
-  let today: ReactNode;
-  if (!tour) {
-    today = (
-      <div className="stack">
-        <Empty title="Noch keine Rundfahrt">Sobald der Admin eine Rundfahrt anlegt, kannst du hier tippen.</Empty>
-        <GamesCard />
-      </div>
-    );
-  } else if (error) today = <ErrorBox error={error} onRetry={reload} />;
-  else if (loading || !data || !members) today = <HomeSkeleton />;
-  else {
-    today = (
-      <div className={cx('stack', waited.current && !switched && 'reveal')}>
-        <TourPicker tour={tour} tours={tours} />
-        <HomeBody data={data} members={members} me={me} now={now} onNews={() => go('news')} />
-      </div>
-    );
-  }
-
   return (
     <>
       <HomeHead me={me} />
       <HomeTabs tab={tab} onTab={go} unread={unread} ctl={tabs} />
       <div className="home-pager" ref={pager}>
-        <div className="home-track" ref={track}>
-          <div className="home-page" id="home-panel-heute" role="tabpanel" aria-labelledby="home-tab-heute">{today}</div>
-          <div className="home-page" id="home-panel-news" role="tabpanel" aria-labelledby="home-tab-news">
-            {newsOn ? <div className="stack"><NewsTab data={tour && !error ? data ?? null : null} members={members ?? null} now={now} /></div> : null}
-          </div>
+        <div className="home-page" id="home-panel-heute" role="tabpanel" aria-labelledby="home-tab-heute">
+          <TodayPage
+            tour={tour} tours={tours} data={data} members={members} me={me} now={now} error={error} loading={loading}
+            reveal={waited.current} onRetry={onRetry} onNews={onNews}
+          />
+        </div>
+        <div className="home-page" id="home-panel-news" role="tabpanel" aria-labelledby="home-tab-news">
+          {newsOn ? <NewsPage data={tour && !error ? data ?? null : null} members={members ?? null} now={now} /> : null}
         </div>
       </div>
     </>

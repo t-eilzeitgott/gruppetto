@@ -3,13 +3,22 @@ import { source } from './config';
 import { invalidate, useQuery } from './query';
 import type { Profile, Tour, TourData } from '../lib/types';
 import { defaultTour } from '../lib/time';
+import { uiBusy } from '../game/uiBusy';
 
 /** Aktuelle Zeit (im Demo-Modus die Demo-Uhr), aktualisiert sich regelmäßig. */
 export function useNow(intervalMs = 15000): number {
   const [now, setNow] = useState(() => source.now());
   useEffect(() => {
-    const id = window.setInterval(() => setNow(source.now()), intervalMs);
-    return () => window.clearInterval(id);
+    // bewegt sich die Oberfläche gerade (Wischen, Einrasten, Blatt), warten: das Neuberechnen der Seite fiele
+    // sonst mitten in die Bewegung
+    let later = 0;
+    const tick = () => {
+      window.clearTimeout(later);
+      if (uiBusy()) { later = window.setTimeout(tick, 250); return; }
+      setNow(source.now());
+    };
+    const id = window.setInterval(tick, intervalMs);
+    return () => { window.clearInterval(id); window.clearTimeout(later); };
   }, [intervalMs]);
   return now;
 }
