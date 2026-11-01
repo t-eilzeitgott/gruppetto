@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject, type TouchEvent as ReactTouchEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
@@ -152,6 +152,9 @@ function useTabMotion(tab: HomeTab, setTabState: (t: HomeTab) => void, panel: Re
 
 /** Wischen nach links/rechts wechselt den Tab – nicht in Bereichen, die selbst seitlich scrollen (Spielkarte,
  *  Tabellen), nicht vom linken Rand (dort ist die Zurück-Geste des Systems) */
+type Pt = { clientX: number; clientY: number };
+type TouchLike = { touches: { length: number; [i: number]: Pt }; changedTouches: { length: number; [i: number]: Pt }; target: EventTarget | null };
+
 function useSwipe(onSwipe: (dir: 1 | -1) => void) {
   const start = useRef<{ x: number; y: number; t: number } | null>(null);
   const scrollsX = (el: Element | null) => {
@@ -163,11 +166,11 @@ function useSwipe(onSwipe: (dir: 1 | -1) => void) {
     return false;
   };
   return {
-    onTouchStart: (e: ReactTouchEvent) => {
+    onTouchStart: (e: TouchLike) => {
       const p = e.touches[0];
       start.current = e.touches.length === 1 && p.clientX > 28 && !scrollsX(e.target as Element) ? { x: p.clientX, y: p.clientY, t: performance.now() } : null;
     },
-    onTouchEnd: (e: ReactTouchEvent) => {
+    onTouchEnd: (e: TouchLike) => {
       const s = start.current;
       start.current = null;
       const p = e.changedTouches[0];
