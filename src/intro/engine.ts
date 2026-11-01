@@ -163,6 +163,22 @@ export function rollOut(c: Ctx, o: RollOpts = {}): { land: number } {
   return { land: end };
 }
 
+/**
+ * Wort von links aufdecken, ohne clip-path (das zeichnet der Browser in jedem Bild auf dem Hauptfaden neu – beim
+ * App-Start ruckelt es dann): eine Abdeckung in Hintergrundfarbe über dem Wort, die von rechts her schmaler wird
+ * (scaleX, läuft im Compositor). Der Punkt liegt darüber (eigenes Element nach dem Wort). edge(x): Anteil der
+ * Abdeckung, der bei der Aufdeckkante x (Bildschirm) noch steht.
+ */
+export function wordCover(c: Ctx, over = 0.04): { el: HTMLElement; edge: (x: number) => number } {
+  // over: so weit (em) reicht die Abdeckung rechts über das Wort (gestreckte Buchstaben ragen hinaus)
+  const { fs, word } = c.geo;
+  const padL = fs * 0.3, padR = fs * over;
+  const el = h('span', '', `position:absolute;left:${-padL}px;right:${-padR}px;top:-0.12em;bottom:-0.14em;background:var(--bg);transform-origin:100% 50%;pointer-events:none`);
+  c.word.appendChild(el);
+  const right = word.right + padR, width = word.right - word.left + padL + padR;
+  return { el, edge: (x: number) => Math.max(0, Math.min(1, (right - x) / width)) };
+}
+
 /** Zufall (für Teilchen) */
 export const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 

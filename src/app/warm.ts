@@ -12,7 +12,7 @@ import { selectedBike } from '../game/bikes';
 import { berlinDayKey } from '../game/abfahrt/rng';
 import { stageInUse, warmGameId } from '../game/abfahrt/pool';
 import { BergPage, GamePage, SprintPage, ZeitfahrenPage, prefetchGames } from './pages';
-import { introReady } from './intro';
+import { introCalm, introReady } from './intro';
 
 export interface WarmArgs {
   me: Profile;
@@ -55,8 +55,9 @@ export function startWarm(o: { me: Profile; tour: Tour | null; data: TourData | 
   if (started) return;
   started = true;
   const a = (args = makeArgs(o));
-  const first = wanted ?? gameOrder(o.kind)[0]?.id ?? 'abfahrt';
-  chain = run(first, a, false).catch(() => undefined).finally(() => {
+  // erst, wenn die Hauptbewegung des Intros durch ist – sonst konkurriert der Aufbau der 3D-Welt (Shader, Texturen)
+  // mit dem Intro um Rechenzeit und Grafik
+  chain = introCalm().then(() => run(wanted ?? gameOrder(o.kind)[0]?.id ?? 'abfahrt', a, false)).catch(() => undefined).finally(() => {
     introReady('warm');
     prefetchGames();
   });

@@ -12,6 +12,7 @@ declare global {
   interface Window {
     __intro?: { finish: (target: Element | null) => void };
     __introPick?: IntroPick;
+    __introLanded?: boolean;
   }
 }
 
@@ -54,7 +55,7 @@ function choose(force: string | null): IntroPick {
   // nicht angemeldet (Anmeldeseite), Browser ohne Web Animations oder automatische Prüfung: kein Intro
   let off = d.dataset.boot === 'none' || /[?&]demo=login\b/.test(qs);
   try { off = off || (!force && localStorage.getItem('gruppetto.nointro') === '1'); } catch { /* egal */ }
-  if (!el || off || !el.animate) { el?.remove(); return; }
+  if (!el || off || !el.animate) { el?.remove(); markLanded(); return; }
   const pristine = el.innerHTML;
   let pick = choose(force);
   window.__introPick = pick;
@@ -69,6 +70,16 @@ function choose(force: string | null): IntroPick {
     start(el, pick);
   }
 })();
+
+/**
+ * Die Hauptbewegung des Intros ist durch (der Punkt hat aufgesetzt): die App darf jetzt Schweres tun (3D-Welt
+ * vorwärmen, app/warm.ts) – vorher würde es mit dem Intro um Rechenzeit und Grafik konkurrieren
+ */
+function markLanded() {
+  if (window.__introLanded) return;
+  window.__introLanded = true;
+  window.dispatchEvent(new Event('gruppetto-intro-landed'));
+}
 
 function start(el: HTMLElement, pick: IntroPick) {
   const d = document.documentElement;
@@ -159,21 +170,25 @@ function start(el: HTMLElement, pick: IntroPick) {
     return box;
   };
 
-  // Eigene Uhr für die Sequenz: läuft nur mit gezeichneten Bildern weiter (höchstens 2 Bilder pro Schritt). Ist
-  // der Browser beim App-Start kurz beschäftigt (iOS zeichnet dann nichts), pausiert das Intro, statt
-  // anschließend ans Ende zu springen.
+  // Die Sequenz läuft im Compositor (auf dem iPhone in Core Animation): Bewegungen aus transform und opacity spielt
+  // das System selbst ab – flüssig, auch wenn das App-Skript beim Start den Hauptfaden belegt (Laden, Startseite,
+  // 3D-Welt vorwärmen). Früher setzte ein eigener Takt in jedem Bild die Zeit aller Animationen; war der Hauptfaden
+  // beschäftigt, stand das Intro still oder ruckelte. Eine leere Animation über die ganze Sequenz dient als Uhr
+  // (Zeitpunkte für Rückrufe, Ende abwarten); alle starten im selben Bild.
   let END = 0;
-  let clock = 0;
-  let rate = 1;
-  let last: number | null = null;
   let waiters: (() => void)[] = [];
   let landed = false;
   let done = false;
-  seq.forEach((x) => { x.pause(); x.currentTime = 0; END = Math.max(END, Number(x.effect?.getComputedTiming().endTime) || 0); });
+  let rate = 1;
+  seq.forEach((x) => { END = Math.max(END, Number(x.effect?.getComputedTiming().endTime) || 0); });
   ats.sort((a, b) => a.t - b.t);
   if (seq.length) for (const a of ats) END = Math.max(END, a.t);
   const LAND = Math.min(hooks.land ?? 950, END || Infinity);
+  const ref = seq.length ? new Animation(new KeyframeEffect(null, [], { duration: END, fill: 'forwards' }), document.timeline) : null;
+  const all = ref ? [...seq, ref] : seq;
+  const now = () => (ref ? Math.min(END, Number(ref.currentTime) || 0) : Infinity);
   const fire = () => {
+    const clock = now();
     for (const a of ats) {
       if (a.done || a.t > clock) continue;
       a.done = true;
@@ -184,29 +199,38 @@ function start(el: HTMLElement, pick: IntroPick) {
     const w = waiters; waiters = [];
     w.forEach((f) => f());
   };
-  const step = (ts: number) => {
-    const dt = last == null ? 0 : Math.min(ts - last, 34);
-    last = ts;
-    clock = Math.min(END, clock + dt * rate);
-    seq.forEach((x) => { x.currentTime = clock; });
-    fire();
-    if (!landed && clock >= LAND) { landed = true; if (!done) idle(); }
-    if (clock < END) requestAnimationFrame(step); else settle();
-  };
-  if (seq.length) requestAnimationFrame(step);
-  else { clock = Infinity; fire(); }
+  if (ref) {
+    ref.play();
+    // gleicher Start für alle (im selben Bild angelegt – sicherheitshalber ausgerichtet, sobald die Uhr läuft)
+    ref.ready.then(() => { for (const x of seq) if (x.playState !== 'finished') x.startTime = ref.startTime; }).catch(() => undefined);
+    ref.finished.then(() => { fire(); settle(); }).catch(() => undefined);
+    // Rückrufe und Aufsetzen (Hauptfaden – nur Nebensachen wie eine mitlaufende Uhr, nie die Bewegung selbst)
+    const js = () => {
+      fire();
+      if (!landed && now() >= LAND) { landed = true; if (!done) idle(); markLanded(); }
+      if (now() < END) requestAnimationFrame(js);
+      else markLanded();
+    };
+    requestAnimationFrame(js);
+    // (kommen gar keine Bilder, gilt es spätestens nach dem Ende der Sequenz als gelandet)
+    setTimeout(markLanded, END + 400);
+  } else { fire(); markLanded(); }
   // Sequenz zu Ende spielen: was noch fehlt, läuft in höchstens MAXREST ms (schneller, aber vollständig)
   // (Themen-Varianten dürfen etwas länger ausspielen – man soll sie ja sehen)
   const MAXREST = pick.id === 'base' ? 420 : 700;
   const playOut = (then: () => void) => {
-    const rest = (END - clock) / rate;
-    if (!seq.length || rest <= 0) { then(); return; }
-    if (rest > MAXREST) rate = (END - clock) / MAXREST;
+    const rest = (END - now()) / rate;
+    if (!ref || rest <= 0) { then(); return; }
+    if (rest > MAXREST) {
+      rate = (END - now()) / MAXREST;
+      // neue Geschwindigkeit ohne Sprung – bleibt im Compositor
+      for (const x of all) x.updatePlaybackRate(rate);
+    }
     let fired = false;
     const go = () => { if (!fired) { fired = true; then(); } };
     waiters.push(go);
     // Notbremse, falls gar keine Bilder mehr kommen (z. B. App im Hintergrund)
-    setTimeout(() => { if (!fired) { clock = END; seq.forEach((x) => { x.currentTime = END; }); fire(); go(); } }, 2500);
+    setTimeout(() => { if (!fired) { for (const x of all) { try { x.finish(); } catch { /* egal */ } } fire(); go(); } }, 2500);
   };
   // Abschluss: Wortmarke fliegt an ihren Platz im Kopf der App (target), der Hintergrund blendet aus
   // Vorschau (?intro=…): ganz abspielen und kurz stehen lassen, auch wenn die App schneller bereit ist

@@ -28,6 +28,21 @@ if (typeof window !== 'undefined') {
   window.setTimeout(() => { if (ready.has('content')) endIntro(); }, Math.max(0, CAP - performance.now()));
 }
 
+/**
+ * Wartet, bis die Hauptbewegung des Intros durch ist (der Punkt hat aufgesetzt) – erst dann Schweres beginnen
+ * (3D-Welt vorwärmen). Ohne Intro sofort, spätestens nach 1,8 s.
+ */
+export function introCalm(): Promise<void> {
+  const w = window as unknown as { __introLanded?: boolean };
+  if (w.__introLanded || !document.getElementById('intro')) return Promise.resolve();
+  return new Promise((ok) => {
+    let done = false;
+    const go = () => { if (!done) { done = true; ok(); } };
+    window.addEventListener('gruppetto-intro-landed', go, { once: true });
+    window.setTimeout(go, Math.max(0, 1800 - performance.now()));
+  });
+}
+
 /** Intro beenden: die Wortmarke fliegt an ihren Platz in der App */
 export function endIntro() {
   if (ended) return;

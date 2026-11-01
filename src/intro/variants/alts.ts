@@ -2,7 +2,7 @@
  * Abwechslung bei jedem dritten Öffnen: sechs ruhige Varianten, alle in der Farbe der Rundfahrt, alle enden wie
  * gewohnt mit dem Punkt hinter dem Wort.
  */
-import { at, bezier, h, letters, onDot, type Variant } from '../engine';
+import { at, bezier, h, letters, onDot, wordCover, type Variant } from '../engine';
 
 // ---------------------------------------------------------------- Zielsprint
 
@@ -111,15 +111,15 @@ export const zielfoto: Variant = (c) => {
   const x1 = dot.x + fs * 0.3;
   const delay = 160, dur = 980;
   const ease = bezier(0.42, 0, 0.58, 1);
-  // Wort aufdecken mit dem Schlitz (clip-path von rechts)
-  const ww = word.right - word.left;
+  // Wort aufdecken mit dem Schlitz (Abdeckung wird von rechts schmaler – läuft im Compositor)
+  // (rechts weit über das Wort: der letzte Buchstabe steht gestreckt und ragt hinaus, bis der Schlitz ihn erfasst)
+  const wc = wordCover(c, 0.8);
   const kf: Keyframe[] = [];
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10;
-    const x = x0 + (x1 - x0) * ease.y(t);
-    kf.push({ offset: t, clipPath: `inset(-40% ${Math.max(0, Math.min(ww, word.right - x))}px -60% -20%)` });
+  for (let i = 0; i <= 20; i++) {
+    const t = i / 20;
+    kf.push({ offset: t, transform: `scaleX(${wc.edge(x0 + (x1 - x0) * ease.y(t)).toFixed(4)})` });
   }
-  c.A(c.word, kf, { duration: dur, delay, easing: 'linear', fill: 'both' });
+  c.A(wc.el, kf, { duration: dur, delay, easing: 'linear', fill: 'both' });
   // der Schlitz: feine Linie mit Schein
   const slit = at(c.front, h('div', '', 'color:var(--accent);background:currentColor;box-shadow:0 0 8px 1px currentColor;border-radius:1px'), x0, (word.top + word.bottom) / 2, Math.max(1.5, fs * 0.03), fs * 1.7);
   c.A(slit, [{ opacity: 0, transform: 'translateX(0)' }, { opacity: 1, offset: 0.06 }, { opacity: 1, offset: 0.9 }, { opacity: 0, transform: `translateX(${x1 - x0}px)` }], { duration: dur + 120, delay, easing: ease.css, fill: 'both' });

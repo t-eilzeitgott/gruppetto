@@ -5,7 +5,7 @@
  * Mannschaftszeitfahren fahren drei Teamkollegen hinterher.
  */
 import { demoRace } from '../schedule';
-import { at, bezier, h, ROLL, type Ctx, type Variant } from '../engine';
+import { at, bezier, h, ROLL, wordCover, type Ctx, type Variant } from '../engine';
 
 const KIND: Record<string, string> = { flat: 'Flachetappe', hilly: 'Hügelig', mountain: 'Bergetappe', itt: 'Einzelzeitfahren', ttt: 'Mannschaftszeitfahren' };
 const START: Record<string, string> = { giro: 'Grande Partenza', tour: 'Grand Départ', vuelta: 'La Salida' };
@@ -77,7 +77,11 @@ export const renntag: Variant = (c) => {
 <path d="${area}" fill="url(#ixRp)"/>
 <path d="${line}" fill="none" stroke="currentColor" stroke-width="${Math.max(2, fs * 0.055)}" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>`);
-  c.back.appendChild(box);
+  // Fenster zum Aufdecken: es wandert nach rechts, das Profil darin gegenläufig – nur transform, das Profil wird
+  // einmal gezeichnet und im Compositor verschoben (clip-path zeichnete es in jedem Bild neu)
+  const win = h('div', '', 'position:absolute;inset:0;overflow:hidden');
+  win.appendChild(box);
+  c.back.appendChild(win);
   // Ziel: kleine karierte Fahne am Ende
   const [ex, ey] = P[P.length - 1];
   const flag = at(c.back, h('div', '', 'opacity:0', `<svg viewBox="0 0 24 34" width="100%" height="100%" style="display:block;overflow:visible">
@@ -114,13 +118,17 @@ export const renntag: Variant = (c) => {
   // Profil wird hinter dem Punkt sichtbar, der Punkt fährt auf der Linie
   const N = 36;
   const ride: Keyframe[] = [];
-  const reveal: Keyframe[] = [];
+  const revealWin: Keyframe[] = [];
+  const revealBox: Keyframe[] = [];
   for (let i = 0; i <= N; i++) {
     const u = i / N;
     const [x, y] = pointAt(ease.y(u));
     const off = (u * RIDE) / D;
     ride.push({ offset: off, transform: `translate(${(x - dot.x).toFixed(1)}px,${(y - r * 1.1 - dot.y).toFixed(1)}px)` });
-    reveal.push({ offset: u, clipPath: `inset(-20px ${Math.max(0, W - x).toFixed(1)}px -20px 0px)` });
+    // (am Ende ein paar Pixel weiter: die runde Linienkappe)
+    const edge = Math.min(W, x + (i === N ? 6 : 0));
+    revealWin.push({ offset: u, transform: `translateX(${(edge - W).toFixed(1)}px)` });
+    revealBox.push({ offset: u, transform: `translateX(${(W - edge).toFixed(1)}px)` });
   }
   // Sprung vom Ziel hinter das Wort
   for (let i = 1; i <= 8; i++) {
@@ -130,10 +138,12 @@ export const renntag: Variant = (c) => {
     ride.push({ offset: (RIDE + JUMP * u) / D, transform: `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)` });
   }
   c.A(c.dot, ride, { duration: D, delay: t0, easing: 'linear', fill: 'both' });
-  c.A(box, reveal, { duration: RIDE, delay: t0, easing: 'linear', fill: 'both' });
+  c.A(win, revealWin, { duration: RIDE, delay: t0, easing: 'linear', fill: 'both' });
+  c.A(box, revealBox, { duration: RIDE, delay: t0, easing: 'linear', fill: 'both' });
   c.A(flag, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 400, delay: 60, easing: 'ease-out', fill: 'both' });
   // Wort erscheint von links, während der Punkt hinüberspringt
-  c.A(c.word, [{ clipPath: 'inset(-40% 100% -50% -30%)', opacity: 0.2 }, { clipPath: 'inset(-40% 0% -50% -30%)', opacity: 1 }], { duration: 520, delay: t0 + RIDE - 240, easing: ROLL, fill: 'both' });
+  const wc = wordCover(c);
+  c.A(wc.el, [{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: 520, delay: t0 + RIDE - 240, easing: ROLL, fill: 'both' });
   c.A(c.dotin, [{ transform: 'scale(1)' }, { transform: 'scale(1.3,.74)' }, { transform: 'scale(.92,1.1)' }, { transform: 'scale(1)' }], { duration: 380, delay: t0 + D - 20, easing: 'ease-out', fill: 'both' });
   c.A(l1, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 420, delay: t0 + RIDE - 100, easing: 'ease-out', fill: 'both' });
   c.A(l2, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 420, delay: t0 + RIDE + 20, easing: 'ease-out', fill: 'both' });
