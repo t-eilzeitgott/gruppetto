@@ -31,7 +31,7 @@ import { wreckPose, wreckTravel, type Wreck } from './wreck';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import { Houses3D } from './houses3d';
 import { Villages3D } from './village3d';
-import { LAMP_GLSL, LAMP_U, haloMaterial, lampFrag, lampHalos, pickLamps, warmLamps } from './lamps3d';
+import { LAMP_GLSL, LAMP_N, LAMP_U, haloMaterial, lampFrag, lampHalos, pickLamps, warmLamps } from './lamps3d';
 import { SunsetGlow } from './sunset3d';
 import { TT_PODIUM, TtStart3D, ttCrowdGap } from './ttstart3d';
 import { DescentStart3D } from './descstart3d';
@@ -47,7 +47,7 @@ import { mulberry32 } from './rng';
 import { ATMO } from './grade';
 import { viewRange, viewRangeVersion } from './viewRange';
 import { setGlossEnv } from './gloss';
-import { apIn, apOut, apQ, appearify, appearifyTree, setAp } from './appear';
+import { apIn, apOut, apQ, appearify, appearifyTree, setAp, setApDiscard } from './appear';
 import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
 import type { WeatherEnv } from './weather';
 import { gfxAA, gfxOn, gfxRes, onGfxChange, onGfxSettings } from './gfxOpts';
@@ -187,27 +187,36 @@ vec3 wPatch(float u, float vm, float len, float seed, float chance) {
   float edge = min(max((wStripe(vm - va0, 0.035) + wStripe(vm - va1, 0.035)) * inU, (wStripe((u - ua) * 5.6, 0.035) + wStripe((u - ub) * 5.6, 0.035)) * inV), 1.0) * on;
   return vec3(inU * inV * on, edge, wH(c, seed, 6.0));
 }
-vec3 roadWear(vec3 col, float um, float vm, float e) {
+// rd: Abstand zur Kamera (m) – feine Linien (Risse, Fugen, Bitumen, Bröckelrand) nur in der Nähe, Flicken bis gut
+// 100 m (weich ausgeblendet; dahinter geht der Belag ohnehin in seine Mittelfarbe über). Je Bildpunkt sind das sonst
+// rund hundert Zufallswerte – auch für die Straße in der Ferne, wo man nichts davon sieht
+vec3 roadWear(vec3 col, float um, float vm, float e, float rd) {
   float u = um / 5.6;
-  vec3 A = wPatch(u, vm, 13.0, 3.1, 0.45);
-  vec3 B = wPatch(u, vm, 37.0, 8.3, 0.5);
-  float cc = floor(vm / 11.0);
-  float vc = cc * 11.0 + h21(vec2(cc, 21.7)) * 11.0;
-  float c1 = h21(vec2(cc, 23.81)), c2 = h21(vec2(cc, 25.92)), c3 = h21(vec2(cc, 28.03)), c4 = h21(vec2(cc, 30.14));
-  // Querriss: schlängelt sich (zwei Oktaven) und läuft schräg
-  float wav = (vn1(um * 0.9, 17.0).x - 0.5) * 0.6 + (vn1(um * 3.7, 19.0).x - 0.5) * 0.16 + (um - 2.8) * (c1 - 0.5) * 0.3;
-  float reach = smoothstep(c2 * 0.6, c2 * 0.6 + 0.1, c3 < 0.5 ? u : 1.0 - u);
-  float crack = wStripe(vm - vc - wav, 0.018) * step(0.35, c4) * reach;
-  float joint = wStripe(um - 2.8 + (vn1(vm / 3.1, 29.0).x - 0.5) * 0.14 + (vn1(vm / 0.8, 33.0).x - 0.5) * 0.04, 0.02) * smoothstep(0.55, 0.65, vn1(vm / 23.0, 31.0).x);
   // Alterung: ältere Abschnitte heller und grauer, neuere dunkler (50–300 m)
   float age = vn1(vm / 97.0, 43.0).x * 0.6 + vn1(vm / 271.0, 47.0).x * 0.4;
   col *= mix(0.86, 1.16, age);
-  // Flicken: frisch dunkel, alt heller und ausgebleicht; Fugen schwarz (Bitumen)
-  col = mix(col, B.z < 0.55 ? col * 0.42 : col * 1.3, B.x * 0.9);
-  col = mix(col, col * 0.28, B.y * 0.85);
-  col = mix(col, A.z < 0.55 ? col * 0.42 : col * 1.3, A.x);
-  col = mix(col, col * 0.28, A.y * 0.85);
-  col = mix(col, col * 0.24, max(crack, joint) * 0.9);
+  float kP = smoothstep(130.0, 100.0, rd);
+  if (kP > 0.0) {
+    vec3 A = wPatch(u, vm, 13.0, 3.1, 0.45);
+    vec3 B = wPatch(u, vm, 37.0, 8.3, 0.5);
+    // Flicken: frisch dunkel, alt heller und ausgebleicht; Fugen schwarz (Bitumen)
+    col = mix(col, B.z < 0.55 ? col * 0.42 : col * 1.3, B.x * 0.9 * kP);
+    col = mix(col, col * 0.28, B.y * 0.85 * kP);
+    col = mix(col, A.z < 0.55 ? col * 0.42 : col * 1.3, A.x * kP);
+    col = mix(col, col * 0.28, A.y * 0.85 * kP);
+  }
+  float kL = smoothstep(48.0, 36.0, rd);
+  if (kL > 0.0) {
+    float cc = floor(vm / 11.0);
+    float vc = cc * 11.0 + h21(vec2(cc, 21.7)) * 11.0;
+    float c1 = h21(vec2(cc, 23.81)), c2 = h21(vec2(cc, 25.92)), c3 = h21(vec2(cc, 28.03)), c4 = h21(vec2(cc, 30.14));
+    // Querriss: schlängelt sich (zwei Oktaven) und läuft schräg
+    float wav = (vn1(um * 0.9, 17.0).x - 0.5) * 0.6 + (vn1(um * 3.7, 19.0).x - 0.5) * 0.16 + (um - 2.8) * (c1 - 0.5) * 0.3;
+    float reach = smoothstep(c2 * 0.6, c2 * 0.6 + 0.1, c3 < 0.5 ? u : 1.0 - u);
+    float crack = wStripe(vm - vc - wav, 0.018) * step(0.35, c4) * reach;
+    float joint = wStripe(um - 2.8 + (vn1(vm / 3.1, 29.0).x - 0.5) * 0.14 + (vn1(vm / 0.8, 33.0).x - 0.5) * 0.04, 0.02) * smoothstep(0.55, 0.65, vn1(vm / 23.0, 31.0).x);
+    col = mix(col, col * 0.24, max(crack, joint) * 0.9 * kL);
+  }
 #ifdef ROAD_RICH
   // Fahrspuren: je Spur zwei glattgefahrene, hellere Radspuren, dazwischen ein dunkler Ölstreifen (stärker und
   // schwächer über die Strecke)
@@ -217,16 +226,18 @@ vec3 roadWear(vec3 col, float um, float vm, float e) {
   float lm = vn1(vm / 41.0, 53.0).x;
   col *= 1.0 + wheel * 0.11 * (0.4 + lm) - oil * 0.12 * (1.3 - lm);
   // vergossene Risse (Bitumen): wellige, schwarz glänzende Linien schräg über die Fahrbahn
-  float tc = floor(vm / 13.0);
-  float tv0 = tc * 13.0 + h21(vec2(tc, 63.1)) * 4.0;
-  float tlen = 4.0 + h21(vec2(tc, 65.7)) * 8.0;
-  float tpath = h21(vec2(tc, 67.9)) * 5.6 + (vm - tv0) * (h21(vec2(tc, 69.2)) - 0.5) * 1.1 + (vn1(vm * 1.7, 71.0).x - 0.5) * 0.4;
-  float tar = wStripe(um - tpath, 0.02) * wSpan(vm, tv0, tv0 + tlen) * step(0.4, h21(vec2(tc, 61.3)));
-  col = mix(col, vec3(0.04, 0.038, 0.04), tar * 0.72);
+  if (kL > 0.0) {
+    float tc = floor(vm / 13.0);
+    float tv0 = tc * 13.0 + h21(vec2(tc, 63.1)) * 4.0;
+    float tlen = 4.0 + h21(vec2(tc, 65.7)) * 8.0;
+    float tpath = h21(vec2(tc, 67.9)) * 5.6 + (vm - tv0) * (h21(vec2(tc, 69.2)) - 0.5) * 1.1 + (vn1(vm * 1.7, 71.0).x - 0.5) * 0.4;
+    float tar = wStripe(um - tpath, 0.02) * wSpan(vm, tv0, tv0 + tlen) * step(0.4, h21(vec2(tc, 61.3)));
+    col = mix(col, vec3(0.04, 0.038, 0.04), tar * 0.72 * kL);
+  }
   // ausgefranster Rand: die letzten Dezimeter bröckeln – heller Splitt, dunkle Löcher, unregelmäßig breit
   float ed = min(um + e, 5.6 + e - um) + (vn1(vm * 2.3, 73.0).x - 0.5) * 0.24;
   float rav = smoothstep(0.34, 0.02, ed);
-  float pit = step(0.6, vn2(vec2(um * 9.0, vm * 7.0)));
+  float pit = rd < 40.0 ? step(0.6, vn2(vec2(um * 9.0, vm * 7.0))) : 0.5;
   col = mix(col, col * vec3(1.2, 1.14, 1.02), rav * 0.6);
   col = mix(col, col * 0.42, rav * pit * 0.7);
 #endif
@@ -1130,7 +1141,8 @@ export class Renderer3D {
               float rd = distance(vWP, cameraPosition);
               sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, avgC, smoothstep(28.0, 95.0, rd) * 0.8);
               ${grain > 0 ? `#ifdef ROAD_RICH
-              sampledDiffuseColor.rgb *= mix(1.0, texture2D(uGrain, vWP.xz / 0.7).r * 2.0, ${grain.toFixed(2)} * smoothstep(16.0, 3.0, rd));
+              // (nur in der Nähe – dahinter wäre es ein Texturzugriff für nichts)
+              if (rd < 16.0) sampledDiffuseColor.rgb *= mix(1.0, texture2D(uGrain, vWP.xz / 0.7).r * 2.0, ${grain.toFixed(2)} * smoothstep(16.0, 3.0, rd));
               #endif` : ''}
               #ifdef ROAD_RICH
               // großflächige Flecken (Staub, Nässe, Ausbleichen) über die Kachel hinweg: keine Wiederholung sichtbar
@@ -1139,7 +1151,7 @@ export class Renderer3D {
               sampledDiffuseColor.rgb *= 1.0 + ${patch.toFixed(2)} * ((mn.r * 0.6 + mn.g * 0.4) - 0.5) + ${(patch * 0.45).toFixed(2)} * (mn2.g - 0.5);
               sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);
               #endif
-              ${wr ? 'sampledDiffuseColor.rgb = roadWear(sampledDiffuseColor.rgb, vRoad.x, vRoad.y, vRoad.z);' : ''}
+              ${wr ? 'sampledDiffuseColor.rgb = roadWear(sampledDiffuseColor.rgb, vRoad.x, vRoad.y, vRoad.z, rd);' : ''}
               diffuseColor *= sampledDiffuseColor;
               ${gfxOn('details') ? CLOUD('vWP.xz') : ''}
             #endif`);
@@ -2122,6 +2134,7 @@ export class Renderer3D {
       gl.shadowMap.autoUpdate = shadowAuto0;
       usePost = true;
       setQ(q0);
+      setApDiscard(true, this.scene);
     };
     const weather = !!this.post && this.debugTod !== null;
     const steps: [string, () => void][] = [['Basis', () => undefined]];
@@ -2131,6 +2144,8 @@ export class Renderer3D {
       ['ohne Lichtkegel der Laternen am Boden', () => { for (const v of LAMP_U.uLampP.value) v.w = 0; }],
       ['ohne dramatischen Himmel (Wolken, Türme, Strahlen)', () => { this.skyMat.uniforms.uDrama.value = 0; }],
       ['ohne Sonnenuntergangs-Licht', () => { this.sunset.mesh.visible = false; }],
+      // (ein Shader, der verwerfen kann, hindert Apple-Grafikchips daran, Verdecktes zu überspringen – appear.ts)
+      ['ohne Ausblend-Raster in Straße, Häusern, Dingen (Shader ohne discard)', () => { setApDiscard(false, this.scene); }],
     );
     if (gl.shadowMap.enabled) steps.push(['ohne Schattenkarte (Durchgang je Bild)', () => { gl.shadowMap.autoUpdate = false; gl.shadowMap.needsUpdate = false; }]);
     if (weather) steps.push(['ohne Wetter-Nachbearbeitung', () => { usePost = false; }]);
@@ -6611,6 +6626,9 @@ export class Renderer3D {
     const pm = this.player;
     if (pm) this.crowdU.uRider.value.copy(pm.group.position);
     const cp = this.camera.position;
+    // Zuschauer als Bilder bis gut hinter das Ende der gebauten Strecke – mit kürzerer Sicht auch weniger weit (in
+    // den Orten und am Ziel stehen sie zu Hunderten; in der Ferne bleiben nur Punkte, aber jeder kostet)
+    const crowdFar = Math.min(CROWD_FAR, this.range.ahead + 250);
     for (const ch of this.chunks.values()) {
       // Kleinteile der Häuser nur in der Nähe (in der Ferne wenige Bildpunkte, aber viele Dreiecke)
       const dt0 = ch.detail;
@@ -6626,7 +6644,7 @@ export class Renderer3D {
         // (alle Zuschauer sind Bilder: nur in der Ferne weglassen)
         const near = false;
         const mid = false;
-        const spr = Math.hypot(cp.x - b.sc.x, cp.z - b.sc.z) - b.sr < CROWD_FAR;
+        const spr = Math.hypot(cp.x - b.sc.x, cp.z - b.sc.z) - b.sr < crowdFar;
         const lod = spr ? 4 : 0;
         if (lod === b.lod) continue;
         b.lod = lod;
@@ -6714,8 +6732,9 @@ export class Renderer3D {
     const track = g.track;
     const w = this.w;
     for (const t of this.tagView.values()) t.on = false;
-    // eigener Fahrer in voller Detailstufe – mit einfacher Grafik in der schlichten (runde Rohre mit weniger Kanten)
-    const pq = this.lite ? 0 : 1;
+    // eigener Fahrer in voller Detailstufe (Kette, Zähne, Schriftzüge: 40k statt 12k Dreiecke, dazu im
+    // Schattendurchgang) erst ab den Landschaftsdetails (Stufe 7) – darunter wie die Gegner
+    const pq = gfxOn('details') || this.pc ? 1 : 0;
     const kitKey = `${riderKitKey(p.kit)}|${pq}`;
     if (!this.player || this.playerKit !== kitKey) {
       if (this.player) { this.scene.remove(this.player.group); this.player.dispose(); }
@@ -6969,7 +6988,8 @@ export class Renderer3D {
       const ci = Math.floor(z / (SEG * CH));
       for (let k = ci - 2; k <= ci + 3; k++) { const c = this.chunks.get(k); if (c?.lamps) L.push(c.lamps); }
     }
-    pickLamps(L, this.camera.position, LAMP_U.uLampK.value);
+    // (unter Stufe 7: die sechs nächsten Laternen – jede kostet in jedem Bildpunkt von Straße und Hang)
+    pickLamps(L, this.camera.position, LAMP_U.uLampK.value, gfxOn('details') || this.pc ? LAMP_N : 6);
   }
 
   // ------------------------------------------------------------------ Häuser, Dörfer, Bäume weg

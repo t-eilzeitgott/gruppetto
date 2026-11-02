@@ -230,7 +230,8 @@ export function GfxSliders({ page }: { page?: boolean }) {
 
 /**
  * Automatik (autoGfx.ts): die Schieberegler sind die Obergrenze; reicht die Leistung nicht, senkt das Spiel erst die
- * Auflösung (bis drei Viertel) und dann die Sichtweite. Darunter steht, was sie gerade eingestellt hat.
+ * Auflösung (bis drei Viertel), dann die Sichtweite und zuletzt die Auflösung bis zur Hälfte. Darunter steht, was sie
+ * gerade eingestellt hat.
  */
 function AutoSwitch({ res }: { res: number }) {
   const [on, setOn] = useState(gfxAuto);

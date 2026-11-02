@@ -4,7 +4,8 @@
  *
  *   1. die Auflösung in zwei Schritten bis auf drei Viertel der gewählten (2-fach → 1,75 → 1,5-fach) – das hilft, wenn
  *      die Grafik das Limit ist (auf dem iPhone fast immer), und kostet keinen Umbau der Welt;
- *   2. danach die Sichtweite Stufe für Stufe bis zur kürzesten („Einfach“).
+ *   2. danach die Sichtweite Stufe für Stufe bis zur kürzesten („Einfach“);
+ *   3. reicht auch das nicht, die Auflösung weiter bis auf die Hälfte der gewählten (2-fach → 1,25 → 1-fach).
  *
  * Ist die Rechenzeit die Grenze, hilft die Auflösung nicht – dann gleich die Sichtweite. Nach jedem Schritt zählt der
  * Beleg: ist die mittlere Bildzeit danach nicht spürbar näher am Takt (die Last liegt woanders, z. B. beim ganzen
@@ -28,8 +29,10 @@
 import { gfxAuto, gfxLevel, gfxRes } from './gfxOpts';
 import { rangeDropMax, setAutoRangeDrop, viewRange } from './viewRange';
 
-/** Auflösung: Faktoren auf die gewählte – höchstens bis drei Viertel (2-fach → 1,5-fach) */
-export const RES_STEPS = [1, 0.875, 0.75];
+/** Auflösung: Faktoren auf die gewählte – höchstens bis zur Hälfte (2-fach → 1-fach) */
+export const RES_STEPS = [1, 0.875, 0.75, 0.625, 0.5];
+/** bis hierher (drei Viertel) zuerst die Auflösung, dann die Sichtweite, dann die Auflösung weiter */
+const RES_FIRST = 2;
 
 /** Bilder je Urteil (bei 60 je Sekunde gut eine Sekunde) */
 const WINDOW = 70;
@@ -219,9 +222,9 @@ export class AutoGfx {
       const cpuBound = cpuMed >= CPU_BOUND * frame;
       const canRes = !this.useless.has('res') && this.res < RES_STEPS.length - 1;
       const canRange = !this.useless.has('range') && this.range < rangeDropMax();
-      // die Grafik (mit dem Zusammensetzen des Bildschirms) ist fast immer die Grenze: zuerst die Auflösung; ist es die
-      // Rechenzeit, zuerst die Sichtweite
-      const kind: 'res' | 'range' | null = !cpuBound && canRes ? 'res' : canRange ? 'range' : canRes ? 'res' : null;
+      // die Grafik (mit dem Zusammensetzen des Bildschirms) ist fast immer die Grenze: zuerst die Auflösung bis drei
+      // Viertel, dann die Sichtweite, dann die Auflösung weiter; ist es die Rechenzeit, zuerst die Sichtweite
+      const kind: 'res' | 'range' | null = !cpuBound && canRes && this.res < RES_FIRST ? 'res' : canRange ? 'range' : canRes ? 'res' : null;
       if (!kind) {
         // nichts mehr zu senken (oder es half nicht): nur notieren, höchstens alle 10 s
         if (this.t - this.lastInfo < 10) return null;
@@ -248,8 +251,8 @@ export class AutoGfx {
     const gpu = this.gpu;
     this.gpu = null;
     this.calm = 0;
-    // umgekehrte Folge: zuerst die Sichtweite zurück (zuletzt gekürzt), dann die Auflösung
-    const kind: 'res' | 'range' = this.range > 0 ? 'range' : 'res';
+    // umgekehrte Folge: erst die Auflösung bis drei Viertel, dann die Sichtweite, dann die Auflösung ganz
+    const kind: 'res' | 'range' = this.res > RES_FIRST || !this.range ? 'res' : 'range';
     const est = kind === 'range' ? gpu * RANGE_COST : gpu * (RES_STEPS[this.res - 1] / RES_STEPS[this.res]) ** 2;
     const cpuNext = kind === 'range' ? cpuMed * 1.15 : cpuMed;
     if (est > GPU_ROOM * frame || cpuNext > CPU_ROOM * frame) {

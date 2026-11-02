@@ -13,7 +13,9 @@
  *    Kontext – das ließ auf dem iPhone das Bild schwarz (stageAA). Sie folgt beim nächsten App-Start.
  *  - schatten (ab 6): Sonnenschatten (ein zweiter Zeichendurchgang je Bild)
  *  - details (ab 7): feine Landschafts-Shader – Relief im Licht, Baumkronen mit Licht und Schatten, Felsstruktur,
- *    Rinnen und Schichten, ziehende Wolkenschatten, Flecken im Straßenbelag (siehe render3d.ts)
+ *    Rinnen und Schichten, ziehende Wolkenschatten, Flecken im Straßenbelag (siehe render3d.ts); das eigene Rad mit
+ *    allen Kleinteilen (Kette, Zähne, Schriftzüge – darunter ein Viertel der Dreiecke); Lichtkegel von bis zu zwölf
+ *    statt sechs Laternen
  *  - licht (ab 8): Wetter und Licht der Spielwelten (Goldene Stunde, Wetterumschwung, Nebel am Pass) mit der
  *    Nachbearbeitung (Leuchten, Lichtstrahlen, Wolken, Farbfilter, Vignette, Korn) und dem leichten Kamerafilter
  *  - pc (10): PC-Grafik – feinere Berge am Horizont, Gras am Wegrand, schärfere Bäume, alle Fahrer in voller

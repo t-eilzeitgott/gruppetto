@@ -55,6 +55,22 @@ export function apHook(_r: THREE.WebGLRenderer, _s: THREE.Scene, _c: THREE.Camer
 const done = new WeakSet<THREE.Material>();
 
 /**
+ * Kostenanalyse: das Ausblend-Raster probeweise ganz weglassen. Ein Fragment-Shader, der verwerfen kann (discard),
+ * nimmt Apple-Grafikchips die Möglichkeit, verdeckte Bildpunkte gar nicht erst zu schattieren – auch wenn er im
+ * Bild nie verwirft. So lässt sich messen, was das an kritischen Stellen kostet.
+ */
+let apDiscard = true;
+export function setApDiscard(on: boolean, scene: THREE.Object3D) {
+  if (on === apDiscard) return;
+  apDiscard = on;
+  scene.traverse((o) => {
+    const ms = (o as THREE.Mesh).material;
+    if (!ms) return;
+    for (const m of Array.isArray(ms) ? ms : [ms]) if (done.has(m)) m.needsUpdate = true;
+  });
+}
+
+/**
  * Material für weiches Ein-/Ausblenden vorbereiten (einmalig; am besten vor dem ersten Zeichnen – sonst wird
  * es einmal neu übersetzt). Eigene Shader (ShaderMaterial) bauen AP_* selbst ein und setzen nur apHook.
  */
@@ -73,9 +89,9 @@ export function appearify(m: THREE.Material | THREE.Material[]) {
       .replace('#include <project_vertex>', `#include <project_vertex>\n${AP_VERT}`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>\n${AP_HEAD}`)
-      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n${AP_FRAG}`);
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n${apDiscard ? AP_FRAG : ''}`);
   };
-  m.customProgramCacheKey = () => `${key}|ap`;
+  m.customProgramCacheKey = () => `${key}|ap${apDiscard ? '' : '-'}`;
   m.onBeforeRender = apHook;
   m.needsUpdate = true;
 }

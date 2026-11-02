@@ -124,7 +124,8 @@ const cand: { x: number; y: number; z: number; d: number }[] = [];
  * (x, y, z je Lampe), k: Stärke (Lichter an 0 … 1). Wer gerade aus der Auswahl fällt, ist schon ausgeblendet
  * (Abstand zur ersten nicht mehr gewählten Lampe) – nichts springt.
  */
-export function pickLamps(lists: ArrayLike<number>[], cam: THREE.Vector3, k: number) {
+export function pickLamps(lists: ArrayLike<number>[], cam: THREE.Vector3, k: number, max = LAMP_N) {
+  const N = Math.min(LAMP_N, max);
   cand.length = 0;
   if (k > 0.001) {
     for (const l of lists) {
@@ -137,9 +138,9 @@ export function pickLamps(lists: ArrayLike<number>[], cam: THREE.Vector3, k: num
     cand.sort((a, b) => a.d - b.d);
   }
   const out = LAMP_U.uLampP.value;
-  const dCut = cand.length > LAMP_N ? cand[LAMP_N].d : 140;
+  const dCut = cand.length > N ? cand[N].d : 140;
   let n = 0;
-  for (let i = 0; i < Math.min(LAMP_N, cand.length); i++) {
+  for (let i = 0; i < Math.min(N, cand.length); i++) {
     const c = cand[i];
     const w = k * Math.min(1, (dCut - c.d) / 15) * (1 - smooth(90, 135, c.d));
     if (w <= 0.001) continue;

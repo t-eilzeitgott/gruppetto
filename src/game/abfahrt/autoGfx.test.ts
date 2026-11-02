@@ -76,6 +76,25 @@ test('Grafik am Limit: erst die Auflösung bis drei Viertel, dann die Sichtweite
   assert.equal(V.viewRange().id, 'max');
 });
 
+test('reicht auch die kürzeste Sicht nicht: die Auflösung weiter bis zur Hälfte', () => {
+  store.delete('gruppetto.gfx.auto.zeitfahren');
+  const g = new AutoGfx('zeitfahren');
+  const ch = drive(g, { pix: 30 }, 70 * 80).filter((c) => !c.startsWith('info'));
+  const kinds = ch.map((c) => c.split(':')[0]);
+  assert.deepEqual(kinds.slice(0, 2), ['res', 'res']);
+  assert.ok(kinds.slice(2, 2 + V.rangeDropMax()).every((k) => k === 'range'), kinds.join(' '));
+  assert.equal(V.autoRangeDrop(), V.rangeDropMax());
+  assert.ok(g.quality < 0.75 && g.quality >= 0.5, String(g.quality));
+  assert.ok(ch[ch.length - 1].startsWith('res:Auflösung 1,5-fach → 1,25-fach'), ch[ch.length - 1]);
+  // wieder Luft: zuerst die Auflösung bis drei Viertel zurück, dann die Sicht
+  const up = drive(g, { pix: 5 }, 70 * 400).filter((c) => !c.startsWith('info'));
+  assert.ok(up[0]?.startsWith('res:Auflösung 1,25-fach → 1,5-fach'), String(up[0]));
+  assert.ok(up[1]?.startsWith('range:'), String(up[1]));
+  assert.equal(g.quality, 1);
+  assert.equal(V.autoRangeDrop(), 0);
+  g.dispose();
+});
+
 test('Ruckler, die kein Senken behebt: jede Art einmal probiert, zurückgenommen, dann Ruhe', () => {
   store.delete('gruppetto.gfx.auto.abfahrt');
   const g = new AutoGfx('abfahrt');
