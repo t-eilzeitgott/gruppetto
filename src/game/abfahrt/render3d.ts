@@ -1730,6 +1730,31 @@ export class Renderer3D {
   idleK = 1;
   private uiMoves = false;
   private idleMs(ms: number): number { return ms * this.idleK * (this.uiMoves ? 0.2 : 1); }
+
+  /**
+   * Startanimation der Spiele (app/gameIntro.ts): steht die Welt rund um den Start vollständig? Alle Abschnitte in
+   * Sichtweite gebaut, alle Ringe der Landschaft da, alles hochgeladen, Probezug und Fahrerbilder fertig. Dann muss
+   * beim Kameraschwenk und beim Losfahren nichts mehr entstehen. (Die Strecke in der Ferne baut danach hinter dem
+   * Startblatt weiter vor, wie bisher – darauf zu warten hieße oft mehrere Sekunden Animation.)
+   */
+  settled(g: RaceView): boolean {
+    if (this.track !== g.track || this.lost) return false;
+    const z = g.p.z;
+    const from = Math.max(0, Math.floor((z - BEHIND) / SEG / CH));
+    const to = Math.floor((z + AHEAD) / SEG / CH);
+    for (let k = from; k <= to; k++) if (!this.chunks.has(k)) return false;
+    if (!this.boxSet.every(Boolean)) return false;
+    return !this.upQ.length && !this.warmQueue.length && !this.needWarm && this.rs.ready;
+  }
+
+  /**
+   * Das nächste Bild aus der Fahrkamera zeichnen, wie nach dem Kameraschwenk (Startanimation: ein Probeblick,
+   * solange sie die Welt verdeckt – was dort ins Bild kommt, ist danach schon auf der Grafikkarte). Das Bild danach
+   * steht wieder wie vorher.
+   */
+  peekNext() { this.peek = true; }
+  private peek = false;
+  private peekSave: { tilt: number; cam: Renderer3D['cam']; chaseLift: number } | null = null;
   /** Rechenzeit für Landschaft und Abschnitte im letzten Bild (ms) */
   private work = 0;
   /**
@@ -3272,6 +3297,16 @@ export class Renderer3D {
   }
 
   private updateCamera(g: RaceView, dt: number) {
+    // Probeblick (peekNext) vorbei: Kamera wie vorher
+    if (this.peekSave) {
+      this.tilt = this.peekSave.tilt;
+      Object.assign(this.cam, this.peekSave.cam);
+      this.chaseLift = this.peekSave.chaseLift;
+      this.peekSave = null;
+    }
+    const peek = this.peek;
+    this.peek = false;
+    if (peek) this.peekSave = { tilt: this.tilt, cam: { ...this.cam }, chaseLift: this.chaseLift };
     const p = g.p;
     const track = g.track;
     const cam = this.cam;
@@ -3354,13 +3389,14 @@ export class Renderer3D {
     A.fov = base + Math.min(9, Math.max(0, (p.v - 14) * 0.38)) + 9 * rk;
     // Regie: in der Abfahrt TV-Kran vor dem Start; in allen Spielen der Sturz aus der Fernsehperspektive – Wechsel
     // weich geflogen
-    this.direct(g, A, dt, descent);
+    // (Probeblick: gleich die Fahrkamera, ohne Regie)
+    if (!peek) this.direct(g, A, dt, descent);
     this.camera.position.copy(A.pos);
     this.camera.lookAt(A.look);
     // Startblatt: es deckt die unteren zwei Drittel – die Kamera neigt sich so weit, dass der Fahrer im freien
     // oberen Drittel steht; mit „Los“ richtet sie sich im Lauf des Countdowns wieder auf
-    const wantTilt = g.phase === 'ready' ? Math.atan(0.95 * Math.tan((cam.fov * Math.PI) / 360)) : 0;
-    this.tilt += (wantTilt - this.tilt) * (still && g.phase === 'ready' ? 1 : Math.min(1, dt * 2.4));
+    const wantTilt = g.phase === 'ready' && !peek ? Math.atan(0.95 * Math.tan((cam.fov * Math.PI) / 360)) : 0;
+    this.tilt += (wantTilt - this.tilt) * (peek || (still && g.phase === 'ready') ? 1 : Math.min(1, dt * 2.4));
     if (this.tilt > 1e-4) this.camera.rotateX(-this.tilt);
     // leicht in die Kurve legen (Motorradkamera)
     if (descent && this.dirKind === 'chase') this.camera.rotateZ(clamp(p.lean, -0.7, 0.7) * 0.07 * (this.dirT < 1 ? this.dirT : 1));
@@ -3976,7 +4012,8 @@ export class Renderer3D {
     for (const o of this.warmLive) { this.scene.remove(o); this.warmGroup?.add(o); }
     this.warmLive = [];
     if (!this.warmQueue.length || phase === 'playing' || !this.warmGroup) return;
-    const n = Math.min(4, this.warmQueue.length);
+    // unter der Startanimation (idleK fast 1, nichts zu sehen) mehr je Bild
+    const n = Math.min(this.idleK > 0.9 ? 12 : 4, this.warmQueue.length);
     for (let i = 0; i < n; i++) {
       const o = this.warmQueue.shift()!;
       o.position.set(0, -5000, 0);

@@ -30,7 +30,7 @@ import { PauseIcon, PlayIcon } from './Game';
 import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
 import {
   FinaleBoard, HowTo, dist, lsGet, lsSet, placeIn,
-  useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
+  againWithIntro, useGameLock, usePreparedRace, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 import type { Profile } from '../lib/types';
 import { teamKit } from '../game/teams';
@@ -159,12 +159,16 @@ export function ZeitfahrenPage() {
       town: ref,
       ghosts,
       myBest,
-      onEvent: (e) => onEvent(e),
-      onOver: (r) => onOver(r),
+      onEvent: (e) => cbs.current.onEvent(e),
+      onOver: (r) => cbs.current.onOver(r),
     });
     eng.setViewport(stageEl.current?.getBoundingClientRect().width ?? 390);
     return eng;
   };
+  // was das Rennen ausmacht: ändert es sich hinter dem Startblatt, wird es gleich neu angelegt (nicht erst beim Start)
+  const kitNo = Math.max(1, (today.data?.findIndex((b) => b.user_id === me.id) ?? -1) + 1);
+  const raceKey = `${day}|${names.join(',')}|${me.display_name ?? ''}|${kitNo}|${bikes.current}|${ref ? JSON.stringify(ref) : ''}|${myBest ?? ''}|${ghosts.map((g) => `${g.id}:${g.timeMs}:${g.old ?? ''}`).join(',')}`;
+  const race = usePreparedRace({ engineRef, uiRef, key: raceKey, settled: settled && !!members.data, make: makeEngine });
 
   const bannerKey = useRef(0);
   const show = (title: string, sub?: string, tone?: 'gold' | 'accent' | 'red') => {
@@ -270,11 +274,15 @@ export function ZeitfahrenPage() {
     for (const gh of h.ghosts) place(hud.current[`strip:${gh.id}`], gh.z);
   };
 
+  // Rückrufe des Rennens immer aus dem aktuellen Stand (das Rennen kann lange vor dem Start angelegt sein)
+  const cbs = useRef({ onEvent, onOver });
+  cbs.current = { onEvent, onOver };
+
   const glGen = useRaceLoop({
     perf: meas.m.perf, onRenderer: (r) => { rendererRef.current = r; },
     game: 'zeitfahren',
     stageRef: stageEl, engineRef, uiRef,
-    make: makeEngine,
+    make: race.make,
     onFrame: writeHud,
     onGlError: () => setGlError(true),
     onHidden: () => setUi('paused'),
@@ -291,7 +299,8 @@ export function ZeitfahrenPage() {
   const start = () => {
     if (!stageEl.current) return;
     bestAtStart.current = myBest;
-    engineRef.current = makeEngine();
+    // das Rennen hinter dem Startblatt ist schon vorbereitet (usePreparedRace) – beim Start nichts neu bauen
+    engineRef.current = race.take();
     engineRef.current.start();
     setResult(null);
     setShowBoard(false);
@@ -403,7 +412,7 @@ export function ZeitfahrenPage() {
               meId={me.id}
               hadBest={bestAtStart.current !== null}
               saveFailed={saveFailed}
-              onAgain={start}
+              onAgain={() => againWithIntro('zeitfahren', 'Zeitfahren', () => { engineRef.current = race.make(); }, start)}
               onBoard={() => setShowBoard(true)}
             />
           )}

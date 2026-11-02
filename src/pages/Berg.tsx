@@ -30,7 +30,7 @@ import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
 import { teamKit } from '../game/teams';
 import {
   FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf,
-  useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
+  againWithIntro, useGameLock, usePreparedRace, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 
 const LS_RIDER = 'gruppetto.berg.rider';
@@ -123,12 +123,15 @@ export function BergPage() {
       kit: teamKit('gruppetto', chosen.number, { bike: bikes.current }),
       town: ref,
       ghosts: gh.ghosts,
-      onEvent: (e) => onEvent(e),
-      onOver: (r) => onOver(r),
+      onEvent: (e) => cbs.current.onEvent(e),
+      onOver: (r) => cbs.current.onOver(r),
     });
     eng.setViewport(stageEl.current?.getBoundingClientRect().width ?? 390);
     return eng;
   };
+  // was das Rennen ausmacht: ändert es sich hinter dem Startblatt, wird es gleich neu angelegt (nicht erst beim Start)
+  const raceKey = `${day}|${names.join(',')}|${chosen.id ?? ''}:${chosen.type}|${bikes.current}|${ref ? JSON.stringify(ref) : ''}|${tourData.data ? 1 : 0}|${gh.sig}`;
+  const race = usePreparedRace({ engineRef, uiRef, key: raceKey, settled: gh.settled && !!members.data && !tourData.loading, make: makeEngine });
 
   const bannerKey = useRef(0);
   const onEvent = (e: BergEvent) => {
@@ -204,11 +207,15 @@ export function BergPage() {
     }
   };
 
+  // Rückrufe des Rennens immer aus dem aktuellen Stand (das Rennen kann lange vor dem Start angelegt sein)
+  const cbs = useRef({ onEvent, onOver });
+  cbs.current = { onEvent, onOver };
+
   const glGen = useRaceLoop({
     perf: meas.m.perf, onRenderer: (r) => { rendererRef.current = r; },
     game: 'berg',
     stageRef: stageEl, engineRef, uiRef,
-    make: makeEngine,
+    make: race.make,
     onFrame: writeHud,
     onGlError: () => setGlError(true),
     onHidden: () => setUi('paused'),
@@ -224,7 +231,8 @@ export function BergPage() {
 
   const start = () => {
     if (!stageEl.current) return;
-    engineRef.current = makeEngine();
+    // das Rennen hinter dem Startblatt ist schon vorbereitet (usePreparedRace) – beim Start nichts neu bauen
+    engineRef.current = race.take();
     engineRef.current.start();
     setResult(null);
     setShowBoard(false);
@@ -343,7 +351,7 @@ export function BergPage() {
               today={today.data ?? []}
               season={season.data ?? []}
               meId={me.id}
-              onAgain={start}
+              onAgain={() => againWithIntro('berg', 'Bergfinale', () => { engineRef.current = race.make(); }, start)}
               onRider={() => { setResult(null); setUi('ready'); }}
               onBoard={() => setShowBoard(true)}
             />

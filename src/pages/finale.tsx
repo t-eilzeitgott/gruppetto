@@ -5,6 +5,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { acquireStage, hasWarmStage, releaseStage, watchStage, type Stage } from '../game/abfahrt/pool';
 import { FpsMeter } from '../game/fpsMeter';
+import { GamePrep } from '../game/gamePrep';
+import { gameIntroActive, gameIntroReady, holdGameIntro, onGameIntroExit, playGameIntro } from '../app/gameIntro';
 import { FrameClock, paceText } from '../game/frameClock';
 import { gfxLevel, gfxRes, onGfxSettings } from '../game/abfahrt/gfxOpts';
 import { AutoGfx, autoStep } from '../game/abfahrt/autoGfx';
@@ -80,6 +82,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       };
       raf = requestAnimationFrame(tick);
       g.__abfahrt = { engine: () => engineRef.current, renderer: null };
+      // ohne 3D gibt es nichts vorzubereiten
+      gameIntroReady();
       return () => cancelAnimationFrame(raf);
     }
     // 3D erst nach dem ersten Bild aufbauen: Startkarte und Bühne stehen sofort, die Szene blendet ein
@@ -124,8 +128,11 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGen((x) => x + 1); } };
       // Wächter: Leinwand eingehängt, Bild kommt an – sonst neue Bühne (pool.ts)
       const watch = watchStage(st, stage);
+      let startT = 99;
       // Bildrate für Admins (unauffällig unten links)
       const fps = new FpsMeter(stage);
+      // Startanimation: darunter alles vorbereiten (gamePrep.ts)
+      const prep = new GamePrep(renderer);
       let lastDraw = 0;
       let lastPhase = '';
       let lastGfx = '';
@@ -155,7 +162,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         // Start- und Ergebniskarte: Szene dahinter nur 10-mal pro Sekunde zeichnen (spart Akku und Wärme)
         const idle = uiRef.current === 'ready' || uiRef.current === 'over';
         idleT = idle ? idleT + dt : 0;
-        if (idle && idleT < 0.1 && frames > 2) {
+        if (idle && idleT < 0.1 && frames > 2 && !prep.covering()) {
           cb.current.onFrame(eng, dt);
           frames += 1;
           raf = requestAnimationFrame(loop);
@@ -165,7 +172,10 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.target));
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : idle ? Math.min(0.1, idleT) : dt, raw);
         if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
-        if (!low && watch()) { rebuild(); return; }
+        if (prep.step(eng)) clock.relearn();
+        // (nicht im Countdown und in den ersten Sekunden der Fahrt: dort läuft der Kameraschwenk)
+        startT = eng.phase === 'countdown' ? 0 : eng.phase === 'playing' ? startT + dt : 99;
+        if (!low && watch(startT < 5)) { rebuild(); return; }
         idleT = 0;
         cb.current.onFrame(eng, dt);
         const cpu = performance.now() - c0;
@@ -243,6 +253,50 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gen]);
   return gen;
+}
+
+/**
+ * Den Lauf vorbereiten statt beim Start neu zu bauen: Das Rennen hinter dem Startblatt ist schon das, das gleich
+ * startet. Ändert sich, was es ausmacht (key: Geister, Rad, Mitspieler …), wird es sofort neu angelegt – noch hinter
+ * dem Startblatt bzw. unter der Startanimation, nicht beim Losfahren (ein neues Rennen tauscht Schilder und baut
+ * Abschnitte – das ruckelte genau beim Kameraschwenk). settled: alles Nötige ist geladen (bis dahin wartet die
+ * Startanimation, siehe gameIntro.holdGameIntro).
+ */
+export function usePreparedRace<E extends { phase: string }>(o: {
+  engineRef: RefObject<E | null>; uiRef: RefObject<Ui>; key: string; settled: boolean; make: () => E;
+}) {
+  const keyRef = useRef('');
+  const cur = useRef(o);
+  cur.current = o;
+  const make = () => { keyRef.current = cur.current.key; return cur.current.make(); };
+  useEffect(() => {
+    const e = o.engineRef.current;
+    if (e && e.phase === 'ready' && (o.uiRef.current === 'ready' || gameIntroActive()) && keyRef.current !== o.key) o.engineRef.current = make();
+    holdGameIntro('race', !o.settled);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [o.key, o.settled]);
+  useEffect(() => () => holdGameIntro('race', false), []);
+  return {
+    /** neues Rennen (für useRaceLoop) */
+    make,
+    /** das vorbereitete Rennen – oder ein neues, wenn es nicht mehr passt */
+    take: (): E => {
+      const e = cur.current.engineRef.current;
+      return e && e.phase === 'ready' && keyRef.current === cur.current.key ? e : make();
+    },
+  };
+}
+
+/**
+ * Nochmal: kurze Startanimation, darunter das nächste Rennen vorbereiten (die Welt springt an den Start, Abschnitte
+ * entstehen neu), erst wenn sie aufgeht, beginnt der Countdown
+ */
+export function againWithIntro(game: GameId, title: string, prepare: () => void, start: () => void) {
+  playGameIntro(game, { title, short: true });
+  afterPaint(() => {
+    try { prepare(); } catch { /* dann baut start() neu */ }
+    onGameIntroExit(start);
+  });
 }
 
 type KeyEngine = { key(name: 'left' | 'right' | 'down' | 'up', down: boolean): void; swapMate?: () => void };

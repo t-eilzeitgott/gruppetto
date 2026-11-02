@@ -40,5 +40,9 @@ export function useGameGhosts(game: Game) {
       .catch(() => undefined);
   };
 
-  return { ghosts, save };
+  /** Geister stehen fest (geladen oder nicht erreichbar) */
+  const settled = q.data !== undefined || !!q.error;
+  /** Kennung der Geister (ändert sie sich, ist es ein anderes Rennen) */
+  const sig = ghosts.map((g) => `${g.id}:${g.timeMs ?? ''}:${g.old ?? ''}`).join(',');
+  return { ghosts, save, settled, sig };
 }

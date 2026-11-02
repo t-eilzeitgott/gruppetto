@@ -230,6 +230,18 @@ export class FrameClock {
     this.window = 90;
   }
 
+  /**
+   * Festen Takt neu lernen (der Bildschirmtakt bleibt): nach einer Ladephase unter einer Startanimation, in der
+   * viele Bilder absichtlich lang waren – sonst bliebe ein dabei gewählter halber Takt für das ganze Spiel stehen
+   */
+  relearn() {
+    if (this.div !== 1) this.changes += 1;
+    this.div = 1;
+    this.seen = 0;
+    this.late = 0;
+    this.window = 30;
+  }
+
   /** Bildschirmtakt aus den Abständen der Aufrufe (alle 16 Aufrufe über die letzten 64) */
   private measure() {
     const a = this.hist.subarray(0, this.n);

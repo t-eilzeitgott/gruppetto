@@ -100,15 +100,17 @@ export function releaseStage(s: Stage) {
  * einhängen)? Kommt das Bild an? Bleibt es zweimal hintereinander leer, obwohl gezeichnet wird (ein still
  * gestorbener Grafikkontext – auf dem iPhone sah man dann nur noch Schwarz), meldet er true: neue Bühne bauen.
  */
-export function watchStage(s: Stage, host: HTMLElement): () => boolean {
+export function watchStage(s: Stage, host: HTMLElement): (defer?: boolean) => boolean {
   const t0 = performance.now();
   const at = [1000, 3000, 6000];
   let next = 0;
   let blanks = 0;
-  return () => {
+  // defer: gerade nicht prüfen (Countdown, Kameraschwenk, erste Sekunden der Fahrt) – das Lesen eines Bildpunkts
+  // wartet auf die Grafikkarte, ein kleiner Ruckler genau im falschen Moment; die Prüfung kommt danach
+  return (defer = false) => {
     const t = performance.now() - t0;
     const due = next < at.length ? at[next] : at[at.length - 1] + (next - at.length + 1) * 20000;
-    if (t < due) return false;
+    if (t < due || defer) return false;
     next += 1;
     if (s.canvas.parentElement !== host) host.append(s.canvas, s.overlay);
     if (!s.canvas.classList.contains('is-drawn')) s.canvas.classList.add('is-drawn');

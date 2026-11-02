@@ -3297,3 +3297,90 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 .abf .tv-ad { bottom: calc(var(--safe-b) + 124px); }
 .abf .abf-coach { bottom: calc(var(--safe-b) + 128px); bottom: calc(var(--safe-b) + 128px + 100lvh - 100dvh); }
 .abf .hud-mate { bottom: calc(var(--safe-b) + 152px); }
+
+/* ---------- Startanimation der Minispiele (app/gameIntro.ts): nur transform und opacity, läuft auf dem Compositor ---------- */
+.gintro {
+  --gi-hue: var(--accent); --gi-bg1: #2a0f22; --gi-bg2: #0c060d;
+  position: fixed; inset: 0; z-index: 95; overflow: hidden; pointer-events: auto; touch-action: none;
+  color: #fff; font-family: var(--font); -webkit-user-select: none; user-select: none; contain: strict;
+}
+.gintro--zeitfahren { --gi-hue: #5aa9ff; --gi-bg1: #12305e; --gi-bg2: #050d1d; }
+.gintro--sprint { --gi-hue: #ffb02e; --gi-bg1: #3d2706; --gi-bg2: #0f0902; }
+.gintro--berg { --gi-hue: #3ddc84; --gi-bg1: #0e3a24; --gi-bg2: #030e08; }
+.gintro__bg { position: absolute; inset: 0; background: radial-gradient(120% 80% at 50% 38%, var(--gi-bg1) 0%, var(--gi-bg2) 70%); will-change: opacity; }
+.gintro__stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 0 24px; will-change: transform; }
+.gintro__art { position: relative; display: grid; place-items: center; }
+.gintro__text { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; will-change: transform, opacity; }
+.gintro__title { font-size: 34px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35); }
+.gintro__sub { font-size: 15px; font-weight: 600; color: rgba(255, 255, 255, 0.66); }
+.gintro__wait {
+  position: absolute; left: 0; right: 0; bottom: calc(var(--safe-b, 0px) + 44px); text-align: center;
+  font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: rgba(255, 255, 255, 0.55); opacity: 0;
+}
+.gintro__wait i { font-style: normal; animation: gi-dot 1.2s ease-in-out infinite; }
+.gintro__wait i:nth-child(2) { animation-delay: 0.2s; }
+.gintro__wait i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes gi-dot { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
+
+/* Zeitfahren: Stoppuhr */
+.gi-watch { position: relative; width: 190px; height: 190px; will-change: transform, opacity; }
+.gi-watch__crown {
+  position: absolute; left: 50%; top: -20px; width: 30px; height: 16px; margin-left: -15px; border-radius: 6px 6px 3px 3px;
+  background: var(--gi-hue); box-shadow: 0 6px 0 -1px color-mix(in srgb, var(--gi-hue) 70%, #000);
+}
+.gi-watch__face {
+  position: absolute; inset: 0; border-radius: 50%; overflow: hidden;
+  background: radial-gradient(circle at 50% 40%, #12284d, #071225 75%);
+  box-shadow: inset 0 0 0 7px var(--gi-hue), 0 0 46px color-mix(in srgb, var(--gi-hue) 45%, transparent);
+}
+.gi-watch__sweep {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from -70deg, transparent 0deg, color-mix(in srgb, var(--gi-hue) 42%, transparent) 70deg, transparent 70.5deg);
+  will-change: transform, opacity;
+}
+.gi-watch__tick { position: absolute; left: 50%; top: 14px; width: 2px; height: 7px; margin-left: -1px; border-radius: 1px; background: rgba(255, 255, 255, 0.35); transform-origin: 1px 81px; }
+.gi-watch__tick.is-big { width: 3px; height: 12px; margin-left: -1.5px; transform-origin: 1.5px 81px; background: rgba(255, 255, 255, 0.85); }
+.gi-watch__hand {
+  position: absolute; left: 50%; bottom: 50%; width: 4px; height: 70px; margin-left: -2px; border-radius: 2px;
+  background: linear-gradient(#fff, var(--gi-hue)); transform-origin: 50% 100%; will-change: transform;
+}
+.gi-watch__pin { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px var(--gi-hue); }
+
+/* Abfahrt: Fahrtwind und Serpentine */
+.gi-wind { position: absolute; inset: 0; pointer-events: none; }
+.gi-wind__line { position: absolute; top: 0; width: 2px; border-radius: 1px; background: linear-gradient(transparent, rgba(255, 255, 255, 0.8), transparent); will-change: transform; }
+.gi-road { position: relative; width: min(62vw, 260px); height: min(34vh, 280px); overflow: hidden; will-change: transform; }
+.gi-road__in { position: absolute; inset: 0; will-change: transform; }
+.gi-road__svg { width: 100%; height: 100%; overflow: visible; }
+.gi-road__svg path {
+  fill: none; stroke: #fff; stroke-width: 9px; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 10px var(--gi-hue));
+}
+
+/* Sprint: Zielband, Schilder, Fotofinish */
+.gi-band { position: relative; width: 125vw; height: 44px; overflow: hidden; box-shadow: 0 0 40px color-mix(in srgb, var(--gi-hue) 40%, transparent); will-change: transform; }
+.gi-band__strip {
+  position: absolute; top: 0; bottom: 0; left: 0; width: calc(100% + 40px);
+  background: conic-gradient(#fff 25%, #15110a 0 50%, #fff 0 75%, #15110a 0) 0 0 / 40px 44px; will-change: transform;
+}
+.gi-boards { display: flex; gap: 10px; margin-top: 26px; justify-content: center; }
+.gi-board {
+  display: inline-flex; align-items: center; min-height: 34px; padding: 0 14px; border-radius: 10px;
+  background: var(--gi-hue); color: #1d1300; font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; will-change: transform, opacity;
+}
+.gi-scan {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 3px; opacity: 0; pointer-events: none;
+  background: linear-gradient(transparent, #fff 20%, #fff 80%, transparent); box-shadow: 0 0 18px 4px color-mix(in srgb, var(--gi-hue) 70%, transparent);
+  will-change: transform, opacity;
+}
+
+/* Berg: Bergketten und Bergtrikot */
+.gi-range { position: absolute; left: 0; right: 0; bottom: 0; height: 46vh; pointer-events: none; }
+.gi-range__l { position: absolute; inset: 0; width: 100%; height: 100%; will-change: transform; }
+.gi-range__l--0 polygon { fill: #1f6a41; }
+.gi-range__l--1 polygon { fill: #144a2d; }
+.gi-range__l--2 polygon { fill: #0a2c1a; }
+.gi-kom { position: relative; width: 104px; height: 104px; border-radius: 50%; background: #fff; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4), 0 0 0 4px rgba(255, 255, 255, 0.15); will-change: transform, opacity; }
+.gi-kom__dot { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: #e5242b; }
+
+@media (prefers-reduced-motion: reduce) { .gintro__wait i { animation: none; } }

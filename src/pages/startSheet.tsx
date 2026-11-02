@@ -11,6 +11,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { HANDOFF_MS, endHandoff, sheetIn, sheetOut } from '../app/handoff';
 import { markUiBusy } from '../game/uiBusy';
+import { gameIntroActive, onGameIntroExit } from '../app/gameIntro';
 import type { GameId } from '../data/source';
 import type { GameBest } from '../data/source';
 import type { Profile } from '../lib/types';
@@ -45,6 +46,16 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
     const s = sheet.current;
     if (!s || !firstRef.current) return;
     firstRef.current = false;
+    // Startanimation läuft (gameIntro.ts): das Blatt gleitet herein, sobald sie aufgeht – darunter wird vorbereitet
+    if (gameIntroActive(game)) {
+      s.style.opacity = '0';
+      onGameIntroExit(() => {
+        s.style.opacity = '';
+        markUiBusy(HANDOFF_MS + 350);
+        sheetIn(s);
+      });
+      return;
+    }
     // solange das Blatt hereinkommt, baut die 3D-Welt nur in kleinen Portionen weiter
     markUiBusy(HANDOFF_MS + 350);
     const h = head.current;

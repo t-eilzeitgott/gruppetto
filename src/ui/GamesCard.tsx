@@ -10,7 +10,9 @@ import { useMembers } from '../app/hooks';
 import { invalidate, useQuery } from '../app/query';
 import { source } from '../app/config';
 import { warmGame } from '../app/warm';
-import { beginHandoff } from '../app/handoff';
+import { playGameIntro } from '../app/gameIntro';
+import { handOver, navigate } from '../app/router';
+import { afterPaint } from '../lib/afterPaint';
 import { markUiBusy, uiBusy } from '../game/uiBusy';
 import type { GameBest, GameRun } from '../data/source';
 import type { Profile, Stage, StageKind } from '../lib/types';
@@ -212,10 +214,16 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
 
   const ackRef = useRef(alerts.map((a) => a.ack));
   ackRef.current = alerts.map((a) => a.ack);
+  const subsRef = useRef(subs);
+  subsRef.current = subs;
   const open = useCallback((i: number) => {
     ackRef.current[i]?.();
-    const head = heads.current[i];
-    beginHandoff(head ?? document.createElement('div'), GAMES[i].path);
+    // Startanimation des Spiels sofort (noch in diesem Bild), der Seitenwechsel erst danach – darunter wird
+    // die Welt vorbereitet, bis Kameraschwenk und Start ohne Nachladen laufen (gameIntro.ts, gamePrep.ts)
+    const g = GAMES[i];
+    playGameIntro(g.id, { title: g.name, sub: subsRef.current[i] });
+    handOver();
+    afterPaint(() => navigate(g.path));
   }, []);
 
   return (

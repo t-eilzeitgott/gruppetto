@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { RunBoard } from './runBoard';
+import { GamePrep } from '../game/gamePrep';
+import { gameIntroReady } from '../app/gameIntro';
 import { RunTiles, ReportActions, Standing, Verdict, fmtKmh, standingOf, verdict } from './report';
 import { acquireStage, hasWarmStage, prewarm, releaseStage, watchStage, type Stage } from '../game/abfahrt/pool';
 import type { WarmArgs } from '../app/warm';
@@ -16,7 +18,7 @@ import { Renderer3D } from '../game/abfahrt/render3d';
 import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock, paceText, cancelNext, requestNext } from '../game/frameClock';
 import { Track } from '../game/abfahrt/track';
-import { HowTo } from './finale';
+import { HowTo, againWithIntro, usePreparedRace } from './finale';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { EV, Perf3D, PLACES, SEC, type Report } from '../game/abfahrt/perf3d';
 import { autoRangeDrop, chosenRange, viewRange } from '../game/abfahrt/viewRange';
@@ -179,18 +181,16 @@ export function GamePage() {
       // keine Hindernisse, dafür Massenstürze (zu schnell aufs Hinterrad); ein ganzes Fahrerfeld
       pileups: true,
       field: FIELD,
-      onEvent: (e) => onEvent(e),
-      onOver: (r) => onOver(r),
+      onEvent: (e) => cbs.current.onEvent(e),
+      onOver: (r) => cbs.current.onOver(r),
     });
     eng.setViewport(stageRef.current?.getBoundingClientRect().width ?? 390);
     return eng;
   };
-
-  // Vorschau im Startbildschirm mit dem gewählten Rad (die Freischaltungen laden ggf. erst später)
-  useEffect(() => {
-    if (uiRef.current === 'ready' && engineRef.current) engineRef.current = makeEngine(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bikes.current]);
+  // das Rennen hinter dem Startblatt ist schon das, das gleich startet (mit Bestmarken der Runde und Geistern):
+  // ändert sich etwas daran (Rad, Geister, Bestwerte), wird es gleich neu angelegt – nicht erst beim Losfahren
+  const raceKey = [day, names.join(','), bikes.current, myBest, friends.map((f) => `${f.userId}:${f.meters}`).join(','), gh.sig, doneIds.join(','), missions.map((m) => m.id).join(',')].join('|');
+  const race = usePreparedRace({ engineRef, uiRef, key: raceKey, settled: gh.settled && !!members.data && !season.loading, make: () => makeEngine(true) });
 
   // Ereignisse aus dem Spiel
   const bannerKey = useRef(0);
@@ -248,13 +248,17 @@ export function GamePage() {
   // Neuaufbau der 3D-Ansicht (neue Leinwand), wenn der Browser den Kontext entzogen hat
   const [glGen, setGlGen] = useState(0);
 
+  // Rückrufe des Rennens immer aus dem aktuellen Stand (das Rennen kann lange vor dem Start angelegt sein)
+  const cbs = useRef({ onEvent, onOver });
+  cbs.current = { onEvent, onOver };
+
   // Spielschleife
   useLayoutEffect(() => {
     const stage = stageRef.current;
     if (!stage) return undefined;
     // Testmodus ohne 3D (?nogl): nur Spiellogik und Oberfläche – für schnelle automatische Layout-Checks
     if (/[?&]nogl\b/.test(window.location.search)) {
-      engineRef.current = makeEngine(false);
+      engineRef.current = race.make();
       let raf = 0;
       let prev = performance.now();
       const tick = (now: number) => {
@@ -266,6 +270,7 @@ export function GamePage() {
       };
       raf = requestAnimationFrame(tick);
       (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer: null };
+      gameIntroReady();
       return () => cancelAnimationFrame(raf);
     }
     // 3D erst nach dem ersten Bild aufbauen: Startkarte und Bühne stehen sofort, die Szene blendet ein
@@ -295,7 +300,7 @@ export function GamePage() {
       // neue Wahl im Menü (Stufe, Auflösung, Automatik): von deren Stand aus weiter
       const offGov = onGfxSettings(() => { gov.reset(true); if (!low) renderer.setQuality(gov.quality); });
       // beim Neuaufbau läuft die Fahrt weiter
-      if (!engineRef.current || (glGen === 0 && uiRef.current === 'ready')) engineRef.current = makeEngine(false);
+      if (!engineRef.current || (glGen === 0 && uiRef.current === 'ready')) engineRef.current = race.make();
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
       // vorgewärmt: die Leinwand zeigt die Welt schon – sofort zeigen, ohne Einblenden (so bleibt der Übergang
       // von der Startseite ein Überblenden, kein Schwarz dazwischen)
@@ -311,8 +316,11 @@ export function GamePage() {
       const rebuild = () => { if (!rebuilt) { rebuilt = true; setGlGen((x) => x + 1); } };
       // Wächter: Leinwand eingehängt, Bild kommt an – sonst neue Bühne (pool.ts)
       const watch = watchStage(st, stage);
+      let startT = 99;
       // Bildrate (im Pausenmenü einschaltbar)
       const fps = new FpsMeter(stage);
+      // Startanimation: darunter alles vorbereiten (gamePrep.ts)
+      const prep = new GamePrep(renderer);
       // Messfahrt (perf3d.ts): Bausteine je Bild, Regler, Phasen
       const P = perfRef.current;
       let lastPhase = '';
@@ -343,7 +351,10 @@ export function GamePage() {
         renderer.period = Math.max(1000 / 144, Math.min(1000 / 30, clock.target));
         if (!low || frames % 30 === 0) renderer.draw(eng, uiRef.current === 'paused' ? 0 : dt, raw);
         if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
-        if (!low && watch()) { rebuild(); return; }
+        if (prep.step(eng)) clock.relearn();
+        // (nicht im Countdown und in den ersten Sekunden der Fahrt: dort läuft der Kameraschwenk)
+        startT = eng.phase === 'countdown' ? 0 : eng.phase === 'playing' ? startT + dt : 99;
+        if (!low && watch(startT < 5)) { rebuild(); return; }
         hudRef.current(eng, dt);
         const cpu = performance.now() - c0;
         fps.frame(raw * 1000, cpu, gfxRes() * renderer.quality, renderer.shaderErrors);
@@ -556,8 +567,10 @@ export function GamePage() {
     // Plätze vorher merken für „↑ 2“
     const pos = (list: GameBest[] | undefined) => (list ?? []).findIndex((b) => b.user_id === me.id);
     setPrevRank({ day: pos(today.data), season: pos(season.data) });
-    engineRef.current = makeEngine(true);
-    engineRef.current.start();
+    // das vorbereitete Rennen (usePreparedRace); nur die Testfahrt (Zeitraffer) entsteht neu
+    const eng = cruiseRef.current ? makeEngine(true) : race.take();
+    engineRef.current = eng;
+    eng.start();
     setResult(null);
     setShowBoard(false);
     setBanner(null);
@@ -793,7 +806,7 @@ export function GamePage() {
               totalM={(mine?.total_m ?? 0)}
               missions={missions}
               done={doneIds}
-              onAgain={() => start(cruiseRef.current)}
+              onAgain={() => (cruiseRef.current ? start(cruiseRef.current) : againWithIntro('abfahrt', 'Abfahrt', () => { engineRef.current = race.make(); }, () => start(0)))}
               onBoard={() => setShowBoard(true)}
             />
           )}
