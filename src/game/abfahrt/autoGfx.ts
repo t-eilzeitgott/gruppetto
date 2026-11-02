@@ -27,7 +27,7 @@
  * statt erst wieder ins Ruckeln zu laufen. Ohne Three.js (das Menü zeigt den Stand).
  */
 import { gfxAuto, gfxLevel, gfxRes } from './gfxOpts';
-import { rangeDropMax, setAutoRangeDrop, viewRange } from './viewRange';
+import { autoRangeDrop, rangeDropMax, setAutoRangeDrop, viewRange } from './viewRange';
 
 /** Auflösung: Faktoren auf die gewählte – höchstens bis zur Hälfte (2-fach → 1-fach) */
 export const RES_STEPS = [1, 0.875, 0.75, 0.625, 0.5];
@@ -58,8 +58,18 @@ const GPU_ROOM = 0.42;
 const CPU_ROOM = 0.6;
 /** Rechenzeit über so viel vom Bildtakt: die Grenze ist die Rechenzeit (Auflösung hilft nicht) */
 const CPU_BOUND = 0.55;
-/** ein Schritt hinab hat geholfen, wenn die Bildzeit danach höchstens so viel über dem Takt liegt wie vorher */
-const HELPED = 0.85;
+/**
+ * ein Schritt hinab hat geholfen, wenn danach höchstens so viel der Bilder zu spät kommen wie vorher (oder kaum noch
+ * welche). Die mittlere Bildzeit taugt dafür nur, wenn fast jedes Bild zu spät kommt: sonst gleicht der feste Takt
+ * die verspäteten mit früheren aus – im Mittel stehen 16,7 ms, obwohl es ruckelt (Messfahrt Version 253: „0,0 → 0,1
+ * ms zu spät“ hieß fälschlich „brachte nichts“, die Sichtweite blieb danach auf Max)
+ */
+const HELPED = 0.92;
+/**
+ * eine Art, deren Senken nichts brachte, nach so vielen Sekunden Fahrt wieder probieren (die Strecke ändert sich);
+ * bringt es wieder nichts, doppelt so lange warten – jeder Versuch kostet zwei Wechsel
+ */
+const RETRY_S = 90;
 /** eine Stufe mehr Sichtweite kostet grob so viel mehr Grafik */
 const RANGE_COST = 1.3;
 /** nach einem Schritt hinauf: so viele Urteile Probezeit */
@@ -70,7 +80,8 @@ export interface AutoChange { kind: 'res' | 'range' | 'info'; text: string }
 
 interface Stored { k: string; r: number; d: number }
 
-const storeKey = (scope: string) => `gruppetto.gfx.auto.${scope}`;
+// (v2: Stände aus der fehlerhaften Prüfung „brachte nichts“ – Auflösung ganz unten, Sicht auf Max – nicht übernehmen)
+const storeKey = (scope: string) => `gruppetto.gfx.auto2.${scope}`;
 const selKey = () => `${gfxLevel()}|${gfxRes()}`;
 
 function load(scope: string): Stored | null {
@@ -106,6 +117,9 @@ export function fmtRes(d: number): string {
 
 // ------------------------------------------------------------------ Regler
 
+/** der Regler, dem die Sichtweite gerade gehört (es gibt nur eine, viewRange.ts) */
+let owner: AutoGfx | null = null;
+
 export class AutoGfx {
   /** Auflösungsschritt (Index in RES_STEPS) */
   res = 0;
@@ -122,7 +136,10 @@ export class AutoGfx {
   private settle = 0;
   private trial: { kind: 'res' | 'range'; left: number } | null = null;
   /** letzter Schritt hinab: hat er geholfen? (mittlere Bildzeit über dem Takt davor, ms) */
-  private verify: { kind: 'res' | 'range'; excess: number } | null = null;
+  private verify: { kind: 'res' | 'range'; frac: number; excess: number } | null = null;
+  /** seit wann eine Art als wirkungslos gilt (s, Fahrzeit) und wie lange bis zum nächsten Versuch */
+  private uselessT = 0;
+  private retry = RETRY_S;
   /** Arten, deren Senken nichts gebracht hat (bis zum nächsten gelungenen Schritt hinauf oder einer neuen Wahl) */
   private useless = new Set<'res' | 'range'>();
   private lastInfo = -1e9;
@@ -157,8 +174,10 @@ export class AutoGfx {
     this.trial = null;
     this.verify = null;
     this.useless.clear();
+    this.retry = RETRY_S;
     this.probeAsk = false;
     this.gpu = null;
+    owner = this;
     setAutoRangeDrop(this.range);
     this.show();
     return this.quality !== q0;
@@ -177,8 +196,12 @@ export class AutoGfx {
    */
   frame(missed: boolean, target: number, cpu: number, dt: number, active: boolean): AutoChange | null {
     if (!gfxAuto() || !active || !(dt > 0) || dt > 0.25) return null;
+    // die Sichtweite gehört dem Regler des laufenden Spiels: hat sie jemand anderes zurückgesetzt (ein Spiel, das
+    // sich erst nach diesem verabschiedet hat), wieder auf den eigenen Stand
+    if (owner !== this || autoRangeDrop() !== Math.min(this.range, rangeDropMax())) { owner = this; setAutoRangeDrop(this.range); }
     if (this.warm < WARMUP_S) { this.warm += dt; return null; }
     this.t += dt;
+    if (this.useless.size && this.t - this.uselessT > this.retry) this.useless.clear();
     this.n += 1;
     // im 120er-Takt (Gerät schafft mehr als 60 je Sekunde) zählt ein verpasster Takt nicht
     if (missed && target >= 15) this.late += 1;
@@ -203,9 +226,13 @@ export class AutoGfx {
     if (this.verify) {
       const v = this.verify;
       this.verify = null;
-      if (slow && excess > v.excess * HELPED) {
+      const fewerLate = frac <= v.frac * HELPED;
+      const lessLate = v.frac > 0.6 && excess <= v.excess * 0.85;
+      if (slow && !fewerLate && !lessLate) {
+        if (this.useless.size === 0 && this.t - this.uselessT < this.retry * 2) this.retry = Math.min(this.retry * 2, 600);
         this.useless.add(v.kind);
-        const why = `brachte nichts: im Schnitt ${v.excess.toFixed(1)} → ${excess.toFixed(1)} ms zu spät`;
+        this.uselessT = this.t;
+        const why = `brachte nichts: ${Math.round(v.frac * 100)} → ${Math.round(frac * 100)} % der Bilder zu spät`;
         return v.kind === 'res' ? this.stepRes(-1, why) : this.stepRange(-1, why);
       }
     }
@@ -235,7 +262,7 @@ export class AutoGfx {
         this.lastInfo = this.t;
         return { kind: 'info', text: `${pct}, Rechnen ${cpuMed.toFixed(1)} ms – nichts mehr zu senken` };
       }
-      this.verify = { kind, excess };
+      this.verify = { kind, frac, excess };
       const why = `${pct}, im Schnitt ${excess.toFixed(1)} ms zu spät, Rechnen ${cpuMed.toFixed(1)} ms`;
       return kind === 'res' ? this.stepRes(1, why) : this.stepRange(1, why);
     }
@@ -280,6 +307,7 @@ export class AutoGfx {
   private stepRange(dir: 1 | -1, why: string): AutoChange {
     const from = viewRange().label;
     this.range = Math.max(0, Math.min(rangeDropMax(), this.range + dir));
+    owner = this;
     setAutoRangeDrop(this.range);
     // (der Umbau der Landschaft ruckelt selbst: zwei Urteile abwarten)
     this.settle = 2;
@@ -296,8 +324,11 @@ export class AutoGfx {
     publish({ on: gfxAuto(), res: gfxRes() * this.quality, range: viewRange().label, reduced: this.res > 0 || this.range > 0 });
   }
 
-  /** Spiel verlassen: Sichtweite wieder wie gewählt (die Bühne wird für andere Spiele vorgewärmt) */
+  /** Spiel verlassen: Sichtweite wieder wie gewählt (die Bühne wird für andere Spiele vorgewärmt) – nur, wenn kein
+   *  anderes Spiel sie inzwischen übernommen hat */
   dispose() {
+    if (owner !== this) return;
+    owner = null;
     setAutoRangeDrop(0);
     publish({ on: gfxAuto(), res: gfxRes(), range: viewRange().label, reduced: false });
   }

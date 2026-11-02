@@ -53,7 +53,7 @@ function drive(g: Gov, d: Dev, n: number): string[] {
 const onlyFull = (p = 0.3) => (gg: Gov) => ({ p: gg.quality === 1 ? p : 0, lateMs: 25, gpu: gg.quality === 1 ? 9 : 3 });
 
 test('Grafik am Limit: erst die Auflösung bis drei Viertel, dann die Sichtweite – solange es hilft', () => {
-  store.delete('gruppetto.gfx.auto.zeitfahren');
+  store.delete('gruppetto.gfx.auto2.zeitfahren');
   const g = new AutoGfx('zeitfahren');
   assert.equal(g.quality, 1);
   assert.equal(V.viewRange().id, 'max');
@@ -77,12 +77,12 @@ test('Grafik am Limit: erst die Auflösung bis drei Viertel, dann die Sichtweite
 });
 
 test('reicht auch die kürzeste Sicht nicht: die Auflösung weiter bis zur Hälfte', () => {
-  store.delete('gruppetto.gfx.auto.zeitfahren');
+  store.delete('gruppetto.gfx.auto2.zeitfahren');
   const g = new AutoGfx('zeitfahren');
   const ch = drive(g, { pix: 30 }, 70 * 80).filter((c) => !c.startsWith('info'));
   const kinds = ch.map((c) => c.split(':')[0]);
   assert.deepEqual(kinds.slice(0, 2), ['res', 'res']);
-  assert.ok(kinds.slice(2, 2 + V.rangeDropMax()).every((k) => k === 'range'), kinds.join(' '));
+  assert.ok(kinds.slice(2, 2 + V.rangeDropMax()).every((k) => k === 'range'), ch.join(' | '));
   assert.equal(V.autoRangeDrop(), V.rangeDropMax());
   assert.ok(g.quality < 0.75 && g.quality >= 0.5, String(g.quality));
   assert.ok(ch[ch.length - 1].startsWith('res:Auflösung 1,5-fach → 1,25-fach'), ch[ch.length - 1]);
@@ -95,8 +95,28 @@ test('reicht auch die kürzeste Sicht nicht: die Auflösung weiter bis zur Hälf
   g.dispose();
 });
 
+test('die Sichtweite gehört dem laufenden Spiel: ein altes, das sich später verabschiedet, setzt sie nicht zurück', () => {
+  store.delete('gruppetto.gfx.auto2.berg');
+  const g = new AutoGfx('berg');
+  drive(g, { pix: 20 }, 70 * 40);
+  const d = V.autoRangeDrop();
+  assert.ok(d >= 1);
+  // altes Spiel (vorher angelegt) räumt erst jetzt auf: darf nichts zurücksetzen
+  const old = new AutoGfx('zeitfahren');
+  const g2 = new AutoGfx('berg');
+  old.dispose();
+  assert.equal(V.autoRangeDrop(), d);
+  // und hat es doch jemand zurückgesetzt: beim nächsten Bild wieder der eigene Stand
+  V.setAutoRangeDrop(0);
+  g2.frame(false, FRAME, 3, DT, true);
+  assert.equal(V.autoRangeDrop(), d);
+  g.dispose();
+  g2.dispose();
+  assert.equal(V.autoRangeDrop(), 0);
+});
+
 test('Ruckler, die kein Senken behebt: jede Art einmal probiert, zurückgenommen, dann Ruhe', () => {
-  store.delete('gruppetto.gfx.auto.abfahrt');
+  store.delete('gruppetto.gfx.auto2.abfahrt');
   const g = new AutoGfx('abfahrt');
   const ch = drive(g, { pix: 4, extra: 0.15 }, 70 * 60);
   assert.equal(g.quality, 1);
@@ -109,7 +129,7 @@ test('Ruckler, die kein Senken behebt: jede Art einmal probiert, zurückgenommen
 });
 
 test('Rechenzeit ist die Grenze: die Auflösung bleibt, gleich die Sichtweite', () => {
-  store.delete('gruppetto.gfx.auto.sprint');
+  store.delete('gruppetto.gfx.auto2.sprint');
   const g = new AutoGfx('sprint');
   // Rechnen 12 ms bei voller Sicht, je Stufe kürzer 1,5 ms weniger; Grafik klein
   const out = run(g, 70 * 30, () => {
@@ -123,7 +143,7 @@ test('Rechenzeit ist die Grenze: die Auflösung bleibt, gleich die Sichtweite', 
 });
 
 test('Senken bringt nichts (die Last ist das Fahrerfeld): zurück, und diese Art nicht weiter senken', () => {
-  store.delete('gruppetto.gfx.auto.berg');
+  store.delete('gruppetto.gfx.auto2.berg');
   const g = new AutoGfx('berg');
   // Bildpunkte wenig, fester Anteil (Fahrer) viel: die Auflösung hilft kaum, die Sichtweite gar nicht
   const dev: Dev = { pix: 4, fixed: 15, rangeK: 0 };
@@ -138,7 +158,7 @@ test('Senken bringt nichts (die Last ist das Fahrerfeld): zurück, und diese Art
 });
 
 test('wieder Luft: erst ein Probebild, dann zuerst die Sichtweite zurück, dann die Auflösung – mit zu wenig Luft nicht', () => {
-  store.delete('gruppetto.gfx.auto.berg');
+  store.delete('gruppetto.gfx.auto2.berg');
   const g = new AutoGfx('berg');
   drive(g, { pix: 20 }, 70 * 40);
   assert.equal(g.quality, 0.75);
@@ -155,7 +175,7 @@ test('wieder Luft: erst ein Probebild, dann zuerst die Sichtweite zurück, dann 
 });
 
 test('Schritt hinauf ruckelt gleich wieder: zurück, der nächste Versuch erst nach doppelt so langer Ruhe', () => {
-  store.delete('gruppetto.gfx.auto.abfahrt');
+  store.delete('gruppetto.gfx.auto2.abfahrt');
   const g = new AutoGfx('abfahrt');
   for (let i = 0; i < 20 && g.quality === 1; i++) run(g, 70, onlyFull());
   assert.equal(g.quality, 0.875);
@@ -176,7 +196,7 @@ test('Schritt hinauf ruckelt gleich wieder: zurück, der nächste Versuch erst n
 });
 
 test('merkt sich den Stand je Spiel (nur für dieselbe Wahl), Automatik aus regelt nichts, 120er-Takt zählt nicht', () => {
-  store.delete('gruppetto.gfx.auto.zeitfahren');
+  store.delete('gruppetto.gfx.auto2.zeitfahren');
   const g = new AutoGfx('zeitfahren');
   run(g, 70 * 6, onlyFull());
   assert.equal(g.quality, 0.875);

@@ -406,21 +406,7 @@ interface Tile { lv: number; key: number; objs: THREE.Object3D[]; geos: THREE.Bu
 /** so viel kommt je Bild vorab auf die Grafikkarte (Geometrie und Texturen neuer Teile, Bytes) */
 const UP_BYTES = 256 * 1024;
 /** Anmeldung zum Vorab-Hochladen: Objekte und Texturen, Fortschritt, noch gebraucht?, fertig */
-interface UpJob { objs: THREE.Object3D[]; tex: THREE.Texture[]; i: number; ti: number; alive: () => boolean; done: () => void }
-/** Größe der Daten einer Geometrie, die three.js beim ersten Zeichnen hochlädt (ohne Index: der folgt beim Zeichnen) */
-function geoBytes(g: THREE.BufferGeometry): number {
-  let b = 0;
-  let last: unknown = null;
-  for (const k in g.attributes) {
-    const a = g.attributes[k] as THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
-    const arr = (a as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute ? (a as THREE.InterleavedBufferAttribute).data.array : (a as THREE.BufferAttribute).array;
-    // mehrere Attribute in einem gemeinsamen Feld: nur einmal
-    if (arr === last) continue;
-    last = arr;
-    b += (arr as unknown as { byteLength: number }).byteLength;
-  }
-  return b;
-}
+interface UpJob { objs: THREE.Object3D[]; tex: THREE.Texture[]; i: number; ti: number; ai: number; alive: () => boolean; done: () => void }
 /** Texturen eines Materials (Bildfelder und Uniforms eigener Shader) */
 function texturesOf(m: THREE.Material, out: Set<THREE.Texture>) {
   const mm = m as unknown as Record<string, unknown>;
@@ -3948,9 +3934,7 @@ export class Renderer3D {
   private upQ: UpJob[] = [];
   private upScene = new THREE.Scene();
   private upMat = new THREE.MeshBasicMaterial({ visible: false });
-  private upNone = new THREE.BufferGeometry();
   private upMesh: THREE.Mesh[] = [];
-  private upPts: THREE.Points[] = [];
   /** schon hochgeladene Geometrien und Texturen */
   private upSeen = new WeakSet<object>();
 
@@ -3966,7 +3950,7 @@ export class Renderer3D {
         for (const mt of Array.isArray(m.material) ? m.material : [m.material]) if (mt) texturesOf(mt, tex);
       });
     }
-    this.upQ.push({ objs, tex: [...tex], i: 0, ti: 0, alive, done });
+    this.upQ.push({ objs, tex: [...tex], i: 0, ti: 0, ai: 0, alive, done });
   }
 
   /** je Bild (nach dem Zeichnen) eine Portion hochladen; auf der Startkarte alles auf einmal */
@@ -3975,7 +3959,6 @@ export class Renderer3D {
     const budget = this.idleBuild ? (this.idleK >= 1 ? Infinity : UP_BYTES * (this.uiMoves ? 2 : 8)) : UP_BYTES;
     let bytes = 0;
     let nm = 0;
-    let np = 0;
     while (this.upQ.length && bytes < budget) {
       const job = this.upQ[0];
       if (!job.alive()) { this.upQ.shift(); continue; }
@@ -3987,36 +3970,35 @@ export class Renderer3D {
         bytes += (img?.width ?? 0) * (img?.height ?? 0) * 4;
         this.gl.initTexture(t);
       }
+      // je Eigenschaft der Geometrie einzeln (eine Landschaftskachel hat gut 600 kB in 13 Eigenschaften – am Stück
+      // ging das in einem Bild hoch, und das Bild kam zu spät): ein Stellvertreter mit nur dieser Eigenschaft
       while (job.i < job.objs.length && bytes < budget) {
-        const o = job.objs[job.i++];
-        const geo = (o as THREE.Mesh).geometry;
-        if (this.upSeen.has(geo)) continue;
-        this.upSeen.add(geo);
-        bytes += geoBytes(geo);
-        if ((o as THREE.Points).isPoints) {
-          let p = this.upPts[np];
-          if (!p) { p = new THREE.Points(this.upNone, this.upMat); p.frustumCulled = false; this.upPts.push(p); this.upScene.add(p); }
-          p.geometry = geo;
-          p.visible = true;
-          np += 1;
-        } else {
+        const geo = (job.objs[job.i] as THREE.Mesh).geometry;
+        if (this.upSeen.has(geo)) { job.i++; job.ai = 0; continue; }
+        const names = Object.keys(geo.attributes);
+        while (job.ai < names.length && bytes < budget) {
+          const at = geo.attributes[names[job.ai++]] as THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
+          const key: object = (at as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute ? (at as THREE.InterleavedBufferAttribute).data : at;
+          if (this.upSeen.has(key)) continue;
+          this.upSeen.add(key);
+          bytes += ((key as { array: ArrayBufferView }).array).byteLength;
           let p = this.upMesh[nm];
-          if (!p) { p = new THREE.Mesh(this.upNone, this.upMat); p.frustumCulled = false; this.upMesh.push(p); this.upScene.add(p); }
-          p.geometry = geo;
+          if (!p) { p = new THREE.Mesh(new THREE.BufferGeometry(), this.upMat); p.frustumCulled = false; this.upMesh.push(p); this.upScene.add(p); }
+          p.geometry.attributes = { a: at };
           p.visible = true;
           nm += 1;
         }
+        if (job.ai >= names.length) { this.upSeen.add(geo); job.i++; job.ai = 0; }
       }
       if (job.ti >= job.tex.length && job.i >= job.objs.length) { this.upQ.shift(); job.done(); }
     }
-    if (nm || np) {
+    if (nm) {
       const ac = this.gl.autoClear;
       this.gl.autoClear = false;
       this.gl.render(this.upScene, this.camera);
       this.gl.autoClear = ac;
-      // nichts festhalten (die Geometrie gehört den Teilen)
-      for (let k = 0; k < nm; k++) { this.upMesh[k].geometry = this.upNone; this.upMesh[k].visible = false; }
-      for (let k = 0; k < np; k++) { this.upPts[k].geometry = this.upNone; this.upPts[k].visible = false; }
+      // nichts festhalten (die Eigenschaften gehören den Teilen)
+      for (let k = 0; k < nm; k++) { this.upMesh[k].geometry.attributes = {}; this.upMesh[k].visible = false; }
     }
   }
 
