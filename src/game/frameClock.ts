@@ -238,7 +238,8 @@ export function appleDevice(): boolean {
 function measureApple(a: Float64Array): number {
   const P = 1000 / 120;
   let one = 0;
-  for (const x of a) if (Math.abs(x - P) <= 1.7) one += 1;
+  // (Index-Schleifen: for…of über ein Float64Array legt je Schritt ein Objekt an – alle 16 Aufrufe 64 Stück)
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - P) <= 1.7) one += 1;
   return one / a.length >= 0.15 ? P : 1000 / 60;
 }
 
@@ -246,7 +247,7 @@ function measureApple(a: Float64Array): number {
 function fits(a: Float64Array, P: number): boolean {
   const tol = Math.max(1.5, 0.2 * P);
   let off = 0;
-  for (const x of a) if (Math.abs(x - Math.max(1, Math.round(x / P)) * P) > tol) off += 1;
+  for (let i = 0; i < a.length; i++) { const x = a[i]; if (Math.abs(x - Math.max(1, Math.round(x / P)) * P) > tol) off += 1; }
   return off / a.length <= 0.25;
 }
 
@@ -267,7 +268,7 @@ function measureAny(a: Float64Array, rates: number[]): number | null {
     let err = 0;
     let out = 0;
     let one = 0;
-    for (const x of a) { const e = Math.abs(x - Math.max(1, Math.round(x / P)) * P); err += e; if (e > 4) out += 1; if (x < P * 1.5) one += 1; }
+    for (let i = 0; i < a.length; i++) { const x = a[i]; const e = Math.abs(x - Math.max(1, Math.round(x / P)) * P); err += e; if (e > 4) out += 1; if (x < P * 1.5) one += 1; }
     errs.push(err / a.length);
     outs.push(out / a.length);
     ones.push(one / a.length);
