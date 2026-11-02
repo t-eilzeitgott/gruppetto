@@ -6,7 +6,7 @@
 import { Fragment, useEffect, useRef, useState, type RefObject } from 'react';
 import { BUILD_ID } from '../app/config';
 import { AB_PERIOD_S, Perf3D, type AbTest, type Report } from '../game/abfahrt/perf3d';
-import { setPaceDivForce, setPaceOff } from '../game/frameClock';
+import { setHalfCalls, setPaceDivForce, setPaceOff } from '../game/frameClock';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import type { RaceView } from '../game/abfahrt/engine';
 import { autoRangeDrop, chosenRange, viewRange } from '../game/abfahrt/viewRange';
@@ -44,6 +44,9 @@ const abTests = (renderer: () => Renderer3D | null): Record<string, AbTest> => (
     apply: (b) => { setAutoSuspended(true); renderer()?.setQuality(0.75); setPaceDivForce(b ? 3 : 0); },
     end: () => { setAutoSuspended(false); setPaceDivForce(0); renderer()?.setQuality(autoView().res / gfxRes()); },
   },
+  // 120-Hz-Aufrufe: nach jedem Bild den nächsten Aufruf erst für den übernächsten Takt anfordern (einer je Bild, wie
+  // bei 60-Hz-Aufrufen) – ruckelt Safari dann weniger?
+  aufrufe: { name: 'Bildaufrufe halbieren', labels: ['jeder Takt ruft auf', 'nur jeder zweite Takt angefordert'], apply: (b) => setHalfCalls(b) },
   hud: { name: 'Oberfläche', labels: ['Oberfläche an', 'Oberfläche aus'], apply: (b) => document.body.classList.toggle('mess-ohne-hud', b) },
   takt: { name: 'fester Bildtakt', labels: ['fester Bildtakt', 'ohne festen Takt (jeder Aufruf zeichnet)'], apply: (b) => setPaceOff(b) },
 });

@@ -404,7 +404,8 @@ export function GpuTestPage() {
         <div className="gpu-hint" onClick={() => setHint60(true)}>
           <strong>Nur 60 Hz?</strong> Safari zeichnet Webseiten auf dem iPhone meist mit 60 Bildern/s. Für 120 Hz:
           Einstellungen → Apps → Safari → Erweitert → Feature Flags → „Prefer Page Rendering Updates near 60fps“
-          ausschalten, Seite neu laden. <span className="muted">(tippen zum Ausblenden)</span>
+          ausschalten, Seite neu laden. Achtung: Mit 120-Hz-Aufrufen laufen die 3D-Spiele unruhiger (Safari lässt Takte aus) –
+          danach wieder einschalten. <span className="muted">(tippen zum Ausblenden)</span>
         </div>
       ) : null}
       {!hud ? <button type="button" className="gpu-hud gpu-hud--off" onClick={() => setHud(true)}>fps</button> : null}

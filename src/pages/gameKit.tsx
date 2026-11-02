@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
 import { GFX_LEVELS, GFX_MAX, GFX_MIN, gfxAuto, gfxLevel, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxAuto, setGfxLevel, setGfxRes, stageAA } from '../game/abfahrt/gfxOpts';
 import { autoView, onAutoView, RES_STEPS } from '../game/abfahrt/autoGfx';
+import { fastTicksSeen } from '../game/frameClock';
 import { cx } from '../ui/kit';
 import { healFixedSoon } from '../ui/fixedHeal';
 
@@ -224,6 +225,13 @@ export function GfxSliders({ page }: { page?: boolean }) {
         <div className="gfx-sl__ends" aria-hidden="true"><span>{fmtX(steps[0])}</span><span>{fmtX(steps[steps.length - 1])}</span></div>
       </div>
       <AutoSwitch res={cur.res} />
+      {fastTicksSeen() ? (
+        <div className="gfx-sl__hint">
+          <strong>Safari ruft mit 120 Hz auf</strong> – dabei lässt es immer wieder einzelne Takte aus (Ruckler), obwohl das Spiel
+          nur 60 Bilder je Sekunde zeichnet. Ruhiger läuft es mit der Safari-Einstellung „Prefer Page Rendering Updates near 60fps“
+          (Einstellungen → Apps → Safari → Erweitert → Feature Flags, einschalten, Safari neu starten).
+        </div>
+      ) : null}
     </div>
   );
 }

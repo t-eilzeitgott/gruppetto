@@ -54,6 +54,35 @@ export function isPaceOff(): boolean { return paceOff; }
  */
 let paceDivForce = 0;
 export function setPaceDivForce(d: number) { paceDivForce = d; }
+/**
+ * Apple-Gerät, dessen Browser mit 120 Hz aufruft (Safari ohne „Prefer Page Rendering Updates near 60fps“). Messfahrten
+ * 261–267: mit 120-Hz-Aufrufen lässt Safari bei 8–13 ms Grafik je Bild laufend einzelne Takte aus (30–90 Ruckler je
+ * Minute), mit 60-Hz-Aufrufen (Chrome auf iOS, Safari mit der Einstellung) dieselbe Szene fast keinen – jeder Aufruf
+ * samt Antwort des Systems muss bei 120 Hz in 8,3 ms durch, bei 60 in 16,7. Das Spiel zeichnet ohnehin 60 je Sekunde
+ */
+let fastTicks = false;
+export function fastTicksSeen(): boolean { return fastTicks; }
+/**
+ * Wechseltest „Bildaufrufe halbieren“: nach einem gezeichneten Bild den nächsten Aufruf nicht sofort anfordern,
+ * sondern über einen Zeitgeber ~12 ms nach dem Takt – so fällt er auf den übernächsten 120-Hz-Takt (einer je 16,7 ms
+ * statt einer je Takt), und Safari hat je Bild nur einen Aufruf samt Antwort zu schaffen, wie mit 60-Hz-Aufrufen
+ */
+let halfCalls = false;
+export function setHalfCalls(on: boolean) { halfCalls = on; }
+let halfTimer = 0;
+let halfRaf = 0;
+/** nächsten Aufruf anfordern (now: Stempel des laufenden Aufrufs; drew: in ihm wurde gezeichnet) */
+export function requestNext(loop: FrameRequestCallback, clock: FrameClock, now: number, drew: boolean): number {
+  if (!(halfCalls && drew && clock.period < 10)) return requestAnimationFrame(loop);
+  const delay = Math.max(1, Math.round(now + 12 - performance.now()));
+  halfTimer = window.setTimeout(() => { halfTimer = 0; halfRaf = requestAnimationFrame(loop); }, delay);
+  return 0;
+}
+export function cancelNext(raf: number) {
+  if (raf) cancelAnimationFrame(raf);
+  if (halfTimer) { clearTimeout(halfTimer); halfTimer = 0; }
+  if (halfRaf) { cancelAnimationFrame(halfRaf); halfRaf = 0; }
+}
 
 export class FrameClock {
   /** Bildschirmtakt (ms): kürzester regelmäßiger Abstand der Aufrufe (60, 90, 120, 144 Hz …) */
@@ -226,6 +255,7 @@ export class FrameClock {
   private adopt(best: number) {
     const t = this.target;
     this.period = best;
+    if (this.apple && best < 10) fastTicks = true;
     // beim ersten Mal jeden Takt versuchen; später bleibt die Zeit je Bild, wie sie ist (nie seltener als 60 je s:
     // eine Fehlerkennung ergab sonst Bildtakte von 20–25 ms)
     this.div = this.measured ? Math.max(1, Math.min(maxDiv(best), Math.round(t / best))) : 1;

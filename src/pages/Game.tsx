@@ -12,7 +12,7 @@ import type { Profile } from '../lib/types';
 import { Abfahrt, type Friend, type GameEvent, type HudState, type RunResult, type ScoreCat } from '../game/abfahrt/engine';
 import { Renderer3D } from '../game/abfahrt/render3d';
 import { FpsMeter } from '../game/fpsMeter';
-import { FrameClock, paceText } from '../game/frameClock';
+import { FrameClock, paceText, cancelNext, requestNext } from '../game/frameClock';
 import { Track } from '../game/abfahrt/track';
 import { HowTo } from './finale';
 import { nextWeatherName } from '../game/abfahrt/weather';
@@ -358,7 +358,7 @@ export function GamePage() {
             quality: gfxRes() * renderer.quality, px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown, screen: clock.period, off: clock.off, callsBy: renderer.lastCallsBy,
           });
         }
-        raf = requestAnimationFrame(loop);
+        raf = requestNext(loop, clock, now, true);
       };
       raf = requestAnimationFrame(loop);
       const onResize = () => { renderer.requestResize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
@@ -391,7 +391,7 @@ export function GamePage() {
       document.addEventListener('visibilitychange', onVis);
       (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer };
       return () => {
-        cancelAnimationFrame(raf);
+        cancelNext(raf);
         offGov();
         gov.dispose();
         fps.dispose();
