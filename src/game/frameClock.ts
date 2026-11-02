@@ -56,6 +56,10 @@ export class FrameClock {
   changes = 0;
   /** das zuletzt gezeichnete Bild kam so viele Bildschirmtakte zu spät (0 = pünktlich; für die Automatik) */
   slip = 0;
+  /** Stempel des zuletzt gezeichneten Bildes gegenüber seinem Takt im Raster (ms, vor dem Nachführen; Messfahrt) */
+  off = 0;
+  /** Aufrufe seit dem vorigen gezeichneten Bild, mit dem gezeichneten (Messfahrt) */
+  callsLast = 0;
   /** echte Zeit, die das Spiel noch nachholen muss (ms; negativ: ist voraus) */
   private owed = 0;
   private prev: number;
@@ -137,6 +141,8 @@ export class FrameClock {
     // nach seinem Takt gehört noch zu diesem
     const steps = Math.max(this.div, 1 + Math.floor((now - this.due - LATE_MS) / P));
     this.slip = steps - this.div;
+    this.off = now - (this.due + this.div * P);
+    this.callsLast = this.calls;
     this.calls = 0;
     this.due += steps * P;
     // Raster an den frühesten Stempeln ausrichten: ein früherer Stempel setzt es sofort, späteren folgt es nur

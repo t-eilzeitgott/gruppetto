@@ -64,6 +64,8 @@ export interface FrameInfo {
   riders: number;
   /** Bildschirmtakt (ms; 8,3 auf 120 Hz) */
   screen: number;
+  /** Stempel dieses Bildes gegenüber seinem Takt im Raster (ms; frameClock.off) */
+  off: number;
 }
 
 /** Probebild: Rückstau (Warten auf das vorige Bild), Abschicken, Grafikzeit dieses Bildes (ms) */
@@ -107,6 +109,12 @@ class Rec {
    *  Layout und Zeichnen der Oberfläche, Speicherbereinigung, andere Arbeit der Seite */
   after = new Float32Array(CAP).fill(-1);
   endAt = new Float64Array(CAP);
+  /** Hauptfaden blockiert (ms): längste Lücke zwischen zwei Wächter-Aufrufen (setTimeout alle paar ms) seit dem
+   *  vorigen Bild – darin steckt auch die Rechenzeit des Bildes selbst; deutlich mehr heißt: Speicherbereinigung
+   *  oder andere Arbeit hielt den Hauptfaden an, auch zwischen den Bildern */
+  stall = new Float32Array(CAP).fill(-1);
+  /** Stempel gegenüber seinem Takt (ms) */
+  off = new Float32Array(CAP);
   events: { t: number; f: number; kind: string; text: string }[] = [];
   constructor(readonly meta: Record<string, unknown>) {}
 }
@@ -132,6 +140,10 @@ export class Perf3D {
   private uiObs: MutationObserver | null = null;
   /** Nachricht an sich selbst nach jedem Bild (misst, wie lange der Hauptfaden danach noch beschäftigt ist) */
   private chan: MessageChannel | null = null;
+  /** Wächter: setTimeout-Schleife; die längste Lücke seit dem vorigen Bild zeigt, ob der Hauptfaden stand */
+  private guardT = 0;
+  private guardMax = 0;
+  private guardTimer = 0;
 
   /** jeder Bildaufruf des Browsers (auch die, die der feste Takt auslässt) – vor clock.ready */
   call() {
@@ -217,9 +229,12 @@ export class Perf3D {
       // (das Bild nach einem Probebild läuft spät an: beide zählen nicht als Ruckler)
       const prevProbe = i > 0 && (r.ev[i - 1] & EV.probe) !== 0;
       if (f.dt > hitchLimit(f.period) && !(this.evBits & EV.probe) && !prevProbe) this.hitches++;
+      r.stall[i] = this.guardMax;
+      r.off[i] = f.off;
       r.endAt[i] = performance.now();
       try { this.chan?.port2.postMessage(i); } catch { /* egal */ }
     }
+    this.guardMax = 0;
     this.evBits = 0;
     this.calls = 0;
     this.gapMax = 0;
@@ -234,6 +249,18 @@ export class Perf3D {
     this.gapMax = 0;
     this.lastCall = 0;
     this.upBytes = 0;
+    this.guardMax = 0;
+    this.guardT = performance.now();
+    clearTimeout(this.guardTimer);
+    const guard = () => {
+      if (!this.rec) return;
+      const now = performance.now();
+      const gap = now - this.guardT;
+      if (gap > this.guardMax) this.guardMax = gap;
+      this.guardT = now;
+      this.guardTimer = window.setTimeout(guard, 2);
+    };
+    this.guardTimer = window.setTimeout(guard, 2);
     try {
       this.chan?.port1.close();
       this.chan = new MessageChannel();
@@ -275,6 +302,7 @@ export class Perf3D {
     this.rec = null;
     this.uiObs?.disconnect();
     this.uiObs = null;
+    clearTimeout(this.guardTimer);
     try { this.chan?.port1.close(); this.chan?.port2.close(); } catch { /* egal */ }
     this.chan = null;
     if (!r || r.n < 30) return null;
@@ -296,6 +324,8 @@ export interface Report {
 const hitchLimit = (period: number) => Math.max(period, 1000 / 60) * 1.5 + 1;
 /** Hauptfaden nach dem Bild länger als so viele ms beschäftigt: das hat das nächste Bild aufgehalten */
 const MAIN_BUSY_MS = 4;
+/** Wächter-Lücke (ohne Rechenzeit des Bildes) über so viele ms: der Hauptfaden stand (der Wächter läuft alle 4 ms) */
+const STALL_MS = 10;
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
 const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -335,9 +365,15 @@ function makeReport(r: Rec): Report {
   let hitches = 0, missed = 0, cpuBound = 0, lateBound = 0;
   // ohne Last: fehlender Bildaufruf (Browser aufgehalten) oder ausgelassener (fester Takt); dabei Neues gezeichnet,
   // hochgeladen oder an der Oberfläche geändert (Ereignisse dieses und der drei Bilder davor)
-  let noCall = 0, skipped = 0, withPipe = 0, withUp = 0, withUi = 0, withMain = 0;
+  let noCall = 0, skipped = 0, withPipe = 0, withUp = 0, withUi = 0, withMain = 0, withStall = 0;
   // Hauptfaden nach dem vorigen Bild noch so lange beschäftigt (ms): das verzögert dieses Bild
   const mainBefore = (i: number) => (i > 0 ? r.after[i - 1] : -1);
+  // Hauptfaden stand zwischen dem vorigen und diesem Bild: Wächter-Lücke abzüglich der Rechenzeit dieses Bildes
+  // (der Wächter läuft alle 4 ms – darunter sagt der Wert nichts)
+  const stallOf = (i: number) => (r.stall[i] < 0 ? -1 : Math.max(0, r.stall[i] - cpu[i]));
+  // Takt-Versatz der Stempel (ms gegenüber dem Raster): wie verrauscht Safari die Aufrufe stempelt
+  const offHist: Record<string, number> = { '<0': 0, '0-2': 0, '2-4': 0, '4-7': 0, '7-10': 0, '10-15': 0, '>15': 0 };
+  const offEdges: [number, string][] = [[0, '<0'], [2, '0-2'], [4, '2-4'], [7, '4-7'], [10, '7-10'], [15, '10-15'], [Infinity, '>15']];
   const near = (i: number, bit: number) => { for (let j = Math.max(0, i - 3); j <= i; j++) if (r.ev[j] & bit) return true; return false; };
   const upNear = (i: number) => { let kb = 0; for (let j = Math.max(0, i - 1); j <= i; j++) kb += r.up[j]; return kb; };
   // Taktfehler: ein Bild kam später als im festen Bildtakt (auch die kleinen, z. B. 25 statt 16,7 ms auf 120 Hz –
@@ -361,9 +397,12 @@ function makeReport(r: Rec): Report {
       if (near(i, EV.tex) || upNear(i) > 256) withUp++;
       if (near(i, EV.ui)) withUi++;
       if (mainBefore(i) > MAIN_BUSY_MS) withMain++;
+      if (stallOf(i) > STALL_MS) withStall++;
     }
+    offHist[offEdges.find(([e]) => r.off[i] < e)![1]]++;
   }
   const afterAll = keep.map((i) => r.after[i]).filter((x) => x >= 0);
+  const stallAll = keep.map((i) => stallOf(i)).filter((x) => x >= 0);
   const secAvg = (list: number[]) => {
     const o: Record<string, number> = {};
     for (let k = 0; k < NS; k++) {
@@ -410,17 +449,17 @@ function makeReport(r: Rec): Report {
     // was genau neu war (Zeichenzustand, Textur, Oberfläche …) in diesem und den drei Bildern davor
     const det = r.events.filter((e) => e.f >= i - 3 && e.f <= i && DETAIL_KINDS.has(e.kind)).map((e) => `${e.kind}: ${e.text}`);
     const detail = det.length > 4 ? [...det.slice(0, 4), `… ${det.length - 4} weitere`] : det;
-    return [r1(r.t[i]), r1(dt[i]), r1(cpu[i]), r1(late[i]), secs, r.calls[i], Math.round(r.tris[i] / 1000), r2(r.quality[i]), Math.round(r.z[i]), Math.round(r.v[i] * 3.6), PLACES[r.place[i]], PHASES[r.phase[i]], r.riders[i], evText(bits), r.calls2[i], r1(r.gap[i]), Math.round(r.up[i] + (i > 0 ? r.up[i - 1] : 0)), r1(mainBefore(i)), detail.join(' | ')];
+    return [r1(r.t[i]), r1(dt[i]), r1(cpu[i]), r1(late[i]), secs, r.calls[i], Math.round(r.tris[i] / 1000), r2(r.quality[i]), Math.round(r.z[i]), Math.round(r.v[i] * 3.6), PLACES[r.place[i]], PHASES[r.phase[i]], r.riders[i], evText(bits), r.calls2[i], r1(r.gap[i]), Math.round(r.up[i] + (i > 0 ? r.up[i - 1] : 0)), r1(mainBefore(i)), r1(stallOf(i)), r1(r.off[i]), detail.join(' | ')];
   });
   // Verlauf je 2 s
   const timeline: (number | string)[][] = [];
   for (let i0 = 0; i0 < n;) {
     const tEnd = r.t[i0] + 2;
     let i1 = i0;
-    let s = 0, mx = 0, c = 0, cm = 0, h = 0, lt = 0, g = -1, dr = -1, af = -1;
+    let s = 0, mx = 0, c = 0, cm = 0, h = 0, lt = 0, g = -1, dr = -1, af = -1, st = -1;
     const dts: number[] = [];
     while (i1 < n && r.t[i1] < tEnd) {
-      s += dt[i1]; c += cpu[i1]; cm = Math.max(cm, cpu[i1]); lt = Math.max(lt, late[i1]); af = Math.max(af, r.after[i1]);
+      s += dt[i1]; c += cpu[i1]; cm = Math.max(cm, cpu[i1]); lt = Math.max(lt, late[i1]); af = Math.max(af, r.after[i1]); st = Math.max(st, stallOf(i1));
       if (!isProbe(i1)) { mx = Math.max(mx, dt[i1]); dts.push(dt[i1]); if (dt[i1] > hitchMs) h++; }
       if (r.gpu[i1] >= 0) { g = r.gpu[i1]; dr = r.drain[i1]; }
       i1++;
@@ -428,7 +467,7 @@ function makeReport(r: Rec): Report {
     const m = i1 - i0;
     const mid = i0 + (m >> 1);
     dts.sort((a, b) => a - b);
-    timeline.push([r1(r.t[i0]), Math.round(r.z[mid]), Math.round(r.v[mid] * 3.6), r1(1000 / (s / m)), r1(pct(dts, 0.6)), r1(mx), r1(c / m), r1(cm), r1(lt), r1(af), r1(g), r1(dr), h, r.calls[mid], Math.round(r.tris[mid] / 1000), r2(r.quality[mid]), r.range[mid], PLACES[r.place[mid]], PHASES[r.phase[mid]], r.riders[mid], r1(r.period[mid])]);
+    timeline.push([r1(r.t[i0]), Math.round(r.z[mid]), Math.round(r.v[mid] * 3.6), r1(1000 / (s / m)), r1(pct(dts, 0.6)), r1(mx), r1(c / m), r1(cm), r1(lt), r1(af), r1(st), r1(g), r1(dr), h, r.calls[mid], Math.round(r.tris[mid] / 1000), r2(r.quality[mid]), r.range[mid], PLACES[r.place[mid]], PHASES[r.phase[mid]], r.riders[mid], r1(r.period[mid])]);
     i0 = i1;
   }
   const probeAll = probeStats(probes.filter((i) => r.phase[i] === playing));
@@ -443,16 +482,16 @@ function makeReport(r: Rec): Report {
       dauer_s: summary.s, bilder: n, takt_ms: summary.period, fps_mittel: summary.fps, fps_1pct_low: summary.low1,
       taktfehler: offBeat, taktfehler_prozent: r1((offBeat / Math.max(1, keep.length)) * 100),
       ruckler: hitches, verpasste_bilder: missed, ruckler_cpu_gebunden: cpuBound, ruckler_spaeter_aufruf: lateBound, ruckler_grenze_ms: r1(hitchMs),
-      ruckler_ohne_bildaufruf: noCall, ruckler_aufruf_ausgelassen: skipped, ruckler_mit_neuem_zeichenzustand: withPipe, ruckler_mit_hochladen: withUp, ruckler_mit_oberflaeche: withUi, ruckler_mit_hauptfaden: withMain,
-      hinweis: `takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. ruckler_ohne_bildaufruf: der Browser rief länger als anderthalb Bildschirmtakte nicht auf (Seite, Speicherbereinigung oder Grafikprozess hielten ihn auf); ruckler_aufruf_ausgelassen: Aufrufe kamen, der feste Takt ließ einen aus. Zeichenzustand = erstes Zeichnen einer neuen Kombination (Pipeline im Grafiktreiber). ruckler_mit_hauptfaden: der Hauptfaden war nach dem vorigen Bild noch über ${MAIN_BUSY_MS} ms beschäftigt (hauptfaden_ms: Stil, Layout und Zeichnen der Oberfläche, Speicherbereinigung – nicht die Grafik). Auflösung und Sichtweite regelt die Automatik (Ereignisse quality und range)`,
+      ruckler_ohne_bildaufruf: noCall, ruckler_aufruf_ausgelassen: skipped, ruckler_mit_neuem_zeichenzustand: withPipe, ruckler_mit_hochladen: withUp, ruckler_mit_oberflaeche: withUi, ruckler_mit_hauptfaden: withMain, ruckler_mit_blockiertem_hauptfaden: withStall,
+      hinweis: `takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. ruckler_ohne_bildaufruf: der Browser rief länger als anderthalb Bildschirmtakte nicht auf (Seite, Speicherbereinigung oder Grafikprozess hielten ihn auf); ruckler_aufruf_ausgelassen: Aufrufe kamen, der feste Takt ließ einen aus. Zeichenzustand = erstes Zeichnen einer neuen Kombination (Pipeline im Grafiktreiber). ruckler_mit_hauptfaden: der Hauptfaden war nach dem vorigen Bild noch über ${MAIN_BUSY_MS} ms beschäftigt (hauptfaden_ms: Stil, Layout und Zeichnen der Oberfläche). ruckler_mit_blockiertem_hauptfaden: ein Wächter (setTimeout alle paar ms) kam zwischen dem vorigen und diesem Bild über ${STALL_MS} ms lang nicht dran (blockiert_ms, ohne die Rechenzeit des Bildes: Speicherbereinigung oder andere Arbeit der Seite – nicht die Grafik). takt_versatz_ms: Stempel der gezeichneten Bilder gegenüber ihrem Takt im Raster (Safari stempelt mit der Zeit, zu der das Skript drankommt). Auflösung und Sichtweite regelt die Automatik (Ereignisse quality und range)`,
     },
     orte: places,
     grafik_probe: probeAll ?? 'keine Probebilder',
-    bildzeit_ms: stats(dtK), cpu_ms: stats(cpu), verspaetung_ms: stats(late), hauptfaden_ms: afterAll.length ? stats(afterAll) : 'nicht gemessen',
+    bildzeit_ms: stats(dtK), cpu_ms: stats(cpu), verspaetung_ms: stats(late), hauptfaden_ms: afterAll.length ? stats(afterAll) : 'nicht gemessen', blockiert_ms: stallAll.length ? stats(stallAll) : 'nicht gemessen', takt_versatz_ms: offHist,
     verteilung_ms: hist, bausteine_ms: secStats,
-    ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse', 'bildaufrufe', 'aufruf_luecke_ms', 'hochgeladen_kb', 'hauptfaden_ms', 'neu'],
+    ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse', 'bildaufrufe', 'aufruf_luecke_ms', 'hochgeladen_kb', 'hauptfaden_ms', 'blockiert_ms', 'takt_versatz_ms', 'neu'],
     ruckler_liste: hitchRows,
-    verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'hauptfaden_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'grafikstufe', 'ort', 'phase', 'fahrer_modelle', 'takt_ms'],
+    verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'hauptfaden_max', 'blockiert_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'grafikstufe', 'ort', 'phase', 'fahrer_modelle', 'takt_ms'],
     verlauf_2s: timeline,
     ereignisse: r.events.slice(0, 400).map((e) => [r1(e.t), e.kind, e.text]),
   };

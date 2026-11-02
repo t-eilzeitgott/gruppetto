@@ -83,10 +83,11 @@ test('weit daneben (alle Bilder zu spät): der erste Schritt fällt nach einem h
   for (; frames < 70 * 10 && !first; frames++) {
     const ch = g.frame(true, FRAME, 3, 0.03, true);
     if (ch && ch.kind !== 'info') first = ch.text;
+    if (g.wantProbe()) g.setProbe(20);
   }
   assert.ok(first.startsWith('Auflösung 2-fach → 1,5-fach'), first);
-  // 1,5 s Aufwärmen bei 33 Bildern je Sekunde (50 Bilder), dann 35 zu späte Bilder
-  assert.ok(frames <= 50 + 36, `${frames} Bilder bis zum ersten Schritt`);
+  // 1,5 s Aufwärmen bei 33 Bildern je Sekunde (50 Bilder), dann 35 zu späte Bilder, ein Probebild
+  assert.ok(frames <= 50 + 37, `${frames} Bilder bis zum ersten Schritt`);
   g.dispose();
 });
 
@@ -138,6 +139,16 @@ test('leicht zu spät bei kleiner Grafik (Ruckler, die kein Senken behebt): Prob
   // (nicht jedes Fenster ein Probebild – jedes wartet auf die Grafik)
   assert.ok(ch.length <= 8, `${ch.length} Notizen`);
   g.dispose();
+});
+
+test('Schub zu später Bilder bei kleiner Grafik (Hauptfaden stand): nichts gesenkt – auch bei 30 oder 60 %', () => {
+  for (const p of [0.3, 0.6]) {
+    const g = fresh('abfahrt');
+    const ch = run(g, 70 * 6, () => ({ p, lateMs: 33, gpu: 6 }));
+    assert.deepEqual(changes(ch), [], ch.join(' | '));
+    assert.ok(ch.some((c) => c.includes('nicht gesenkt')), ch.join(' | '));
+    g.dispose();
+  }
 });
 
 test('leicht zu spät, aber die Grafik braucht gut die Hälfte des Takts: wird gesenkt', () => {
