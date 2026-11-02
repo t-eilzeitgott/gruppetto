@@ -7,24 +7,29 @@
  *   2. danach die Sichtweite Stufe für Stufe bis zur kürzesten („Einfach“);
  *   3. reicht auch das nicht, die Auflösung weiter bis auf die Hälfte der gewählten (2-fach → 1,25 → 1-fach).
  *
- * Ist die Rechenzeit die Grenze, hilft die Auflösung nicht – dann gleich die Sichtweite. Nach jedem Schritt zählt der
- * Beleg: ist die mittlere Bildzeit danach nicht spürbar näher am Takt (die Last liegt woanders, z. B. beim ganzen
- * Fahrerfeld, oder die Ruckler haben eine andere Ursache), wird er zurückgenommen und diese Art nicht weiter gesenkt –
- * jeder Wechsel ruckelt selbst (neue Bildpuffer, Umbau der Landschaft).
- * Die Grafikzeit eines Probebilds allein taugt nicht als Beleg für „keine Last“: auf dem iPhone kommt nach dem
- * Zeichnen noch das Zusammensetzen des Bildschirms dazu (Leinwand hochskaliert, Anzeigen darüber). Messfahrten
- * zeigten 11–89 % verspätete Bilder bei nur 7–11 ms Grafikzeit – der Browser rief schlicht kein neues Bild ab, weil
- * das vorige noch nicht auf dem Schirm war.
+ * Ist die Rechenzeit die Grenze, hilft die Auflösung nicht – dann gleich die Sichtweite.
+ *
+ * Maß sind die Bilder, die ihren Takt verpassen (frameClock.ts) – im festen 60er-Takt die verlässlichste Größe
+ * (die Bildzeit selbst ist dort immer 16,7 ms, auch wenn die Grafik schon 15 ms braucht). Gemessen wird nur während
+ * der Fahrt (nicht in Pause, Start- oder Ergebniskarte), die ersten Sekunden zählen nicht. Verpasst mehr als die
+ * Hälfte der Bilder ihren Takt, geht es gleich zwei Schritte auf einmal und ohne das Ende des Fensters abzuwarten –
+ * sonst dauerte es vom Start bis zu einer passenden Stufe fast eine Minute (Messfahrten Version 255: 50 s).
+ *
+ * Verpasst nur jedes zehnte bis fünfte Bild seinen Takt, entscheidet ein Probebild (Grafikzeit): nur wenn die Grafik
+ * einen guten Teil des Takts braucht, wird gesenkt. Denn das iPhone verpasst auch bei kleiner Grafik ein paar Bilder
+ * (Hauptfaden, Zusammensetzen des Bildschirms) – da bringt eine kleinere Auflösung nur ein unschärferes Bild. Früher
+ * wurde jeder Schritt hinab geprüft („brachte nichts“ → zurück, Art gesperrt); das scheiterte am Rauschen und daran,
+ * dass das Telefon seinen Takt mitten in der Fahrt ändert (Messfahrt 255: Sichtweite Normal → Weit „brachte nichts:
+ * 21 → 94 %“, danach zweieinhalb Minuten bei 2-fach mit 94–100 % zu späten Bildern, „nichts mehr zu senken“).
+ * Darum: nie zurück, solange es ruckelt.
+ *
  * Wieder hinauf geht es in umgekehrter Folge: nach einigen ruhigen Sekunden ein Probebild; reicht die Grafikzeit auch
  * für den nächsten Schritt mit reichlich Reserve, wird er probiert. Ruckelt es danach gleich wieder, geht es zurück,
  * und bis zum nächsten Versuch vergeht doppelt so viel Zeit.
  *
- * Maß sind die Bilder, die ihren Takt verpassen (frameClock.ts) – im festen 60er-Takt die verlässlichste Größe
- * (die Bildzeit selbst ist dort immer 16,7 ms, auch wenn die Grafik schon 15 ms braucht). Gemessen wird nur während
- * der Fahrt (nicht in Pause, Start- oder Ergebniskarte), die ersten Sekunden zählen nicht.
- *
- * Je Spiel merkt sich das Gerät den letzten Stand (für dieselbe Stufe und Auflösung): die nächste Fahrt beginnt dort,
- * statt erst wieder ins Ruckeln zu laufen. Ohne Three.js (das Menü zeigt den Stand).
+ * Je Spiel merkt sich das Gerät den letzten Stand je Wahl (Stufe und Auflösung): die nächste Fahrt beginnt dort,
+ * statt erst wieder ins Ruckeln zu laufen. Für eine neue Wahl dient der Stand einer anderen als Anhalt (dieselbe
+ * Pixeldichte). Ohne Three.js (das Menü zeigt den Stand).
  */
 import { gfxAuto, gfxLevel, gfxRes } from './gfxOpts';
 import { autoRangeDrop, rangeDropMax, setAutoRangeDrop, viewRange } from './viewRange';
@@ -37,9 +42,13 @@ const RES_FIRST = 2;
 /** Bilder je Urteil (bei 60 je Sekunde gut eine Sekunde) */
 const WINDOW = 70;
 /** so lange nach dem Start der Fahrt nicht urteilen (Shader, Landschaft rund um den Start) */
-const WARMUP_S = 2.5;
+const WARMUP_S = 1.5;
 /** zu langsam: mehr als so viele Bilder verpassen ihren Takt (jedes zwölfte – ein spürbares Stottern) */
 const SLOW = 0.08;
+/** ab so vielen zu späten Bildern ist die Grafik sicher die Ursache – ohne Probebild senken */
+const SURE = 0.25;
+/** ab so vielen: zwei Schritte auf einmal, und das Urteil fällt, sobald so viel vom Fenster zu spät ist */
+const HEAVY = 0.5;
 /** ruhig: höchstens so viele */
 const CALM = 0.015;
 /**
@@ -59,41 +68,68 @@ const CPU_ROOM = 0.6;
 /** Rechenzeit über so viel vom Bildtakt: die Grenze ist die Rechenzeit (Auflösung hilft nicht) */
 const CPU_BOUND = 0.55;
 /**
- * ein Schritt hinab hat geholfen, wenn danach höchstens so viel der Bilder zu spät kommen wie vorher (oder kaum noch
- * welche). Die mittlere Bildzeit taugt dafür nur, wenn fast jedes Bild zu spät kommt: sonst gleicht der feste Takt
- * die verspäteten mit früheren aus – im Mittel stehen 16,7 ms, obwohl es ruckelt (Messfahrt Version 253: „0,0 → 0,1
- * ms zu spät“ hieß fälschlich „brachte nichts“, die Sichtweite blieb danach auf Max)
+ * leicht zu spät (unter SURE): hinab nur, wenn das Probebild mindestens so viel vom Takt braucht (Messfahrten: bei
+ * 7–9 ms Grafik kamen auf der kleinsten Stufe noch 9 % der Bilder zu spät – mit und ohne Senken gleich)
  */
-const HELPED = 0.92;
-/**
- * eine Art, deren Senken nichts brachte, nach so vielen Sekunden Fahrt wieder probieren (die Strecke ändert sich);
- * bringt es wieder nichts, doppelt so lange warten – jeder Versuch kostet zwei Wechsel
- */
-const RETRY_S = 90;
+const GPU_NEED = 0.5;
+/** so lange gilt ein Probebild (s) – nicht öfter messen, jedes Probebild wartet einmal auf die Grafik */
+const PROBE_S = 6;
 /** eine Stufe mehr Sichtweite kostet grob so viel mehr Grafik */
 const RANGE_COST = 1.3;
 /** nach einem Schritt hinauf: so viele Urteile Probezeit */
 const TRIAL = 3;
 
-/** Änderung (res, range) oder nur eine Notiz für die Messfahrt (info: zu spät, aber keine Last – nichts geändert) */
+/** Änderung (res, range) oder nur eine Notiz für die Messfahrt (info: zu spät, aber nichts geändert) */
 export interface AutoChange { kind: 'res' | 'range' | 'info'; text: string }
 
-interface Stored { k: string; r: number; d: number }
+/** gespeicherter Stand je Wahl: Schritte und die Pixeldichte, die dabei herauskam */
+interface Stored { r: number; d: number; e: number; t: number }
+type Store = Record<string, Stored>;
 
-// (v2: Stände aus der fehlerhaften Prüfung „brachte nichts“ – Auflösung ganz unten, Sicht auf Max – nicht übernehmen)
-const storeKey = (scope: string) => `gruppetto.gfx.auto2.${scope}`;
+// (auto2: Stände aus der fehlerhaften Prüfung „brachte nichts“ nicht übernehmen; auto3 je Wahl)
+const storeKey = (scope: string) => `gruppetto.gfx.auto3.${scope}`;
 const selKey = () => `${gfxLevel()}|${gfxRes()}`;
+const MAX_STORED = 12;
 
-function load(scope: string): Stored | null {
+function readStore(scope: string): Store {
   try {
-    const v = JSON.parse(localStorage.getItem(storeKey(scope)) ?? 'null') as Stored | null;
-    return v && v.k === selKey() ? v : null;
-  } catch { return null; }
+    const v = JSON.parse(localStorage.getItem(storeKey(scope)) ?? 'null') as Store | null;
+    return v && typeof v === 'object' ? v : {};
+  } catch { return {}; }
 }
+
+/** Auflösungsschritt, der (bei der gewählten Auflösung) höchstens die Pixeldichte e ergibt */
+function stepFor(e: number): number {
+  const base = gfxRes();
+  for (let i = 0; i < RES_STEPS.length; i++) if (base * RES_STEPS[i] <= e * 1.05) return i;
+  return RES_STEPS.length - 1;
+}
+
+/** Stand für die aktuelle Wahl – oder ein Anhalt aus einer anderen (dieselbe Pixeldichte; die Sicht nur bei gleicher Stufe) */
+function load(scope: string): { r: number; d: number } | null {
+  const st = readStore(scope);
+  const own = st[selKey()];
+  if (own) return { r: own.r, d: own.d };
+  const level = `${gfxLevel()}|`;
+  // am liebsten dieselbe Stufe, sonst der jüngste Stand
+  let best: { v: Stored; same: boolean } | null = null;
+  for (const [k, v] of Object.entries(st)) {
+    const same = k.startsWith(level);
+    if (!best || (same !== best.same ? same : v.t > best.v.t)) best = { v, same };
+  }
+  if (!best) return null;
+  // (ganz oben gestanden: auch hier oben beginnen – die neue Auflösung ist die gewählte)
+  if (best.v.r === 0 && best.v.d === 0) return null;
+  return { r: stepFor(best.v.e), d: best.same ? best.v.d : 0 };
+}
+
 function save(scope: string, r: number, d: number) {
   try {
-    if (!r && !d) localStorage.removeItem(storeKey(scope));
-    else localStorage.setItem(storeKey(scope), JSON.stringify({ k: selKey(), r, d }));
+    const st = readStore(scope);
+    st[selKey()] = { r, d, e: Math.round(gfxRes() * RES_STEPS[r] * 1000) / 1000, t: Date.now() };
+    const keys = Object.keys(st).sort((a, b) => st[b].t - st[a].t);
+    for (const k of keys.slice(MAX_STORED)) delete st[k];
+    localStorage.setItem(storeKey(scope), JSON.stringify(st));
   } catch { /* egal */ }
 }
 
@@ -135,17 +171,14 @@ export class AutoGfx {
   private need = NEED0;
   private settle = 0;
   private trial: { kind: 'res' | 'range'; left: number } | null = null;
-  /** letzter Schritt hinab: hat er geholfen? (mittlere Bildzeit über dem Takt davor, ms) */
-  private verify: { kind: 'res' | 'range'; frac: number; excess: number } | null = null;
-  /** seit wann eine Art als wirkungslos gilt (s, Fahrzeit) und wie lange bis zum nächsten Versuch */
-  private uselessT = 0;
-  private retry = RETRY_S;
-  /** Arten, deren Senken nichts gebracht hat (bis zum nächsten gelungenen Schritt hinauf oder einer neuen Wahl) */
-  private useless = new Set<'res' | 'range'>();
+  /** leicht zu spät: Urteil wartet auf ein Probebild */
+  private pending: { frac: number; cpuMed: number; excess: number } | null = null;
   private lastInfo = -1e9;
   private t = 0;
   private probeAsk = false;
+  /** letztes Probebild (ms Grafikzeit) und wann (Fahrzeit, s) */
   private gpu: number | null = null;
+  private gpuT = -1e9;
 
   constructor(private readonly scope: string) {
     this.reset(true);
@@ -172,11 +205,10 @@ export class AutoGfx {
     this.need = NEED0;
     this.settle = 0;
     this.trial = null;
-    this.verify = null;
-    this.useless.clear();
-    this.retry = RETRY_S;
+    this.pending = null;
     this.probeAsk = false;
     this.gpu = null;
+    this.gpuT = -1e9;
     owner = this;
     setAutoRangeDrop(this.range);
     this.show();
@@ -186,7 +218,7 @@ export class AutoGfx {
   /** soll das nächste Bild die Grafikzeit messen (ein Probebild; wartet einmal auf die Grafik)? */
   wantProbe(): boolean { return this.probeAsk; }
   /** Ergebnis des Probebilds (ms Grafikzeit) */
-  setProbe(ms: number) { this.probeAsk = false; this.gpu = ms; }
+  setProbe(ms: number) { this.probeAsk = false; this.gpu = ms; this.gpuT = this.t; }
 
   /**
    * ein gezeichnetes Bild. missed: hat es seinen Takt verpasst (frameClock); target: Bildtakt (ms); cpu: Rechenzeit
@@ -201,15 +233,21 @@ export class AutoGfx {
     if (owner !== this || autoRangeDrop() !== Math.min(this.range, rangeDropMax())) { owner = this; setAutoRangeDrop(this.range); }
     if (this.warm < WARMUP_S) { this.warm += dt; return null; }
     this.t += dt;
-    if (this.useless.size && this.t - this.uselessT > this.retry) this.useless.clear();
+    const frame = Math.max(target, 1000 / 60);
+    // ein Urteil wartet auf sein Probebild: jetzt entscheiden
+    if (this.pending && this.gpu !== null && !this.probeAsk) {
+      const p = this.pending;
+      this.pending = null;
+      return this.down(p.frac, p.cpuMed, p.excess, frame);
+    }
     this.n += 1;
     // im 120er-Takt (Gerät schafft mehr als 60 je Sekunde) zählt ein verpasster Takt nicht
     if (missed && target >= 15) this.late += 1;
     this.sum += dt;
     this.cpu.push(cpu);
-    if (this.n < WINDOW) return null;
+    // Fenster voll – oder schon mehr als die Hälfte davon zu spät (dann nicht erst abwarten)
+    if (this.n < WINDOW && this.late < WINDOW * HEAVY) return null;
     const frac = this.late / this.n;
-    const frame = Math.max(target, 1000 / 60);
     // mittlere Bildzeit über dem Takt (ms): wie weit die Bilder im Schnitt zu spät kommen
     const excess = Math.max(0, (this.sum / this.n) * 1000 - frame);
     const cs = this.cpu.sort((a, b) => a - b);
@@ -219,66 +257,37 @@ export class AutoGfx {
     this.sum = 0;
     this.cpu = [];
     if (this.settle > 0) { this.settle -= 1; return null; }
-    const slow = frac > SLOW;
-    const pct = `${Math.round(frac * 100)} % der Bilder zu spät`;
 
-    // der letzte Schritt hinab: hat er geholfen? Sonst zurück – und diese Art nicht weiter senken
-    if (this.verify) {
-      const v = this.verify;
-      this.verify = null;
-      const fewerLate = frac <= v.frac * HELPED;
-      const lessLate = v.frac > 0.6 && excess <= v.excess * 0.85;
-      if (slow && !fewerLate && !lessLate) {
-        if (this.useless.size === 0 && this.t - this.uselessT < this.retry * 2) this.retry = Math.min(this.retry * 2, 600);
-        this.useless.add(v.kind);
-        this.uselessT = this.t;
-        const why = `brachte nichts: ${Math.round(v.frac * 100)} → ${Math.round(frac * 100)} % der Bilder zu spät`;
-        return v.kind === 'res' ? this.stepRes(-1, why) : this.stepRange(-1, why);
-      }
-    }
-
-    if (slow) {
+    if (frac > SLOW) {
       this.calm = 0;
+      this.pending = null;
       // eben hinauf und gleich wieder zu langsam: zurück, nächster Versuch erst nach doppelt so langer Ruhe
       if (this.trial) {
         const kind = this.trial.kind;
         this.trial = null;
-        this.gpu = null;
         this.probeAsk = false;
         this.need = Math.min(NEED_MAX, this.need * 2);
         return kind === 'range' ? this.stepRange(1, 'zurück') : this.stepRes(1, 'zurück');
       }
-      this.gpu = null;
-      this.probeAsk = false;
-      const cpuBound = cpuMed >= CPU_BOUND * frame;
-      const canRes = !this.useless.has('res') && this.res < RES_STEPS.length - 1;
-      const canRange = !this.useless.has('range') && this.range < rangeDropMax();
-      // die Grafik (mit dem Zusammensetzen des Bildschirms) ist fast immer die Grenze: zuerst die Auflösung bis drei
-      // Viertel, dann die Sichtweite, dann die Auflösung weiter; ist es die Rechenzeit, zuerst die Sichtweite
-      const kind: 'res' | 'range' | null = !cpuBound && canRes && this.res < RES_FIRST ? 'res' : canRange ? 'range' : canRes ? 'res' : null;
-      if (!kind) {
-        // nichts mehr zu senken (oder es half nicht): nur notieren, höchstens alle 10 s
-        if (this.t - this.lastInfo < 10) return null;
-        this.lastInfo = this.t;
-        return { kind: 'info', text: `${pct}, Rechnen ${cpuMed.toFixed(1)} ms – nichts mehr zu senken` };
-      }
-      this.verify = { kind, frac, excess };
-      const why = `${pct}, im Schnitt ${excess.toFixed(1)} ms zu spät, Rechnen ${cpuMed.toFixed(1)} ms`;
-      return kind === 'res' ? this.stepRes(1, why) : this.stepRange(1, why);
+      // sicher die Grafik (oder die Rechenzeit): gleich senken; sonst erst ein Probebild – ein frisches genügt
+      const fresh = this.gpu !== null && this.t - this.gpuT <= PROBE_S;
+      if (frac >= SURE || cpuMed >= CPU_BOUND * frame || fresh) return this.down(frac, cpuMed, excess, frame);
+      this.pending = { frac, cpuMed, excess };
+      this.probeAsk = true;
+      return null;
     }
 
     if (this.trial && --this.trial.left <= 0) {
-      // Schritt hinauf gehalten: die Lage hat sich geändert – auch zuvor wirkungslose Arten wieder erlauben
+      // Schritt hinauf gehalten
       this.trial = null;
       this.need = NEED0;
-      this.useless.clear();
     }
     if (frac > CALM) { this.calm = 0; return null; }
     this.calm += 1;
     if (!this.res && !this.range) return null;
     if (this.calm < this.need) return null;
     // genug Ruhe: erst ein Probebild, dann entscheiden
-    if (this.gpu === null) { this.probeAsk = true; return null; }
+    if (this.gpu === null || this.t - this.gpuT > PROBE_S) { this.probeAsk = true; return null; }
     const gpu = this.gpu;
     this.gpu = null;
     this.calm = 0;
@@ -296,26 +305,57 @@ export class AutoGfx {
     return kind === 'range' ? this.stepRange(-1, why) : this.stepRes(-1, why);
   }
 
-  private stepRes(dir: 1 | -1, why: string): AutoChange {
+  /** zu spät: was senken? (frac: Anteil zu später Bilder im Fenster) */
+  private down(frac: number, cpuMed: number, excess: number, frame: number): AutoChange | null {
+    const pct = `${Math.round(frac * 100)} % der Bilder zu spät`;
+    const cpuBound = cpuMed >= CPU_BOUND * frame;
+    // leicht zu spät und die Grafik klein: das liegt nicht an Auflösung oder Sichtweite – nichts senken
+    if (frac < SURE && !cpuBound && this.gpu !== null && this.gpu < GPU_NEED * frame) {
+      if (this.t - this.lastInfo < 10) return null;
+      this.lastInfo = this.t;
+      return { kind: 'info', text: `${pct}, Grafik nur ${this.gpu.toFixed(1)} ms, Rechnen ${cpuMed.toFixed(1)} ms – nicht gesenkt` };
+    }
+    const canRange = this.range < rangeDropMax();
+    // die Grafik (mit dem Zusammensetzen des Bildschirms) ist fast immer die Grenze: zuerst die Auflösung bis drei
+    // Viertel, dann die Sichtweite, dann die Auflösung weiter; ist es die Rechenzeit, zuerst die Sichtweite
+    const resTo = canRange ? RES_FIRST : RES_STEPS.length - 1;
+    const kind: 'res' | 'range' | null = !cpuBound && this.res < RES_FIRST ? 'res' : canRange ? 'range' : this.res < resTo ? 'res' : null;
+    if (!kind) {
+      // nichts mehr zu senken: nur notieren, höchstens alle 10 s
+      if (this.t - this.lastInfo < 10) return null;
+      this.lastInfo = this.t;
+      return { kind: 'info', text: `${pct}, Rechnen ${cpuMed.toFixed(1)} ms – nichts mehr zu senken` };
+    }
+    const k = frac >= HEAVY ? 2 : 1;
+    const why = `${pct}, im Schnitt ${excess.toFixed(1)} ms zu spät, Rechnen ${cpuMed.toFixed(1)} ms${this.gpu !== null && this.t - this.gpuT <= PROBE_S ? `, Grafik ${this.gpu.toFixed(1)} ms` : ''}`;
+    return kind === 'res' ? this.stepRes(k, why, resTo) : this.stepRange(k, why);
+  }
+
+  private stepRes(dir: number, why: string, to = RES_STEPS.length - 1): AutoChange {
     const from = gfxRes() * this.quality;
-    this.res = Math.max(0, Math.min(RES_STEPS.length - 1, this.res + dir));
-    this.settle = 1;
+    // hinab höchstens bis to (Phase 1: drei Viertel), hinauf bis ganz oben
+    const hi = dir > 0 ? Math.max(to, this.res) : RES_STEPS.length - 1;
+    this.res = Math.max(0, Math.min(hi, this.res + dir));
+    // (die neue Leinwand selbst ruckelt ein Bild lang – das verfälscht kein Fenster)
+    this.settle = 0;
     this.after();
     return { kind: 'res', text: `Auflösung ${fmtRes(from)} → ${fmtRes(gfxRes() * this.quality)} (${why})` };
   }
 
-  private stepRange(dir: 1 | -1, why: string): AutoChange {
+  private stepRange(dir: number, why: string): AutoChange {
     const from = viewRange().label;
     this.range = Math.max(0, Math.min(rangeDropMax(), this.range + dir));
     owner = this;
     setAutoRangeDrop(this.range);
-    // (der Umbau der Landschaft ruckelt selbst: zwei Urteile abwarten)
-    this.settle = 2;
+    // (der Umbau der Landschaft ruckelt selbst: ein Urteil abwarten)
+    this.settle = 1;
     this.after();
     return { kind: 'range', text: `Sichtweite ${from} → ${viewRange().label} (${why})` };
   }
 
   private after() {
+    // (ein Probebild von vor dem Wechsel sagt nichts mehr)
+    this.gpu = null;
     save(this.scope, this.res, this.range);
     this.show();
   }

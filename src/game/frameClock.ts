@@ -24,9 +24,25 @@
  * - Ein einmal erkannter schneller Takt bleibt. Wartet die Grafik, kommen auch auf dem 120-Hz-Schirm nur noch Aufrufe
  *   alle 16,7 ms – das ist kein 60-Hz-Schirm (früher: Takt „60 Hz", fester Bildtakt aus, das Bild sprang wieder
  *   zwischen 8,3 und 16,7 ms).
- * - Wann ein Bild dran ist, misst sich am gleichmäßigen Raster der gezeichneten Bilder, nicht am verrauschten
- *   Zeitstempel des letzten Bildes – mit einem halben Takt Spielraum.
+ * - Wann ein Bild dran ist, zählt sich an den Aufrufen seit dem letzten Bild (Safari ruft zu jedem Takt, auch
+ *   während die Grafik noch arbeitet); fehlt ein Aufruf, entscheidet das gleichmäßige Raster der gezeichneten Bilder,
+ *   nicht der verrauschte Zeitstempel des letzten. Das Raster liegt an den frühesten Stempeln (die nie vor ihrem
+ *   Takt liegen); ein Stempel bis 7 ms nach seinem Takt gehört noch zu diesem. Mit nur einem halben Takt Spielraum
+ *   nach der Zeit allein galt auf dem iPhone jeder fünfte Aufruf als ein Takt später (Spielzeit sprang um einen
+ *   halben Takt vor und zurück), und 3–4 % der Bilder kamen schon nach einem Takt (als Ruckler zu sehen).
  */
+/**
+ * Spielraum fürs Zeichnen (Anteil eines Takts): fehlte ein Aufruf, ist ein Bild dran, sobald sein Takt im Raster bis
+ * auf so viel erreicht ist (Stempel liegen nie vor ihrem Takt)
+ */
+const SLACK = 0.15;
+/**
+ * so viele ms nach seinem Takt gilt ein Stempel als ein Takt später (verpasstes Bild). Safari-Stempel sind bis zu
+ * einigen ms spät, ohne dass ein Bild fehlt – ein halber Takt (4 ms auf 120 Hz) war zu wenig: jeder fünfte Aufruf
+ * galt als verpasst, die Spielzeit sprang um einen halben Takt vor und wieder zurück
+ */
+const LATE_MS = 7;
+
 export class FrameClock {
   /** Bildschirmtakt (ms): kürzester regelmäßiger Abstand der Aufrufe (60, 90, 120, 144 Hz …) */
   period = 1000 / 60;
@@ -57,6 +73,8 @@ export class FrameClock {
   /** Messungen in Folge, die für einen anderen Takt sprechen */
   private pendP = 0;
   private pend = 0;
+  /** Aufrufe seit dem letzten gezeichneten Bild (mit dem laufenden) */
+  private calls = 0;
   /** fester Bildtakt: verspätete Bilder im laufenden Fenster */
   private seen = 0;
   private late = 0;
@@ -86,9 +104,13 @@ export class FrameClock {
       if (this.n < 64) this.n += 1;
       if ((this.k & 15) === 0 && this.n >= 16) this.measure();
     }
+    this.calls += 1;
     if (!this.pace || this.div <= 1) return true;
-    // dran, sobald das nächste Bild im Raster näher liegt als das übernächste Takt-Ende (halber Takt Spielraum)
-    return now >= this.due + this.target - this.period * 0.5;
+    // dran, wenn seit dem letzten Bild so viele Aufrufe kamen, wie Takte je Bild gelten (Safari ruft zu jedem Takt,
+    // auch während die Grafik noch arbeitet) – oder, fehlte ein Aufruf (der Browser war aufgehalten), wenn das
+    // nächste Bild im Raster fast erreicht ist. Nicht nach der Zeit allein: ein Aufruf, der 5 ms spät dran ist, sähe
+    // sonst wie der nächste Takt aus, und das Bild käme nach 8 statt 17 ms (ein Doppel, das als Ruckler zu sehen ist)
+    return this.calls >= this.div || now >= this.due + (this.div - SLACK) * this.period;
   }
 
   /** Zeitstempel des gezeichneten Bildes → Spielzeit für dieses Bild (s) */
@@ -111,14 +133,17 @@ export class FrameClock {
       this.owed = 0;
       return raw / 1000;
     }
-    // ganze Bildschirmtakte seit dem letzten Bild im Raster (mindestens der feste Bildtakt)
-    const steps = Math.max(this.div, Math.round((now - this.due) / P));
+    // ganze Bildschirmtakte seit dem letzten Bild im Raster (mindestens der feste Bildtakt); ein Stempel bis LATE_MS
+    // nach seinem Takt gehört noch zu diesem
+    const steps = Math.max(this.div, 1 + Math.floor((now - this.due - LATE_MS) / P));
     this.slip = steps - this.div;
+    this.calls = 0;
     this.due += steps * P;
-    // dem Zeitstempel langsam folgen (Lage des Takts, kleine Abweichung des Takts), sein Rauschen herausfiltern – nie
-    // voraus (sonst ließe ready danach zu viele Aufrufe aus)
-    this.due += (now - this.due) * 0.1;
-    if (this.due > now + 1) this.due = now;
+    // Raster an den frühesten Stempeln ausrichten: ein früherer Stempel setzt es sofort, späteren folgt es nur
+    // langsam (kleine Abweichung des Takts) – so liegt es dort, wo die Takte wirklich sind, nicht im Mittel der
+    // Verspätungen
+    if (now < this.due) this.due = now;
+    else this.due += (now - this.due) * 0.03;
     this.learnPace(steps);
     let dt = steps * P;
     // auf Dauer genau mit der echten Zeit (kleine Korrektur, unmerklich)

@@ -305,3 +305,50 @@ test('Safari: jeder zwölfte Aufruf 3–7 ms spät (Hauptfaden beschäftigt) –
     assert.ok(even > 0.85, `${gpu} ms: ${Math.round(even * 100)} % gleichmäßig`);
   }
 });
+
+/**
+ * Safari genauer: ein Aufruf zu jedem Takt, solange das letzte Bild fertig ist (sonst keiner); der Stempel ist die
+ * Zeit, zu der das Skript drankommt (abgerundet, 0–3 ms spät; ein Anteil late 3–7 ms). Liefert je gezeichnetem Bild
+ * den Takt (Nummer), den gemeldeten Ausrutscher und die Takte, zu denen die Bilder erscheinen
+ */
+function safariFine(o: { gpu: number; late: number; seed?: number }) {
+  let seed = o.seed ?? 5;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const clock = new FrameClock(0, { apple: true });
+  const drawnV: number[] = [];
+  const slips: number[] = [];
+  const shownV: number[] = [];
+  let done = -1;
+  let t = 0;
+  for (let v = 1; v < 6000; v++) {
+    t += P120;
+    if (done > t) continue;
+    const jit = rnd() < o.late ? 3 + rnd() * 4 : rnd() * 3;
+    const stamp = Math.floor(t + jit);
+    if (!clock.ready(stamp)) continue;
+    clock.tick(stamp);
+    drawnV.push(v);
+    slips.push(clock.slip);
+    done = t + jit + 2 + o.gpu * (0.92 + rnd() * 0.16);
+    shownV.push(Math.max(v + 2, Math.ceil(done / P120 - 1e-6)));
+  }
+  return { clock, drawnV: drawnV.slice(300), slips: slips.slice(300), shownV: shownV.slice(300) };
+}
+
+test('Safari: jeder fünfte Aufruf 3–7 ms spät – kein Bild nach nur einem Takt (Doppel), Ausrutscher nur, wo ein Bild wirklich fehlt', () => {
+  for (const gpu of [5, 9, 11]) {
+    const r = safariFine({ gpu, late: 0.2 });
+    const div = r.clock.div;
+    const dv = r.drawnV.slice(1).map((x, i) => x - r.drawnV[i]);
+    // (früher: 3–4 % der Bilder, mit halbem Takt Spielraum – jeder um 4 ms verspätete Aufruf zählte als nächster Takt)
+    const dbl = dv.filter((x) => x < div).length / dv.length;
+    assert.ok(dbl < 0.002, `${gpu} ms: ${(dbl * 100).toFixed(2)} % der Bilder nach weniger als ${div} Takt(en)`);
+    const shownGaps = r.shownV.slice(1).map((x, i) => x - r.shownV[i]);
+    const trueLate = share(shownGaps, (g) => g > 2);
+    const slip = share(r.slips, (s) => s > 0);
+    // (im 60er-Takt, wenn Safari nur alle 16,7 ms aufruft, ist das Raster 16,7 ms: ein um einen 120er-Takt zu spätes
+    // Bild zählt dort erst ab 7 ms – fast immer)
+    assert.ok(Math.abs(slip - trueLate) < 0.03, `${gpu} ms: ${Math.round(slip * 100)} % Ausrutscher gemeldet, ${Math.round(trueLate * 100)} % Bilder wirklich zu spät`);
+    if (gpu === 5) assert.ok(trueLate < 0.01, `${gpu} ms: ${Math.round(trueLate * 100)} % zu spät`);
+  }
+});

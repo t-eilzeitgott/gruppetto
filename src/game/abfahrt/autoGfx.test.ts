@@ -15,6 +15,7 @@ type Gov = InstanceType<typeof AutoGfx>;
 
 const DT = 1 / 60;
 const FRAME = 1000 / 60;
+const fresh = (scope: string) => { store.delete(`gruppetto.gfx.auto3.${scope}`); return new AutoGfx(scope); };
 
 /**
  * Gerät als Modell: Grafikzeit je Bild aus der Auflösung (Bildpunkte) und der Sichtweite (je Stufe kürzer gut 12 %
@@ -49,22 +50,21 @@ function run(g: Gov, n: number, model: (g: Gov) => { p: number; lateMs: number; 
 function drive(g: Gov, d: Dev, n: number): string[] {
   return run(g, n, (gg) => { const gpu = gpuOf(gg, d); const [p, lateMs] = lateOf(gpu, d.extra); return { p, lateMs, gpu, cpu: d.cpu }; });
 }
+const changes = (ch: string[]) => ch.filter((c) => !c.startsWith('info:'));
 /** Gerät, das nur in voller Auflösung zu langsam ist */
 const onlyFull = (p = 0.3) => (gg: Gov) => ({ p: gg.quality === 1 ? p : 0, lateMs: 25, gpu: gg.quality === 1 ? 9 : 3 });
 
-test('Grafik am Limit: erst die Auflösung bis drei Viertel, dann die Sichtweite – solange es hilft', () => {
-  store.delete('gruppetto.gfx.auto2.zeitfahren');
-  const g = new AutoGfx('zeitfahren');
+test('Grafik am Limit: erst die Auflösung bis drei Viertel (weit daneben: zwei Schritte auf einmal), dann die Sichtweite – solange es hilft', () => {
+  const g = fresh('zeitfahren');
   assert.equal(g.quality, 1);
   assert.equal(V.viewRange().id, 'max');
   const dev: Dev = { pix: 20 };
   // die ersten Sekunden zählen nicht
-  assert.deepEqual(drive(g, dev, 150), []);
-  const ch = drive(g, dev, 70 * 40);
-  assert.ok(ch[0].startsWith('res:Auflösung 2-fach → 1,75-fach'), ch[0]);
-  assert.ok(ch[1].startsWith('res:Auflösung 1,75-fach → 1,5-fach'), ch[1]);
-  assert.ok(ch[2].startsWith('range:Sichtweite Max → Weit'), ch[2]);
-  assert.ok(!ch.some((c) => c.includes('brachte nichts')), ch.join(' | '));
+  assert.deepEqual(drive(g, dev, 80), []);
+  const ch = changes(drive(g, dev, 70 * 40));
+  assert.ok(ch[0].startsWith('res:Auflösung 2-fach → 1,5-fach'), ch[0]);
+  assert.ok(ch[1].startsWith('range:Sichtweite Max → Weit'), ch[1]);
+  assert.ok(!ch.some((c) => c.includes('zurück')), ch.join(' | '));
   assert.equal(g.quality, RES_STEPS[2]);
   // so weit, bis kaum noch Bilder zu spät kommen – nicht weiter
   const p = lateOf(gpuOf(g, dev))[0];
@@ -76,28 +76,41 @@ test('Grafik am Limit: erst die Auflösung bis drei Viertel, dann die Sichtweite
   assert.equal(V.viewRange().id, 'max');
 });
 
+test('weit daneben (alle Bilder zu spät): der erste Schritt fällt nach einem halben Fenster, in gut zwei Sekunden Fahrt', () => {
+  const g = fresh('zeitfahren');
+  let frames = 0;
+  let first = '';
+  for (; frames < 70 * 10 && !first; frames++) {
+    const ch = g.frame(true, FRAME, 3, 0.03, true);
+    if (ch && ch.kind !== 'info') first = ch.text;
+  }
+  assert.ok(first.startsWith('Auflösung 2-fach → 1,5-fach'), first);
+  // 1,5 s Aufwärmen bei 33 Bildern je Sekunde (50 Bilder), dann 35 zu späte Bilder
+  assert.ok(frames <= 50 + 36, `${frames} Bilder bis zum ersten Schritt`);
+  g.dispose();
+});
+
 test('reicht auch die kürzeste Sicht nicht: die Auflösung weiter bis zur Hälfte', () => {
-  store.delete('gruppetto.gfx.auto2.zeitfahren');
-  const g = new AutoGfx('zeitfahren');
-  const ch = drive(g, { pix: 30 }, 70 * 80).filter((c) => !c.startsWith('info'));
+  const g = fresh('zeitfahren');
+  const ch = changes(drive(g, { pix: 30 }, 70 * 80));
   const kinds = ch.map((c) => c.split(':')[0]);
-  assert.deepEqual(kinds.slice(0, 2), ['res', 'res']);
-  assert.ok(kinds.slice(2, 2 + V.rangeDropMax()).every((k) => k === 'range'), ch.join(' | '));
+  assert.equal(kinds[0], 'res');
+  assert.ok(ch[0].startsWith('res:Auflösung 2-fach → 1,5-fach'), ch[0]);
+  const firstRes2 = kinds.indexOf('res', 1);
+  assert.ok(firstRes2 > 1 && kinds.slice(1, firstRes2).every((k) => k === 'range'), ch.join(' | '));
   assert.equal(V.autoRangeDrop(), V.rangeDropMax());
   assert.ok(g.quality < 0.75 && g.quality >= 0.5, String(g.quality));
-  assert.ok(ch[ch.length - 1].startsWith('res:Auflösung 1,5-fach → 1,25-fach'), ch[ch.length - 1]);
   // wieder Luft: zuerst die Auflösung bis drei Viertel zurück, dann die Sicht
-  const up = drive(g, { pix: 5 }, 70 * 400).filter((c) => !c.startsWith('info'));
-  assert.ok(up[0]?.startsWith('res:Auflösung 1,25-fach → 1,5-fach'), String(up[0]));
-  assert.ok(up[1]?.startsWith('range:'), String(up[1]));
+  const up = changes(drive(g, { pix: 5 }, 70 * 400));
+  assert.ok(up[0]?.startsWith('res:Auflösung'), String(up[0]));
+  assert.ok(up.some((c) => c.startsWith('range:')), up.join(' | '));
   assert.equal(g.quality, 1);
   assert.equal(V.autoRangeDrop(), 0);
   g.dispose();
 });
 
 test('die Sichtweite gehört dem laufenden Spiel: ein altes, das sich später verabschiedet, setzt sie nicht zurück', () => {
-  store.delete('gruppetto.gfx.auto2.berg');
-  const g = new AutoGfx('berg');
+  const g = fresh('berg');
   drive(g, { pix: 20 }, 70 * 40);
   const d = V.autoRangeDrop();
   assert.ok(d >= 1);
@@ -115,59 +128,72 @@ test('die Sichtweite gehört dem laufenden Spiel: ein altes, das sich später ve
   assert.equal(V.autoRangeDrop(), 0);
 });
 
-test('Ruckler, die kein Senken behebt: jede Art einmal probiert, zurückgenommen, dann Ruhe', () => {
-  store.delete('gruppetto.gfx.auto2.abfahrt');
-  const g = new AutoGfx('abfahrt');
+test('leicht zu spät bei kleiner Grafik (Ruckler, die kein Senken behebt): Probebild, dann nichts gesenkt', () => {
+  const g = fresh('abfahrt');
   const ch = drive(g, { pix: 4, extra: 0.15 }, 70 * 60);
   assert.equal(g.quality, 1);
   assert.equal(V.autoRangeDrop(), 0);
-  const changes = ch.filter((c) => !c.startsWith('info:'));
-  assert.ok(changes.length <= 4, changes.join(' | '));
-  assert.ok(changes.filter((c) => c.includes('brachte nichts')).length === 2, changes.join(' | '));
-  assert.ok(ch.some((c) => c.startsWith('info:') && c.includes('nichts mehr zu senken')), ch.join(' | '));
+  assert.deepEqual(changes(ch), []);
+  assert.ok(ch.some((c) => c.startsWith('info:') && c.includes('nicht gesenkt')), ch.join(' | '));
+  // (nicht jedes Fenster ein Probebild – jedes wartet auf die Grafik)
+  assert.ok(ch.length <= 8, `${ch.length} Notizen`);
+  g.dispose();
+});
+
+test('leicht zu spät, aber die Grafik braucht gut die Hälfte des Takts: wird gesenkt', () => {
+  const g = fresh('abfahrt');
+  // 13 % zu spät, Probebild 10 ms (wie Messfahrt 255 bei 1,5-fach/Kurz)
+  const ch = changes(run(g, 70 * 6, (gg) => ({ p: gg.quality === 1 ? 0.13 : 0, lateMs: 25, gpu: gg.quality === 1 ? 10 : 6 })));
+  assert.ok(ch[0]?.startsWith('res:Auflösung 2-fach → 1,75-fach'), String(ch[0]));
+  assert.ok(ch[0].includes('Grafik 10.0 ms'), ch[0]);
   g.dispose();
 });
 
 test('Rechenzeit ist die Grenze: die Auflösung bleibt, gleich die Sichtweite', () => {
-  store.delete('gruppetto.gfx.auto2.sprint');
-  const g = new AutoGfx('sprint');
+  const g = fresh('sprint');
   // Rechnen 12 ms bei voller Sicht, je Stufe kürzer 1,5 ms weniger; Grafik klein
-  const out = run(g, 70 * 30, () => {
+  const out = changes(run(g, 70 * 30, () => {
     const cpu = 12 - 1.5 * V.autoRangeDrop();
     return { p: Math.min(1, Math.max(0, (cpu - 8) / 10)), lateMs: 25, cpu, gpu: 4 };
-  });
+  }));
   assert.ok(out[0].startsWith('range:Sichtweite Max → Weit'), out[0]);
   assert.equal(g.quality, 1);
   assert.ok(V.autoRangeDrop() >= 2, String(V.autoRangeDrop()));
   g.dispose();
 });
 
-test('Senken bringt nichts (die Last ist das Fahrerfeld): zurück, und diese Art nicht weiter senken', () => {
-  store.delete('gruppetto.gfx.auto2.berg');
-  const g = new AutoGfx('berg');
-  // Bildpunkte wenig, fester Anteil (Fahrer) viel: die Auflösung hilft kaum, die Sichtweite gar nicht
-  const dev: Dev = { pix: 4, fixed: 15, rangeK: 0 };
-  const ch = drive(g, dev, 70 * 40);
-  const ranges = ch.filter((c) => c.startsWith('range:'));
-  assert.ok(ranges.length >= 1 && ranges[ranges.length - 1].includes('brachte nichts'), ch.join(' | '));
-  assert.equal(V.autoRangeDrop(), 0);
-  // und nicht wieder und wieder probiert
-  assert.ok(ranges.length <= 2, `${ranges.length} Wechsel der Sichtweite`);
-  assert.ok(ch.filter((c) => c.startsWith('res:') || c.startsWith('range:')).length <= 4, ch.join(' | '));
+test('das Telefon drosselt mitten in der Fahrt (Grafik plötzlich doppelt so teuer): weiter senken, nie zurück, solange es ruckelt', () => {
+  const g = fresh('berg');
+  // erst kühl: 11 % zu spät bei 8 ms Grafik – bleibt oben (Messfahrt 255, die ersten 16 s)
+  const cool = drive(g, { pix: 8, extra: 0.03 }, 70 * 12);
+  assert.deepEqual(changes(cool), [], cool.join(' | '));
+  assert.equal(g.quality, 1);
+  // dann gedrosselt: dieselbe Szene kostet das Doppelte – Fenster für Fenster hinab
+  const hot = drive(g, { pix: 22 }, 70 * 40);
+  const ch = changes(hot);
+  assert.ok(ch.length >= 3, hot.join(' | '));
+  assert.ok(!hot.some((c) => c.includes('zurück') || c.includes('brachte nichts')), hot.join(' | '));
+  // am Ende kaum noch zu spät – oder nur noch leicht, bei einer Grafik unter der halben Taktzeit (Bodensatz)
+  const p = lateOf(gpuOf(g, { pix: 22 }))[0];
+  assert.ok(p <= 0.08 || (p <= 0.12 && gpuOf(g, { pix: 22 }) < 0.5 * FRAME), `am Ende noch ${Math.round(p * 100)} % zu spät bei ${gpuOf(g, { pix: 22 }).toFixed(1)} ms Grafik`);
+  // ein Ausreißer-Fenster (94 % zu spät, Ortsdurchfahrt) nimmt nichts zurück
+  const q = g.quality;
+  const d = V.autoRangeDrop();
+  run(g, 70, () => ({ p: 0.94, lateMs: 33, gpu: 15 }));
+  assert.ok(g.quality <= q && V.autoRangeDrop() >= d);
   g.dispose();
 });
 
 test('wieder Luft: erst ein Probebild, dann zuerst die Sichtweite zurück, dann die Auflösung – mit zu wenig Luft nicht', () => {
-  store.delete('gruppetto.gfx.auto2.berg');
-  const g = new AutoGfx('berg');
+  const g = fresh('berg');
   drive(g, { pix: 20 }, 70 * 40);
   assert.equal(g.quality, 0.75);
   const d0 = V.autoRangeDrop();
   assert.ok(d0 >= 1);
   // gleiche Last: bleibt (Luft reicht nicht für den nächsten Schritt)
-  assert.deepEqual(drive(g, { pix: 20 }, 70 * 30).filter((c) => !c.startsWith('info')), []);
+  assert.deepEqual(changes(drive(g, { pix: 20 }, 70 * 30)), []);
   // Last fällt weg (Fahrerfeld zieht davon): Sicht zurück, dann Auflösung
-  const up = drive(g, { pix: 5 }, 70 * 300);
+  const up = changes(drive(g, { pix: 5 }, 70 * 300));
   assert.ok(up[0]?.startsWith('range:Sichtweite'), String(up[0]));
   assert.equal(V.autoRangeDrop(), 0);
   assert.equal(g.quality, 1);
@@ -175,8 +201,7 @@ test('wieder Luft: erst ein Probebild, dann zuerst die Sichtweite zurück, dann 
 });
 
 test('Schritt hinauf ruckelt gleich wieder: zurück, der nächste Versuch erst nach doppelt so langer Ruhe', () => {
-  store.delete('gruppetto.gfx.auto2.abfahrt');
-  const g = new AutoGfx('abfahrt');
+  const g = fresh('abfahrt');
   for (let i = 0; i < 20 && g.quality === 1; i++) run(g, 70, onlyFull());
   assert.equal(g.quality, 0.875);
   // Probebild misst wenig (ein ruhiger Moment), danach ist es wieder schwer
@@ -195,9 +220,8 @@ test('Schritt hinauf ruckelt gleich wieder: zurück, der nächste Versuch erst n
   g.dispose();
 });
 
-test('merkt sich den Stand je Spiel (nur für dieselbe Wahl), Automatik aus regelt nichts, 120er-Takt zählt nicht', () => {
-  store.delete('gruppetto.gfx.auto2.zeitfahren');
-  const g = new AutoGfx('zeitfahren');
+test('merkt sich den Stand je Spiel und Wahl; eine neue Wahl beginnt bei derselben Pixeldichte; Automatik aus regelt nichts; 120er-Takt zählt nicht', () => {
+  const g = fresh('zeitfahren');
   run(g, 70 * 6, onlyFull());
   assert.equal(g.quality, 0.875);
   g.dispose();
@@ -205,7 +229,19 @@ test('merkt sich den Stand je Spiel (nur für dieselbe Wahl), Automatik aus rege
   const h = new AutoGfx('zeitfahren');
   assert.equal(h.quality, 0.875);
   h.dispose();
-  // andere Auflösung gewählt: von vorn
+  // größere Auflösung gewählt: beginnt bei der Pixeldichte, die zuletzt reichte (1,75 → 2,5 · 0,625 = 1,56)
+  G.setGfxRes(2.5);
+  const j = new AutoGfx('zeitfahren');
+  assert.equal(j.quality, 0.625);
+  j.dispose();
+  // andere Stufe: ebenso (die Sichtweite aber wie gewählt)
+  G.setGfxLevel(5);
+  const m = new AutoGfx('zeitfahren');
+  assert.equal(m.quality, 0.625);
+  assert.equal(V.autoRangeDrop(), 0);
+  m.dispose();
+  G.setGfxLevel(7);
+  // kleinere Auflösung gewählt (1,5 ≤ 1,75): ganz oben
   G.setGfxRes(1.5);
   const k = new AutoGfx('zeitfahren');
   assert.equal(k.quality, 1);
