@@ -20,8 +20,8 @@ const fresh = (scope: string) => { store.delete(`gruppetto.gfx.auto3.${scope}`);
 /**
  * Gerät als Modell: Grafikzeit je Bild aus der Auflösung (Bildpunkte) und der Sichtweite (je Stufe kürzer gut 12 %
  * weniger, rangeK), dazu ein fester Anteil (fixed – z. B. das ganze Fahrerfeld, unabhängig von beidem). Wie in den
- * Messfahrten auf dem iPhone verpassen schon ab gut 6 ms Grafikzeit Bilder ihren Takt (das Zusammensetzen des
- * Bildschirms kommt dazu) – je mehr Grafik, desto mehr und desto länger. Extra: Ruckler unabhängig von der Last.
+ * Messfahrten auf dem iPhone: bis gut 12 ms Grafikzeit verpassen nur wenige Bilder ihren Takt (Bodensatz 3 %),
+ * darüber schnell immer mehr (15 ms: die Hälfte). Extra: Ruckler unabhängig von der Last.
  */
 interface Dev { pix: number; fixed?: number; rangeK?: number; cpu?: number; extra?: number }
 function gpuOf(g: Gov, d: Dev) {
@@ -29,7 +29,7 @@ function gpuOf(g: Gov, d: Dev) {
 }
 /** Anteil verspäteter Bilder und Bildzeit eines verspäteten (ms) */
 function lateOf(gpu: number, extra = 0): [number, number] {
-  const p = Math.min(1, Math.max(0, (gpu - 6) / 20) + extra);
+  const p = Math.min(1, Math.max(0, (gpu - 12.5) / 6) + 0.03 + extra);
   return [p, Math.max(25, Math.ceil(gpu / (1000 / 120)) * (1000 / 120))];
 }
 /** n Bilder fahren (mit Modell oder fester Vorgabe je Zustand); liefert die Änderungen */
@@ -51,14 +51,14 @@ function drive(g: Gov, d: Dev, n: number): string[] {
   return run(g, n, (gg) => { const gpu = gpuOf(gg, d); const [p, lateMs] = lateOf(gpu, d.extra); return { p, lateMs, gpu, cpu: d.cpu }; });
 }
 const changes = (ch: string[]) => ch.filter((c) => !c.startsWith('info:'));
-/** Gerät, das nur in voller Auflösung zu langsam ist */
-const onlyFull = (p = 0.3) => (gg: Gov) => ({ p: gg.quality === 1 ? p : 0, lateMs: 25, gpu: gg.quality === 1 ? 9 : 3 });
+/** Gerät, das nur in voller Auflösung zu langsam ist (Grafik 14 ms, darunter 3 ms) */
+const onlyFull = (p = 0.3) => (gg: Gov) => ({ p: gg.quality === 1 ? p : 0.03, lateMs: 25, gpu: gg.quality === 1 ? 14 : 3 });
 
-test('Grafik am Limit: erst die Auflösung bis drei Viertel (weit daneben: zwei Schritte auf einmal), dann die Sichtweite – solange es hilft', () => {
+test('Grafik am Limit: erst die Auflösung bis drei Viertel (weit daneben: zwei Schritte auf einmal), dann die Sichtweite – bis die Grafik unter der Grenze liegt', () => {
   const g = fresh('zeitfahren');
   assert.equal(g.quality, 1);
   assert.equal(V.viewRange().id, 'max');
-  const dev: Dev = { pix: 20 };
+  const dev: Dev = { pix: 26 };
   // die ersten Sekunden zählen nicht
   assert.deepEqual(drive(g, dev, 80), []);
   const ch = changes(drive(g, dev, 70 * 40));
@@ -66,10 +66,9 @@ test('Grafik am Limit: erst die Auflösung bis drei Viertel (weit daneben: zwei 
   assert.ok(ch[1].startsWith('range:Sichtweite Max → Weit'), ch[1]);
   assert.ok(!ch.some((c) => c.includes('zurück')), ch.join(' | '));
   assert.equal(g.quality, RES_STEPS[2]);
-  // so weit, bis kaum noch Bilder zu spät kommen – nicht weiter
-  const p = lateOf(gpuOf(g, dev))[0];
-  assert.ok(p <= 0.08, `noch ${p} zu spät`);
-  assert.ok(lateOf(gpuOf(g, dev) / (1 - 0.12 * V.autoRangeDrop()) * (1 - 0.12 * (V.autoRangeDrop() - 1)))[0] > 0.08, 'eine Stufe weniger hätte gereicht');
+  // bis die Grafik unter der Grenze (13 ms) liegt – nicht weiter, auch wenn noch jedes zehnte Bild zu spät kommt
+  const gpu = gpuOf(g, dev);
+  assert.ok(gpu < 0.78 * FRAME && gpu > 0.7 * FRAME, `Grafik ${gpu.toFixed(1)} ms`);
   assert.equal(autoView().reduced, true);
   assert.equal(autoView().res, 1.5);
   g.dispose();
@@ -93,7 +92,7 @@ test('weit daneben (alle Bilder zu spät): der erste Schritt fällt nach einem h
 
 test('reicht auch die kürzeste Sicht nicht: die Auflösung weiter bis zur Hälfte', () => {
   const g = fresh('zeitfahren');
-  const ch = changes(drive(g, { pix: 30 }, 70 * 80));
+  const ch = changes(drive(g, { pix: 48 }, 70 * 80));
   const kinds = ch.map((c) => c.split(':')[0]);
   assert.equal(kinds[0], 'res');
   assert.ok(ch[0].startsWith('res:Auflösung 2-fach → 1,5-fach'), ch[0]);
@@ -112,7 +111,7 @@ test('reicht auch die kürzeste Sicht nicht: die Auflösung weiter bis zur Hälf
 
 test('die Sichtweite gehört dem laufenden Spiel: ein altes, das sich später verabschiedet, setzt sie nicht zurück', () => {
   const g = fresh('berg');
-  drive(g, { pix: 20 }, 70 * 40);
+  drive(g, { pix: 30 }, 70 * 40);
   const d = V.autoRangeDrop();
   assert.ok(d >= 1);
   // altes Spiel (vorher angelegt) räumt erst jetzt auf: darf nichts zurücksetzen
@@ -151,13 +150,18 @@ test('Schub zu später Bilder bei kleiner Grafik (Hauptfaden stand): nichts gese
   }
 });
 
-test('leicht zu spät, aber die Grafik braucht gut die Hälfte des Takts: wird gesenkt', () => {
+test('leicht zu spät, aber die Grafik über der Grenze: wird gesenkt; knapp darunter (12 ms) nicht', () => {
   const g = fresh('abfahrt');
-  // 13 % zu spät, Probebild 10 ms (wie Messfahrt 255 bei 1,5-fach/Kurz)
-  const ch = changes(run(g, 70 * 6, (gg) => ({ p: gg.quality === 1 ? 0.13 : 0, lateMs: 25, gpu: gg.quality === 1 ? 10 : 6 })));
+  // 13 % zu spät, Probebild 14 ms
+  const ch = changes(run(g, 70 * 6, (gg) => ({ p: gg.quality === 1 ? 0.13 : 0, lateMs: 25, gpu: gg.quality === 1 ? 14 : 6 })));
   assert.ok(ch[0]?.startsWith('res:Auflösung 2-fach → 1,75-fach'), String(ch[0]));
-  assert.ok(ch[0].includes('Grafik 10.0 ms'), ch[0]);
+  assert.ok(ch[0].includes('Grafik 14.0 ms'), ch[0]);
   g.dispose();
+  // 13 % zu spät bei 12 ms Grafik (die Zone, in der das iPhone am rundesten läuft): bleibt
+  const h = fresh('abfahrt');
+  const ch2 = run(h, 70 * 10, () => ({ p: 0.13, lateMs: 25, gpu: 12 }));
+  assert.deepEqual(changes(ch2), [], ch2.join(' | '));
+  h.dispose();
 });
 
 test('Rechenzeit ist die Grenze: die Auflösung bleibt, gleich die Sichtweite', () => {
@@ -176,33 +180,32 @@ test('Rechenzeit ist die Grenze: die Auflösung bleibt, gleich die Sichtweite', 
 test('das Telefon drosselt mitten in der Fahrt (Grafik plötzlich doppelt so teuer): weiter senken, nie zurück, solange es ruckelt', () => {
   const g = fresh('berg');
   // erst kühl: 11 % zu spät bei 8 ms Grafik – bleibt oben (Messfahrt 255, die ersten 16 s)
-  const cool = drive(g, { pix: 8, extra: 0.03 }, 70 * 12);
+  const cool = drive(g, { pix: 8, extra: 0.08 }, 70 * 12);
   assert.deepEqual(changes(cool), [], cool.join(' | '));
   assert.equal(g.quality, 1);
-  // dann gedrosselt: dieselbe Szene kostet das Doppelte – Fenster für Fenster hinab
+  // dann gedrosselt: dieselbe Szene kostet das Doppelte (16 → 20 ms) – hinab, bis die Grafik unter der Grenze liegt
   const hot = drive(g, { pix: 22 }, 70 * 40);
   const ch = changes(hot);
-  assert.ok(ch.length >= 3, hot.join(' | '));
+  assert.ok(ch.length >= 1, hot.join(' | '));
   assert.ok(!hot.some((c) => c.includes('zurück') || c.includes('brachte nichts')), hot.join(' | '));
-  // am Ende kaum noch zu spät – oder nur noch leicht, bei einer Grafik unter der halben Taktzeit (Bodensatz)
-  const p = lateOf(gpuOf(g, { pix: 22 }))[0];
-  assert.ok(p <= 0.08 || (p <= 0.12 && gpuOf(g, { pix: 22 }) < 0.5 * FRAME), `am Ende noch ${Math.round(p * 100)} % zu spät bei ${gpuOf(g, { pix: 22 }).toFixed(1)} ms Grafik`);
-  // ein Ausreißer-Fenster (94 % zu spät, Ortsdurchfahrt) nimmt nichts zurück
+  const gpu = gpuOf(g, { pix: 22 });
+  assert.ok(gpu < 0.78 * FRAME, `am Ende ${gpu.toFixed(1)} ms Grafik`);
+  // ein Schub zu später Bilder bei kleiner Grafik (Ausreißer-Fenster) ändert nichts
   const q = g.quality;
   const d = V.autoRangeDrop();
-  run(g, 70, () => ({ p: 0.94, lateMs: 33, gpu: 15 }));
-  assert.ok(g.quality <= q && V.autoRangeDrop() >= d);
+  run(g, 70 * 3, () => ({ p: 0.94, lateMs: 33, gpu: 8 }));
+  assert.ok(g.quality === q && V.autoRangeDrop() === d);
   g.dispose();
 });
 
 test('wieder Luft: erst ein Probebild, dann zuerst die Sichtweite zurück, dann die Auflösung – mit zu wenig Luft nicht', () => {
   const g = fresh('berg');
-  drive(g, { pix: 20 }, 70 * 40);
+  drive(g, { pix: 30 }, 70 * 40);
   assert.equal(g.quality, 0.75);
   const d0 = V.autoRangeDrop();
   assert.ok(d0 >= 1);
   // gleiche Last: bleibt (Luft reicht nicht für den nächsten Schritt)
-  assert.deepEqual(changes(drive(g, { pix: 20 }, 70 * 30)), []);
+  assert.deepEqual(changes(drive(g, { pix: 30 }, 70 * 30)), []);
   // Last fällt weg (Fahrerfeld zieht davon): Sicht zurück, dann Auflösung
   const up = changes(drive(g, { pix: 5 }, 70 * 300));
   assert.ok(up[0]?.startsWith('range:Sichtweite'), String(up[0]));
@@ -223,7 +226,7 @@ test('Schritt hinauf ruckelt gleich wieder: zurück, der nächste Versuch erst n
   for (let i = 0; i < 70 * 2 && !up.length; i++) { const ch = g.frame(false, FRAME, 3, DT, true); if (ch) up.push(ch.text); }
   assert.ok(up[0]?.startsWith('Auflösung 1,75-fach → 2-fach'), String(up[0]));
   const back = run(g, 70 * 3, onlyFull());
-  assert.ok(back[0]?.startsWith('res:Auflösung 2-fach → 1,75-fach (zurück)'), String(back[0]));
+  assert.ok(back[0]?.startsWith('res:Auflösung 2-fach → 1,75-fach (zurück'), String(back[0]));
   // jetzt dauert es länger bis zum nächsten Probebild
   n = 0;
   while (!g.wantProbe() && n < 70 * 400) { g.frame(false, FRAME, 3, DT, true); n++; }

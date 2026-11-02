@@ -9,24 +9,24 @@
  *
  * Ist die Rechenzeit die Grenze, hilft die Auflösung nicht – dann gleich die Sichtweite.
  *
- * Maß sind die Bilder, die ihren Takt verpassen (frameClock.ts) – im festen 60er-Takt die verlässlichste Größe
- * (die Bildzeit selbst ist dort immer 16,7 ms, auch wenn die Grafik schon 15 ms braucht). Gemessen wird nur während
- * der Fahrt (nicht in Pause, Start- oder Ergebniskarte), die ersten Sekunden zählen nicht. Verpasst mehr als die
- * Hälfte der Bilder ihren Takt, geht es gleich zwei Schritte auf einmal und ohne das Ende des Fensters abzuwarten –
- * sonst dauerte es vom Start bis zu einer passenden Stufe fast eine Minute (Messfahrten Version 255: 50 s).
+ * Ziel ist nicht die kleinste Grafik, sondern eine Grafikzeit von etwa der Hälfte bis drei Vierteln des Takts
+ * (8–13 ms Probebild bei 16,7 ms). Messfahrten (Version 255–258) zeigten: bei 12–13 ms Grafik kamen die wenigsten
+ * Bilder zu spät (32 Ruckler in 150 s), bei 6–8 ms auf der kleinsten Stufe dagegen 80–200 – in Schüben an denselben
+ * Streckenstellen, bei freiem Hauptfaden, ohne Hochladen oder neue Shader. Das iPhone taktet seine Grafik bei
+ * kleiner Last herunter und verpasst dann gerade die leichten Bilder; mehr Last hält den Takt oben. Darum:
  *
- * Vor jedem Schritt hinab entscheidet ein Probebild (Grafikzeit): nur wenn die Grafik einen guten Teil des Takts
- * braucht, wird gesenkt. Denn das iPhone verpasst auch bei kleiner Grafik Bilder – ein paar immer (Hauptfaden,
- * Zusammensetzen des Bildschirms), und steht der Hauptfaden (Speicherbereinigung), eine Sekunde lang jedes zweite;
- * da bringt eine kleinere Auflösung nur ein unschärferes Bild. Ist die Rechenzeit die Grenze, braucht es kein Probebild. Früher
- * wurde jeder Schritt hinab geprüft („brachte nichts“ → zurück, Art gesperrt); das scheiterte am Rauschen und daran,
- * dass das Telefon seinen Takt mitten in der Fahrt ändert (Messfahrt 255: Sichtweite Normal → Weit „brachte nichts:
- * 21 → 94 %“, danach zweieinhalb Minuten bei 2-fach mit 94–100 % zu späten Bildern, „nichts mehr zu senken“).
- * Darum: nie zurück, solange es ruckelt.
+ * - Hinab nur, wenn ein Probebild zeigt, dass die Grafik über GPU_DOWN liegt (oder die Rechenzeit die Grenze ist) –
+ *   egal, wie viele Bilder zu spät kamen. Verpasst fast jedes Bild seinen Takt und die Grafik ist weit drüber, geht
+ *   es zwei Schritte auf einmal und ohne das Ende des Fensters abzuwarten (vom Start bis zur passenden Stufe wenige
+ *   Sekunden statt fast einer Minute). Früher wurde jeder Schritt hinab geprüft („brachte nichts“ → zurück, Art
+ *   gesperrt); das scheiterte am Rauschen und daran, dass das Telefon seinen Takt mitten in der Fahrt ändert.
+ * - Hinauf, sobald eine Weile wenig zu spät kam und ein Probebild für den nächsten Schritt höchstens GPU_UP
+ *   verspricht; danach Probezeit – zurück nur, wenn ein Probebild dann wirklich über GPU_DOWN liegt (ein Schub
+ *   später Bilder bei kleiner Grafik ist kein Grund). Nach einem Rückzieher dauert es bis zum nächsten Versuch
+ *   doppelt so lang.
  *
- * Wieder hinauf geht es in umgekehrter Folge: nach einigen ruhigen Sekunden ein Probebild; reicht die Grafikzeit auch
- * für den nächsten Schritt mit reichlich Reserve, wird er probiert. Ruckelt es danach gleich wieder, geht es zurück,
- * und bis zum nächsten Versuch vergeht doppelt so viel Zeit.
+ * Maß für „zu spät“ sind die Bilder, die ihren Takt verpassen (frameClock.ts); gemessen wird nur während der Fahrt
+ * (nicht in Pause, Start- oder Ergebniskarte), die ersten Sekunden zählen nicht.
  *
  * Je Spiel merkt sich das Gerät den letzten Stand je Wahl (Stufe und Auflösung): die nächste Fahrt beginnt dort,
  * statt erst wieder ins Ruckeln zu laufen. Für eine neue Wahl dient der Stand einer anderen als Anhalt (dieselbe
@@ -44,34 +44,32 @@ const RES_FIRST = 2;
 const WINDOW = 70;
 /** so lange nach dem Start der Fahrt nicht urteilen (Shader, Landschaft rund um den Start) */
 const WARMUP_S = 1.5;
-/** zu langsam: mehr als so viele Bilder verpassen ihren Takt (jedes zwölfte – ein spürbares Stottern) */
+/** zu langsam: mehr als so viele Bilder eines Fensters verpassen ihren Takt (jedes zwölfte – ein spürbares Stottern) */
 const SLOW = 0.08;
+/** hinauf nur, wenn im gleitenden Mittel der Fenster höchstens so viele zu spät kamen */
+const SLOW_UP = 0.15;
 /** ab so vielen zu späten Bildern: zwei Schritte auf einmal, und das Urteil fällt, sobald so viel vom Fenster zu spät ist */
 const HEAVY = 0.5;
-/** ruhig: höchstens so viele */
-const CALM = 0.015;
 /**
- * ruhige Urteile in Folge vor dem ersten Versuch hinauf (gut 9 s); nach jedem Fehlschlag doppelt so viele (höchstens
- * MAX). Nicht kürzer: jeder Wechsel der Auflösung ruckelt selbst – zwischen Ort und freier Strecke hin und her wäre
- * schlimmer als eine etwas kleinere Auflösung
+ * Urteile seit dem letzten Wechsel vor dem ersten Versuch hinauf (gut 9 s); nach jedem Fehlschlag doppelt so viele
+ * (höchstens MAX). Nicht kürzer: jeder Wechsel der Auflösung ruckelt selbst – zwischen Ort und freier Strecke hin
+ * und her wäre schlimmer als eine etwas kleinere Auflösung
  */
 const NEED0 = 8;
 const NEED_MAX = 96;
+/** nach „keine Luft“ höchstens so viele Urteile bis zum nächsten Probebild (gut 40 s) */
+const NEED_ROOM_MAX = 32;
 /**
- * hinauf nur, wenn die geschätzte Grafikzeit des Probebilds danach höchstens so viel vom Bildtakt braucht – knapp,
- * weil das Zusammensetzen des Bildschirms noch dazukommt (Messfahrten: ab etwa 8 ms verpasste schon jedes zehnte
- * Bild seinen Takt)
+ * Grafikzeit des Probebilds (Anteil des Bildtakts): hinab erst ab GPU_DOWN; zwei Schritte auf einmal ab GPU_HEAVY;
+ * hinauf, wenn die Schätzung für den nächsten Schritt höchstens GPU_UP ergibt. Dazwischen (8–13 ms) bleibt es –
+ * dort läuft das iPhone am rundesten (siehe oben)
  */
-const GPU_ROOM = 0.42;
+const GPU_DOWN = 0.78;
+const GPU_HEAVY = 0.9;
+const GPU_UP = 0.7;
 const CPU_ROOM = 0.6;
 /** Rechenzeit über so viel vom Bildtakt: die Grenze ist die Rechenzeit (Auflösung hilft nicht) */
 const CPU_BOUND = 0.55;
-/**
- * hinab nur, wenn das Probebild mindestens so viel vom Takt braucht (Messfahrten: bei 7–9 ms Grafik kamen auf der
- * kleinsten Stufe noch 9 % der Bilder zu spät – mit und ohne Senken gleich); ab GPU_HEAVY zwei Schritte auf einmal
- */
-const GPU_NEED = 0.5;
-const GPU_HEAVY = 0.75;
 /**
  * so lange gilt ein Probebild (s) – nicht öfter messen, jedes Probebild wartet einmal auf die Grafik. Sagt es „nicht
  * gesenkt“, gilt es doppelt so lange (bis PROBE_MAX_S): am Bodensatz zu später Bilder sonst alle paar Sekunden ein
@@ -172,7 +170,10 @@ export class AutoGfx {
   /** Summe der echten Bildabstände im Fenster (s) */
   private sum = 0;
   private cpu: number[] = [];
-  private calm = 0;
+  /** gleitendes Mittel des Anteils zu später Bilder je Fenster (−1: noch keins) */
+  private lateAvg = -1;
+  /** Urteile seit dem letzten Wechsel */
+  private since = 0;
   private need = NEED0;
   private settle = 0;
   private trial: { kind: 'res' | 'range'; left: number } | null = null;
@@ -185,6 +186,10 @@ export class AutoGfx {
   private gpu: number | null = null;
   private gpuT = -1e9;
   private probeFor = PROBE_S;
+  /** Anteil zu später Bilder beim letzten „nicht gesenkt“: deutlich mehr verlangt ein neues Probebild */
+  private infoFrac = 0;
+  /** Grafikzeit beim letzten „keine Luft“: deutlich weniger heißt, die Lage hat sich geändert – bald wieder probieren */
+  private roomGpu = 0;
 
   constructor(private readonly scope: string) {
     this.reset(true);
@@ -207,7 +212,8 @@ export class AutoGfx {
     this.late = 0;
     this.sum = 0;
     this.cpu = [];
-    this.calm = 0;
+    this.lateAvg = -1;
+    this.since = 0;
     this.need = NEED0;
     this.settle = 0;
     this.trial = null;
@@ -216,6 +222,8 @@ export class AutoGfx {
     this.gpu = null;
     this.gpuT = -1e9;
     this.probeFor = PROBE_S;
+    this.infoFrac = 0;
+    this.roomGpu = 0;
     owner = this;
     setAutoRangeDrop(this.range);
     this.show();
@@ -263,54 +271,48 @@ export class AutoGfx {
     this.late = 0;
     this.sum = 0;
     this.cpu = [];
+    this.lateAvg = this.lateAvg < 0 ? frac : this.lateAvg + (frac - this.lateAvg) * 0.3;
+    this.since += 1;
     if (this.settle > 0) { this.settle -= 1; return null; }
+    // Schritt hinauf gehalten
+    if (this.trial && --this.trial.left <= 0) { this.trial = null; this.need = NEED0; }
 
     if (frac > SLOW) {
-      this.calm = 0;
       this.pending = null;
-      // eben hinauf und gleich wieder zu langsam: zurück, nächster Versuch erst nach doppelt so langer Ruhe
-      if (this.trial) {
-        const kind = this.trial.kind;
-        this.trial = null;
-        this.probeAsk = false;
-        this.need = Math.min(NEED_MAX, this.need * 2);
-        return kind === 'range' ? this.stepRange(1, 'zurück') : this.stepRes(1, 'zurück');
-      }
       // Rechenzeit die Grenze: gleich senken; sonst erst ein Probebild (ein frisches genügt) – auch wenn fast jedes
-      // Bild zu spät kommt: steht der Hauptfaden (Speicherbereinigung), ist eine Sekunde lang jedes zweite Bild zu
-      // spät, ohne dass die Grafik etwas dafür kann (Messfahrt 256: „2,25 → 1,97-fach (26 %)“ bei 6 ms Grafik)
-      const fresh = this.gpu !== null && this.t - this.gpuT <= this.probeFor;
+      // Bild zu spät kommt: Schübe später Bilder bei kleiner Grafik (siehe oben) sind kein Grund zu senken
+      // (Messfahrt 256: „2,25 → 1,97-fach (26 %)“ bei 6 ms Grafik)
+      // (ein altes Probebild gilt nur, solange es nicht deutlich schlimmer wurde – das Telefon drosselt mitten in der
+      // Fahrt, dann muss ein neues her)
+      const maxAge = frac >= 0.25 || frac > this.infoFrac * 1.5 + 0.05 ? PROBE_S : this.probeFor;
+      const fresh = this.gpu !== null && this.t - this.gpuT <= maxAge;
       if (cpuMed >= CPU_BOUND * frame || fresh) return this.down(frac, cpuMed, excess, frame);
       this.pending = { frac, cpuMed, excess };
       this.probeAsk = true;
       return null;
     }
 
-    if (this.trial && --this.trial.left <= 0) {
-      // Schritt hinauf gehalten
-      this.trial = null;
-      this.need = NEED0;
-    }
-    if (frac > CALM) { this.calm = 0; return null; }
-    this.calm += 1;
+    // ruhig genug: hinauf? Erst ein Probebild, dann entscheiden
     if (!this.res && !this.range) return null;
-    if (this.calm < this.need) return null;
-    // genug Ruhe: erst ein Probebild, dann entscheiden
+    if (this.since < this.need || this.lateAvg > SLOW_UP) return null;
     if (this.gpu === null || this.t - this.gpuT > PROBE_S) { this.probeAsk = true; return null; }
     const gpu = this.gpu;
     this.gpu = null;
-    this.calm = 0;
+    // seit dem letzten „keine Luft“ deutlich leichter (das Telefon ist wieder kühl): nicht länger warten
+    if (this.roomGpu && gpu < this.roomGpu * 0.7) this.need = NEED0;
     // umgekehrte Folge: erst die Auflösung bis drei Viertel, dann die Sichtweite, dann die Auflösung ganz
     const kind: 'res' | 'range' = this.res > RES_FIRST || !this.range ? 'res' : 'range';
     const est = kind === 'range' ? gpu * RANGE_COST : gpu * (RES_STEPS[this.res - 1] / RES_STEPS[this.res]) ** 2;
     const cpuNext = kind === 'range' ? cpuMed * 1.15 : cpuMed;
-    if (est > GPU_ROOM * frame || cpuNext > CPU_ROOM * frame) {
+    if (est > GPU_UP * frame || cpuNext > CPU_ROOM * frame) {
       // (noch) keine Luft: später wieder messen
-      this.need = Math.min(NEED_MAX, this.need * 2);
+      this.need = Math.min(NEED_ROOM_MAX, this.need * 2);
+      this.roomGpu = gpu;
+      this.since = 0;
       return null;
     }
     this.trial = { kind, left: TRIAL };
-    const why = `Luft: Grafik ${gpu.toFixed(1)} ms`;
+    const why = `Luft: Grafik ${gpu.toFixed(1)} ms, nächster Schritt etwa ${est.toFixed(1)} ms`;
     return kind === 'range' ? this.stepRange(-1, why) : this.stepRes(-1, why);
   }
 
@@ -318,12 +320,13 @@ export class AutoGfx {
   private down(frac: number, cpuMed: number, excess: number, frame: number): AutoChange | null {
     const pct = `${Math.round(frac * 100)} % der Bilder zu spät`;
     const cpuBound = cpuMed >= CPU_BOUND * frame;
-    // die Grafik klein: das liegt nicht an Auflösung oder Sichtweite – nichts senken
-    if (!cpuBound && this.gpu !== null && this.gpu < GPU_NEED * frame) {
+    // die Grafik nicht über der Grenze: das liegt nicht an Auflösung oder Sichtweite – nichts senken
+    if (!cpuBound && (this.gpu === null || this.gpu < GPU_DOWN * frame)) {
       this.probeFor = Math.min(PROBE_MAX_S, this.probeFor * 2);
+      this.infoFrac = frac;
       if (this.t - this.lastInfo < 10) return null;
       this.lastInfo = this.t;
-      return { kind: 'info', text: `${pct}, Grafik nur ${this.gpu.toFixed(1)} ms, Rechnen ${cpuMed.toFixed(1)} ms – nicht gesenkt` };
+      return { kind: 'info', text: `${pct}, Grafik nur ${this.gpu === null ? '?' : this.gpu.toFixed(1)} ms, Rechnen ${cpuMed.toFixed(1)} ms – nicht gesenkt` };
     }
     const canRange = this.range < rangeDropMax();
     // die Grafik (mit dem Zusammensetzen des Bildschirms) ist fast immer die Grenze: zuerst die Auflösung bis drei
@@ -334,11 +337,17 @@ export class AutoGfx {
       // nichts mehr zu senken: nur notieren, höchstens alle 10 s
       if (this.t - this.lastInfo < 10) return null;
       this.lastInfo = this.t;
-      return { kind: 'info', text: `${pct}, Rechnen ${cpuMed.toFixed(1)} ms – nichts mehr zu senken` };
+      return { kind: 'info', text: `${pct}, Grafik ${this.gpu === null ? '?' : this.gpu.toFixed(1)} ms, Rechnen ${cpuMed.toFixed(1)} ms – nichts mehr zu senken` };
     }
     // weit daneben und die Grafik deutlich über dem Takt: zwei Schritte auf einmal
     const k = frac >= HEAVY && (cpuBound || (this.gpu !== null && this.gpu >= GPU_HEAVY * frame)) ? 2 : 1;
-    const why = `${pct}, im Schnitt ${excess.toFixed(1)} ms zu spät, Rechnen ${cpuMed.toFixed(1)} ms${this.gpu !== null ? `, Grafik ${this.gpu.toFixed(1)} ms` : ''}`;
+    let why = `${pct}, im Schnitt ${excess.toFixed(1)} ms zu spät, Rechnen ${cpuMed.toFixed(1)} ms${this.gpu !== null ? `, Grafik ${this.gpu.toFixed(1)} ms` : ''}`;
+    // eben erst hinauf: zurück, und bis zum nächsten Versuch doppelt so lange Ruhe
+    if (this.trial) {
+      this.trial = null;
+      this.need = Math.min(NEED_MAX, this.need * 2);
+      why = `zurück – ${why}`;
+    }
     return kind === 'res' ? this.stepRes(k, why, resTo) : this.stepRange(k, why);
   }
 
@@ -368,6 +377,9 @@ export class AutoGfx {
     // (ein Probebild von vor dem Wechsel sagt nichts mehr)
     this.gpu = null;
     this.probeFor = PROBE_S;
+    this.infoFrac = 0;
+    this.roomGpu = 0;
+    this.since = 0;
     save(this.scope, this.res, this.range);
     this.show();
   }

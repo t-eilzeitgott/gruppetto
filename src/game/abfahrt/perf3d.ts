@@ -368,9 +368,12 @@ function makeReport(r: Rec): Report {
   let noCall = 0, skipped = 0, withPipe = 0, withUp = 0, withUi = 0, withMain = 0, withStall = 0;
   // Hauptfaden nach dem vorigen Bild noch so lange beschäftigt (ms): das verzögert dieses Bild
   const mainBefore = (i: number) => (i > 0 ? r.after[i - 1] : -1);
-  // Hauptfaden stand zwischen dem vorigen und diesem Bild: Wächter-Lücke abzüglich der Rechenzeit dieses Bildes
-  // (der Wächter läuft alle 4 ms – darunter sagt der Wert nichts)
-  const stallOf = (i: number) => (r.stall[i] < 0 ? -1 : Math.max(0, r.stall[i] - cpu[i]));
+  // Hauptfaden stand zwischen dem vorigen und diesem Bild: Wächter-Lücke über ihrem üblichen Maß (iOS lässt die
+  // setTimeout-Schleife unter Last nur etwa alle 28 ms dran – Messfahrt 258: Median 25 ms; darum zählt nur, was
+  // darüber hinausgeht). −1: in diesem Bild kein Wächter-Aufruf
+  const gapsAll = Float32Array.from(keep.map((i) => r.stall[i]).filter((x) => x > 0)).sort();
+  const gapBase = gapsAll.length ? pct(gapsAll, 0.5) : 0;
+  const stallOf = (i: number) => (r.stall[i] <= 0 ? -1 : Math.max(0, r.stall[i] - gapBase));
   // Takt-Versatz der Stempel (ms gegenüber dem Raster): wie verrauscht Safari die Aufrufe stempelt
   const offHist: Record<string, number> = { '<0': 0, '0-2': 0, '2-4': 0, '4-7': 0, '7-10': 0, '10-15': 0, '>15': 0 };
   const offEdges: [number, string][] = [[0, '<0'], [2, '0-2'], [4, '2-4'], [7, '4-7'], [10, '7-10'], [15, '10-15'], [Infinity, '>15']];
@@ -483,11 +486,11 @@ function makeReport(r: Rec): Report {
       taktfehler: offBeat, taktfehler_prozent: r1((offBeat / Math.max(1, keep.length)) * 100),
       ruckler: hitches, verpasste_bilder: missed, ruckler_cpu_gebunden: cpuBound, ruckler_spaeter_aufruf: lateBound, ruckler_grenze_ms: r1(hitchMs),
       ruckler_ohne_bildaufruf: noCall, ruckler_aufruf_ausgelassen: skipped, ruckler_mit_neuem_zeichenzustand: withPipe, ruckler_mit_hochladen: withUp, ruckler_mit_oberflaeche: withUi, ruckler_mit_hauptfaden: withMain, ruckler_mit_blockiertem_hauptfaden: withStall,
-      hinweis: `takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. ruckler_ohne_bildaufruf: der Browser rief länger als anderthalb Bildschirmtakte nicht auf (Seite, Speicherbereinigung oder Grafikprozess hielten ihn auf); ruckler_aufruf_ausgelassen: Aufrufe kamen, der feste Takt ließ einen aus. Zeichenzustand = erstes Zeichnen einer neuen Kombination (Pipeline im Grafiktreiber). ruckler_mit_hauptfaden: der Hauptfaden war nach dem vorigen Bild noch über ${MAIN_BUSY_MS} ms beschäftigt (hauptfaden_ms: Stil, Layout und Zeichnen der Oberfläche). ruckler_mit_blockiertem_hauptfaden: ein Wächter (setTimeout alle paar ms) kam zwischen dem vorigen und diesem Bild über ${STALL_MS} ms lang nicht dran (blockiert_ms, ohne die Rechenzeit des Bildes: Speicherbereinigung oder andere Arbeit der Seite – nicht die Grafik). takt_versatz_ms: Stempel der gezeichneten Bilder gegenüber ihrem Takt im Raster (Safari stempelt mit der Zeit, zu der das Skript drankommt). Auflösung und Sichtweite regelt die Automatik (Ereignisse quality und range)`,
+      hinweis: `takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. ruckler_ohne_bildaufruf: der Browser rief länger als anderthalb Bildschirmtakte nicht auf (Seite, Speicherbereinigung oder Grafikprozess hielten ihn auf); ruckler_aufruf_ausgelassen: Aufrufe kamen, der feste Takt ließ einen aus. Zeichenzustand = erstes Zeichnen einer neuen Kombination (Pipeline im Grafiktreiber). ruckler_mit_hauptfaden: der Hauptfaden war nach dem vorigen Bild noch über ${MAIN_BUSY_MS} ms beschäftigt (hauptfaden_ms: Stil, Layout und Zeichnen der Oberfläche). ruckler_mit_blockiertem_hauptfaden: ein Wächter (setTimeout-Schleife; iOS lässt sie unter Last nur etwa alle 28 ms dran) kam zwischen dem vorigen und diesem Bild über ${STALL_MS} ms später dran als üblich (blockiert_ms = Lücke über dem Median aller Lücken; −1: kein Aufruf in diesem Bild): Speicherbereinigung oder andere Arbeit der Seite – nicht die Grafik. takt_versatz_ms: Stempel der gezeichneten Bilder gegenüber ihrem Takt im Raster (Safari stempelt mit der Zeit, zu der das Skript drankommt). Auflösung und Sichtweite regelt die Automatik (Ereignisse quality und range)`,
     },
     orte: places,
     grafik_probe: probeAll ?? 'keine Probebilder',
-    bildzeit_ms: stats(dtK), cpu_ms: stats(cpu), verspaetung_ms: stats(late), hauptfaden_ms: afterAll.length ? stats(afterAll) : 'nicht gemessen', blockiert_ms: stallAll.length ? stats(stallAll) : 'nicht gemessen', takt_versatz_ms: offHist,
+    bildzeit_ms: stats(dtK), cpu_ms: stats(cpu), verspaetung_ms: stats(late), hauptfaden_ms: afterAll.length ? stats(afterAll) : 'nicht gemessen', blockiert_ms: stallAll.length ? { ...stats(stallAll), waechter_takt_ms: r1(gapBase) } : 'nicht gemessen', takt_versatz_ms: offHist,
     verteilung_ms: hist, bausteine_ms: secStats,
     ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse', 'bildaufrufe', 'aufruf_luecke_ms', 'hochgeladen_kb', 'hauptfaden_ms', 'blockiert_ms', 'takt_versatz_ms', 'neu'],
     ruckler_liste: hitchRows,
