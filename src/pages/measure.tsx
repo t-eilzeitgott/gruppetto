@@ -108,6 +108,7 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
       zeichenflaeche: cv ? `${cv.width}×${cv.height}` : '?',
       aufloesung: r ? `${fmtRes(gfxRes() * r.quality)}${r.quality < 1 ? ` (Automatik; gewählt ${fmtRes(gfxRes())})` : ''} (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
       sichtweite: `${viewRange().label}${autoRangeDrop() ? ` (Automatik; gewählt ${chosenRange().label})` : ''}`,
+      schattenkarte: gfxOn('schatten') ? (autoView().shadow > 1 ? `alle ${autoView().shadow} Bilder (Automatik)` : 'jedes Bild') : 'aus',
       automatik: gfxAuto() ? 'an' : 'aus',
       // (PC-Grafik und Kantenglättung gehören zur Bühne: nach einem Wechsel gelten sie erst im nächsten Spiel)
       grafik: `${gfxDescribe()}${r && r.pc !== gfxOn('pc') ? ' – PC-Grafik erst ab dem nächsten Spiel' : ''}${r && r.aa !== gfxAA() ? ` – Kantenglättung ${r.aa ? 'noch an' : 'noch aus'} bis zum nächsten App-Start` : ''}`,
@@ -125,7 +126,7 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
   const stop = () => {
     if (!perf.current.rec) return;
     const d = deviceInfo();
-    const r = perf.current.stopRec({ ende: new Date().toISOString(), aufloesung_ende: d.aufloesung, sichtweite_ende: d.sichtweite });
+    const r = perf.current.stopRec({ ende: new Date().toISOString(), aufloesung_ende: d.aufloesung, sichtweite_ende: d.sichtweite, schattenkarte_ende: d.schattenkarte });
     setMeasuring(false);
     if (r) { setReport(r); setCopied(false); lsSet(key, r.text); setLastReport(r.text); }
   };

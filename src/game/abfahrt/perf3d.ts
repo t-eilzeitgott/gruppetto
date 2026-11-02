@@ -120,6 +120,8 @@ class Rec {
   off = new Float32Array(CAP);
   /** Wechseltest: Variante dieses Bildes (0/1; 255: kein Wechseltest) */
   ab = new Uint8Array(CAP).fill(255);
+  /** DOM-Änderungen der Oberfläche seit dem vorigen Bild (MutationObserver) */
+  dom = new Uint16Array(CAP);
   /** Zeichenaufrufe nach Art: Schattendurchgang, Fahrer, Instanzen, kleine Netze (< 100 Ecken) */
   cShadow = new Uint16Array(CAP);
   cSkin = new Uint16Array(CAP);
@@ -236,6 +238,8 @@ export class Perf3D {
       r.calls[i] = Math.min(65535, f.calls);
       r.tris[i] = f.tris;
       if (f.callsBy) { r.cShadow[i] = f.callsBy.shadow; r.cSkin[i] = f.callsBy.skinned; r.cInst[i] = f.callsBy.inst; r.cTiny[i] = f.callsBy.tiny; }
+      r.dom[i] = Math.min(65535, this.domMut);
+      this.domMut = 0;
       r.progs[i] = Math.min(65535, f.progs);
       r.quality[i] = f.quality;
       r.px[i] = f.px;
@@ -267,8 +271,19 @@ export class Perf3D {
     this.upBytes = 0;
   }
 
+  /** DOM-Änderungen seit dem vorigen Bild (Oberfläche: Tacho, Zeit, Abstände …) */
+  private domMut = 0;
+  private domObs: MutationObserver | null = null;
+
   startRec(meta: Record<string, unknown>, ab: AbTest | null = null) {
     this.rec = new Rec(meta);
+    this.domMut = 0;
+    // (jede Änderung der Oberfläche zählt – Text, Attribute, Knoten; ohne DOM, z. B. im Test, bleibt es bei 0)
+    try {
+      this.domObs?.disconnect();
+      this.domObs = new MutationObserver((list) => { this.domMut += list.length; });
+      this.domObs.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+    } catch { this.domObs = null; }
     this.ab = ab;
     this.abCur = -1;
     this.hitches = 0;
@@ -333,6 +348,8 @@ export class Perf3D {
     this.rec = null;
     this.uiObs?.disconnect();
     this.uiObs = null;
+    this.domObs?.disconnect();
+    this.domObs = null;
     clearTimeout(this.guardTimer);
     if (this.ab) { try { if (this.ab.end) this.ab.end(); else this.ab.apply(false); } catch { /* egal */ } }
     const ab = this.ab;
@@ -518,6 +535,23 @@ function makeReport(r: Rec, ab: AbTest | null): Report {
     const detail = det.length > 4 ? [...det.slice(0, 4), `… ${det.length - 4} weitere`] : det;
     return [r1(r.t[i]), r1(dt[i]), r1(cpu[i]), r1(late[i]), secs, r.calls[i], Math.round(r.tris[i] / 1000), r2(r.quality[i]), Math.round(r.z[i]), Math.round(r.v[i] * 3.6), PLACES[r.place[i]], PHASES[r.phase[i]], r.riders[i], evText(bits), r.calls2[i], r1(r.gap[i]), Math.round(r.up[i] + (i > 0 ? r.up[i - 1] : 0)), r1(mainBefore(i)), r1(stallOf(i)), r1(r.off[i]), detail.join(' | ')];
   });
+  // Umfeld der schlimmsten Ruckler, Bild für Bild (−4 … +1): Bildzeit, Bildaufrufe und ihr größter Abstand, Stempel
+  // gegenüber dem Takt, Rechnen, Hauptfaden danach, Wächter-Lücke, Oberfläche (DOM-Änderungen), Probebild
+  const around = top.slice(0, 24).map((i) => {
+    const rows: (number | string)[][] = [];
+    for (let j = Math.max(0, i - 4); j <= Math.min(n - 1, i + 1); j++) {
+      rows.push([r1(r.t[j]), r1(dt[j]), r.calls2[j], r1(r.gap[j]), r1(r.off[j]), r1(cpu[j]), r1(r.after[j]), r1(stallOf(j)), r.dom[j], r.gpu[j] >= 0 ? r1(r.gpu[j]) : '', evText(r.ev[j])]);
+    }
+    return rows;
+  });
+  // Ruckler in Folge: wie lang die Schübe sind (Bilder direkt hintereinander über der Grenze)
+  const runs: Record<string, number> = { '1': 0, '2': 0, '3-5': 0, '6-10': 0, '>10': 0 };
+  { let run = 0; const flush = () => { if (!run) return; runs[run === 1 ? '1' : run === 2 ? '2' : run <= 5 ? '3-5' : run <= 10 ? '6-10' : '>10']++; run = 0; };
+    for (const i of keep) { if (dt[i] > hitchLimit(r.period[i] || period)) run++; else flush(); } flush(); }
+  // Oberfläche: DOM-Änderungen je Bild (Median, p90) und Anteil der Bilder mit Änderung
+  let domFrames = 0;
+  for (const i of keep) if (r.dom[i] > 0) domFrames++;
+  const domStats = stats(keep.map((i) => r.dom[i]));
   // Verlauf je 2 s
   const timeline: (number | string)[][] = [];
   for (let i0 = 0; i0 < n;) {
@@ -560,6 +594,10 @@ function makeReport(r: Rec, ab: AbTest | null): Report {
     verteilung_ms: hist, bausteine_ms: secStats,
     ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse', 'bildaufrufe', 'aufruf_luecke_ms', 'hochgeladen_kb', 'hauptfaden_ms', 'blockiert_ms', 'takt_versatz_ms', 'neu'],
     ruckler_liste: hitchRows,
+    ruckler_folgen: runs,
+    ruckler_umfeld_spalten: ['t_s', 'bild_ms', 'bildaufrufe', 'aufruf_luecke_ms', 'takt_versatz_ms', 'cpu_ms', 'hauptfaden_ms', 'blockiert_ms', 'dom_aenderungen', 'grafik_probe_ms', 'ereignisse'],
+    ruckler_umfeld: around,
+    oberflaeche: { dom_aenderungen_je_bild: domStats, anteil_bilder_mit_aenderung_prozent: r1((domFrames / Math.max(1, keep.length)) * 100) },
     verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'hauptfaden_max', 'blockiert_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'grafikstufe', 'ort', 'phase', 'fahrer_modelle', 'takt_ms'],
     verlauf_2s: timeline,
     ereignisse: r.events.slice(0, 400).map((e) => [r1(e.t), e.kind, e.text]),
