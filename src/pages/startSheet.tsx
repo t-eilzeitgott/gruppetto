@@ -18,6 +18,8 @@ import { GameHead } from '../ui/GameHead';
 import { Icon } from '../ui/Icon';
 import { Avatar, cx } from '../ui/kit';
 import { FpsSwitch, GfxSliders, PlayIcon } from './gameKit';
+import { teamRadio } from '../game/teams';
+import { berlinDayKey } from '../game/abfahrt/rng';
 
 export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losfahren', onStart, onClose, plain, after }: {
   game: GameId;
@@ -69,6 +71,7 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
             </div>
             {children ? <div className="abf-sheet__body abf-scroll">{children}</div> : null}
             <div className="abf-sheet__foot">
+              <TeamRadio game={game} />
               <button type="button" className="btn btn--primary btn--full abf-go" onClick={go} disabled={leaving}><span>{cta}</span></button>
               {after}
             </div>
@@ -76,6 +79,17 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
         )}
       </div>
     </div>
+  );
+}
+
+/** Teamfunk vor dem Start: ein Satz vom sportlichen Leiter von Team gruppetto (je Tag und Spiel ein anderer) */
+function TeamRadio({ game }: { game: string }) {
+  const r = teamRadio(berlinDayKey(), game);
+  return (
+    <p className="team-radio">
+      <span className="team-radio__badge" aria-hidden="true">g<i>.</i></span>
+      <span className="team-radio__text"><b>Teamfunk · {r.ds}</b> „{r.line}“</span>
+    </p>
   );
 }
 

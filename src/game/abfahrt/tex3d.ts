@@ -1,6 +1,7 @@
 /** Farbtexturen für den WebGL-Renderer (prozedural, nahtlos kachelbar) */
 import { mulberry32, type Rng } from './rng';
 import { fitFont } from './textfit';
+import { TEAMS, drawWordmark, type Team } from '../teams';
 
 function canvas(w: number, h: number) {
   const c = document.createElement('canvas');
@@ -341,19 +342,31 @@ export function roundTex(inner: string, outer: string, size = 64): HTMLCanvasEle
   return cv;
 }
 
-/** Schriftzug für Torbögen */
-export function bannerTex(text: string, sub: string, bg: string, fg: string): HTMLCanvasElement {
+/** Schriftzug für Torbögen; sponsor: links und rechts je eine Werbefläche eines Teams (wie an echten Zielbögen) */
+export function bannerTex(text: string, sub: string, bg: string, fg: string, sponsor: Team | null = null): HTMLCanvasElement {
   const W = 1024;
   const H = 160;
   const cv = canvas(W, H);
   const c = cv.getContext('2d')!;
   c.fillStyle = bg;
   c.fillRect(0, 0, W, H);
+  const pw = sponsor ? 230 : 0;
+  if (sponsor) {
+    for (const x of [0, W - pw]) {
+      c.save();
+      c.translate(x, 0);
+      c.beginPath();
+      c.rect(0, 0, pw, H);
+      c.clip();
+      teamBoard(c, sponsor, pw, H, { tagline: false });
+      c.restore();
+    }
+  }
   c.fillStyle = fg;
   c.textAlign = 'center';
   c.textBaseline = 'middle';
   const font = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif';
-  fitFont(c, text, W * 0.92, sub ? 64 : 80, 4, 20, (fs) => `800 ${fs}px ${font}`);
+  fitFont(c, text, (W - pw * 2) * 0.92, sub ? 64 : 80, 4, 20, (fs) => `800 ${fs}px ${font}`);
   c.fillText(text, W / 2, sub ? H * 0.38 : H * 0.52);
   if (sub) {
     c.globalAlpha = 0.85;
@@ -361,6 +374,62 @@ export function bannerTex(text: string, sub: string, bg: string, fg: string): HT
     c.fillText(sub, W / 2, H * 0.76);
   }
   return cv;
+}
+
+/**
+ * Werbefläche eines Teams im Querformat (Bande, Ende eines Bogens, Fernsehen): Grundfarbe, Teammuster als Andeutung,
+ * links ein Block mit dem Teamkürzel, rechts der Sponsorschriftzug in der Teamschrift, darunter der Slogan.
+ */
+export function teamBoard(c: CanvasRenderingContext2D, t: Team, W: number, H: number, opts: { tagline?: boolean } = {}) {
+  const tag = opts.tagline ?? true;
+  c.save();
+  c.fillStyle = t.primary;
+  c.fillRect(0, 0, W, H);
+  // Muster, zurückhaltend
+  c.save();
+  c.beginPath();
+  c.rect(0, 0, W, H);
+  c.clip();
+  c.fillStyle = t.secondary;
+  switch (t.pattern) {
+    case 'dot': c.beginPath(); c.arc(W - H * 0.18, H * 0.2, H * 0.09, 0, Math.PI * 2); c.fillStyle = t.secondary; c.fill(); break;
+    case 'peaks': c.globalAlpha = 0.22; c.beginPath(); c.moveTo(0, H); for (let i = 0; i <= 10; i++) c.lineTo((i / 10) * W, i % 2 ? H * 0.62 : H * 0.86); c.lineTo(W, H); c.fill(); break;
+    case 'pinstripe': c.fillStyle = t.accent; c.globalAlpha = 0.25; for (let x = 4; x < W; x += 10) c.fillRect(x, 0, 1, H); break;
+    case 'band': c.fillRect(0, H * 0.86, W, H * 0.14); break;
+    case 'sash': c.beginPath(); c.moveTo(W - H * 0.3, 0); c.lineTo(W - H * 0.12, 0); c.lineTo(W, H * 0.25); c.lineTo(W, H * 0.6); c.fill(); break;
+    case 'fade': { const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0.4, 'rgba(0,0,0,0)'); g.addColorStop(1, t.secondary); c.globalAlpha = 0.45; c.fillStyle = g; c.fillRect(0, 0, W, H); break; }
+    case 'hoops': c.fillRect(0, H * 0.06, W, H * 0.04); c.fillStyle = t.accent; c.fillRect(0, H * 0.9, W, H * 0.04); break;
+    case 'split': c.beginPath(); c.moveTo(0, H * 0.97); c.lineTo(W, H * 0.86); c.lineTo(W, H); c.lineTo(0, H); c.fill(); break;
+    case 'checker': { const q = H / 16; for (let x = 0; x < W; x += q) for (let r = 0; r < 2; r++) { c.fillStyle = ((x / q + r) & 1) ? t.secondary : t.accent; c.fillRect(x, H - (2 - r) * q, q, q); } break; }
+    case 'flash': c.beginPath(); c.moveTo(0, H * 0.94); c.lineTo(W * 0.55, H * 0.84); c.lineTo(W * 0.56, H * 0.9); c.lineTo(W, H * 0.8); c.lineTo(W, H * 0.86); c.lineTo(W * 0.44, H * 0.96); c.lineTo(W * 0.43, H * 0.9); c.lineTo(0, H); c.fill(); break;
+  }
+  c.restore();
+  // Block mit Kürzel (nur auf breiten Flächen – schmale tragen allein den Schriftzug)
+  const block = W >= H * 2.2;
+  const bw = block ? H * 0.62 : 0;
+  if (block) {
+    c.fillStyle = t.secondary;
+    c.fillRect(H * 0.12, H * 0.19, bw, H * 0.62);
+    c.fillStyle = t.primary;
+    c.font = `900 ${Math.round(H * 0.24)}px -apple-system, "SF Pro Display", Roboto, Arial, sans-serif`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(t.code, H * 0.12 + bw / 2, H * 0.51);
+  }
+  // Schriftzug und Slogan
+  const x0 = block ? H * 0.12 + bw + H * 0.1 : H * 0.08;
+  const mid = x0 + (W - x0 - H * 0.08) / 2;
+  const tw = W - x0 - H * 0.12;
+  drawWordmark(c, t, t.sponsor, mid, tag ? H * 0.42 : H * 0.52, tw, Math.round(H * (tag ? 0.42 : 0.5)), t.ink, t.id === 'gruppetto' ? t.secondary : t.ink);
+  if (tag) {
+    c.globalAlpha = 0.85;
+    c.fillStyle = t.ink;
+    let px = Math.round(H * 0.16);
+    c.font = `600 ${px}px -apple-system, "SF Pro Text", Roboto, Arial, sans-serif`;
+    while (c.measureText(t.tagline).width > tw && px > 6) { px -= 1; c.font = `600 ${px}px -apple-system, "SF Pro Text", Roboto, Arial, sans-serif`; }
+    c.fillText(t.tagline, mid, H * 0.74);
+  }
+  c.restore();
 }
 
 // ------------------------------------------------------------------ Werbebanden und Pappschilder
@@ -386,20 +455,13 @@ const MARKER = '"Marker Felt", "Chalkboard SE", "Comic Sans MS", "Bradley Hand",
 
 /** erfundene Marken – Radsport-Humor statt echter Sponsoren */
 const ADS: { t: string; s: string; bg: string; fg: string; ac?: string; style?: 'round' | 'italic' | 'stripe' }[] = [
-  { t: 'gruppetto', s: 'Tippen. Leiden. Siegen.', bg: '#ff5fa2', fg: '#ffffff', style: 'round' },
   { t: 'BIDON-BAR', s: 'kalt · nass · gratis', bg: '#0b5394', fg: '#ffffff', ac: '#7fd3ff' },
   { t: 'KETTE RECHTS', s: 'Fahrradwerkstatt', bg: '#111214', fg: '#ffd400', style: 'italic' },
-  { t: 'POLENTA POWER', s: 'seit 1923', bg: '#ffd400', fg: '#1a1a1a', ac: '#c0392b' },
   { t: 'Gelateria Tornante', s: '48 Sorten · 48 Kehren', bg: '#f6efe2', fg: '#d63384', style: 'round' },
-  { t: 'ESPRESSO DOPPIO', s: 'Doping für alle', bg: '#4b2e1e', fg: '#f3e2c7', style: 'stripe' },
   { t: 'Bremsen?', s: 'Optional.', bg: '#e74c3c', fg: '#ffffff', style: 'italic' },
-  { t: 'WINDSCHATTEN', s: 'Versicherung AG', bg: '#169c88', fg: '#ffffff' },
   { t: 'Kaiserschmarrn', s: 'Hütte · 2 km', bg: '#ffffff', fg: '#7d1f2a', style: 'round' },
   { t: 'SPRINT-SALAMI', s: 'luftgetrocknet', bg: '#7d1f2a', fg: '#ffffff', ac: '#ffd400' },
-  { t: 'SITZCREME', s: 'Deluxe · für lange Tage', bg: '#ffffff', fg: '#2e86de', style: 'stripe' },
-  { t: 'TOUR27', s: 'Jetzt mittippen', bg: '#1f2a44', fg: '#ff8fc0', style: 'round' },
   { t: 'PASTA LANTERNA', s: 'für das Gruppetto', bg: '#2f9e5a', fg: '#ffffff', ac: '#ffffff' },
-  { t: 'Schlauch-Express', s: '24 h Pannendienst', bg: '#f1c40f', fg: '#111214', style: 'italic' },
   { t: 'BERGPREIS BIER', s: 'alkoholfrei · leider', bg: '#0e3b2e', fg: '#f1c40f' },
   { t: 'Pizzeria Kehre 7', s: 'Holzofen · Aussicht', bg: '#ffffff', fg: '#c0392b', style: 'round' },
   // Essen & Trinken
@@ -410,7 +472,6 @@ const ADS: { t: string; s: string; bg: string; fg: string; ac?: string; style?: 
   { t: 'CAPPUCCINO-STOPP', s: 'nur vor 11 Uhr. Ernsthaft.', bg: '#6f4e37', fg: '#fff4e0', style: 'italic' },
   { t: 'Banane GmbH', s: 'gelb wie das Trikot', bg: '#ffe14d', fg: '#3b2f00', style: 'round' },
   // Rad & Material
-  { t: 'CARBON-KUMMER', s: 'leichter als dein Konto', bg: '#1b1b1d', fg: '#e8e8e8', style: 'stripe' },
   { t: 'NOCH EIN RAD?', s: 'N+1 Finanzierung', bg: '#2e86de', fg: '#ffffff', style: 'italic' },
   { t: 'Speichen Schmidt', s: 'wir ziehen alles nach', bg: '#ffffff', fg: '#34495e', ac: '#e67e22' },
   { t: 'RITZEL-REHA', s: 'für Knie ab 40', bg: '#16a085', fg: '#ffffff', style: 'round' },
@@ -422,14 +483,15 @@ const ADS: { t: string; s: string; bg: string; fg: string; ac?: string; style?: 
   { t: 'LEISTUNGSDATEN AG', s: 'lügt nie, leider', bg: '#5b2c6f', fg: '#ffffff', ac: '#f1c40f' },
   { t: 'WATT-WETTE', s: 'Bauchgefühl statt Powermeter', bg: '#ff5733', fg: '#ffffff', style: 'italic' },
   { t: 'Gegenwind GmbH', s: 'immer für dich da', bg: '#aed6f1', fg: '#1b4f72', style: 'round' },
-  { t: 'SERPENTINEN-SPARKASSE', s: 'es geht aufwärts', bg: '#d63031', fg: '#ffffff', ac: '#ffffff' },
   // gruppetto in eigener Sache
   { t: 'gruppetto', s: 'Hinten ist das neue Vorne', bg: '#1f2a44', fg: '#ff8fc0', style: 'round' },
   { t: 'TIPP-SCHLUSS', s: '12 Uhr. Kein Pardon.', bg: '#ff5fa2', fg: '#ffffff', style: 'italic' },
   { t: 'Außenseiter-Bonus', s: 'einsam, aber reich', bg: '#ffffff', fg: '#d6249f', style: 'round' },
   { t: 'gruppetto', s: 'Wir kommen an. Irgendwann.', bg: '#ffd400', fg: '#1f2a44', style: 'round' },
 ];
-export const AD_COUNT = ADS.length;
+/** die ersten Zellen des Atlas: je Team eine Bande (in der Reihenfolge von TEAMS) */
+export const TEAM_ADS = TEAMS.length;
+export const AD_COUNT = TEAM_ADS + ADS.length;
 
 /** Vorrat an Sprüchen für die Pappschilder – je Rennen kommt eine neue Auswahl auf die Schilder */
 const SIGN_POOL = ['ALLEZ!', 'FORZA!', 'DAJE!', 'HOPP HOPP', 'VAI VAI!', 'GO GO GO', '♥ GIRO', 'KEINE BREMSE!', 'HALLO MAMA', 'SCHNELLER!',
@@ -497,9 +559,16 @@ export function adsTex(names: string[], seed = 77): HTMLCanvasElement {
   };
   c.textAlign = 'center';
   c.textBaseline = 'middle';
-  // Banden: 2 m × 0,8 m – gezeichnet in 320×128 und auf 256×128 gestaucht
-  for (let i = 0; i < AD_COUNT; i++) {
-    const ad = ADS[i];
+  // Banden: 2 m × 0,8 m – gezeichnet in 320×128 und auf 256×128 gestaucht; vorn die Teams
+  for (let i = 0; i < TEAM_ADS; i++) {
+    c.save();
+    c.translate((i % 4) * 256, Math.floor(i / 4) * 128);
+    c.scale(256 / 320, 1);
+    teamBoard(c, TEAMS[i], 320, 128);
+    c.restore();
+  }
+  for (let i = TEAM_ADS; i < AD_COUNT; i++) {
+    const ad = ADS[i - TEAM_ADS];
     const x0 = (i % 4) * 256;
     const y0 = Math.floor(i / 4) * 128;
     c.save();
@@ -507,6 +576,8 @@ export function adsTex(names: string[], seed = 77): HTMLCanvasElement {
     c.scale(256 / 320, 1);
     c.fillStyle = ad.bg;
     c.fillRect(0, 0, 320, 128);
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
     if (ad.style === 'stripe') {
       c.fillStyle = ad.fg;
       c.globalAlpha = 0.18;
@@ -616,6 +687,15 @@ const FAN_ROW = 224;
 /** Höhe : Breite eines Bands im Atlas */
 export const FAN_ASPECT = (FAN_ROW - 4) / 1024;
 
+/** so viele der Bänder sind gedruckte Sponsorbänder der Teams (die letzten Zellen) */
+export const FAN_SPONSORED = 3;
+/** Teams auf den Sponsorbändern eines Rennens: Team gruppetto fast immer, dazu zwei andere – je Rennen andere */
+export function fanSponsors(seed: number): Team[] {
+  const r = mulberry32(seed ^ 0x3c6ef372);
+  const rivals = shuffled(TEAMS.slice(1), r);
+  return r() < 0.8 ? [TEAMS[0], rivals[0], rivals[1]] : [rivals[0], rivals[1], rivals[2]];
+}
+
 /** UV-Rechteck [u0, v0, u1, v1] eines Spruchbands */
 export function fanCell(i: number): [number, number, number, number] {
   const k = ((i % FAN_CELLS) + FAN_CELLS) % FAN_CELLS;
@@ -646,10 +726,27 @@ export function fanAtlas(names: string[], seed: number): HTMLCanvasElement {
   const texts = fanTexts(names, seed);
   const r = mulberry32(seed ^ 0x2545f491);
   const look0 = Math.floor(r() * FAN_LOOKS.length);
+  const sponsors = fanSponsors(seed);
   for (let k = 0; k < FAN_CELLS; k++) {
     const L = FAN_LOOKS[(look0 + k) % FAN_LOOKS.length];
     const y0 = k * FAN_ROW;
     const H = FAN_ROW;
+    const sp = sponsors[k - (FAN_CELLS - FAN_SPONSORED)];
+    if (sp) {
+      // gedrucktes Sponsorband (Plane statt Bettlaken): straff, sauber, mit Saum
+      c.save();
+      c.beginPath();
+      c.rect(0, y0, W, H);
+      c.clip();
+      c.translate(0, y0 + 2);
+      teamBoard(c, sp, W, H - 4);
+      c.fillStyle = 'rgba(255,255,255,0.08)';
+      c.fillRect(0, 0, W, (H - 4) * 0.45);
+      c.fillStyle = 'rgba(0,0,0,0.25)';
+      for (const x of [14, W - 22]) for (const y of [14, H - 26]) c.fillRect(x, y, 8, 8);
+      c.restore();
+      continue;
+    }
     c.save();
     c.beginPath();
     c.rect(0, y0, W, H);

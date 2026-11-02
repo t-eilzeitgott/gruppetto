@@ -163,9 +163,9 @@ export function writeRing(els: Els, last: Record<string, string>, s: RingState) 
 function sponsorFor(title: string): string | null {
   if (/flamme rouge|letzter kilometer/i.test(title)) return 'LANTERNE ROUGE';
   if (/^zwischenzeit/i.test(title)) return 'TICKTACK & SPEICHE';
-  if (/^gipfel|bergwertung/i.test(title)) return 'HUNGERAST';
-  if (/zielsprint|jetzt antreten/i.test(title)) return 'TICKTACK & SPEICHE';
-  if (/^abfahrt/i.test(title)) return 'KETTENFETT';
+  if (/^gipfel|bergwertung/i.test(title)) return 'ALPENGLÜH';
+  if (/zielsprint|jetzt antreten/i.test(title)) return 'HUNGERAST';
+  if (/^abfahrt/i.test(title)) return 'NORDKAP';
   return null;
 }
 
@@ -212,12 +212,25 @@ const ADS: Ad[] = [
     icon: I(<><circle cx="6" cy="17" r="3.5" /><circle cx="18" cy="17" r="3.5" /><path d="M6 17l4-7h5l3 7M10 10 8.5 6.5H6M15 10l1-3h2.5" /></>),
   },
   {
+    brand: 'WINDSCHATTEN', line: 'Versicherung · Wir fahren für Sie hinterher', c: '#3fd1bb', ink: '#032420', font: 'heavy',
+    icon: I(<><path d="M3 8h11a3 3 0 1 0-3-3" /><path d="M3 12h15a3 3 0 1 1-3 3" /><path d="M3 16h7" /></>),
+  },
+  {
+    brand: 'POLENTA POWER', line: 'Molino Rossi · gemahlen seit 1923', c: '#ffd400', ink: '#2a2100', font: 'heavy',
+    icon: I(<><path d="M4 11h16l-1.5 7.5a2 2 0 0 1-2 1.5h-9a2 2 0 0 1-2-1.5z" /><path d="M8 11c0-2.5 1.8-4 4-4s4 1.5 4 4M12 7V4" /></>),
+  },
+  {
     brand: 'Wadenglanz', line: 'Rasiert. Geölt. Fotogen.', c: '#8ccaff', ink: '#06203a', font: 'script',
     icon: I(<><path d="M12 3s5.5 6.2 5.5 10a5.5 5.5 0 0 1-11 0C6.5 9.2 12 3 12 3z" /><path d="M9.5 13.5a2.5 2.5 0 0 0 2.5 2.5" /></>),
   },
   {
     brand: 'GRUPPETTO-REISEN', line: 'Ankommen ist alles – Karenzzeit inklusive', c: '#ffd23f', ink: '#2a2100', font: 'round',
     icon: I(<><rect x="3" y="5" width="18" height="12" rx="2.5" /><path d="M3 11h18M7.5 17v2.5M16.5 17v2.5M8 5V3.5h8V5" /></>),
+  },
+  // Sponsoren der Teams im Feld (teams.ts) – im Wechsel mit den übrigen Marken
+  {
+    brand: 'ALPENGLÜH', line: 'Strom von ganz oben – Partner von Alpenglüh Energie Racing', c: '#ff5a64', ink: '#2a0507', font: 'heavy',
+    icon: I(<><path d="M3 19 9.5 8l3.5 6 2.5-4L21 19z" /><path d="M13 3.5 11 8h3l-2 4.5" /></>),
   },
   {
     brand: 'KETTENFETT', line: 'Läuft wie geschmiert – auch im Regen von Roubaix', c: '#c9cbd6', ink: '#14151a', font: 'heavy',
@@ -228,8 +241,16 @@ const ADS: Ad[] = [
     icon: I(<><path d="M9 6h6l1.5 3v8L15 20H9l-1.5-3V9z" /><path d="M12 2.5V6M9 9h6M12 12.5v2.5" /></>),
   },
   {
+    brand: 'Banca Serpentina', line: 'Es geht aufwärts. Seit 1871.', c: '#d9b24c', ink: '#1d1503', font: 'serif',
+    icon: I(<><path d="M4 9.5 12 4l8 5.5" /><path d="M5.5 10v7M10 10v7M14 10v7M18.5 10v7M3.5 19.5h17" /></>),
+  },
+  {
     brand: 'SATTELFEST', line: 'Versichert bis zur Karenzzeit', c: '#7d9bff', ink: '#081436', font: 'round',
     icon: I(<><path d="M12 3 4.5 6v5.5c0 4.3 3.1 7.7 7.5 9.5 4.4-1.8 7.5-5.2 7.5-9.5V6z" /><path d="m8.8 12 2.2 2.2 4.2-4.4" /></>),
+  },
+  {
+    brand: 'Café du Col', line: 'Un express, et on monte – Lavande-Röstung', c: '#b8a3f5', ink: '#170e33', font: 'script',
+    icon: I(<><path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z" /><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16M9 3.5c-.8 1 .8 2 0 3M12.5 3.5c-.8 1 .8 2 0 3" /></>),
   },
   {
     brand: 'PAVÉ-PFLASTER', line: 'Hält auch auf Kopfsteinpflaster', c: '#e7b97c', ink: '#2a1a06', font: 'heavy',

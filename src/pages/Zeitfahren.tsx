@@ -23,12 +23,13 @@ import { Skel, SkelText } from '../ui/skeleton';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
 import type { Renderer3D } from '../game/abfahrt/render3d';
-import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent } from './Game';
+import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon } from './Game';
 import {
   FinaleBoard, HowTo, dist, lsGet, lsSet, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 import type { Profile } from '../lib/types';
+import { teamKit } from '../game/teams';
 
 const LS_RUNS = 'gruppetto.zeitfahren.runs';
 const LS_BEST = 'gruppetto.zeitfahren.best';
@@ -83,7 +84,7 @@ export function warmZeitfahren(a: WarmArgs, reuse = false): Promise<void> {
     dayKey: a.day,
     names: a.names,
     rider: a.me.display_name ?? 'Du',
-    kit: { jersey: a.accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: '1', bike: a.bike },
+    kit: teamKit('gruppetto', '1', { bike: a.bike }),
     town,
     ghosts: [],
     myBest: null,
@@ -144,12 +145,11 @@ export function ZeitfahrenPage() {
   const leader = useMemo(() => [...ghosts].filter((g) => !g.bot && !g.old).sort((a, b) => a.timeMs - b.timeMs)[0] ?? null, [ghosts]);
 
   const makeEngine = () => {
-    const accent = readAccent();
     const eng = new TimeTrial({
       dayKey: day,
       names,
       rider: me.display_name ?? 'Du',
-      kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: String(Math.max(1, (today.data?.findIndex((b) => b.user_id === me.id) ?? -1) + 1)), bike: bikes.current },
+      kit: teamKit('gruppetto', String(Math.max(1, (today.data?.findIndex((b) => b.user_id === me.id) ?? -1) + 1)), { bike: bikes.current }),
       town: ref,
       ghosts,
       myBest,

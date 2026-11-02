@@ -32,6 +32,7 @@ import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './start
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
 import { PauseIcon, PlayIcon, useCountUp } from './gameKit';
 import { healFixedSoon } from '../ui/fixedHeal';
+import { teamKit } from '../game/teams';
 
 export { PauseIcon, PlayIcon, useCountUp };
 
@@ -79,7 +80,7 @@ export function warmAbfahrt(a: WarmArgs, reuse = false): Promise<void> {
     dayKey: a.day,
     names: a.names,
     friends: [],
-    kit: { jersey: a.accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: '27', bike: a.bike },
+    kit: teamKit('gruppetto', '27', { bike: a.bike }),
     best: 0,
     missions: dailyMissions(a.day),
     missionsDone: new Set(),
@@ -159,12 +160,11 @@ export function GamePage() {
   }, [season.data, members.data, me.id]);
 
   const makeEngine = (playing: boolean) => {
-    const accent = readAccent();
     const eng = new Abfahrt({
       dayKey: day,
       names,
       friends: playing ? friends : [],
-      kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: '27', bike: bikes.current },
+      kit: teamKit('gruppetto', '27', { bike: bikes.current }),
       best: myBest,
       missions,
       missionsDone: new Set(doneIds),

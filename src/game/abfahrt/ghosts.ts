@@ -88,7 +88,8 @@ export class GhostPack {
     sorted.forEach((g, i) => {
       ghostAt(g.trace, 0, this.pos);
       const skin = SKINS[hashStr(g.id) % SKINS.length];
-      const kit: Kit = { jersey: g.color, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin, shoes: '#ffffff', number: String(i + 1), bike: g.bike };
+      // Mitspieler fahren als Teamkollegen: gruppetto-Trikot in ihrer Avatarfarbe
+      const kit: Kit = { jersey: g.color, side: '#1f2a44', helmet: '#1f2a44', shorts: '#1f2a44', skin, shoes: '#ffffff', number: String(i + 1), bike: g.bike, team: 'gruppetto' };
       this.opps.push({
         id: idBase + i, z: this.pos.z, x: this.pos.x, vx: 0, v: 0, tx: this.pos.x, f: 1, kit,
         pedal: hashStr(g.id) % 6, lean: 0, tuck: 0.5, brake: 0, passed: false, group: -1, bump: 0, attacker: false, stand: 0,

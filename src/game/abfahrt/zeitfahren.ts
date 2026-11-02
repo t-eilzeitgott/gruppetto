@@ -263,7 +263,7 @@ export class TimeTrial {
       const skin = SKINS[hashStr(g.id) % SKINS.length];
       const kit: Kit = g.bot
         ? { jersey: '#8d939b', side: '#2a2d33', helmet: '#2a2d33', shorts: '#2a2d33', skin, shoes: '#2a2d33', number: 'T', bike: g.bike }
-        : { jersey: g.color, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin, shoes: '#ffffff', number: String(i + 1), bike: g.bike };
+        : { jersey: g.color, side: '#1f2a44', helmet: '#1f2a44', shorts: '#1f2a44', skin, shoes: '#ffffff', number: String(i + 1), bike: g.bike, team: 'gruppetto' };
       this.opps.push({
         id: 1000 + i, z: this.ghostPos.z, x: this.ghostPos.x, vx: 0, v: 0, tx: this.ghostPos.x, f: 1, kit,
         pedal: hashStr(g.id) % 6, lean: 0, tuck: 0.6, brake: 0, passed: false, group: -1, bump: 0, attacker: false, stand: 0,

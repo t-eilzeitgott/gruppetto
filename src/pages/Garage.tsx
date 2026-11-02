@@ -7,11 +7,11 @@ import type { Kit } from '../game/abfahrt/rider';
 import { useBikes } from '../ui/useBikes';
 import { cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
+import { teamKit } from '../game/teams';
 
 /** Trikot des Spielers (wie in den Spielen) – das Teamrad wird darin lackiert */
 function playerKit(): Kit {
-  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#ff5fa2';
-  return { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: '27' };
+  return teamKit('gruppetto', '27');
 }
 
 /** Radgarage: alle Räder im Überblick, das gewählte auf der Drehscheibe, Freischalt-Fortschritt */

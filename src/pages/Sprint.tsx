@@ -23,7 +23,8 @@ import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
 import type { Renderer3D } from '../game/abfahrt/render3d';
-import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, readAccent, useCountUp } from './Game';
+import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, useCountUp } from './Game';
+import { teamKit } from '../game/teams';
 import {
   FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
@@ -57,7 +58,7 @@ export function warmSprint(a: WarmArgs, reuse = false): Promise<void> {
     rivals: rivalNames(a.data, chosen.id),
     trains: sprintTrains(a.data, chosen.id, a.day),
     mate: teamMate(a.data, chosen.id, 'sprint')?.name ?? null,
-    kit: { jersey: a.accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number, bike: a.bike },
+    kit: teamKit('gruppetto', chosen.number, { bike: a.bike }),
     town,
     onEvent: () => undefined,
     onOver: () => undefined,
@@ -106,7 +107,6 @@ export function SprintPage() {
   const myBest = Math.max(best, mine?.best ?? 0);
 
   const makeEngine = () => {
-    const accent = readAccent();
     const eng = new SprintRace({
       dayKey: day,
       names,
@@ -114,7 +114,7 @@ export function SprintPage() {
       rivals: rivalNames(tourData.data, chosen.id),
       trains: sprintTrains(tourData.data, chosen.id, day),
       mate: teamMate(tourData.data, chosen.id, 'sprint')?.name ?? null,
-      kit: { jersey: accent, side: '#ffffff', helmet: '#ffffff', shorts: '#16171a', skin: '#f0c4a0', shoes: '#ffffff', number: chosen.number, bike: bikes.current },
+      kit: teamKit('gruppetto', chosen.number, { bike: bikes.current }),
       town: ref,
       ghosts: gh.ghosts,
       onEvent: (e) => onEvent(e),

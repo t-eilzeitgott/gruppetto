@@ -1,5 +1,7 @@
 /** Radfahrer von hinten, als Vektorgrafik – mit Tretbewegung, Schräglage und Abfahrtshaltung. */
 
+import { RIVALS } from '../teams';
+
 type Ctx = CanvasRenderingContext2D;
 
 export interface Kit {
@@ -12,22 +14,12 @@ export interface Kit {
   number: string;
   /** Rad (bikes.ts); ohne Angabe das Teamrad in Trikotfarben */
   bike?: string;
+  /** Team (teams.ts): Muster und Sponsorschriftzug auf dem Trikot */
+  team?: string;
 }
 
-export const TEAM_KITS: Omit<Kit, 'skin' | 'number'>[] = [
-  { jersey: '#1f6feb', side: '#ffffff', helmet: '#ffffff', shorts: '#0d1b3a', shoes: '#ffffff' },
-  { jersey: '#e11d48', side: '#111111', helmet: '#111111', shorts: '#111111', shoes: '#111111' },
-  { jersey: '#16a34a', side: '#fde047', helmet: '#fde047', shorts: '#14301f', shoes: '#ffffff' },
-  { jersey: '#f97316', side: '#1e293b', helmet: '#1e293b', shorts: '#1e293b', shoes: '#ffffff' },
-  { jersey: '#0ea5e9', side: '#0f172a', helmet: '#ffffff', shorts: '#0f172a', shoes: '#0f172a' },
-  { jersey: '#facc15', side: '#111827', helmet: '#111827', shorts: '#111827', shoes: '#facc15' },
-  { jersey: '#7c3aed', side: '#f5f5f5', helmet: '#f5f5f5', shorts: '#2e1065', shoes: '#ffffff' },
-  { jersey: '#111827', side: '#ef4444', helmet: '#ef4444', shorts: '#111827', shoes: '#111111' },
-  { jersey: '#14b8a6', side: '#ffffff', helmet: '#0f766e', shorts: '#0f3d3a', shoes: '#ffffff' },
-  { jersey: '#f5f5f4', side: '#2563eb', helmet: '#2563eb', shorts: '#1e3a8a', shoes: '#ffffff' },
-  { jersey: '#9f1239', side: '#fbbf24', helmet: '#fbbf24', shorts: '#4c0519', shoes: '#111111' },
-  { jersey: '#65a30d', side: '#1c1917', helmet: '#1c1917', shorts: '#1c1917', shoes: '#ffffff' },
-];
+/** Trikots der Konkurrenz im Feld: die neun anderen Teams (teams.ts) – Team gruppetto fährt nur der Spieler */
+export const TEAM_KITS: Omit<Kit, 'skin' | 'number'>[] = RIVALS.map((t) => t.kit);
 
 export const SKINS = ['#f1c7a5', '#e8b48f', '#d49a72', '#a8714c', '#7a4e33'];
 

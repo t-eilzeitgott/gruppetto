@@ -14,7 +14,7 @@ import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
 import { mistTexture, waterTexture } from './falls3d';
-import { adCell, adsTex, AD_COUNT, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex } from './tex3d';
+import { adCell, adsTex, AD_COUNT, TEAM_ADS, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex } from './tex3d';
 import { CURB_CHAMFER, CURB_FACE, CURB_TOP, CURB_V, COVER_PATCH, GUTTER_W, asphaltTex as groundAsphalt, cobbleTex, coverAtlas, curbTex, grainTex, groundCached, gutterTex, vergeTex, walkTex, type GroundTex } from './groundTex';
 import { GROUND_STYLES, coverLang } from './groundStyle';
 import { SkyLife } from './sky3d';
@@ -52,6 +52,7 @@ import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprite
 import type { WeatherEnv } from './weather';
 import { gfxAA, gfxOn, gfxRes, onGfxChange, onGfxSettings } from './gfxOpts';
 import { buildHouse, rowUnits, roofColor, roofKind, wallSet, type At, type Town } from './house3d';
+import { TEAMS } from '../teams';
 
 /** Kennung der feinen Landschafts-Shader (gfxOpts „details“) im Programmschlüssel */
 /** Schlüssel der Bodenshader: Details (ab Stufe 7) und schlichte Böden (Stufe 1–2) übersetzen eigene Fassungen */
@@ -5081,7 +5082,11 @@ export class Renderer3D {
         const cloth = lin(CLOTH[(s.i >> 2) % CLOTH.length]);
         // bedruckte Bande zur Straße, dahinter Stoff
         const x = sg * (EDGE - 0.07);
-        const [u0, v0, u1, v1] = adCell(Math.floor(hash(s.i * 2 + (sg > 0 ? 1 : 0)) * AD_COUNT), false);
+        // wie an echten Rennen: dieselbe Bande mehrmals hintereinander (je 3 Stück), gut die Hälfte davon Teams
+        const run = Math.floor(s.i / 3) * 2 + (sg > 0 ? 1 : 0);
+        const hv = hash(run);
+        const cell = hv < 0.55 ? Math.floor(hash(run * 7 + 3) * TEAM_ADS) : TEAM_ADS + Math.floor(hash(run * 5 + 1) * (AD_COUNT - TEAM_ADS));
+        const [u0, v0, u1, v1] = adCell(cell, false);
         const A0 = P(a, x, 0.17); const B0 = P(b, x, 0.17); const A1 = P(a, x, 0.93); const B1 = P(b, x, 0.93);
         const back = shadeF(cloth, 0.9);
         if (sg > 0) ads.quad(B0, A0, A1, B1, back, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
@@ -6095,10 +6100,13 @@ export class Renderer3D {
   private arch(group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], a: Row, banner: Banner | { kind: string; text: string; sub?: string }, color: string) {
     const light = color === '#ffffff' || color === '#ffd23f';
     const main = banner.kind === 'gpm' ? `GPM · ${banner.text}` : banner.kind === 'welcome' ? `Benvenuti a ${banner.text}` : banner.text;
-    const key = `arch:${main}:${banner.sub ?? ''}:${color}`;
+    // offizielle Bögen tragen links und rechts Werbung: Start und Ziel Team gruppetto (Veranstalter), sonst ein
+    // Team, fest je Bogen (Bestmarken-Bögen ohne)
+    const sponsor = banner.kind === 'arch' ? null : banner.kind === 'start' || banner.kind === 'finish' ? TEAMS[0] : TEAMS[1 + Math.floor(hash(a.seg.i * 13 + 5) * (TEAMS.length - 1))];
+    const key = `arch:${main}:${banner.sub ?? ''}:${color}:${sponsor?.id ?? ''}`;
     let tex = this.labelTex.get(key);
     if (!tex) {
-      tex = this.tex(bannerTex(main.toUpperCase(), banner.sub ?? '', color, light ? '#1a1a1a' : '#ffffff'), false);
+      tex = this.tex(bannerTex(main.toUpperCase(), banner.sub ?? '', color, light ? '#1a1a1a' : '#ffffff', sponsor), false);
       this.labelTex.set(key, tex);
     }
     // Masten neben dem Bankett (breitere Straße: weiter auseinander)

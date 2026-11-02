@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import type { WreckPose } from './wreck';
 import type { Kit } from './rider';
+import { drawWordmark, team as teamOf, type Team } from '../teams';
 import { alphaTex, lin, type RGBf } from './models3d';
 import { BIKE_BB, bikeBuild, type BikeFit } from './bike3d';
 import { FAR1, LambertFarMaterial, glossFarMat, glossMat } from './gloss';
@@ -179,14 +180,167 @@ export function muscle(len: number, prof: [number, number, number, number, RGBf]
   return mb.build();
 }
 
+/** Farbe des Sponsorschriftzugs: Teamschrift auf Teamfarbe, sonst die Zweitfarbe des Trikots (z. B. Geister in Avatarfarbe) */
+function wordInk(t: Team, kit: Kit): string {
+  return kit.jersey.toLowerCase() === t.primary.toLowerCase() ? t.ink : kit.side;
+}
+
+/**
+ * Trikotmuster eines Teams auf die Rumpftextur (u rundherum: 0,25 Brust, 0,75 Rücken; y über vy in Rumpfhöhe).
+ * Zurückhaltend – man soll das Team im Vorbeifahren erkennen, nicht geblendet werden.
+ */
+function teamPattern(c: CanvasRenderingContext2D, t: Team, kit: Kit, W: number, vy: (y: number) => number) {
+  const top = vy(0.6);
+  const hem = vy(0.03);
+  const sec = kit.side;
+  const acc = t.accent;
+  c.save();
+  c.beginPath();
+  c.rect(0, top, W, hem - top);
+  c.clip();
+  switch (t.pattern) {
+    case 'dot': {
+      // Schulterpasse in der Zweitfarbe mit runder Kante, großer Punkt hinten unten (die Wortmarke „gruppetto.“)
+      c.fillStyle = sec;
+      c.beginPath();
+      c.moveTo(0, top);
+      c.lineTo(W, top);
+      c.lineTo(W, vy(0.5));
+      for (let x = W; x >= 0; x -= 8) c.lineTo(x, vy(0.5) + Math.sin((x / W) * Math.PI * 4) * 3);
+      c.closePath();
+      c.fill();
+      c.fillStyle = acc;
+      c.beginPath();
+      c.arc(W * 0.83, vy(0.15), 7, 0, Math.PI * 2);
+      c.fill();
+      break;
+    }
+    case 'peaks': {
+      // weiße Bergkette um die Brust
+      c.fillStyle = sec;
+      c.beginPath();
+      c.moveTo(0, vy(0.2));
+      for (let i = 0; i <= 16; i++) c.lineTo((i / 16) * W, i % 2 ? vy(0.31) : vy(0.22));
+      c.lineTo(W, vy(0.17));
+      for (let i = 16; i >= 0; i--) c.lineTo((i / 16) * W, i % 2 ? vy(0.25) : vy(0.17));
+      c.closePath();
+      c.fill();
+      break;
+    }
+    case 'pinstripe': {
+      c.fillStyle = acc;
+      c.globalAlpha = 0.55;
+      for (let x = 3; x < W; x += 9) c.fillRect(x, top, 1, hem - top);
+      c.globalAlpha = 1;
+      c.fillRect(0, vy(0.08), W, 3);
+      break;
+    }
+    case 'band': {
+      c.fillStyle = sec;
+      c.fillRect(0, vy(0.33), W, vy(0.22) - vy(0.33));
+      c.fillStyle = acc;
+      c.fillRect(0, vy(0.22), W, 3);
+      break;
+    }
+    case 'sash': {
+      // Schärpe von der Schulter zur Hüfte, vorn und hinten
+      c.fillStyle = sec;
+      for (const u0 of [0.06, 0.56]) {
+        c.beginPath();
+        c.moveTo(u0 * W, top);
+        c.lineTo((u0 + 0.12) * W, top);
+        c.lineTo((u0 + 0.36) * W, hem);
+        c.lineTo((u0 + 0.24) * W, hem);
+        c.closePath();
+        c.fill();
+      }
+      break;
+    }
+    case 'fade': {
+      const g = c.createLinearGradient(0, vy(0.45), 0, hem);
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, sec);
+      c.fillStyle = g;
+      c.fillRect(0, top, W, hem - top);
+      break;
+    }
+    case 'hoops': {
+      for (const [y, col] of [[0.3, sec], [0.24, acc], [0.18, sec]] as [number, string][]) {
+        c.fillStyle = col;
+        c.fillRect(0, vy(y), W, 4);
+      }
+      break;
+    }
+    case 'split': {
+      // schräg geteilt: unten die Signalfarbe
+      c.fillStyle = sec;
+      c.beginPath();
+      c.moveTo(0, vy(0.12));
+      c.lineTo(W, vy(0.28));
+      c.lineTo(W, hem);
+      c.lineTo(0, hem);
+      c.closePath();
+      c.fill();
+      c.fillStyle = kit.jersey;
+      c.beginPath();
+      c.moveTo(0, vy(0.12) + 3);
+      c.lineTo(W, vy(0.28) + 3);
+      c.lineTo(W, vy(0.28) + 5);
+      c.lineTo(0, vy(0.12) + 5);
+      c.closePath();
+      c.fill();
+      break;
+    }
+    case 'checker': {
+      // Karoband wie eine Tischdecke im Bistro
+      const s = 6;
+      for (let r = 0; r < 2; r++) {
+        for (let x = 0; x < W; x += s) {
+          c.fillStyle = ((x / s + r) & 1) ? sec : acc;
+          c.fillRect(x, vy(0.3) + r * s, s, s);
+        }
+      }
+      break;
+    }
+    case 'flash': {
+      // Blitz quer über den Rumpf
+      c.fillStyle = sec;
+      c.beginPath();
+      c.moveTo(0, vy(0.36));
+      c.lineTo(W * 0.4, vy(0.26));
+      c.lineTo(W * 0.42, vy(0.32));
+      c.lineTo(W, vy(0.14));
+      c.lineTo(W, vy(0.1));
+      c.lineTo(W * 0.58, vy(0.24));
+      c.lineTo(W * 0.56, vy(0.18));
+      c.lineTo(0, vy(0.3));
+      c.closePath();
+      c.fill();
+      break;
+    }
+  }
+  c.restore();
+}
+
 /** Trikot und Hose als Textur des Rumpfs (u rundherum, 0,75 = Rücken mit Startnummer, 0,25 = Brust) */
 const torsoCache = new Map<string, THREE.MeshLambertMaterial>();
 const TORSO_Y0 = -0.13;
 const TORSO_Y1 = 0.62;
 function torsoMat(kit: Kit): THREE.MeshLambertMaterial {
-  const key = `${kit.jersey}|${kit.side}|${kit.shorts}|${kit.number}`;
+  const key = `${kit.jersey}|${kit.side}|${kit.shorts}|${kit.number}|${kit.team ?? ''}`;
   const hit = torsoCache.get(key);
   if (hit) return hit;
+  const tex = new THREE.CanvasTexture(torsoCanvas(kit));
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  const m = new THREE.MeshLambertMaterial({ map: tex, vertexColors: true });
+  torsoCache.set(key, m);
+  return m;
+}
+
+/** die Rumpftextur als Leinwand (auch für Vorschauen) */
+export function torsoCanvas(kit: Kit): HTMLCanvasElement {
   const W = 256;
   const H = 128;
   const cv = document.createElement('canvas');
@@ -200,6 +354,9 @@ function torsoMat(kit: Kit): THREE.MeshLambertMaterial {
   const vy = (y: number) => H * (1 - (y - TORSO_Y0) / (TORSO_Y1 - TORSO_Y0));
   c.fillStyle = kit.jersey;
   c.fillRect(0, 0, W, H);
+  const tm = teamOf(kit.team);
+  // Teammuster (teams.ts) unter Seitenteilen, Kragen und Hose
+  if (tm) teamPattern(c, tm, kit, W, vy);
   // Seitenteile mit feiner Kante
   for (const u of [0, 0.5, 1]) {
     c.fillStyle = kit.side;
@@ -208,11 +365,17 @@ function torsoMat(kit: Kit): THREE.MeshLambertMaterial {
     c.fillRect(u * W - 16, 0, 2, H);
     c.fillRect(u * W + 14, 0, 2, H);
   }
-  // Brustband vorn
-  c.fillStyle = kit.side;
-  c.globalAlpha = 0.85;
-  c.fillRect(W * 0.12, vy(0.42), W * 0.26, vy(0.36) - vy(0.42));
-  c.globalAlpha = 1;
+  if (tm) {
+    // Sponsor quer über die Brust, klein über der Startnummer
+    drawWordmark(c, tm, tm.sponsor, W * 0.25, vy(0.39), W * 0.36, 20, wordInk(tm, kit), tm.id === 'gruppetto' ? kit.side : undefined);
+    drawWordmark(c, tm, tm.sponsor, W * 0.75, vy(0.475), W * 0.26, 11, wordInk(tm, kit), tm.id === 'gruppetto' ? kit.side : undefined);
+  } else {
+    // Brustband vorn
+    c.fillStyle = kit.side;
+    c.globalAlpha = 0.85;
+    c.fillRect(W * 0.12, vy(0.42), W * 0.26, vy(0.36) - vy(0.42));
+    c.globalAlpha = 1;
+  }
   // Kragen, Reißverschluss vorn
   c.fillStyle = kit.side;
   c.fillRect(0, 0, W, vy(0.575));
@@ -238,13 +401,15 @@ function torsoMat(kit: Kit): THREE.MeshLambertMaterial {
   c.textAlign = 'center';
   c.textBaseline = 'middle';
   c.fillText(kit.number, x, (top + bot) / 2 + 1);
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  const m = new THREE.MeshLambertMaterial({ map: tex, vertexColors: true });
-  torsoCache.set(key, m);
-  return m;
+  if (tm) {
+    // Teamkürzel seitlich auf der Hose (wie die UCI-Codes)
+    c.font = '800 9px -apple-system, "SF Pro Display", Roboto, Arial, sans-serif';
+    c.fillStyle = kit.side;
+    c.globalAlpha = 0.9;
+    for (const u of [0.02, 0.48]) c.fillText(tm.code, u * W + 12, vy(-0.04));
+    c.globalAlpha = 1;
+  }
+  return cv;
 }
 /** weißer Streifen unter der Trikottextur (Bildpunkte) */
 const TORSO_PAD = 16;
@@ -326,7 +491,7 @@ export function ik(a: THREE.Vector3, c: THREE.Vector3, l1: number, l2: number, p
 
 /** Schlüssel eines Trikots (alles, was das Aussehen bestimmt) */
 export function riderKitKey(kit: Kit): string {
-  return `${kit.jersey}|${kit.side}|${kit.helmet}|${kit.shorts}|${kit.skin}|${kit.shoes}|${kit.number}|${kit.bike ?? ''}`;
+  return `${kit.jersey}|${kit.side}|${kit.helmet}|${kit.shorts}|${kit.skin}|${kit.shoes}|${kit.number}|${kit.bike ?? ''}|${kit.team ?? ''}`;
 }
 
 let lamp: { geo: THREE.BufferGeometry; mat: THREE.MeshLambertMaterial } | null = null;
