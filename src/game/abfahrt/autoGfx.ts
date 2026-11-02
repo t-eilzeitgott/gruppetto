@@ -65,6 +65,10 @@ const NEED_ROOM_MAX = 32;
  * dort läuft das iPhone am rundesten (siehe oben)
  */
 const GPU_DOWN = 0.78;
+/** verpasst mehr als ein Viertel / mehr als die Hälfte der Bilder den Takt, reicht entsprechend weniger im Probebild
+ *  (es zeigt ein einzelnes Bild, oft ein leichteres als die zu späten) */
+const GPU_DOWN_MANY = 0.7;
+const GPU_DOWN_HEAVY = 0.6;
 const GPU_HEAVY = 0.9;
 const GPU_UP = 0.7;
 const CPU_ROOM = 0.6;
@@ -284,7 +288,7 @@ export class AutoGfx {
       // (Messfahrt 256: „2,25 → 1,97-fach (26 %)“ bei 6 ms Grafik)
       // (ein altes Probebild gilt nur, solange es nicht deutlich schlimmer wurde – das Telefon drosselt mitten in der
       // Fahrt, dann muss ein neues her)
-      const maxAge = frac >= 0.25 || frac > this.infoFrac * 1.5 + 0.05 ? PROBE_S : this.probeFor;
+      const maxAge = frac >= HEAVY ? 1 : frac >= 0.25 || frac > this.infoFrac * 1.5 + 0.05 ? PROBE_S : this.probeFor;
       const fresh = this.gpu !== null && this.t - this.gpuT <= maxAge;
       if (cpuMed >= CPU_BOUND * frame || fresh) return this.down(frac, cpuMed, excess, frame);
       this.pending = { frac, cpuMed, excess };
@@ -321,7 +325,8 @@ export class AutoGfx {
     const pct = `${Math.round(frac * 100)} % der Bilder zu spät`;
     const cpuBound = cpuMed >= CPU_BOUND * frame;
     // die Grafik nicht über der Grenze: das liegt nicht an Auflösung oder Sichtweite – nichts senken
-    if (!cpuBound && (this.gpu === null || this.gpu < GPU_DOWN * frame)) {
+    const gate = frac >= HEAVY ? GPU_DOWN_HEAVY : frac >= 0.25 ? GPU_DOWN_MANY : GPU_DOWN;
+    if (!cpuBound && (this.gpu === null || this.gpu < gate * frame)) {
       this.probeFor = Math.min(PROBE_MAX_S, this.probeFor * 2);
       this.infoFrac = frac;
       if (this.t - this.lastInfo < 10) return null;
