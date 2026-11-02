@@ -184,7 +184,7 @@ export function GamePage() {
       onEvent: (e) => cbs.current.onEvent(e),
       onOver: (r) => cbs.current.onOver(r),
     });
-    eng.setViewport(stageRef.current?.getBoundingClientRect().width ?? 390);
+    eng.setViewport(stageRef.current?.clientWidth || 390);
     return eng;
   };
   // das Rennen hinter dem Startblatt ist schon das, das gleich startet (mit Bestmarken der Runde und Geistern):
@@ -377,7 +377,7 @@ export function GamePage() {
         raf = requestNext(loop, clock, now, true);
       };
       raf = requestAnimationFrame(loop);
-      const onResize = () => { renderer.requestResize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
+      const onResize = () => { renderer.requestResize(); engineRef.current?.setViewport(canvas.clientWidth || canvas.getBoundingClientRect().width); };
       const onVis = () => {
         if (document.hidden && uiRef.current === 'playing') setUi('paused');
         if (!document.hidden && renderer.lost) rebuild();

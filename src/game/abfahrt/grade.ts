@@ -5,11 +5,16 @@
  */
 import * as THREE from 'three';
 
+/*
+ * Filmkurve: im Gammaraum p = c^(1/2.2) zu 20 % eine Smoothstep-Kurve, zurück mit ^2.2. Das ist dasselbe wie
+ * c · (0.8 + 0.6 p − 0.4 p²)^2.2 – und dieser Faktor ist über s = √c fast genau ein Polynom zweiten Grades
+ * (größter Fehler im fertigen 8-Bit-Bild 0,2 Stufen, also unsichtbar). Statt sechs pow (je log2 und exp2, in
+ * jedem Bildpunkt jedes Materials) drei Wurzeln und drei Multiplikationen.
+ */
 const GRADE = `vec3 CustomToneMapping( vec3 color ) {
-	vec3 c = NeutralToneMapping( color );
-	vec3 p = pow( max( c, vec3( 0.0 ) ), vec3( 0.4545 ) );
-	p = mix( p, p * p * ( 3.0 - 2.0 * p ), 0.2 );
-	c = pow( p, vec3( 2.2 ) );
+	vec3 c = max( NeutralToneMapping( color ), vec3( 0.0 ) );
+	vec3 s = sqrt( c );
+	c *= 0.62306 + s * ( 1.18403 - 0.80891 * s );
 	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
 	c = max( mix( vec3( l ), c, 1.1 ), vec3( 0.0 ) );
 	c *= mix( vec3( 0.965, 0.99, 1.05 ), vec3( 1.035, 1.0, 0.95 ), smoothstep( 0.015, 0.45, l ) );
@@ -42,5 +47,6 @@ chunk.fog_fragment = chunk.fog_fragment
   )
   .replace(
     'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );',
-    'float fogSun = pow( max( dot( normalize( vFogDir ), fogSunDir ), 0.0 ), 5.0 );\n\tgl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor + fogSunCol * fogSun, fogFactor );',
+    // (hoch 5 als Multiplikationen – pow kostet log2 und exp2 in jedem Bildpunkt)
+    'float fogSun = max( dot( normalize( vFogDir ), fogSunDir ), 0.0 );\n\tfloat fogSun2 = fogSun * fogSun;\n\tfogSun *= fogSun2 * fogSun2;\n\tgl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor + fogSunCol * fogSun, fogFactor );',
   );

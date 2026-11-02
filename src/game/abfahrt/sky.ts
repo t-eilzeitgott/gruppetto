@@ -42,13 +42,46 @@ export function dailyMood(seed: number): SkyMood {
 
 /* Die Kugel wird nach allem Festen gezeichnet und liegt in der Tiefe ganz hinten (z = w): nur Bildpunkte, an denen
    wirklich Himmel zu sehen ist, rechnen die Wolken – nicht der ganze Bildschirm, der dann von Landschaft überdeckt wird */
-export const SKY_VERT = 'varying vec3 vDir; void main(){ vDir = normalize(position); vec4 cp = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position = vec4(cp.xy, cp.w * 0.99998, cp.w); }';
+/*
+ * Rechenzeit (die Kuppel deckt ein Drittel des Bilds): Was nur von Uniforms abhängt (Sonnenrichtung, Sonnenlicht,
+ * Drehung der Schleierwolken, Richtung der Front), rechnet der Eckenshader – einmal je Ecke statt je Bildpunkt, als
+ * flache Varyings. Die Wolken rechnen ihr Relief (acht weitere Texturzugriffe) und ihr Licht nur, wo eine Wolke zu
+ * sehen ist; unter dem Horizont und im blauen Himmel dazwischen entfällt das. (Texturen in diesen Zweigen mit der
+ * gewohnten Mip-Wahl: am Rand eines Zweigs ist die Wolke durchsichtig – eine abweichende Stufe dort sieht man nicht;
+ * so hielten es auch Türme und Regenvorhänge schon.)
+ */
+export const SKY_VERT = `
+uniform vec3 sunDir; uniform vec3 sunCol; uniform float uWarm, uSeed;
+varying vec3 vDir;
+flat varying vec3 vSd;
+/* x: Sonne über dem Horizont, y: tiefe Sonne in den Wolkenbäuchen, z: tiefe Sonne (dramatischer Himmel) */
+flat varying vec3 vSun;
+flat varying vec3 vSunLit;
+/* Drehung der Schleierwolken (cos, sin), Richtung der Front */
+flat varying vec4 vRot;
+void main(){
+	vDir = normalize(position);
+	vec3 sd = normalize( sunDir );
+	vSd = sd;
+	float sunUp = clamp( sd.y * 6.0 + 0.3, 0.0, 1.0 );
+	vSun = vec3( sunUp, ( 1.0 - smoothstep( 0.06, 0.32, sd.y ) ) * sunUp, clamp( 1.0 - ( degrees( asin( clamp( sd.y, - 1.0, 1.0 ) ) ) - 4.0 ) / 26.0, 0.0, 1.0 ) );
+	/* mittags weiß, erst zum Abend hin in der Farbe der Sonne */
+	vSunLit = mix( vec3( 1.0 ), sunCol, 0.3 + 0.7 * uWarm ) * ( 1.15 + 0.4 * uWarm ) * sunUp;
+	float ca = uSeed * 0.7;
+	vRot = vec4( cos( ca ), sin( ca ), cos( uSeed * 1.7 ), sin( uSeed * 1.7 ) );
+	vec4 cp = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+	gl_Position = vec4(cp.xy, cp.w * 0.99998, cp.w);
+}`;
 
 export const SKY_FRAG = `
-uniform vec3 top; uniform vec3 horizon; uniform vec3 below; uniform vec3 sunDir; uniform vec3 sunCol; uniform float sunSize; uniform float uHoles;
+uniform vec3 top; uniform vec3 horizon; uniform vec3 below; uniform vec3 sunCol; uniform float sunSize; uniform float uHoles;
 uniform sampler2D uNoise;
 uniform float uTime, uSeed, uCover, uCirrus, uStorm, uOvercast, uTowers, uStars, uWarm, uDrama;
 varying vec3 vDir;
+flat varying vec3 vSd;
+flat varying vec3 vSun;
+flat varying vec3 vSunLit;
+flat varying vec4 vRot;
 
 float lumF( vec3 c ) { return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); }
 
@@ -68,13 +101,18 @@ void main(){
 	float h = d.y;
 	if ( uHoles > 0.5 && h < -0.03 ) { gl_FragColor = vec4( 1.0, 0.0, 1.0, 1.0 ); return; }
 	float e = clamp( h, 0.0, 1.0 );
-	vec3 sd = normalize( sunDir );
+	vec3 sd = vSd;
 	float s = max( dot( d, sd ), 0.0 );
-	float sunUp = clamp( sd.y * 6.0 + 0.3, 0.0, 1.0 );
+	float s2 = s * s;
+	float s4 = s2 * s2;
+	float s8 = s4 * s4;
+	float sunUp = vSun.x;
 	/* Front: unter 1 zieht die Decke als Wand von einer Seite auf (Richtung aus uSeed), gegenüber bleibt der Himmel offen */
-	vec2 fd = vec2( cos( uSeed * 1.7 ), sin( uSeed * 1.7 ) );
-	float wall = smoothstep( - 0.35, 0.55, dot( normalize( d.xz + vec2( 0.0001 ) ), fd ) + 0.15 - e * 0.3 );
-	float storm = uStorm >= 0.999 ? 1.0 : uStorm * mix( wall, 1.0, uStorm * 0.5 );
+	float storm = uStorm;
+	if ( uStorm > 0.0 && uStorm < 0.999 ) {
+		float wall = smoothstep( - 0.35, 0.55, dot( normalize( d.xz + vec2( 0.0001 ) ), vRot.zw ) + 0.15 - e * 0.3 );
+		storm = uStorm * mix( wall, 1.0, uStorm * 0.5 );
+	} else if ( uStorm >= 0.999 ) storm = 1.0;
 	float over = uOvercast;
 
 	/* --- Himmel: am Zenit tiefer und satter, zum Horizont heller; bei Front und Hochnebel grau */
@@ -87,24 +125,30 @@ void main(){
 	/* (dramatischer Himmel: das Blau reicht weiter herab – Abendrot nur am Horizont, darüber klares Blau) */
 	vec3 c = h > 0.0 ? mix( hz, zen * 0.92, pow( e, mix( 0.42, 0.3, uDrama ) ) ) : mix( hz, below, clamp( - h * 6.0, 0.0, 1.0 ) );
 	/* Abendrot: zur Sonne hin färbt sich der Horizont in ihrer Farbe, gegenüber bleibt er kühl; unter einer Front glüht es */
-	float toSun = pow( s, 2.0 ) * ( 1.0 - smoothstep( 0.0, 0.5, e ) );
+	float toSun = s2 * ( 1.0 - smoothstep( 0.0, 0.5, e ) );
 	c += sunCol * toSun * ( 0.08 + 0.32 * dusk + 0.25 * storm ) * sunUp;
 
 	/* --- dramatischer Himmel (Abfahrt, wie in der WebGPU-Abfahrt): Farben wie bei gemalten Wolken – Licht in der Farbe
 	   der Sonne, Schatten schieferblau; Helligkeit aus dem blanken Himmel */
 	float drama = uDrama * ( 1.0 - storm ) * ( 1.0 - over );
-	float dBase = max( lumF( zen ) * 0.5 + lumF( hz ) * 0.5, 0.01 );
-	float dLow = clamp( 1.0 - ( degrees( asin( clamp( sd.y, - 1.0, 1.0 ) ) ) - 4.0 ) / 26.0, 0.0, 1.0 );
-	vec3 dWarm = mix( max( mix( sunCol / max( lumF( sunCol ), 1e-4 ), hz / max( lumF( hz ), 1e-4 ), 0.3 ), 0.0 ), vec3( 1.0 ), 0.22 );
-	vec3 dCool = max( mix( zen / max( lumF( zen ), 1e-4 ), vec3( 0.78, 0.74, 0.92 ), 0.45 ), 0.0 );
-	vec3 dLit = dWarm * dBase * ( 2.1 + dLow * 0.7 );
-	vec3 dShadow = dCool * dBase * ( 0.36 - dLow * 0.1 );
-	/* Blick von der Sonne weg (angestrahlt) … zur Sonne (Gegenlicht) */
-	float facing = dot( normalize( d.xz + vec2( 1e-5, 0.0 ) ), normalize( sd.xz + vec2( 1e-5, 0.0 ) ) );
-	float frontL = ( 1.0 - facing ) * 0.5;
+	float dBase = 0.0;
+	float dLow = vSun.z;
+	vec3 dWarm = vec3( 0.0 );
+	vec3 dLit = vec3( 0.0 );
+	vec3 dShadow = vec3( 0.0 );
+	float facing = 0.0;
+	float frontL = 0.0;
 	float cosS = dot( d, sd );
 	float towerA = 0.0;
 	if ( drama > 0.001 ) {
+		dBase = max( lumF( zen ) * 0.5 + lumF( hz ) * 0.5, 0.01 );
+		dWarm = mix( max( mix( sunCol / max( lumF( sunCol ), 1e-4 ), hz / max( lumF( hz ), 1e-4 ), 0.3 ), 0.0 ), vec3( 1.0 ), 0.22 );
+		vec3 dCool = max( mix( zen / max( lumF( zen ), 1e-4 ), vec3( 0.78, 0.74, 0.92 ), 0.45 ), 0.0 );
+		dLit = dWarm * dBase * ( 2.1 + dLow * 0.7 );
+		dShadow = dCool * dBase * ( 0.36 - dLow * 0.1 );
+		/* Blick von der Sonne weg (angestrahlt) … zur Sonne (Gegenlicht) */
+		facing = dot( normalize( d.xz + vec2( 1e-5, 0.0 ) ), normalize( sd.xz + vec2( 1e-5, 0.0 ) ) );
+		frontL = ( 1.0 - facing ) * 0.5;
 		/* Quelltürme rund um den Horizont: Höhenzug mit blumenkohligen Kanten, um die Sonne eine Lücke; von der
 		   Sonne weg angestrahlt (Alpenglühen), zur Sonne hin Schattenrisse mit Lichtsaum, unten im Dunst */
 		float az = atan( d.z, d.x );
@@ -137,59 +181,67 @@ void main(){
 	float pe = e + 0.09;
 	vec2 p = d.xz / pe * 0.75 + uSeed;
 	float t = uTime * ( 1.0 + storm * 1.6 );
-	float n = cloudNoise( p, t );
-	/* große Wolkenfelder und weite Lücken: eine sehr grobe Welle hebt und senkt die Bedeckung */
-	float big = texture2D( uNoise, p * 0.011 + vec2( t * 0.0012, 0.0 ) + vec2( 0.4 ) ).g;
-	float cover = clamp( uCover + storm * 0.35 + over + ( big - 0.5 ) * 0.5 * ( 1.0 - over ) * ( 1.0 - storm * 0.5 ), 0.0, 1.0 );
-	float lo = 0.64 - cover * 0.46;
-	float dens = smoothstep( lo, lo + 0.17 + 0.08 * over, n );
-	/* dichte Kerne: Hochnebel wird zur glatten Decke */
-	dens = mix( dens, clamp( dens * 1.6 + over * 0.6, 0.0, 1.0 ), over );
-	/* Plastik: die Dichte als Relief gelesen – jede Beule hat eine Sonnen- und eine Schattenseite (Blumenkohl) */
-	float dp = 0.07;
-	float nx = cloudNoise( p + vec2( dp, 0.0 ), t );
-	float ny = cloudNoise( p + vec2( 0.0, dp ), t );
-	float bump = ( 0.9 + 1.1 * uTowers ) * 0.9;
-	vec3 N = normalize( vec3( - ( nx - n ) / dp * bump, - ( ny - n ) / dp * bump, 1.0 ) );
-	vec3 Lp = normalize( vec3( sd.x, sd.z, max( sd.y, 0.04 ) + 0.25 ) );
-	float lit = clamp( dot( N, Lp ) * 1.15 - 0.05, 0.0, 1.0 );
-	/* dicke Kerne (von unten gesehen die grauen Bäuche) und dünne, helle Ränder */
-	float thick = smoothstep( lo, lo + 0.42, n );
-	float core = thick;
-	/* tiefe Sonne scheint von unten in die Wolkenbäuche – das Abendrot der Wolken */
-	float lowSun = ( 1.0 - smoothstep( 0.06, 0.32, sd.y ) ) * sunUp;
-	vec3 ambient = mix( hz, zen, 0.5 );
-	/* mittags weiß, erst zum Abend hin in der Farbe der Sonne */
-	vec3 sunLit = mix( vec3( 1.0 ), sunCol, 0.3 + 0.7 * dusk ) * ( 1.15 + 0.4 * dusk ) * sunUp;
-	vec3 shadeCol = ambient * ( 0.62 - 0.3 * thick - 0.08 * uTowers );
-	vec3 litCol = sunLit * ( 0.72 + 0.28 * ( 1.0 - thick ) );
-	vec3 cloudCol = mix( shadeCol, litCol, lit * mix( 0.5, 1.0, 1.0 - thick * uTowers ) );
-	cloudCol = mix( cloudCol, sunCol * ( 1.1 + 0.3 * dusk ), lowSun * thick * ( 0.3 + 0.3 * lit ) );
-	if ( drama > 0.001 ) {
-		/* aufgerissenes Wolkenfeld: dünne Ränder zur Sonne leuchten, dicke Kerne bleiben schieferblau; im Gegenlicht
-		   Glut in den dünnen Teilen, die dicken als Schattenriss */
-		float Lk = clamp( lit * 0.75 + frontL * 0.3 - thick * 0.25 + 0.1, 0.0, 1.0 );
-		vec3 dc = mix( dShadow, dLit, Lk );
-		float back = pow( cosS * 0.5 + 0.5, 8.0 );
-		dc = mix( dc, dShadow * 0.85 + dWarm * max( lumF( c ), dBase ) * ( 1.0 - thick ) * 1.15, back * 0.85 );
-		cloudCol = mix( cloudCol, dc, drama );
-	}
-	/* Silberstreifen: dünne Ränder vor der Sonne leuchten */
-	float rim = smoothstep( 0.0, 0.35, dens ) * ( 1.0 - smoothstep( 0.35, 0.95, dens ) );
-	cloudCol += sunCol * rim * pow( s, 6.0 ) * 1.4 * sunUp;
-	/* Gewitterdecke: dunkelblaugrau, helle Risse nur an den dünnen Stellen */
-	vec3 stormCol = mix( vec3( 0.07, 0.08, 0.11 ), vec3( 0.42, 0.42, 0.47 ), lit * 0.45 + ( 1.0 - core ) * 0.55 ) * ( 0.6 + 0.6 * sunUp );
-	/* Licht unter der Decke: zur Sonne hin glüht der Rand der Front */
-	stormCol += sunCol * ( rim * pow( s, 8.0 ) * 0.6 + pow( s, 3.0 ) * ( 1.0 - smoothstep( 0.0, 0.25, e ) ) * 0.45 ) * sunUp;
-	cloudCol = mix( cloudCol, stormCol, storm );
-	/* Hochnebel: flach, grau, kaum Licht und Schatten */
-	cloudCol = mix( cloudCol, mix( hz, zen, 0.3 ) * vec3( 0.84, 0.85, 0.87 ), over * 0.85 );
-	/* zum Horizont hin verschwinden die Wolken im Dunst (und werden flacher) */
+	/* zum Horizont hin verschwinden die Wolken im Dunst – darunter gar keine */
 	float fadeH = smoothstep( 0.0, 0.09, e );
-	float farMix = 1.0 - smoothstep( 0.0, 0.35, e );
-	cloudCol = mix( cloudCol, hz, farMix * 0.4 );
-	float alpha = dens * fadeH;
-	c = mix( c, cloudCol, alpha );
+	float alpha = 0.0;
+	if ( fadeH > 0.0 ) {
+		float n = cloudNoise( p, t );
+		/* große Wolkenfelder und weite Lücken: eine sehr grobe Welle hebt und senkt die Bedeckung */
+		float big = texture2D( uNoise, p * 0.011 + vec2( t * 0.0012, 0.0 ) + vec2( 0.4 ) ).g;
+		float cover = clamp( uCover + storm * 0.35 + over + ( big - 0.5 ) * 0.5 * ( 1.0 - over ) * ( 1.0 - storm * 0.5 ), 0.0, 1.0 );
+		float lo = 0.64 - cover * 0.46;
+		float dens = smoothstep( lo, lo + 0.17 + 0.08 * over, n );
+		/* dichte Kerne: Hochnebel wird zur glatten Decke */
+		dens = mix( dens, clamp( dens * 1.6 + over * 0.6, 0.0, 1.0 ), over );
+		alpha = dens * fadeH;
+		/* nur wo eine Wolke zu sehen ist: Relief, Licht und Farbe */
+		if ( alpha > 0.0 ) {
+			/* Plastik: die Dichte als Relief gelesen – jede Beule hat eine Sonnen- und eine Schattenseite (Blumenkohl) */
+			float dp = 0.07;
+			float nx = cloudNoise( p + vec2( dp, 0.0 ), t );
+			float ny = cloudNoise( p + vec2( 0.0, dp ), t );
+			float bump = ( 0.9 + 1.1 * uTowers ) * 0.9;
+			vec3 N = normalize( vec3( - ( nx - n ) / dp * bump, - ( ny - n ) / dp * bump, 1.0 ) );
+			vec3 Lp = normalize( vec3( sd.x, sd.z, max( sd.y, 0.04 ) + 0.25 ) );
+			float lit = clamp( dot( N, Lp ) * 1.15 - 0.05, 0.0, 1.0 );
+			/* dicke Kerne (von unten gesehen die grauen Bäuche) und dünne, helle Ränder */
+			float thick = smoothstep( lo, lo + 0.42, n );
+			float core = thick;
+			/* tiefe Sonne scheint von unten in die Wolkenbäuche – das Abendrot der Wolken */
+			float lowSun = vSun.y;
+			vec3 ambient = mix( hz, zen, 0.5 );
+			vec3 sunLit = vSunLit;
+			vec3 shadeCol = ambient * ( 0.62 - 0.3 * thick - 0.08 * uTowers );
+			vec3 litCol = sunLit * ( 0.72 + 0.28 * ( 1.0 - thick ) );
+			vec3 cloudCol = mix( shadeCol, litCol, lit * mix( 0.5, 1.0, 1.0 - thick * uTowers ) );
+			cloudCol = mix( cloudCol, sunCol * ( 1.1 + 0.3 * dusk ), lowSun * thick * ( 0.3 + 0.3 * lit ) );
+			if ( drama > 0.001 ) {
+				/* aufgerissenes Wolkenfeld: dünne Ränder zur Sonne leuchten, dicke Kerne bleiben schieferblau; im
+				   Gegenlicht Glut in den dünnen Teilen, die dicken als Schattenriss */
+				float Lk = clamp( lit * 0.75 + frontL * 0.3 - thick * 0.25 + 0.1, 0.0, 1.0 );
+				vec3 dc = mix( dShadow, dLit, Lk );
+				float back = pow( cosS * 0.5 + 0.5, 8.0 );
+				dc = mix( dc, dShadow * 0.85 + dWarm * max( lumF( c ), dBase ) * ( 1.0 - thick ) * 1.15, back * 0.85 );
+				cloudCol = mix( cloudCol, dc, drama );
+			}
+			/* Silberstreifen: dünne Ränder vor der Sonne leuchten */
+			float rim = smoothstep( 0.0, 0.35, dens ) * ( 1.0 - smoothstep( 0.35, 0.95, dens ) );
+			cloudCol += sunCol * rim * ( s4 * s2 ) * 1.4 * sunUp;
+			if ( storm > 0.0 ) {
+				/* Gewitterdecke: dunkelblaugrau, helle Risse nur an den dünnen Stellen */
+				vec3 stormCol = mix( vec3( 0.07, 0.08, 0.11 ), vec3( 0.42, 0.42, 0.47 ), lit * 0.45 + ( 1.0 - core ) * 0.55 ) * ( 0.6 + 0.6 * sunUp );
+				/* Licht unter der Decke: zur Sonne hin glüht der Rand der Front */
+				stormCol += sunCol * ( rim * s8 * 0.6 + s2 * s * ( 1.0 - smoothstep( 0.0, 0.25, e ) ) * 0.45 ) * sunUp;
+				cloudCol = mix( cloudCol, stormCol, storm );
+			}
+			/* Hochnebel: flach, grau, kaum Licht und Schatten */
+			cloudCol = mix( cloudCol, mix( hz, zen, 0.3 ) * vec3( 0.84, 0.85, 0.87 ), over * 0.85 );
+			/* (zum Horizont hin flacher) */
+			float farMix = 1.0 - smoothstep( 0.0, 0.35, e );
+			cloudCol = mix( cloudCol, hz, farMix * 0.4 );
+			c = mix( c, cloudCol, alpha );
+		}
+	}
 
 	/* --- Regenvorhänge der Front: senkrechte Schleier unter der Decke, zum Horizont hin */
 	if ( storm > 0.01 ) {
@@ -199,17 +251,19 @@ void main(){
 		c = mix( c, mix( hz, vec3( 0.36, 0.38, 0.43 ), 0.6 ), veil * storm * 0.75 );
 	}
 
-	/* --- Schleierwolken: hoch, dünn, lang gezogen – fangen das Abendlicht */
+	/* --- Schleierwolken: hoch, dünn, lang gezogen – fangen das Abendlicht (nur, wo sie zu sehen sein können) */
 	{
 		vec2 q = d.xz / ( e + 0.28 ) * 0.55;
-		float ca = uSeed * 0.7;
-		q = mat2( cos( ca ), - sin( ca ), sin( ca ), cos( ca ) ) * q + vec2( uSeed * 3.1, 0.0 );
+		q = mat2( vRot.x, - vRot.y, vRot.y, vRot.x ) * q + vec2( uSeed * 3.1, 0.0 );
 		q.x *= 0.22;
-		float cn = texture2D( uNoise, q * 0.35 + vec2( t * 0.0025, 0.0 ) ).g * 0.65 + texture2D( uNoise, q * 1.3 + vec2( 0.2, t * 0.004 ) ).r * 0.35;
-		float cir = smoothstep( 0.62 - uCirrus * 0.14, 0.86, cn ) * uCirrus * smoothstep( 0.02, 0.22, e ) * ( 1.0 - storm * 0.8 ) * ( 1.0 - over );
-		vec3 cirCol = mix( vec3( 1.0, 1.0, 1.0 ) * ( 0.75 + 0.25 * sunUp ), sunCol * 1.35, dusk * 0.85 + pow( s, 3.0 ) * 0.3 );
-		cirCol = mix( cirCol, mix( hz, zen, 0.5 ), ( 1.0 - sunUp ) * 0.6 );
-		c = mix( c, cirCol, cir * 0.55 * ( 1.0 - alpha * 0.8 ) );
+		float cirW = uCirrus * smoothstep( 0.02, 0.22, e ) * ( 1.0 - storm * 0.8 ) * ( 1.0 - over );
+		if ( cirW > 0.0 ) {
+			float cn = texture2D( uNoise, q * 0.35 + vec2( t * 0.0025, 0.0 ) ).g * 0.65 + texture2D( uNoise, q * 1.3 + vec2( 0.2, t * 0.004 ) ).r * 0.35;
+			float cir = smoothstep( 0.62 - uCirrus * 0.14, 0.86, cn ) * cirW;
+			vec3 cirCol = mix( vec3( 1.0, 1.0, 1.0 ) * ( 0.75 + 0.25 * sunUp ), sunCol * 1.35, dusk * 0.85 + s2 * s * 0.3 );
+			cirCol = mix( cirCol, mix( hz, zen, 0.5 ), ( 1.0 - sunUp ) * 0.6 );
+			c = mix( c, cirCol, cir * 0.55 * ( 1.0 - alpha * 0.8 ) );
+		}
 	}
 
 	/* --- dramatischer Himmel: Strahlen um die tiefe Sonne – helle Fächer, nach außen auslaufend */
@@ -227,7 +281,7 @@ void main(){
 	/* --- Sonne: Scheibe, Hof, Glühen – hinter Wolken verdeckt, vor dem Abendrot weit leuchtend */
 	float occ = ( 1.0 - alpha * ( 0.92 - storm * 0.3 ) ) * ( 1.0 - towerA * 0.95 );
 	// (gedämpft: Scheibe, enger und weiter Schein blendeten zu sehr)
-	c += sunCol * ( pow( s, 900.0 ) * 1.9 * sunSize * occ + pow( s, 24.0 ) * ( 0.18 + 0.24 * dusk ) * ( 0.5 + 0.5 * occ ) + pow( s, 4.0 ) * ( 0.06 + 0.15 * dusk ) ) * sunUp;
+	c += sunCol * ( pow( s, 900.0 ) * 1.9 * sunSize * occ + ( s8 * s8 * s8 ) * ( 0.18 + 0.24 * dusk ) * ( 0.5 + 0.5 * occ ) + s4 * ( 0.06 + 0.15 * dusk ) ) * sunUp;
 
 	/* --- Sterne */
 	if ( uStars > 0.01 ) {

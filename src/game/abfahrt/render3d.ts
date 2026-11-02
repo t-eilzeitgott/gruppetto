@@ -158,47 +158,122 @@ float rockRelief(vec3 pos, vec3 nG, float strata, int lod, out vec3 grad) {
  * Ausbesserungen und Risse im Asphalt (wie gpu/mats.ts roadWear): je Abschnitt zufällig gesägte Flicken (eine
  * Spur, die Radspur, die ganze Breite; frisch dunkel oder alt und ausgebleicht) mit vergossener Fuge, Querrisse in
  * unregelmäßigen Abständen, stellenweise eine Längsfuge in der Mitte, großflächig wechselnde Alterung.
+ *
+ * Fast alle Zufallswerte dafür hängen nur von einer Größe ab: vom Straßenmeter längs (ausgefranste Flickenränder,
+ * Fuge, Bitumen, Bröckelrand), vom Meter quer (Flickenenden, Riss) oder von der Nummer des Abschnitts (Lage, Länge
+ * und Art jedes Flickens, Risses, Bitumenstreifens). Je Bildpunkt waren das rund hundert Zufallswerte – das
+ * teuerste Stück Rechnung im ganzen Bild (die Straße füllt ein Drittel davon). Darum stehen sie in einer Tabelle
+ * (WEAR_LUT_FRAG, einmal beim Bau der Bühne mit denselben Funktionen gerechnet): längs alle 3 cm, quer alle 1,6 cm
+ * (dazwischen linear), je Abschnitt genau. Die langsame Alterung und die Stärke der Fahrspuren rechnet der
+ * Eckenshader (Ecken alle 2 m, Wellen von 41 bis 271 m).
  * um, vm: quer (ab dem linken Rand der Normalbreite) und längs in Metern. Ergebnis: Farbfaktor.
  */
+/** Tabelle: 4096 Spalten; Zeilen: je 128 m längs zwei (34 Blöcke bis 4352 m – Abschnitte zählen ab einem Vielfachen
+ *  von 4096 m und sind 80 m lang), zwei quer (−16 … 48 m), sieben für die Abschnitte */
+const WEAR_W = 4096;
+const WEAR_VB = 34;
+const WEAR_H = WEAR_VB * 2 + 2 + 7;
+const WEAR_TAB = `
+uniform sampler2D uWear;
+const float WEAR_H = ${WEAR_H.toFixed(1)};
+// längs (r = 0: Flickenränder quer, 1: Fuge, Bitumen, Bröckelrand)
+vec4 wearV(float vm, float r) {
+  float b = clamp(floor(vm / 128.0), 0.0, ${(WEAR_VB - 1).toFixed(1)});
+  return textureLod(uWear, vec2(((vm - b * 128.0) * (4095.0 / 128.0) + 0.5) / ${WEAR_W.toFixed(1)}, (b * 2.0 + r + 0.5) / WEAR_H), 0.0);
+}
+// quer (r = 0: Flickenenden, 1: Riss)
+vec4 wearU(float um, float r) {
+  return textureLod(uWear, vec2(((um + 16.0) * (4095.0 / 64.0) + 0.5) / ${WEAR_W.toFixed(1)}, (${(WEAR_VB * 2).toFixed(1)} + r + 0.5) / WEAR_H), 0.0);
+}
+// je Abschnitt (genau, ohne Filter)
+vec4 wearC(float c, int row) { return texelFetch(uWear, ivec2(int(mod(c, ${WEAR_W.toFixed(1)})), ${WEAR_VB * 2 + 2} + row), 0); }
+`;
+/** rechnet die Tabelle (Bildpunkt = Eintrag): dieselben Funktionen, die vorher je Bildpunkt liefen */
+const WEAR_LUT_FRAG = `
+${NOISE_GLSL}
+float wH(float c, float seed, float k) { return h21(vec2(c, seed + k * 1.37)); }
+// Ränder, die nicht schnurgerade laufen: zwei Oktaven weiches Rauschen um 0 (−0,68 … 0,68; gespeichert /1,4 + 0,5)
+float wWob(float t, float seed) { return vn1(t * 1.7, seed).x - 0.5 + (vn1(t * 6.1, seed + 3.0).x - 0.5) * 0.35; }
+vec4 wob4(float t, float a, float b, float c, float d) { return vec4(wWob(t, a), wWob(t, b), wWob(t, c), wWob(t, d)) / 1.4 + 0.5; }
+void main() {
+  float x = floor(gl_FragCoord.x);
+  float row = floor(gl_FragCoord.y);
+  vec4 o = vec4(0.0);
+  if (row < ${(WEAR_VB * 2).toFixed(1)}) {
+    float b = floor(row * 0.5);
+    float vm = b * 128.0 + x * (128.0 / 4095.0);
+    if (row - b * 2.0 < 0.5) o = wob4(vm, 3.1 + 11.0, 3.1 + 13.0, 8.3 + 11.0, 8.3 + 13.0);
+    else o = vec4(
+      ((vn1(vm / 3.1, 29.0).x - 0.5) * 0.14 + (vn1(vm / 0.8, 33.0).x - 0.5) * 0.04) * 5.0 + 0.5,
+      smoothstep(0.55, 0.65, vn1(vm / 23.0, 31.0).x),
+      vn1(vm * 1.7, 71.0).x,
+      vn1(vm * 2.3, 73.0).x);
+  } else if (row < ${(WEAR_VB * 2 + 2).toFixed(1)}) {
+    float um = -16.0 + x * (64.0 / 4095.0);
+    if (row < ${(WEAR_VB * 2 + 1).toFixed(1)}) o = wob4(um, 3.1 + 17.0, 3.1 + 19.0, 8.3 + 17.0, 8.3 + 19.0);
+    else o = vec4(((vn1(um * 0.9, 17.0).x - 0.5) * 0.6 + (vn1(um * 3.7, 19.0).x - 0.5) * 0.16) / 0.8 + 0.5, 0.0, 0.0, 0.0);
+  } else {
+    float k = row - ${(WEAR_VB * 2 + 2).toFixed(1)};
+    float c = x;
+    // Flicken alle 13 m (dazu der Bitumenstreifen im selben Abschnitt), Flicken alle 37 m, Querriss alle 11 m
+    if (k < 0.5) o = vec4(wH(c, 3.1, 0.0), wH(c, 3.1, 1.0), wH(c, 3.1, 2.0), wH(c, 3.1, 3.0));
+    else if (k < 1.5) o = vec4(wH(c, 3.1, 4.0), wH(c, 3.1, 5.0), wH(c, 3.1, 6.0), h21(vec2(c, 61.3)));
+    else if (k < 2.5) o = vec4(h21(vec2(c, 63.1)), h21(vec2(c, 65.7)), h21(vec2(c, 67.9)), h21(vec2(c, 69.2)));
+    else if (k < 3.5) o = vec4(wH(c, 8.3, 0.0), wH(c, 8.3, 1.0), wH(c, 8.3, 2.0), wH(c, 8.3, 3.0));
+    else if (k < 4.5) o = vec4(wH(c, 8.3, 4.0), wH(c, 8.3, 5.0), wH(c, 8.3, 6.0), 0.0);
+    else if (k < 5.5) o = vec4(h21(vec2(c, 21.7)), h21(vec2(c, 23.81)), h21(vec2(c, 25.92)), h21(vec2(c, 28.03)));
+    else o = vec4(h21(vec2(c, 30.14)), 0.0, 0.0, 0.0);
+  }
+  gl_FragColor = o;
+}
+`;
+/** Eckenshader: langsame Alterung (50–300 m) und Stärke der Fahrspuren (41 m) je Ecke */
+const WEAR_SLOW_VS = `vWearS = vec2(vn1(aRoad.y / 97.0, 43.0).x * 0.6 + vn1(aRoad.y / 271.0, 47.0).x * 0.4, vn1(aRoad.y / 41.0, 53.0).x);`;
+/** Rauschen für den Eckenshader (ohne fwidth) */
+const NOISE_VS_GLSL = `
+float h21(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+vec2 vn1(float x, float seed) { float i = floor(x); float f = fract(x); float a = h21(vec2(i, seed)); float b = h21(vec2(i + 1.0, seed)); float s = f * f * (3.0 - 2.0 * f); return vec2(mix(a, b, s), (b - a) * 6.0 * f * (1.0 - f)); }
+`;
 const WEAR_GLSL = `
+${WEAR_TAB}
 float wStripe(float d, float w) { float fw = max(fwidth(d), 1e-4); float h = fw * 0.5; return (clamp(d + w, -h, h) - clamp(d - w, -h, h)) / fw; }
 float wSpan(float x, float a, float b) { float fw = max(fwidth(x), 1e-4); return smoothstep(a - fw, a + fw, x) * (1.0 - smoothstep(b - fw, b + fw, x)); }
-float wH(float c, float seed, float k) { return h21(vec2(c, seed + k * 1.37)); }
-// Ränder, die nicht schnurgerade laufen: zwei Oktaven weiches Rauschen um 0
-float wWob(float t, float seed) { return vn1(t * 1.7, seed).x - 0.5 + (vn1(t * 6.1, seed + 3.0).x - 0.5) * 0.35; }
-// Flicken: (innen, Fuge, frisch?)
-vec3 wPatch(float u, float vm, float len, float seed, float chance) {
-  float c = floor(vm / len);
-  float on = step(1.0 - chance, wH(c, seed, 0.0));
-  float h1 = wH(c, seed, 1.0);
+// Flicken: (innen, Fuge, frisch?) – c: Abschnitt, h0/h1: seine Zufallswerte, wv: Ränder quer (längs gelesen),
+// wu: Enden (quer gelesen)
+vec3 wPatch(float u, float vm, float len, float chance, float c, vec4 h0, vec4 h1, vec2 wv, vec2 wu) {
+  float on = step(1.0 - chance, h0.x);
   // (mit Abstand zu den Zellgrenzen: dort würde der ausgefranste Rand gerade abgeschnitten)
-  float l = mix(2.2, len * 0.75 - 0.8, h1 * h1);
-  float v0 = c * len + 0.4 + wH(c, seed, 2.0) * (len - l - 0.8);
-  float k = wH(c, seed, 3.0);
-  float ua = k < 0.3 ? 0.5 : k < 0.55 ? 0.0 : k < 0.8 ? 0.12 + wH(c, seed, 4.0) * 0.5 : 0.0;
-  float ub = k < 0.3 ? 1.0 : k < 0.55 ? 0.5 : k < 0.8 ? ua + 0.2 + wH(c, seed, 5.0) * 0.12 : 1.0;
+  float l = mix(2.2, len * 0.75 - 0.8, h0.y * h0.y);
+  float v0 = c * len + 0.4 + h0.z * (len - l - 0.8);
+  float k = h0.w;
+  float ua = k < 0.3 ? 0.5 : k < 0.55 ? 0.0 : k < 0.8 ? 0.12 + h1.x * 0.5 : 0.0;
+  float ub = k < 0.3 ? 1.0 : k < 0.55 ? 0.5 : k < 0.8 ? ua + 0.2 + h1.y * 0.12 : 1.0;
   // Ränder ausgefranst (sonst ein Rechteck wie mit dem Lineal): quer um bis zu ±12 cm, längs um bis zu ±30 cm
-  ua += wWob(vm, seed + 11.0) * 0.045;
-  ub += wWob(vm, seed + 13.0) * 0.045;
-  float va0 = v0 + wWob(u * 5.6, seed + 17.0) * 0.6;
-  float va1 = v0 + l + wWob(u * 5.6, seed + 19.0) * 0.6;
+  ua += wv.x * 0.045;
+  ub += wv.y * 0.045;
+  float va0 = v0 + wu.x * 0.6;
+  float va1 = v0 + l + wu.y * 0.6;
   float inU = wSpan(u, ua, ub);
   float inV = wSpan(vm, va0, va1);
   float edge = min(max((wStripe(vm - va0, 0.035) + wStripe(vm - va1, 0.035)) * inU, (wStripe((u - ua) * 5.6, 0.035) + wStripe((u - ub) * 5.6, 0.035)) * inV), 1.0) * on;
-  return vec3(inU * inV * on, edge, wH(c, seed, 6.0));
+  return vec3(inU * inV * on, edge, h1.z);
 }
 // rd: Abstand zur Kamera (m) – feine Linien (Risse, Fugen, Bitumen, Bröckelrand) nur in der Nähe, Flicken bis gut
-// 100 m (weich ausgeblendet; dahinter geht der Belag ohnehin in seine Mittelfarbe über). Je Bildpunkt sind das sonst
-// rund hundert Zufallswerte – auch für die Straße in der Ferne, wo man nichts davon sieht
-vec3 roadWear(vec3 col, float um, float vm, float e, float rd) {
+// 100 m (weich ausgeblendet; dahinter geht der Belag ohnehin in seine Mittelfarbe über); slow: Alterung, Fahrspuren
+vec3 roadWear(vec3 col, float um, float vm, float e, float rd, vec2 slow) {
   float u = um / 5.6;
   // Alterung: ältere Abschnitte heller und grauer, neuere dunkler (50–300 m)
-  float age = vn1(vm / 97.0, 43.0).x * 0.6 + vn1(vm / 271.0, 47.0).x * 0.4;
-  col *= mix(0.86, 1.16, age);
+  col *= mix(0.86, 1.16, slow.x);
+  // längs: Fuge (Versatz, Maske), Bitumen, Bröckelrand
+  vec4 V1 = wearV(vm, 1.0);
   float kP = smoothstep(130.0, 100.0, rd);
   if (kP > 0.0) {
-    vec3 A = wPatch(u, vm, 13.0, 3.1, 0.45);
-    vec3 B = wPatch(u, vm, 37.0, 8.3, 0.5);
+    vec4 V0 = (wearV(vm, 0.0) - 0.5) * 1.4;
+    vec4 U0 = (wearU(um, 0.0) - 0.5) * 1.4;
+    float cA = floor(vm / 13.0);
+    float cB = floor(vm / 37.0);
+    vec3 A = wPatch(u, vm, 13.0, 0.45, cA, wearC(cA, 0), wearC(cA, 1), V0.xy, U0.xy);
+    vec3 B = wPatch(u, vm, 37.0, 0.5, cB, wearC(cB, 3), wearC(cB, 4), V0.zw, U0.zw);
     // Flicken: frisch dunkel, alt heller und ausgebleicht; Fugen schwarz (Bitumen)
     col = mix(col, B.z < 0.55 ? col * 0.42 : col * 1.3, B.x * 0.9 * kP);
     col = mix(col, col * 0.28, B.y * 0.85 * kP);
@@ -208,13 +283,14 @@ vec3 roadWear(vec3 col, float um, float vm, float e, float rd) {
   float kL = smoothstep(48.0, 36.0, rd);
   if (kL > 0.0) {
     float cc = floor(vm / 11.0);
-    float vc = cc * 11.0 + h21(vec2(cc, 21.7)) * 11.0;
-    float c1 = h21(vec2(cc, 23.81)), c2 = h21(vec2(cc, 25.92)), c3 = h21(vec2(cc, 28.03)), c4 = h21(vec2(cc, 30.14));
+    vec4 r0 = wearC(cc, 5);
+    float vc = cc * 11.0 + r0.x * 11.0;
+    float c1 = r0.y, c2 = r0.z, c3 = r0.w, c4 = wearC(cc, 6).x;
     // Querriss: schlängelt sich (zwei Oktaven) und läuft schräg
-    float wav = (vn1(um * 0.9, 17.0).x - 0.5) * 0.6 + (vn1(um * 3.7, 19.0).x - 0.5) * 0.16 + (um - 2.8) * (c1 - 0.5) * 0.3;
+    float wav = (wearU(um, 1.0).x - 0.5) * 0.8 + (um - 2.8) * (c1 - 0.5) * 0.3;
     float reach = smoothstep(c2 * 0.6, c2 * 0.6 + 0.1, c3 < 0.5 ? u : 1.0 - u);
     float crack = wStripe(vm - vc - wav, 0.018) * step(0.35, c4) * reach;
-    float joint = wStripe(um - 2.8 + (vn1(vm / 3.1, 29.0).x - 0.5) * 0.14 + (vn1(vm / 0.8, 33.0).x - 0.5) * 0.04, 0.02) * smoothstep(0.55, 0.65, vn1(vm / 23.0, 31.0).x);
+    float joint = wStripe(um - 2.8 + (V1.x - 0.5) * 0.2, 0.02) * V1.y;
     col = mix(col, col * 0.24, max(crack, joint) * 0.9 * kL);
   }
 #ifdef ROAD_RICH
@@ -223,19 +299,20 @@ vec3 roadWear(vec3 col, float um, float vm, float e, float rd) {
   float lane = mod(um, 2.8);
   float wheel = smoothstep(0.42, 0.0, abs(lane - 0.65)) + smoothstep(0.42, 0.0, abs(lane - 2.15));
   float oil = smoothstep(0.5, 0.0, abs(lane - 1.4));
-  float lm = vn1(vm / 41.0, 53.0).x;
+  float lm = slow.y;
   col *= 1.0 + wheel * 0.11 * (0.4 + lm) - oil * 0.12 * (1.3 - lm);
   // vergossene Risse (Bitumen): wellige, schwarz glänzende Linien schräg über die Fahrbahn
   if (kL > 0.0) {
     float tc = floor(vm / 13.0);
-    float tv0 = tc * 13.0 + h21(vec2(tc, 63.1)) * 4.0;
-    float tlen = 4.0 + h21(vec2(tc, 65.7)) * 8.0;
-    float tpath = h21(vec2(tc, 67.9)) * 5.6 + (vm - tv0) * (h21(vec2(tc, 69.2)) - 0.5) * 1.1 + (vn1(vm * 1.7, 71.0).x - 0.5) * 0.4;
-    float tar = wStripe(um - tpath, 0.02) * wSpan(vm, tv0, tv0 + tlen) * step(0.4, h21(vec2(tc, 61.3)));
+    vec4 t0 = wearC(tc, 2);
+    float tv0 = tc * 13.0 + t0.x * 4.0;
+    float tlen = 4.0 + t0.y * 8.0;
+    float tpath = t0.z * 5.6 + (vm - tv0) * (t0.w - 0.5) * 1.1 + (V1.z - 0.5) * 0.4;
+    float tar = wStripe(um - tpath, 0.02) * wSpan(vm, tv0, tv0 + tlen) * step(0.4, wearC(tc, 1).w);
     col = mix(col, vec3(0.04, 0.038, 0.04), tar * 0.72 * kL);
   }
   // ausgefranster Rand: die letzten Dezimeter bröckeln – heller Splitt, dunkle Löcher, unregelmäßig breit
-  float ed = min(um + e, 5.6 + e - um) + (vn1(vm * 2.3, 73.0).x - 0.5) * 0.24;
+  float ed = min(um + e, 5.6 + e - um) + (V1.w - 0.5) * 0.24;
   float rav = smoothstep(0.34, 0.02, ed);
   float kPit = smoothstep(44.0, 34.0, rd);
   float pit = kPit > 0.0 ? mix(0.4, step(0.6, vn2(vec2(um * 9.0, vm * 7.0))), kPit) : 0.4;
@@ -793,6 +870,10 @@ export class Renderer3D {
     this.valley = new THREE.Mesh(new THREE.PlaneGeometry(30000, 30000), this.valleyMat);
     this.valley.userData.nopick = true;
     this.valley.rotation.x = -Math.PI / 2;
+    // nach allem Festen, vor dem Himmel: three.js ordnet Festes nach Material, nicht nach Tiefe – als eines der
+    // ersten Materialien rechnete die Fläche sonst über halb des Bildschirms jeden Bildpunkt, den danach die
+    // Landschaft überdeckt (Messung: 54 % des Bilds umsonst). Jetzt verwirft der Tiefentest alles Verdeckte.
+    this.valley.renderOrder = 8;
     this.scene.add(this.valley);
 
     // Partikel
@@ -866,6 +947,35 @@ export class Renderer3D {
       if (this.warmGroup) this.warmUp(this.warmGroup);
       this.warmUp(this.scene);
     } catch (e) { console.error(e); }
+  }
+
+  /**
+   * Tabelle der Straßenabnutzung (WEAR_GLSL): einmal je Bühne auf der Grafikkarte gerechnet – mit denselben
+   * Zufallsfunktionen wie vorher je Bildpunkt, also dieselben Flicken und Risse. Lebt nur im Grafikspeicher (wie
+   * die gebackenen Zuschauer): nach einem verlorenen Kontext wird die Bühne ohnehin neu gebaut (lost).
+   */
+  private wearRT: THREE.WebGLRenderTarget | null = null;
+  private wearTable(): THREE.Texture {
+    if (this.wearRT) return this.wearRT.texture;
+    const rt = new THREE.WebGLRenderTarget(WEAR_W, WEAR_H, {
+      depthBuffer: false, stencilBuffer: false, generateMipmaps: false,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping,
+      type: THREE.UnsignedByteType, format: THREE.RGBAFormat,
+    });
+    rt.texture.colorSpace = THREE.NoColorSpace;
+    const mat = new THREE.ShaderMaterial({ vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }', fragmentShader: WEAR_LUT_FRAG, depthTest: false, depthWrite: false });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    quad.frustumCulled = false;
+    const sc = new THREE.Scene();
+    sc.add(quad);
+    const prev = this.gl.getRenderTarget();
+    this.gl.setRenderTarget(rt);
+    this.gl.render(sc, new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1));
+    this.gl.setRenderTarget(prev);
+    quad.geometry.dispose();
+    mat.dispose();
+    this.wearRT = rt;
+    return rt.texture;
   }
 
   /** Datentextur (Rauschen, Helligkeit): Werte wie gemalt, ohne Farbraum-Umrechnung */
@@ -1077,7 +1187,7 @@ export class Renderer3D {
     // feines Korn für die Nähe (ab Stufe 3): Splitt und Sand, in Weltkoordinaten (keine Kachel erkennbar)
     const grainMap = this.dataTex(grainTex(), 4);
     const grass = this.grassTexture();
-    const roadU = { uNoise: { value: this.noiseMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uGrain: { value: grainMap }, uGrassE: { value: grass.tex }, uGrassEM: { value: grass.mean } };
+    const roadU = { uNoise: { value: this.noiseMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uGrain: { value: grainMap }, uGrassE: { value: grass.tex }, uGrassEM: { value: grass.mean }, uWear: { value: this.wearTable() } };
     // wear: Flicken, Risse und Fugen (Asphalt; die Fahrbahn trägt dafür ihre Straßenmeter in aRoad: quer, längs,
     // Mehrbreite); grain: Korn in der Nähe; warp: Koordinaten weich verbogen (keine Wiederholung der Kachel);
     // edge: organischer Übergang am Rand (aX: Farbe des Bodens daneben, Anteil quer 0 … 1) – 'verge' innen zur
@@ -1090,10 +1200,10 @@ export class Renderer3D {
         const wr = wear && rich, wp = warp && rich, sn = rich ? sheen : 0;
         Object.assign(sh.uniforms, roadU, { uLampP: LAMP_U.uLampP, uLampCol: LAMP_U.uLampCol });
         sh.vertexShader = sh.vertexShader
-          .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wr ? '\nattribute vec3 aRoad;\nvarying vec3 vRoad;' : ''}${edge ? '\nattribute vec4 aX;\nvarying vec4 vX;' : ''}`)
-          .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wr ? '\nvRoad = aRoad;' : ''}${edge ? '\nvX = aX;' : ''}`);
+          .replace('#include <common>', `#include <common>\nvarying vec3 vWP;${wr ? `\nattribute vec3 aRoad;\nvarying vec3 vRoad;\nvarying vec2 vWearS;\n${NOISE_VS_GLSL}` : ''}${edge ? '\nattribute vec4 aX;\nvarying vec4 vX;' : ''}`)
+          .replace('#include <project_vertex>', `#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;${wr ? `\nvRoad = aRoad;\n${WEAR_SLOW_VS}` : ''}${edge ? '\nvX = aX;' : ''}`);
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', `#include <common>\n${rich ? '#define ROAD_RICH\n' : ''}uniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform sampler2D uGrain;\nuniform float uTime;\nvarying vec3 vWP;${edge ? '\nuniform sampler2D uGrassE;\nuniform vec3 uGrassEM;\nvarying vec4 vX;' : ''}${wr ? `\nvarying vec3 vRoad;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
+          .replace('#include <common>', `#include <common>\n${rich ? '#define ROAD_RICH\n' : ''}uniform sampler2D uNoise;\nuniform sampler2D uRelief;\nuniform sampler2D uGrain;\nuniform float uTime;\nvarying vec3 vWP;${edge ? '\nuniform sampler2D uGrassE;\nuniform vec3 uGrassEM;\nvarying vec4 vX;' : ''}${wr ? `\nvarying vec3 vRoad;\nvarying vec2 vWearS;\n${NOISE_GLSL}\n${WEAR_GLSL}` : ''}\n${LAMP_GLSL}`)
           // Lichtkegel der Laternen auf Straße und Bankett
           .replace('#include <lights_fragment_end>', lampFrag('vWP'))
           // matter Glanz bei flachem Blick: der Himmel (Farbe des Dunstes) spiegelt sich auf dem Belag – so zeichnen
@@ -1101,7 +1211,9 @@ export class Renderer3D {
           .replace('#include <envmap_fragment>', sn > 0 ? `#include <envmap_fragment>
             {
               float sNv = clamp(dot(normal, geometryViewDir), 0.0, 1.0);
-              float sFr = pow(1.0 - sNv, 5.0) * ${sn.toFixed(2)};
+              float sF1 = 1.0 - sNv;
+              float sF2 = sF1 * sF1;
+              float sFr = sF2 * sF2 * sF1 * ${sn.toFixed(2)};
               #ifdef USE_FOG
                 vec3 sSky = fogColor;
               #else
@@ -1141,7 +1253,7 @@ export class Renderer3D {
               sampledDiffuseColor.rgb *= 1.0 + ${patch.toFixed(2)} * ((mn.r * 0.6 + mn.g * 0.4) - 0.5) + ${(patch * 0.45).toFixed(2)} * (mn2.g - 0.5);
               sampledDiffuseColor.rgb *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), mn.b * 0.8);
               #endif
-              ${wr ? 'sampledDiffuseColor.rgb = roadWear(sampledDiffuseColor.rgb, vRoad.x, vRoad.y, vRoad.z, rd);' : ''}
+              ${wr ? 'sampledDiffuseColor.rgb = roadWear(sampledDiffuseColor.rgb, vRoad.x, vRoad.y, vRoad.z, rd, vWearS);' : ''}
               diffuseColor *= sampledDiffuseColor;
               ${gfxOn('details') ? CLOUD('vWP.xz') : ''}
             #endif`);
@@ -1668,7 +1780,10 @@ export class Renderer3D {
    */
   resize() {
     this.pendingResize = false;
-    const rect = this.gl.domElement.getBoundingClientRect();
+    // Größe im Layout, nicht der Kasten auf dem Bildschirm: hinter offenen Menüs ist die Bühne per CSS um 4 %
+    // vergrößert (scale) – die Leinwand bekam sonst diese Größe und rechnete das ganze Rennen 8 % Bildpunkte mehr
+    const cvEl = this.gl.domElement;
+    const rect = cvEl.clientWidth > 0 ? { width: cvEl.clientWidth, height: cvEl.clientHeight } : cvEl.getBoundingClientRect();
     const W = Math.max(100, Math.round(rect.width));
     const H = Math.max(100, Math.round(rect.height));
     // Pixeldichte, wie im Schieberegler gewählt (gfxOpts; fest, keine automatische Regelung) – quality ist nur ein
@@ -4630,8 +4745,10 @@ export class Renderer3D {
       () => add(walk2, this.mats.walk2),
       () => add(curb, this.mats.curb),
       () => add(gutter, this.mats.gutter),
-      () => add(covers, this.mats.covers, 1),
-      () => add(marks, this.mats.marks, 1),
+      // Deckel und Markierungen vor der Fahrbahn (dank Tiefenversatz bleiben sie oben): der Tiefentest verwirft dann
+      // die teure Fahrbahn unter ihnen, statt sie zu rechnen und zu übermalen
+      () => add(covers, this.mats.covers, -1),
+      () => add(marks, this.mats.marks, -1),
       // Gelände neben der Straße weich schattiert (keine harten Kanten zwischen den Bändern)
       () => {
         if (terr.empty) return;
@@ -6885,6 +7002,7 @@ export class Renderer3D {
     if (!this.player || this.playerKit !== kitKey) {
       if (this.player) { this.scene.remove(this.player.group); this.player.dispose(); }
       this.player = new RiderModel(p.kit, this.shadowTex, pq);
+      this.player.setFront(true);
       this.playerKit = kitKey;
       this.player.group.userData.nopick = true;
       this.scene.add(this.player.group);
@@ -7717,7 +7835,7 @@ export class Renderer3D {
   dispose() {
     this.offGfx();
     this.offRes();
-    try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); this.markers?.dispose(); this.ttStart?.dispose(); this.descStart?.dispose(); } catch { /* Kontext evtl. schon weg */ }
+    try { this.clearChunks(); this.skyLife.dispose(); this.crowdAtlas.dispose(); this.markers?.dispose(); this.ttStart?.dispose(); this.descStart?.dispose(); this.wearRT?.dispose(); } catch { /* Kontext evtl. schon weg */ }
     try { this.gl.dispose(); } catch { /* egal */ }
     // Kontext sofort freigeben: iOS erlaubt nur wenige gleichzeitig – sonst bleibt ein späteres Spiel schwarz
     try { this.gl.forceContextLoss(); } catch { /* egal */ }

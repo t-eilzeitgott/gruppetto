@@ -953,6 +953,25 @@ export class RiderModel {
     if (on === this.solid || !this.fadeMats) return;
     this.solid = on;
     this.meshes.forEach((m, i) => { if (!Array.isArray(m.material)) m.material = on ? this.solidOf[i] : this.fadeOf[i]; });
+    this.applyOrder();
+  }
+
+  /**
+   * Eigener Fahrer: deckend vor allem anderen zeichnen. three.js ordnet Festes nach Material – der Fahrer kam nach
+   * der Straße, die Grafik rechnete ihre teuren Bildpunkte hinter ihm umsonst. Zuerst gezeichnet verwirft der
+   * Tiefentest sie. (Durchsichtig bleibt er in der gewohnten Reihenfolge – sonst stimmte das Mischen nicht.)
+   */
+  setFront(on: boolean) {
+    this.front = on;
+    this.applyOrder();
+  }
+  private front = false;
+  private applyOrder() {
+    for (const m of this.meshes) {
+      const base = (m.userData.ro as number | undefined) ?? (m.userData.ro = m.renderOrder);
+      const mat = Array.isArray(m.material) ? m.material[0] : m.material;
+      m.renderOrder = this.front && base === 0 && !mat.transparent ? -1 : base;
+    }
   }
 
   /** zum Vorübersetzen (render3d warmUp): kurz die durchsichtigen Materialien, danach wieder wie vorher */

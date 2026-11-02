@@ -200,7 +200,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         raf = requestAnimationFrame(loop);
       };
       raf = requestAnimationFrame(loop);
-      const onResize = () => { renderer.requestResize(); engineRef.current?.setViewport(canvas.getBoundingClientRect().width); };
+      const onResize = () => { renderer.requestResize(); engineRef.current?.setViewport(canvas.clientWidth || canvas.getBoundingClientRect().width); };
       const onVis = () => {
         if (document.hidden && uiRef.current === 'playing') cb.current.onHidden();
         if (!document.hidden && renderer.lost) rebuild();

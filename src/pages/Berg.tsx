@@ -126,7 +126,7 @@ export function BergPage() {
       onEvent: (e) => cbs.current.onEvent(e),
       onOver: (r) => cbs.current.onOver(r),
     });
-    eng.setViewport(stageEl.current?.getBoundingClientRect().width ?? 390);
+    eng.setViewport(stageEl.current?.clientWidth || 390);
     return eng;
   };
   // was das Rennen ausmacht: ändert es sich hinter dem Startblatt, wird es gleich neu angelegt (nicht erst beim Start)
