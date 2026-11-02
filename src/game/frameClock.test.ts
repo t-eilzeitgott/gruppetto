@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FrameClock } from './frameClock';
+import { FrameClock, setPaceDivForce } from './frameClock';
 
 /** Uhr mit den Aufrufen (Zeitstempel) füttern; liefert die Schritte der gezeichneten Bilder in ms */
 function run(stamps: number[]): { dts: number[]; drawn: number[]; clock: FrameClock } {
@@ -351,4 +351,35 @@ test('Safari: jeder fünfte Aufruf 3–7 ms spät – kein Bild nach nur einem T
     assert.ok(Math.abs(slip - trueLate) < 0.03, `${gpu} ms: ${Math.round(slip * 100)} % Ausrutscher gemeldet, ${Math.round(trueLate * 100)} % Bilder wirklich zu spät`);
     if (gpu === 5) assert.ok(trueLate < 0.01, `${gpu} ms: ${Math.round(trueLate * 100)} % zu spät`);
   }
+});
+
+test('erzwungener Bildtakt (Wechseltest): jeder 3. Takt auf 120 Hz = Bilder alle 25 ms, kein Ausrutscher; auf 60 Hz ohne Wirkung', () => {
+  setPaceDivForce(3);
+  try {
+    // 120-Hz-Telefon, Safari ruft zu jedem Takt (Stempel bis 3 ms spät), Grafik 14 ms je Bild
+    let seed = 11;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const clock = new FrameClock(0, { apple: true });
+    const drawn: number[] = [];
+    const slips: number[] = [];
+    for (let v = 1; v < 3000; v++) {
+      const stamp = Math.floor(v * P120 + rnd() * 3);
+      if (!clock.ready(stamp)) continue;
+      clock.tick(stamp);
+      drawn.push(v);
+      slips.push(clock.slip);
+    }
+    assert.equal(clock.divNow, 3);
+    assert.ok(Math.abs(clock.target - 25) < 0.1, `Bildabstand ${clock.target.toFixed(1)} ms`);
+    const dv = drawn.slice(300).slice(1).map((x, i) => x - drawn.slice(300)[i]);
+    assert.ok(share(dv, (x) => x === 3) > 0.99, `${Math.round(share(dv, (x) => x === 3) * 100)} % der Bilder nach drei Takten`);
+    assert.ok(share(slips.slice(300), (x) => x > 0) < 0.005, 'kaum Ausrutscher');
+    // 60-Hz-Schirm: drei Takte wären 20 Bilder je Sekunde – bleibt bei jedem Takt
+    const c = new FrameClock(0, { apple: true });
+    let t = 0;
+    const dts: number[] = [];
+    for (let i = 0; i < 400; i++) { t += P60; if (c.ready(t)) dts.push(c.tick(t) * 1000); }
+    assert.equal(c.divNow, 1);
+    assert.ok(Math.abs(dts[dts.length - 1] - P60) < 0.5, `60 Hz: Schritt ${dts[dts.length - 1].toFixed(1)} ms`);
+  } finally { setPaceDivForce(0); }
 });

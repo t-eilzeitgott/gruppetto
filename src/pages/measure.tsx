@@ -6,7 +6,7 @@
 import { Fragment, useEffect, useRef, useState, type RefObject } from 'react';
 import { BUILD_ID } from '../app/config';
 import { AB_PERIOD_S, Perf3D, type AbTest, type Report } from '../game/abfahrt/perf3d';
-import { setPaceOff } from '../game/frameClock';
+import { setPaceDivForce, setPaceOff } from '../game/frameClock';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import type { RaceView } from '../game/abfahrt/engine';
 import { autoRangeDrop, chosenRange, viewRange } from '../game/abfahrt/viewRange';
@@ -36,6 +36,13 @@ const abTests = (renderer: () => Renderer3D | null): Record<string, AbTest> => (
     name: 'Auflösung', labels: ['halbe gewählte Auflösung', 'drei Viertel der gewählten'],
     apply: (b) => { setAutoSuspended(true); renderer()?.setQuality(b ? 0.75 : 0.5); },
     end: () => { setAutoSuspended(false); renderer()?.setQuality(autoView().res / gfxRes()); },
+  },
+  // fester Bildtakt 60 ↔ 40 Bilder je Sekunde (jeder 2. ↔ 3. Takt auf 120 Hz), Auflösung fest drei Viertel der
+  // gewählten: reichen 25 ms je Bild für die Grafik, bleiben die Ruckler aus?
+  takt40: {
+    name: 'Bildtakt 60 ↔ 40', labels: ['60 Bilder je s, drei Viertel Auflösung', '40 Bilder je s, drei Viertel Auflösung'],
+    apply: (b) => { setAutoSuspended(true); renderer()?.setQuality(0.75); setPaceDivForce(b ? 3 : 0); },
+    end: () => { setAutoSuspended(false); setPaceDivForce(0); renderer()?.setQuality(autoView().res / gfxRes()); },
   },
   hud: { name: 'Oberfläche', labels: ['Oberfläche an', 'Oberfläche aus'], apply: (b) => document.body.classList.toggle('mess-ohne-hud', b) },
   takt: { name: 'fester Bildtakt', labels: ['fester Bildtakt', 'ohne festen Takt (jeder Aufruf zeichnet)'], apply: (b) => setPaceOff(b) },

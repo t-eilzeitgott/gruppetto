@@ -414,13 +414,15 @@ function makeReport(r: Rec, ab: AbTest | null): Report {
   // die fühlen sich als Mikroruckler an, obwohl sie unter der Rucklergrenze bleiben)
   let offBeat = 0;
   const idx: number[] = [];
+  // (Grenzen je Bild nach seinem Takt: ein Wechseltest kann den Bildtakt umstellen, 16,7 ↔ 25 ms)
   for (const i of keep) {
     const d = dt[i];
-    if (d > period * 1.25 + 1) offBeat++;
+    const per = r.period[i] || period;
+    if (d > per * 1.25 + 1) offBeat++;
     hist[edges.find(([e]) => d < e)![1]]++;
-    if (d > hitchMs) {
+    if (d > hitchLimit(per)) {
       hitches++;
-      missed += Math.max(1, Math.round(d / period) - 1);
+      missed += Math.max(1, Math.round(d / per) - 1);
       idx.push(i);
       if (cpu[i] > period * 0.8) cpuBound++;
       if (late[i] > period * 0.5) lateBound++;
@@ -484,7 +486,7 @@ function makeReport(r: Rec, ab: AbTest | null): Report {
       if (r.ab[i] === v && r.t[i] - since >= 2) list.push(i);
     }
     let secs = 0, h = 0, off = 0;
-    for (const i of list) { const d = dt[i]; secs += d / 1000; if (d > hitchMs) h++; if (d > period * 1.25 + 1) off++; }
+    for (const i of list) { const d = dt[i]; const per = r.period[i] || period; secs += d / 1000; if (d > hitchLimit(per)) h++; if (d > per * 1.25 + 1) off++; }
     const pr = probes.filter((i) => r.ab[i] === v && r.phase[i] === playing);
     const gpuList = pr.map((i) => r.gpu[i]);
     const gpuMed = gpuList.length ? pct(Float32Array.from(gpuList).sort(), 0.5) : null;

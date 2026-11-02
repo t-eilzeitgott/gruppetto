@@ -47,6 +47,13 @@ const LATE_MS = 7;
 let paceOff = false;
 export function setPaceOff(off: boolean) { paceOff = off; }
 export function isPaceOff(): boolean { return paceOff; }
+/**
+ * mehr Takte je Bild erzwingen (Wechseltest der Messfahrt: 3 auf 120 Hz = 40 Bilder je Sekunde; 0 = wie gelernt).
+ * Gilt nur, wenn es mehr sind als gelernt, und nur auf schnellen Schirmen (unter 10 ms Takt) – auf 60 Hz wären drei
+ * Takte 20 Bilder je Sekunde
+ */
+let paceDivForce = 0;
+export function setPaceDivForce(d: number) { paceDivForce = d; }
 
 export class FrameClock {
   /** Bildschirmtakt (ms): kürzester regelmäßiger Abstand der Aufrufe (60, 90, 120, 144 Hz …) */
@@ -97,8 +104,11 @@ export class FrameClock {
     this.rates = (this.apple ? [60, 120] : RATES_HZ).map((hz) => 1000 / hz);
   }
 
+  /** Takte je Bild, die gerade gelten (gelernt oder erzwungen, s. setPaceDivForce) */
+  get divNow(): number { return paceDivForce > this.div && this.period < 10 ? paceDivForce : this.div; }
+
   /** Abstand der Bilder im festen Takt (ms) */
-  get target(): number { return this.period * this.div; }
+  get target(): number { return this.period * this.divNow; }
 
   /**
    * Soll in diesem Aufruf (requestAnimationFrame) gezeichnet werden? Lernt nebenbei den Bildschirmtakt; im festen
@@ -114,12 +124,13 @@ export class FrameClock {
       if ((this.k & 15) === 0 && this.n >= 16) this.measure();
     }
     this.calls += 1;
-    if (!this.pace || paceOff || this.div <= 1) return true;
+    const div = this.divNow;
+    if (!this.pace || paceOff || div <= 1) return true;
     // dran, wenn seit dem letzten Bild so viele Aufrufe kamen, wie Takte je Bild gelten (Safari ruft zu jedem Takt,
     // auch während die Grafik noch arbeitet) – oder, fehlte ein Aufruf (der Browser war aufgehalten), wenn das
     // nächste Bild im Raster fast erreicht ist. Nicht nach der Zeit allein: ein Aufruf, der 5 ms spät dran ist, sähe
     // sonst wie der nächste Takt aus, und das Bild käme nach 8 statt 17 ms (ein Doppel, das als Ruckler zu sehen ist)
-    return this.calls >= this.div || now >= this.due + (this.div - SLACK) * this.period;
+    return this.calls >= div || now >= this.due + (div - SLACK) * this.period;
   }
 
   /** Zeitstempel des gezeichneten Bildes → Spielzeit für dieses Bild (s) */
@@ -144,9 +155,10 @@ export class FrameClock {
     }
     // ganze Bildschirmtakte seit dem letzten Bild im Raster (mindestens der feste Bildtakt); ein Stempel bis LATE_MS
     // nach seinem Takt gehört noch zu diesem
-    const steps = Math.max(paceOff ? 1 : this.div, 1 + Math.floor((now - this.due - LATE_MS) / P));
-    this.slip = Math.max(0, steps - this.div);
-    this.off = now - (this.due + this.div * P);
+    const div = this.divNow;
+    const steps = Math.max(paceOff ? 1 : div, 1 + Math.floor((now - this.due - LATE_MS) / P));
+    this.slip = Math.max(0, steps - div);
+    this.off = now - (this.due + div * P);
     this.callsLast = this.calls;
     this.calls = 0;
     this.due += steps * P;
@@ -155,7 +167,7 @@ export class FrameClock {
     // Verspätungen
     if (now < this.due) this.due = now;
     else this.due += (now - this.due) * 0.03;
-    this.learnPace(steps);
+    this.learnPace(steps, div);
     let dt = steps * P;
     // auf Dauer genau mit der echten Zeit (kleine Korrektur, unmerklich)
     this.owed += raw - dt;
@@ -173,10 +185,10 @@ export class FrameClock {
    * Bilder je Sekunde, in keiner Grafikstufe: der feste Takt glättet nur 120 Hz zu gleichmäßigen 60, er bremst nie
    * darunter.
    */
-  private learnPace(steps: number) {
+  private learnPace(steps: number, div: number) {
     if (!this.pace) return;
     this.seen += 1;
-    if (steps > this.div) this.late += 1;
+    if (steps > div) this.late += 1;
     if (this.seen < this.window) return;
     // nie seltener als 60 Bilder je Sekunde (auf 120 Hz also höchstens jeder zweite Takt) – schafft das Gerät das
     // nicht, hilft eine kleinere Auflösung oder Grafikstufe
@@ -297,7 +309,7 @@ export function maxDiv(period: number): number {
 
 /** Takt in Worten (Messfahrt): „120 Hz, jeder 2. Takt → 16,7 ms" */
 export function paceText(c: FrameClock): string {
-  return `${Math.round(1000 / c.period)} Hz erkannt${c.div > 1 ? `, jeder ${c.div}. Takt` : ''} → Bild alle ${c.target.toFixed(1)} ms`;
+  return `${Math.round(1000 / c.period)} Hz erkannt${c.divNow > 1 ? `, jeder ${c.divNow}. Takt` : ''} → Bild alle ${c.target.toFixed(1)} ms`;
 }
 
 /** übliche Bildschirmtakte (Hz), längster Takt zuerst */
