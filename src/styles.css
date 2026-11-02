@@ -1650,7 +1650,7 @@ body:has(.abf-layer--sheet:not(.is-leaving), .abf-layer--pause, .abf-layer--over
 }
 /* unter dem Blatt weiter dieselbe Fläche: als Web-App auf dem Homescreen ist 100dvh anfangs kürzer als der Bildschirm,
    sonst bliebe unten ein Streifen der unscharfen Welt */
-.abf-sheet::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 100vh; background: inherit; pointer-events: none; }
+.abf-sheet::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 100vh; background: var(--bg); pointer-events: none; }
 .abf-sheet__head { padding: 0 12px; }
 .abf-sheet__body {
   display: flex; flex-direction: column; gap: 12px; min-height: 0; padding: 2px 0; overflow-y: auto; overflow-x: hidden;
@@ -1689,6 +1689,8 @@ body:has(.abf-layer--sheet:not(.is-leaving), .abf-layer--pause, .abf-layer--over
 .abf-sheet { gap: 14px; }
 .abf-sheet__body { scrollbar-width: none; }
 .abf-sheet__body::-webkit-scrollbar { display: none; }
+/* was unten weiterläuft, blendet weich aus (statt hart an der Fußleiste abgeschnitten) */
+.abf-sheet--start .abf-sheet__body { padding-bottom: 10px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); }
 /* Pause */
 .abf-sheet--pause { padding-top: 20px; }
 .abf-pause__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -1918,6 +1920,96 @@ body:has(.abf-layer--sheet:not(.is-leaving), .abf-layer--pause, .abf-layer--over
 }
 .abf-actions .btn--primary { flex: 1 1 auto; }
 .abf-actions__board { flex: none; width: 54px; padding: 0; }
+
+/* ---------- Persönlichkeit der Spielmenüs: jede Disziplin hat ihre Farbe (wie die Symbole auf der Startseite) ---------- */
+.abf-layer, .hue-abfahrt { --hue: var(--accent); }
+.hue-zeitfahren { --hue: #5aa9ff; }
+.hue-sprint { --hue: #ffb02e; }
+.hue-berg { --hue: #3ddc84; }
+[data-theme="light"] .hue-zeitfahren { --hue: #1d6fd6; }
+[data-theme="light"] .hue-sprint { --hue: #b86f00; }
+[data-theme="light"] .hue-berg { --hue: #0f7d3e; }
+/* Startblatt: ein Schimmer der Spielfarbe oben links, der Startknopf glänzt kurz, bevor es losgeht */
+.abf-sheet--start, .abf-sheet--pause, .abf-sheet--over {
+  background: radial-gradient(130% 70% at 0% 0%, color-mix(in srgb, var(--hue) 13%, transparent) 0%, transparent 62%), var(--bg);
+}
+.abf-go { position: relative; overflow: hidden; }
+.abf-go::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 30%; pointer-events: none;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.32), transparent); transform: translateX(-140%) skewX(-18deg);
+  animation: abf-go-shine 3.6s 1.2s ease-in-out infinite; will-change: transform;
+}
+@keyframes abf-go-shine { 0% { transform: translateX(-140%) skewX(-18deg); } 28%, 100% { transform: translateX(440%) skewX(-18deg); } }
+.abf-go:active { transform: scale(0.98); }
+/* Teamfunk: drei Balken wie ein Funksignal */
+.team-radio__bars { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 9px; margin-left: 5px; vertical-align: 0; }
+.team-radio__bars i { width: 2px; border-radius: 1px; background: var(--hue, var(--accent)); animation: radio-bar 1.1s ease-in-out infinite; }
+.team-radio__bars i:nth-child(1) { height: 4px; }
+.team-radio__bars i:nth-child(2) { height: 7px; animation-delay: 0.15s; }
+.team-radio__bars i:nth-child(3) { height: 9px; animation-delay: 0.3s; }
+@keyframes radio-bar { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+/* Pause: ein Satz zum Durchschnaufen und der Stand im Rennen */
+.abf-pause__titles { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.abf-pause__quip { margin: 0; font-size: 14px; color: var(--muted); }
+.abf-pause__status { display: flex; flex-wrap: wrap; gap: 6px; }
+.abf-pause__status > span {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 11px; border-radius: 999px;
+  background: var(--surface); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.abf-pause__status b { color: var(--text); font-weight: 700; }
+.abf-pause__status .rb-kraft { color: var(--text); font-size: 13px; }
+.abf-pause__status .rb-kraft__cell i, .rp-tile .rb-kraft__cell i { background: var(--hue); }
+
+/* ---------- Ergebnis als Rennbericht (report.tsx) ---------- */
+.abf-sheet--over .abf-score strong { animation: rp-hero 0.7s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+@keyframes rp-hero { from { opacity: 0; transform: translateY(8px) scale(1.06); filter: blur(4px); } }
+.rp-gap { margin: -6px 0 0; font-size: 15px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Beppe am Funk */
+.rp-verdict { margin: 0; display: flex; align-items: flex-end; gap: 8px; }
+.rp-verdict .team-radio__badge { width: 28px; height: 28px; border-radius: 9px; font-size: 16px; }
+.rp-verdict__bubble {
+  min-width: 0; padding: 8px 12px 9px; border-radius: 16px 16px 16px 5px; font-size: 14.5px; line-height: 1.35;
+  background: color-mix(in srgb, var(--hue) 13%, var(--surface)); animation: rp-bubble 0.5s 0.3s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  transform-origin: 0 100%;
+}
+.rp-verdict__bubble b { display: block; margin-bottom: 1px; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--hue); }
+@keyframes rp-bubble { from { opacity: 0; transform: scale(0.85) translateY(6px); } }
+/* Dieser Lauf: Kacheln mit Farbstreifen */
+.rp-tiles { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.rp-tiles.is-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rp-tile {
+  position: relative; overflow: hidden; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 9px 8px 10px 11px;
+  border-radius: 14px; background: var(--surface); animation: rp-tile-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+.rp-tile::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--hue); }
+.rp-tile dt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; color: var(--muted); }
+.rp-tile dd { margin: 0; display: flex; flex-direction: column; font-size: 19px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rp-tile dd small { font-size: 11px; font-weight: 600; letter-spacing: 0; color: var(--muted); }
+.rp-tile dd .rb-kraft { font-size: 17px; font-weight: 800; gap: 6px; }
+.rp-tile.is-good::before { background: #f2c94c; }
+.rp-tile.is-good dd { color: #f2c94c; }
+[data-theme="light"] .rp-tile.is-good dd { color: #a17800; }
+.rp-tile__note { font-size: 11px; color: var(--muted); }
+@keyframes rp-tile-in { from { opacity: 0; transform: translateY(8px); } }
+/* Deine Wertung */
+.rp-standing {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label chev" "cells chev" "note chev";
+  align-items: center; gap: 3px 10px; width: 100%; padding: 11px 14px 12px; border: 0; border-radius: 16px;
+  background: var(--surface); color: inherit; font: inherit; text-align: left; -webkit-tap-highlight-color: transparent; cursor: pointer;
+}
+.rp-standing:active { background: var(--surface2); }
+.rp-standing__label { grid-area: label; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.rp-standing__cells { grid-area: cells; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.rp-standing__cell { display: inline-flex; align-items: baseline; gap: 5px; font-size: 14px; font-weight: 600; color: var(--muted); }
+.rp-standing__cell svg { align-self: center; color: var(--hue); }
+.rp-standing__cell b { font-size: 21px; font-weight: 800; letter-spacing: -0.02em; color: var(--text); font-variant-numeric: tabular-nums; }
+.rp-standing__cell em { font-style: normal; font-weight: 700; color: #3ddc84; }
+.rp-standing__note { grid-area: note; font-size: 12px; line-height: 1.35; color: var(--muted); }
+.rp-standing__chev { grid-area: chev; color: var(--muted); }
+.abf-actions__board.rp-board { width: auto; gap: 6px; padding: 0 16px; }
+@media (prefers-reduced-motion: reduce) {
+  .abf-go::after, .team-radio__bars i, .abf-sheet--over .abf-score strong, .rp-verdict__bubble, .rp-tile { animation: none; }
+}
 
 /* Sprintfinale */
 .abf-banner--red strong { color: #ff6b6b; }

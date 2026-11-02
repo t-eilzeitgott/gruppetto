@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { RunBoard } from './runBoard';
+import { RunTiles, ReportActions, Standing, Verdict, fmtKmh, standingOf, verdict } from './report';
 import { acquireStage, hasWarmStage, prewarm, releaseStage, watchStage, type Stage } from '../game/abfahrt/pool';
 import type { WarmArgs } from '../app/warm';
 import { afterPaint } from '../lib/afterPaint';
@@ -690,7 +691,7 @@ export function GamePage() {
       {ui === 'countdown' ? <Countdown count={count} /> : null}
 
       {ui === 'paused' ? (
-        <PauseSheet game="Abfahrt" onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={canMeasure ? (
+        <PauseSheet game="Abfahrt" id="abfahrt" status={(() => { const h = engineRef.current?.hud(); return h ? [<><b>{nf(h.score)}</b> {h.score === 1 ? 'Punkt' : 'Punkte'}</>, <><b>{km(h.meters)}</b></>, <>Kombo <b>×{h.mult}</b></>] : undefined; })()} onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={canMeasure ? (
           <div className="abf-gfx">
             <div className="race-row">
               {measuring
@@ -777,7 +778,7 @@ export function GamePage() {
       ) : null}
 
       {ui === 'over' && result ? (
-        <OverSheet onClose={() => navigate('/')} plain={showBoard}>
+        <OverSheet game="abfahrt" onClose={() => navigate('/')} plain={showBoard}>
           {showBoard ? (
             <BoardView rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} />
           ) : (
@@ -928,14 +929,8 @@ function Summary({ bikes, result, record, prevRank, today, season, meId, totalM,
   meId: string; totalM: number; missions: Mission[]; done: string[]; onAgain: () => void; onBoard: () => void;
 }) {
   const shown = useCountUp(result.score);
-  // vorläufiger Platz: eigener Lauf gegen die Bestwerte der anderen
-  const placeIn = (list: GameBest[]) => {
-    const others = list.filter((b) => b.user_id !== meId).map((b) => b.best);
-    const mineBest = Math.max(result.score, list.find((b) => b.user_id === meId)?.best ?? 0);
-    return others.filter((s) => s > mineBest).length + 1;
-  };
-  const dayPlace = placeIn(today);
-  const seasonPlace = placeIn(season);
+  // vorläufiger Platz in der Saison: eigener Lauf gegen die Bestwerte der anderen (für „↑ Plätze gutgemacht“)
+  const seasonPlace = standingOf(season, meId, result.score).place;
   const delta = (before: number, now: number) => (before >= 0 && now < before + 1 ? before + 1 - now : 0);
   const up = prevRank ? delta(prevRank.season, seasonPlace) : 0;
   const parts = ORDER.filter((k) => result.parts[k] > 0);
@@ -954,16 +949,16 @@ function Summary({ bikes, result, record, prevRank, today, season, meId, totalM,
           <NewBikePill bikes={bikes} />
         </div>
         <p className="abf-score"><strong>{nf(shown)}</strong><span className="sr-only"> Punkte</span></p>
-        <div className="abf-stats">
-          <span><Icon name="flag" size={15} />{km(result.meters)}</span>
-          <span><Icon name="zap" size={15} />{result.topKmh}&nbsp;km/h</span>
-          <span><b>×{result.stats.combo}</b>&nbsp;Kombo</span>
-        </div>
-        <div className="abf-places">
-          <span><Icon name="podium" size={15} /><b>{dayPlace}.</b>&nbsp;heute</span>
-          <span><Icon name="trophy" size={15} /><b>{seasonPlace}.</b>&nbsp;Saison{up > 0 ? <em className="pos">&nbsp;↑{up}</em> : null}</span>
-        </div>
+        <p className="rp-gap">Punkte{record && result.reason ? ` · ${result.reason}` : ''}</p>
       </div>
+      <Verdict line={verdict({ game: 'abfahrt', seed: result.score, pb: record, crash: result.reason || undefined })} />
+      <RunTiles tiles={[
+        { key: 'm', label: 'Strecke', value: km(result.meters) },
+        result.avgKmh ? { key: 'v', label: 'Schnitt', value: fmtKmh(result.avgKmh), unit: 'km/h' } : null,
+        { key: 't', label: 'Spitze', value: String(result.topKmh), unit: 'km/h' },
+        { key: 'c', label: 'Kombo', value: `×${result.stats.combo}` },
+      ]} />
+      <Standing today={today} season={season} meId={meId} score={result.score} fmt={nf} bestWord="Bestleistung" up={up} onBoard={onBoard} />
       <dl className="abf-parts">
         {parts.map((k) => (
           <div key={k}>
@@ -976,10 +971,7 @@ function Summary({ bikes, result, record, prevRank, today, season, meId, totalM,
       <Missions missions={missions} done={done} />
       {rankNow.name !== rankBefore.name ? <p className="abf-levelup">Aufgestiegen: {rankNow.name}</p> : null}
       <RankBar totalM={newTotal} name={rankNow.name} gained={result.meters} />
-      <div className="abf-actions">
-        <button type="button" className="btn btn--primary btn--full" onClick={onAgain}><Icon name="refresh" size={18} /><span>Nochmal</span></button>
-        <button type="button" className="btn btn--secondary abf-actions__board" onClick={onBoard} aria-label="Bestenliste"><Icon name="podium" size={20} /></button>
-      </div>
+      <ReportActions onAgain={onAgain} onBoard={onBoard} />
     </section>
   );
 }

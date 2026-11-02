@@ -59,9 +59,9 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
     (s ? sheetOut(s, layer.current) : Promise.resolve()).then(onStart);
   };
   return (
-    <div ref={layer} className={cx('abf-layer abf-layer--sheet', leaving && 'is-leaving')}>
+    <div ref={layer} className={cx('abf-layer abf-layer--sheet', `hue-${game}`, leaving && 'is-leaving')}>
       <button type="button" className="abf-round abf-close" onClick={onClose} aria-label="Schließen"><Icon name="x" size={20} /></button>
-      <div className="abf-sheet" ref={sheet}>
+      <div className={cx('abf-sheet', !plain && 'abf-sheet--start')} ref={sheet}>
         {plain ? (
           <div className="abf-sheet__body abf-scroll">{children}</div>
         ) : (
@@ -88,14 +88,28 @@ function TeamRadio({ game }: { game: string }) {
   return (
     <p className="team-radio">
       <span className="team-radio__badge" aria-hidden="true">g<i>.</i></span>
-      <span className="team-radio__text"><b>Teamfunk · {r.ds}</b> „{r.line}“</span>
+      <span className="team-radio__text"><b>Teamfunk · {r.ds}<span className="team-radio__bars" aria-hidden="true"><i /><i /><i /></span></b> „{r.line}“</span>
     </p>
   );
 }
 
+/** ein Satz unter „Pause“ – jedes Mal ein anderer */
+const PAUSE_QUIPS = [
+  'Kurz durchschnaufen.',
+  'Trinkflasche auffüllen, dann weiter.',
+  'Der Mechaniker zieht die Schrauben nach.',
+  'Das Feld wartet. Ausnahmsweise.',
+  'Beppe hält das Funkgerät bereit.',
+  'Ein Riegel geht immer.',
+];
+
 /** Pause: Weiter (Hauptaktion), Beenden, Grafik; extra: Messmodus (eingeklappt) */
-export function PauseSheet({ game, onResume, onQuit, extra }: {
+export function PauseSheet({ game, id, status, onResume, onQuit, extra }: {
   game: string;
+  /** Spiel (Farbe) */
+  id?: GameId;
+  /** Stand im Rennen: Platz, Reststrecke, Kraft */
+  status?: ReactNode[];
   onResume: () => void;
   onQuit: () => void;
   extra?: ReactNode;
@@ -103,6 +117,7 @@ export function PauseSheet({ game, onResume, onQuit, extra }: {
   const layer = useRef<HTMLDivElement | null>(null);
   const sheet = useRef<HTMLDivElement | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [quip] = useState(() => PAUSE_QUIPS[Math.floor(Math.random() * PAUSE_QUIPS.length)]);
   useLayoutEffect(() => { if (sheet.current) sheetIn(sheet.current); }, []);
   const resume = () => {
     if (leaving) return;
@@ -111,12 +126,16 @@ export function PauseSheet({ game, onResume, onQuit, extra }: {
     (s ? sheetOut(s, layer.current) : Promise.resolve()).then(onResume);
   };
   return (
-    <div ref={layer} className={cx('abf-layer abf-layer--sheet abf-layer--pause', leaving && 'is-leaving')}>
+    <div ref={layer} className={cx('abf-layer abf-layer--sheet abf-layer--pause', id && `hue-${id}`, leaving && 'is-leaving')}>
       <div className="abf-sheet abf-sheet--pause" ref={sheet} role="dialog" aria-modal="true" aria-labelledby="abf-pause-title">
         <div className="abf-pause__head">
-          <h2 id="abf-pause-title" className="abf-pause__title">Pause</h2>
+          <div className="abf-pause__titles">
+            <h2 id="abf-pause-title" className="abf-pause__title">Pause</h2>
+            <p className="abf-pause__quip">{quip}</p>
+          </div>
           <span className="abf-pause__game">{game}</span>
         </div>
+        {status?.length ? <div className="abf-pause__status" aria-label="Stand im Rennen">{status.map((x, i) => <span key={i}>{x}</span>)}</div> : null}
         <div className="abf-pause__actions">
           {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
           <button type="button" className="btn btn--primary abf-pause__go" onClick={resume} disabled={leaving} autoFocus><PlayIcon /><span>Weiter</span></button>
@@ -140,11 +159,11 @@ export function PauseSheet({ game, onResume, onQuit, extra }: {
 }
 
 /** Ende: das Ergebnis (Inhalt je Spiel) unter dem Zielband; Schließen oben rechts */
-export function OverSheet({ onClose, children, plain }: { onClose: () => void; children: ReactNode; plain?: boolean }) {
+export function OverSheet({ game, onClose, children, plain }: { game?: GameId; onClose: () => void; children: ReactNode; plain?: boolean }) {
   const sheet = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => { if (sheet.current) sheetIn(sheet.current); }, []);
   return (
-    <div className="abf-layer abf-layer--sheet abf-layer--over">
+    <div className={cx('abf-layer abf-layer--sheet abf-layer--over', game && `hue-${game}`)}>
       <button type="button" className="abf-round abf-close" onClick={onClose} aria-label="Schließen"><Icon name="x" size={20} /></button>
       <div className={cx('abf-sheet abf-sheet--over', plain && 'is-plain')} ref={sheet} role="dialog" aria-modal="true" aria-label="Ergebnis">
         <div className="abf-sheet__body abf-scroll">{children}</div>

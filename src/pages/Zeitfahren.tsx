@@ -22,6 +22,9 @@ import { Icon } from '../ui/Icon';
 import { Skel, SkelText } from '../ui/skeleton';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
+import { Kraft } from './runBoard';
+import { RunTiles, ReportActions, Standing, Verdict, raceTiles, verdict } from './report';
+import { useCountUp } from './gameKit';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { PauseIcon, PlayIcon } from './Game';
 import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
@@ -368,7 +371,7 @@ export function ZeitfahrenPage() {
       {ui === 'countdown' ? <Countdown count={count} step={0.6} /> : null}
 
       {ui === 'paused' ? (
-        <PauseSheet game="Zeitfahren" onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={meas.menu(() => engineRef.current)} />
+        <PauseSheet game="Zeitfahren" id="zeitfahren" status={(() => { const h = engineRef.current?.hud(); return h ? [<><b>{h.place}.</b> von {h.riders}</>, <>noch <b>{dist(h.toGo)}</b></>, <Kraft k={h.energy} />] : undefined; })()} onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={meas.menu(() => engineRef.current)} />
       ) : null}
 
       {meas.overlays(ui === 'paused')}
@@ -390,7 +393,7 @@ export function ZeitfahrenPage() {
       ) : null}
 
       {ui === 'over' && result ? (
-        <OverSheet onClose={() => navigate('/')} plain={showBoard}>
+        <OverSheet game="zeitfahren" onClose={() => navigate('/')} plain={showBoard}>
           {showBoard ? boardView : (
             <TtSummary
               bikes={bikes}
@@ -561,11 +564,13 @@ function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, on
 }) {
   const r = result;
   const score = ttScore(r.timeMs);
+  const shown = useCountUp(r.timeMs);
   const badge = r.dayBest ? ['trophy', 'Tagesbestzeit!', true] as const
     : r.pb && hadBest ? ['star', 'Persönliche Bestzeit', true] as const
-      : r.riders > 1 ? ['clock', `${r.place}. von ${r.riders}`, false] as const
+      : r.riders > 1 ? ['flag', 'Im Ziel', false] as const
         : ['flag', 'Erste Zeit des Tages', true] as const;
-  const gapText = r.gapMs === null ? 'allein gegen die Uhr' : r.gapMs <= 0 ? `${fmtGap(r.gapMs)} vor ${firstName(r.leader?.name ?? '')}` : `${fmtGap(r.gapMs)} hinter ${firstName(r.leader?.name ?? '')}`;
+  const leaderName = firstName(r.leader?.name ?? '');
+  const gapText = r.gapMs === null ? 'allein gegen die Uhr' : r.gapMs <= 0 ? `${fmtGap(r.gapMs)} vor ${leaderName}` : `${fmtGap(r.gapMs)} hinter ${leaderName}`;
   // Zwischenzeiten mit Rückstand auf den Tagesbesten an der Station
   const leaderCum: (number | null)[] = [];
   let acc: number | null = 0;
@@ -573,8 +578,10 @@ function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, on
   const myCum = [...r.splits, r.timeMs];
   const names = ['1 km', '2 km', 'Ziel'];
   const secNames = ['Tal', 'Côte', 'Abfahrt & Ziel'];
-  // ein kurzer Hinweis, was beim nächsten Mal geht (oder wen man überholt hat)
-  const tip = r.reserve > 0.15 ? `${Math.round(r.reserve * 100)} % Kraft übrig` : r.slides > 0 ? `${r.slides}× abgerutscht` : r.passed.length ? `Überholt: ${r.passed.map(firstName).join(', ')}` : null;
+  const line = verdict({
+    game: 'zeitfahren', seed: r.timeMs, place: r.place, riders: r.riders, dayBest: r.dayBest, pb: r.pb && hadBest,
+    reserve: r.reserve, gapS: r.gapMs !== null && r.gapMs > 0 ? r.gapMs / 1000 : undefined, slides: r.slides, leader: leaderName || undefined,
+  });
   return (
     <section className="abf-summary" aria-label="Ergebnis">
       <div className="abf-sum-top">
@@ -585,19 +592,14 @@ function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, on
           </span>
           <NewBikePill bikes={bikes} />
         </div>
-        <p className="abf-score tt-time"><strong>{fmtTime(r.timeMs)}</strong><span className="sr-only"> Minuten</span></p>
-        <div className="abf-stats">
-          <span><Icon name="podium" size={15} />{r.place}.&nbsp;Platz</span>
-          <span><Icon name="clock" size={15} />{gapText}</span>
-          <span><Icon name="zap" size={15} />Ø {r.avgKmh.toLocaleString('de-DE', { maximumFractionDigits: 1 })}&nbsp;km/h</span>
-        </div>
-        {tip ? <p className="abf-tip">{tip}</p> : null}
-        <div className="abf-places">
-          <span><Icon name="podium" size={15} /><b>{placeIn(today, meId, score)}.</b>&nbsp;heute</span>
-          <span><Icon name="trophy" size={15} /><b>{placeIn(season, meId, score)}.</b>&nbsp;Saison</span>
-        </div>
-        {saveFailed ? <p className="tt-warn">Nicht gespeichert – keine Verbindung</p> : null}
+        <p className="abf-score tt-time"><strong>{fmtTime(shown)}</strong><span className="sr-only"> Minuten</span></p>
+        <p className="rp-gap">{gapText}</p>
       </div>
+      <Verdict line={line} />
+      <RunTiles tiles={raceTiles({ place: r.place, riders: r.riders, avgKmh: r.avgKmh, reserve: r.reserve, topKmh: r.topKmh })} />
+      {r.passed.length ? <p className="abf-note"><Icon name="users" size={15} />Überholt: {r.passed.map(firstName).join(', ')}</p> : null}
+      <Standing today={today} season={season} meId={meId} score={score} fmt={(b) => fmtTime(ttMs(b))} bestWord="Bestzeit" onBoard={onBoard} />
+      {saveFailed ? <p className="tt-warn">Nicht gespeichert – keine Verbindung</p> : null}
       <dl className="tt-splits" aria-label="Zwischenzeiten">
         {myCum.map((t, i) => {
           const lc = leaderCum[i];
@@ -636,10 +638,7 @@ function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, on
           </li>
         ))}
       </ol>
-      <div className="abf-actions">
-        <button type="button" className="btn btn--primary btn--full" onClick={onAgain}><Icon name="refresh" size={18} /><span>Nochmal</span></button>
-        <button type="button" className="btn btn--secondary abf-actions__board" onClick={onBoard} aria-label="Bestenliste"><Icon name="podium" size={20} /></button>
-      </div>
+      <ReportActions onAgain={onAgain} onBoard={onBoard} />
     </section>
   );
 }

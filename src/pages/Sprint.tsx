@@ -22,12 +22,14 @@ import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
+import { Kraft } from './runBoard';
+import { RunTiles, ReportActions, Standing, Verdict, raceTiles, verdict } from './report';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { PauseIcon, PlayIcon, useCountUp } from './Game';
 import { RaceControls, controlsHowTo } from './controls';
 import { teamKit } from '../game/teams';
 import {
-  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn,
+  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 
@@ -271,7 +273,7 @@ export function SprintPage() {
       {ui === 'countdown' ? <Countdown count={count} /> : null}
 
       {ui === 'paused' ? (
-        <PauseSheet game="Sprintfinale" onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={meas.menu(() => engineRef.current)} />
+        <PauseSheet game="Sprintfinale" id="sprint" status={(() => { const h = engineRef.current?.hud(); return h ? [<><b>{h.place}.</b> von {h.riders}</>, <>noch <b>{dist(h.toGo)}</b></>, <Kraft k={h.energy} />] : undefined; })()} onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={meas.menu(() => engineRef.current)} />
       ) : null}
 
       {meas.overlays(ui === 'paused')}
@@ -295,7 +297,7 @@ export function SprintPage() {
       ) : null}
 
       {ui === 'over' && result ? (
-        <OverSheet onClose={() => navigate('/')} plain={showBoard}>
+        <OverSheet game="sprint" onClose={() => navigate('/')} plain={showBoard}>
           {showBoard ? boardView : (
             <SprintSummary
               bikes={bikes}
@@ -328,27 +330,23 @@ function SprintSummary({ bikes, result, rider, record, today, season, meId, onAg
     ['Plätze gutgemacht', result.parts.gain],
     [`${TYPE_STATS[rider.type].label}-Bonus`, result.parts.type],
   ];
+  const line = verdict({ game: 'sprint', seed: result.score, place: result.place, riders: result.riders, win, pb: record, reserve: result.reserve, gapS: win ? undefined : result.gap, leader: result.winner });
   return (
     <section className="abf-summary" aria-label="Ergebnis">
       <div className="abf-sum-top">
         <div className="abf-badges">
           <span className={cx('abf-badge', (win || record) && 'is-gold')}>
             <Icon name={win ? 'trophy' : record ? 'star' : 'flag'} size={14} />
-            {win ? 'Etappensieg!' : record ? 'Bestleistung' : `${result.place}. von ${result.riders}`}
+            {win ? 'Etappensieg!' : record ? 'Bestleistung' : 'Im Ziel'}
           </span>
           <NewBikePill bikes={bikes} />
         </div>
         <p className="abf-score"><strong>{nf(shown)}</strong><span className="sr-only"> Punkte</span></p>
-        <div className="abf-stats">
-          <span><Icon name="podium" size={15} />{result.place}.&nbsp;Platz</span>
-          <span><Icon name="clock" size={15} />{win ? 'Sieger' : result.gap < 0.05 ? 'gleiche Zeit' : `+${result.gap.toFixed(2).replace('.', ',')} s`}</span>
-          <span><Icon name="zap" size={15} />{result.topKmh}&nbsp;km/h</span>
-        </div>
-        <div className="abf-places">
-          <span><Icon name="podium" size={15} /><b>{placeIn(today, meId, result.score)}.</b>&nbsp;heute</span>
-          <span><Icon name="trophy" size={15} /><b>{placeIn(season, meId, result.score)}.</b>&nbsp;Saison</span>
-        </div>
+        <p className="rp-gap">{win ? 'Sprintsieg vor dem ganzen Feld' : result.gap < 0.05 ? `zeitgleich mit ${result.winner}` : `+${result.gap.toFixed(2).replace('.', ',')} s auf ${result.winner}`}</p>
       </div>
+      <Verdict line={line} />
+      <RunTiles tiles={raceTiles({ place: result.place, riders: result.riders, avgKmh: result.avgKmh, reserve: result.reserve, topKmh: result.topKmh })} />
+      <Standing today={today} season={season} meId={meId} score={result.score} fmt={nf} bestWord="Bestleistung" onBoard={onBoard} />
       <Podium podium={result.podium} />
       <dl className="abf-parts spr-parts">
         {parts.filter(([, v]) => v > 0).map(([k, v]) => (
@@ -358,10 +356,7 @@ function SprintSummary({ bikes, result, rider, record, today, season, meId, onAg
           </div>
         ))}
       </dl>
-      <div className="abf-actions">
-        <button type="button" className="btn btn--primary btn--full" onClick={onAgain}><Icon name="refresh" size={18} /><span>Nochmal</span></button>
-        <button type="button" className="btn btn--secondary abf-actions__board" onClick={onBoard} aria-label="Bestenliste"><Icon name="podium" size={20} /></button>
-      </div>
+      <ReportActions onAgain={onAgain} onBoard={onBoard} />
       <button type="button" className="abf-link spr-change" onClick={onRider}>Anderen Fahrer wählen<Icon name="chevron" size={14} /></button>
     </section>
   );

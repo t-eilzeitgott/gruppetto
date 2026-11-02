@@ -22,12 +22,14 @@ import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
+import { Kraft } from './runBoard';
+import { RunTiles, ReportActions, Standing, Verdict, raceTiles, verdict } from './report';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { PauseIcon, PlayIcon, useCountUp } from './Game';
 import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
 import { teamKit } from '../game/teams';
 import {
-  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn,
+  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 
@@ -306,7 +308,7 @@ export function BergPage() {
       {ui === 'countdown' ? <Countdown count={count} /> : null}
 
       {ui === 'paused' ? (
-        <PauseSheet game="Bergfinale" onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={meas.menu(() => engineRef.current)} />
+        <PauseSheet game="Bergfinale" id="berg" status={(() => { const h = engineRef.current?.hud(); return h ? [<><b>{h.place}.</b> von {h.riders}</>, h.toTop > 0 ? <>noch <b>{dist(h.toTop)}</b> zum Gipfel</> : <>noch <b>{dist(h.toGo)}</b></>, <Kraft k={h.energy} />] : undefined; })()} onResume={() => setUi('playing')} onQuit={() => navigate('/')} extra={meas.menu(() => engineRef.current)} />
       ) : null}
 
       {meas.overlays(ui === 'paused')}
@@ -331,7 +333,7 @@ export function BergPage() {
       ) : null}
 
       {ui === 'over' && result ? (
-        <OverSheet onClose={() => navigate('/')} plain={showBoard}>
+        <OverSheet game="berg" onClose={() => navigate('/')} plain={showBoard}>
           {showBoard ? boardView : (
             <BergSummary
               bikes={bikes}
@@ -395,30 +397,25 @@ function BergSummary({ bikes, result, rider, record, today, season, meId, onAgai
     [`${BERG_STATS[rider.type].label}-Bonus`, result.parts.type],
   ];
   const gapText = win
-    ? (result.gap < -0.3 ? `${sec(-result.gap)} s Vorsprung` : 'Sieger')
+    ? (result.gap < -0.3 ? `${sec(-result.gap)} s Vorsprung` : 'Sieg am Berg')
     : result.gap < 0.05 ? 'gleiche Zeit' : `+${sec(result.gap)} s`;
+  const line = verdict({ game: 'berg', seed: result.score, place: result.place, riders: result.riders, win, pb: record, reserve: result.reserve, gapS: win ? undefined : result.gap, slides: result.slides, leader: result.winner });
   return (
     <section className="abf-summary" aria-label="Ergebnis">
       <div className="abf-sum-top">
         <div className="abf-badges">
           <span className={cx('abf-badge', (win || record) && 'is-gold')}>
             <Icon name={win ? 'trophy' : record ? 'star' : 'flag'} size={14} />
-            {win ? 'Etappensieg!' : record ? 'Bestleistung' : `${result.place}. von ${result.riders}`}
+            {win ? 'Etappensieg!' : record ? 'Bestleistung' : 'Im Ziel'}
           </span>
           <NewBikePill bikes={bikes} />
         </div>
         <p className="abf-score"><strong>{nf(shown)}</strong><span className="sr-only"> Punkte</span></p>
-        <div className="abf-stats">
-          <span><Icon name="podium" size={15} />{result.place}.&nbsp;Platz</span>
-          <span><Icon name="clock" size={15} />{gapText}</span>
-          <span><Icon name="zap" size={15} />{result.topKmh}&nbsp;km/h</span>
-        </div>
-        <p className="abf-tip">Bergwertung {result.gpmPlace}.{result.slides > 0 ? `, ${result.slides}× abgerutscht` : ''}</p>
-        <div className="abf-places">
-          <span><Icon name="podium" size={15} /><b>{placeIn(today, meId, result.score)}.</b>&nbsp;heute</span>
-          <span><Icon name="trophy" size={15} /><b>{placeIn(season, meId, result.score)}.</b>&nbsp;Saison</span>
-        </div>
+        <p className="rp-gap">{win ? gapText : result.gap < 0.05 ? `zeitgleich mit ${result.winner}` : `${gapText} auf ${result.winner}`} · Bergwertung {result.gpmPlace}.</p>
       </div>
+      <Verdict line={line} />
+      <RunTiles tiles={raceTiles({ place: result.place, riders: result.riders, avgKmh: result.avgKmh, reserve: result.reserve, topKmh: result.topKmh })} />
+      <Standing today={today} season={season} meId={meId} score={result.score} fmt={nf} bestWord="Bestleistung" onBoard={onBoard} />
       <Podium podium={result.podium} />
       <dl className="abf-parts spr-parts">
         {parts.filter(([, v]) => v > 0).map(([k, v]) => (
@@ -428,10 +425,7 @@ function BergSummary({ bikes, result, rider, record, today, season, meId, onAgai
           </div>
         ))}
       </dl>
-      <div className="abf-actions">
-        <button type="button" className="btn btn--primary btn--full" onClick={onAgain}><Icon name="refresh" size={18} /><span>Nochmal</span></button>
-        <button type="button" className="btn btn--secondary abf-actions__board" onClick={onBoard} aria-label="Bestenliste"><Icon name="podium" size={20} /></button>
-      </div>
+      <ReportActions onAgain={onAgain} onBoard={onBoard} />
       <button type="button" className="abf-link spr-change" onClick={onRider}>Anderen Fahrer wählen<Icon name="chevron" size={14} /></button>
     </section>
   );
