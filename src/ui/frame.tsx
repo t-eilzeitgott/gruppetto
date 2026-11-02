@@ -7,6 +7,14 @@ import { ScrollIndicator } from './ScrollIndicator';
 import { Icon, type IconName } from './Icon';
 import { Link, cx } from './kit';
 
+
+/** „Heute“ in der Leiste: auf der Startseite zurück vom News-Tab auf Heute (Home.tsx hört darauf), von anderen
+ *  Seiten aus ebenfalls auf Heute */
+function toToday() {
+  try { sessionStorage.setItem('gruppetto.home.tab', 'heute'); } catch { /* egal */ }
+  window.dispatchEvent(new Event('gruppetto-home-today'));
+}
+
 export const NAV: { to: string; label: string; icon: IconName; match: string[] }[] = [
   { to: '/', label: 'Heute', icon: 'home', match: ['', 'spiel'] },
   { to: '/etappen', label: 'Etappen', icon: 'flag', match: ['etappen', 'etappe', 'tipp', 'fahrer', 'anstiege'] },
@@ -31,7 +39,7 @@ export function ShellFrame({ children, active, sideActive = active, adminActive,
         <div className="wordmark wordmark--lg">gruppetto<span>.</span></div>
         <nav className="sidebar__nav" aria-label="Hauptnavigation">
           {NAV.map((n) => (
-            <Link key={n.to} to={n.to} className={cx('sidebar__link', sideActive === n.to && 'is-active')} ariaCurrent={sideActive === n.to ? 'page' : undefined}>
+            <Link key={n.to} to={n.to} className={cx('sidebar__link', sideActive === n.to && 'is-active')} ariaCurrent={sideActive === n.to ? 'page' : undefined} onNavigate={n.to === '/' ? toToday : undefined}>
               <Icon name={n.icon} />
               <span>{n.label}</span>
             </Link>
@@ -54,7 +62,7 @@ export function ShellFrame({ children, active, sideActive = active, adminActive,
       {hideTabBar ? null : (
         <nav className="tabbar" aria-label="Hauptnavigation">
           {NAV.map((n) => (
-            <Link key={n.to} to={n.to} className={cx('tabbar__item', active === n.to && 'is-active')} ariaCurrent={active === n.to ? 'page' : undefined}>
+            <Link key={n.to} to={n.to} className={cx('tabbar__item', active === n.to && 'is-active')} ariaCurrent={active === n.to ? 'page' : undefined} onNavigate={n.to === '/' ? toToday : undefined}>
               <Icon name={n.icon} size={24} />
               <span>{n.label}</span>
             </Link>

@@ -24,8 +24,9 @@ type HomeTab = 'heute' | 'news';
 const TAB_KEY = 'gruppetto.home.tab';
 let homeTab: HomeTab | null = null;
 function initialTab(): HomeTab {
-  if (homeTab) return homeTab;
-  try { return sessionStorage.getItem(TAB_KEY) === 'news' ? 'news' : 'heute'; } catch { return 'heute'; }
+  // (zuerst der gespeicherte Tab: über „Heute“ unten von einer anderen Seite zurück hat frame.tsx ihn auf Heute gesetzt)
+  try { const v = sessionStorage.getItem(TAB_KEY); if (v) return v === 'news' ? 'news' : 'heute'; } catch { /* egal */ }
+  return homeTab ?? 'heute';
 }
 
 /** „Heute | News“ als große Überschriften; Punkt am News-Tab, wenn es Neues gibt. Wie hell welcher Titel ist,
@@ -247,6 +248,12 @@ export function Home() {
   // gleichbleibende Rückrufe für die memo-Seiten
   const goRef = useRef(go);
   goRef.current = go;
+  // „Heute“ unten in der Leiste: zurück auf den Heute-Tab
+  useEffect(() => {
+    const f = () => { homeTab = 'heute'; goRef.current('heute'); };
+    window.addEventListener('gruppetto-home-today', f);
+    return () => window.removeEventListener('gruppetto-home-today', f);
+  }, []);
   const reloadRef = useRef(reload);
   reloadRef.current = reload;
   const onNews = useCallback(() => goRef.current('news'), []);
