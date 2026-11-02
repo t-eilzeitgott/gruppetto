@@ -2355,6 +2355,16 @@ body:has(.abf-layer--sheet:not(.is-leaving), .abf-layer--pause, .abf-layer--over
 .install-steps__icon { display: inline-block; vertical-align: -3px; color: var(--accent); }
 .setting .install-steps { padding: 0; background: none; border: 0; }
 .auth__links--center { justify-content: center; }
+
+/* Umzugshinweis für alte Installationen */
+.moved-address {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 18px 16px; border-radius: var(--radius-lg);
+  background: var(--accent-soft); text-align: center;
+}
+.moved-address__old { font-size: 14px; color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; overflow-wrap: anywhere; }
+.moved-address__arrow { color: var(--accent); transform: rotate(90deg); }
+.moved-address__new { font-size: 20px; letter-spacing: -0.02em; color: var(--text); overflow-wrap: anywhere; }
 .text-btn--muted { color: var(--muted); font-weight: 500; }
 
 /* Scroll-Anzeige (Touch): native ausblenden, eigene schlanke zwischen Statusleiste und Tableiste */

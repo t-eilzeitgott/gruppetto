@@ -3,7 +3,7 @@
   "short_name": "gruppetto",
   "description": "Das Tippspiel für Giro, Tour und Vuelta",
   "lang": "de",
-  "start_url": "./",
+  "start_url": "./?app=2",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

@@ -24,9 +24,36 @@ export interface InstallState {
   canPrompt: boolean;
   /** gerade installiert (Android) – jetzt die App vom Home-Bildschirm öffnen */
   installed: boolean;
+  /** App-Symbol stammt noch von der alten Adresse (github.io) – einmal neu installieren */
+  legacyInstall: boolean;
 }
 
 const SKIP_KEY = 'gruppetto.installSkip';
+/** Die App ist von t-eilzeitgott.github.io/gruppetto nach gruppetto.talfahrt.dev umgezogen. */
+export const APP_HOST = 'gruppetto.talfahrt.dev';
+export const OLD_APP_HOST = 't-eilzeitgott.github.io/gruppetto';
+/** Merker: Diese installierte App wurde schon einmal über die neue start_url (?app=2) geöffnet. */
+const HOME_V2_KEY = 'gruppetto.homeV2';
+
+/**
+ * Alte Installationen starten mit der alten start_url und landen per Weiterleitung ohne `?app=2` hier.
+ * Neue Installationen bringen den Marker beim ersten Start mit und merken sich das (eigener Speicher je App).
+ * Zum Ansehen im Browser: ?moved=1
+ */
+function detectLegacyInstall(standalone: boolean): boolean {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('moved') === '1') return true;
+    if (!standalone) return false;
+    if (params.get('app') === '2') {
+      localStorage.setItem(HOME_V2_KEY, '1');
+      return false;
+    }
+    return localStorage.getItem(HOME_V2_KEY) !== '1';
+  } catch {
+    return false;
+  }
+}
 
 function detectPlatform(): Pick<InstallState, 'platform' | 'iosNoShare' | 'iosOtherBrowser'> {
   const ua = navigator.userAgent;
@@ -56,7 +83,7 @@ function detectStandalone(): boolean {
 }
 
 let deferred: InstallPromptEvent | null = null;
-let state: InstallState = { standalone: false, platform: 'desktop', iosNoShare: false, iosOtherBrowser: false, canPrompt: false, installed: false };
+let state: InstallState = { standalone: false, platform: 'desktop', iosNoShare: false, iosOtherBrowser: false, canPrompt: false, installed: false, legacyInstall: false };
 const listeners = new Set<() => void>();
 
 function update(patch: Partial<InstallState>) {
@@ -65,7 +92,8 @@ function update(patch: Partial<InstallState>) {
 }
 
 if (typeof window !== 'undefined') {
-  state = { ...state, ...detectPlatform(), standalone: detectStandalone() };
+  const standalone = detectStandalone();
+  state = { ...state, ...detectPlatform(), standalone, legacyInstall: detectLegacyInstall(standalone) };
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault(); // eigener Knopf statt Mini-Leiste des Browsers
     deferred = e as InstallPromptEvent;
