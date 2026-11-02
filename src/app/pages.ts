@@ -25,3 +25,5 @@ export const GpuTestPage = lazyPage(() => import('../pages/admin/AdminGpu').then
 export const RaceGpuPage = lazyPage(() => import('../pages/admin/AdminRace').then((m) => m.RaceGpuPage));
 /** Zeitfahren auf WebGPU (Admin) */
 export const TtGpuPage = lazyPage(() => import('../pages/admin/AdminRace').then((m) => m.TtGpuPage));
+/** Takt-Prüfstand (Admin): Bildaufrufe des Browsers ohne das Spiel messen */
+export const TaktTestPage = lazyPage(() => import('../pages/admin/AdminTakt').then((m) => m.TaktTestPage));

@@ -47,6 +47,7 @@ function Sections({ tour }: { tour: Tour }) {
     { to: '/admin/abfahrt', icon: 'mountain', title: 'Abfahrt · WebGPU', sub: 'Das ganze Spiel mit neuer Grafik: endlos, Gegner, Tunnel, dramatischer Himmel – ohne Wertung' },
     { to: '/admin/zeitfahren', icon: 'clock', title: 'Zeitfahren · WebGPU', sub: 'Gegen die Uhr und die Geister der Runde, mit der neuen Grafik: Morgendunst, Torbögen, Publikum – ohne Wertung' },
     { to: '/admin/gpu', icon: 'zap', title: 'WebGPU-Test', sub: 'Passabfahrt mit neuer Grafik-Technik – Vergleich zum Spiel' },
+    { to: '/admin/takt', icon: 'zap', title: 'Takt-Prüfstand', sub: 'Liefert der Browser die Bildaufrufe gleichmäßig? Ohne das Spiel, gut zwei Minuten' },
   ];
   return (
     <ul className="list admin-list">
