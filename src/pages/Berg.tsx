@@ -322,7 +322,7 @@ export function BergPage() {
           game="berg" title="Bergfinale"
           sub={gameSubFor('berg', day, ref)}
           onStart={start} onClose={() => navigate('/')} plain={showBoard}
-          after={meas.m.can ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); meas.m.start(); }}>Losfahren mit Messfahrt</button> : null}
+          after={meas.m.can ? <><button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); meas.m.start(); }}>Losfahren mit Messfahrt</button>{meas.abSelect}</> : null}
         >
           {showBoard ? boardView : (
             <>

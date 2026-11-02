@@ -115,6 +115,8 @@ class Rec {
   stall = new Float32Array(CAP).fill(-1);
   /** Stempel gegenüber seinem Takt (ms) */
   off = new Float32Array(CAP);
+  /** Wechseltest: Variante dieses Bildes (0/1; 255: kein Wechseltest) */
+  ab = new Uint8Array(CAP).fill(255);
   events: { t: number; f: number; kind: string; text: string }[] = [];
   constructor(readonly meta: Record<string, unknown>) {}
 }
@@ -140,6 +142,12 @@ export class Perf3D {
   private uiObs: MutationObserver | null = null;
   /** Nachricht an sich selbst nach jedem Bild (misst, wie lange der Hauptfaden danach noch beschäftigt ist) */
   private chan: MessageChannel | null = null;
+  /**
+   * Wechseltest: zwei Varianten einer Einstellung wechseln sich alle AB_PERIOD_S ab (A, B, A, B …) – so vergleicht
+   * eine Fahrt beide auf derselben Strecke, ohne dass Wärme, Ort oder Fahrerfeld das Ergebnis verzerren
+   */
+  private ab: AbTest | null = null;
+  private abCur = -1;
   /** Wächter: setTimeout-Schleife; die längste Lücke seit dem vorigen Bild zeigt, ob der Hauptfaden stand */
   private guardT = 0;
   private guardMax = 0;
@@ -201,8 +209,17 @@ export class Perf3D {
   end(f: FrameInfo) {
     const cpu = performance.now() - this.start;
     const r = this.rec;
+    if (r && this.ab) {
+      const want = Math.floor((performance.now() - r.t0) / 1000 / AB_PERIOD_S) % 2;
+      if (want !== this.abCur) {
+        this.abCur = want;
+        try { this.ab.apply(want === 1); } catch (e) { console.error(e); }
+        this.event(EV.phase, `Wechseltest ${this.ab.name}: ${this.ab.labels[want]}`);
+      }
+    }
     if (r && r.n < CAP) {
       const i = r.n++;
+      r.ab[i] = this.ab ? this.abCur : 255;
       r.t[i] = (performance.now() - r.t0) / 1000;
       r.dt[i] = f.dt;
       r.late[i] = this.late;
@@ -241,8 +258,10 @@ export class Perf3D {
     this.upBytes = 0;
   }
 
-  startRec(meta: Record<string, unknown>) {
+  startRec(meta: Record<string, unknown>, ab: AbTest | null = null) {
     this.rec = new Rec(meta);
+    this.ab = ab;
+    this.abCur = -1;
     this.hitches = 0;
     this.lastProbe = performance.now();
     this.calls = 0;
@@ -264,6 +283,9 @@ export class Perf3D {
     try {
       this.chan?.port1.close();
       this.chan = new MessageChannel();
+      // (Node, Tests: offene Kanäle halten den Prozess am Leben)
+      (this.chan.port1 as { unref?: () => void }).unref?.();
+      (this.chan.port2 as { unref?: () => void }).unref?.();
       this.chan.port1.onmessage = (e: MessageEvent<number>) => {
         const r = this.rec;
         const i = e.data;
@@ -303,17 +325,25 @@ export class Perf3D {
     this.uiObs?.disconnect();
     this.uiObs = null;
     clearTimeout(this.guardTimer);
+    if (this.ab) { try { this.ab.apply(false); } catch { /* egal */ } }
+    const ab = this.ab;
+    this.ab = null;
     try { this.chan?.port1.close(); this.chan?.port2.close(); } catch { /* egal */ }
     this.chan = null;
     if (!r || r.n < 30) return null;
     if (extra) Object.assign(r.meta, extra);
-    return makeReport(r);
+    return makeReport(r, ab);
   }
 }
 
+/** Wechseltest: Name, Beschriftung der Varianten (A = aus/normal, B = an), Umschalten */
+export interface AbTest { name: string; labels: [string, string]; apply: (b: boolean) => void }
+/** Abstand der Wechsel (s) */
+export const AB_PERIOD_S = 20;
+
 export interface Report {
   /** Kurzfassung für die Anzeige */
-  summary: { s: number; fps: number; low1: number; hitches: number; worst: number; period: number; cpuP95: number; gpuMed: number | null; frames: number; places: { name: string; s: number; fps: number; p60: number; gpu: number | null }[] };
+  summary: { s: number; fps: number; low1: number; hitches: number; worst: number; period: number; cpuP95: number; gpuMed: number | null; frames: number; places: { name: string; s: number; fps: number; p60: number; gpu: number | null }[]; ab: { label: string; s: number; fps: number; late: number; hitchesPerMin: number }[] | null };
   /** kompakt (zum Kopieren) */
   text: string;
   /** vollständig (Datei) */
@@ -340,7 +370,7 @@ function stats(a: ArrayLike<number>) {
   return { avg: r2(sum / Math.max(1, s.length)), p50: r2(pct(s, 0.5)), p60: r2(pct(s, 0.6)), p90: r2(pct(s, 0.9)), p95: r2(pct(s, 0.95)), p99: r2(pct(s, 0.99)), max: r2(s[s.length - 1] ?? 0) };
 }
 
-function makeReport(r: Rec): Report {
+function makeReport(r: Rec, ab: AbTest | null): Report {
   const n = r.n;
   const dt = r.dt.subarray(0, n);
   const cpu = r.cpu.subarray(0, n);
@@ -442,6 +472,23 @@ function makeReport(r: Rec): Report {
       aufloesung_fach: r2(q / m), pixel_je_punkt: r2(px / m), fahrer_als_modell: r1(rd / m), grafik_probe: probeStats(pr),
     };
   }).filter((x) => x !== null);
+  // Wechseltest: je Variante nur gefahrene Bilder, ohne die ersten zwei Sekunden nach jedem Wechsel (der Wechsel
+  // selbst kann ruckeln)
+  const abRows = ab ? [0, 1].map((v) => {
+    const list: number[] = [];
+    let since = -1;
+    for (const i of keep) {
+      if (r.phase[i] !== playing) continue;
+      if (i > 0 && r.ab[i] !== r.ab[i - 1]) since = r.t[i];
+      if (r.ab[i] === v && r.t[i] - since >= 2) list.push(i);
+    }
+    let secs = 0, h = 0, off = 0;
+    for (const i of list) { const d = dt[i]; secs += d / 1000; if (d > hitchMs) h++; if (d > period * 1.25 + 1) off++; }
+    const pr = probes.filter((i) => r.ab[i] === v && r.phase[i] === playing);
+    const gpuList = pr.map((i) => r.gpu[i]);
+    const gpuMed = gpuList.length ? pct(Float32Array.from(gpuList).sort(), 0.5) : null;
+    return { variante: ab.labels[v], sekunden: r1(secs), bilder: list.length, fps: r1(list.length / Math.max(0.001, secs)), taktfehler_prozent: r1((off / Math.max(1, list.length)) * 100), ruckler: h, ruckler_je_min: r1(h / Math.max(0.001, secs / 60)), grafik_probe_median_ms: gpuMed };
+  }) : null;
   const evText = (bits: number) => EV_NAMES.filter(([b]) => bits & b).map(([, k]) => k).join('+');
   // die schlimmsten Ruckler mit Umfeld (Ereignisse −3 … +1 Bilder, größte Bausteine)
   const top = [...idx].sort((a, b) => dt[b] - dt[a]).slice(0, 40).sort((a, b) => a - b);
@@ -478,6 +525,7 @@ function makeReport(r: Rec): Report {
     s: r1(dur), fps: r1(fps), low1: r1(low1), hitches, worst: r1(sorted[sorted.length - 1] ?? 0), period: r1(period), cpuP95: stats(cpu).p95,
     gpuMed: probeAll ? probeAll.grafik_ms.p50 : null, frames: n,
     places: places.map((p) => ({ name: p.name, s: p.sekunden, fps: p.fps, p60: p.bildzeit_p60_ms, gpu: p.grafik_probe ? p.grafik_probe.grafik_ms.p50 : null })),
+    ab: abRows ? abRows.map((a) => ({ label: a.variante, s: a.sekunden, fps: a.fps, late: a.taktfehler_prozent, hitchesPerMin: a.ruckler_je_min })) : null,
   };
   const base = {
     art: 'gruppetto Abfahrt (WebGL) Messfahrt', v: 1, ...r.meta,
@@ -489,6 +537,7 @@ function makeReport(r: Rec): Report {
       hinweis: `takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. ruckler_ohne_bildaufruf: der Browser rief länger als anderthalb Bildschirmtakte nicht auf (Seite, Speicherbereinigung oder Grafikprozess hielten ihn auf); ruckler_aufruf_ausgelassen: Aufrufe kamen, der feste Takt ließ einen aus. Zeichenzustand = erstes Zeichnen einer neuen Kombination (Pipeline im Grafiktreiber). ruckler_mit_hauptfaden: der Hauptfaden war nach dem vorigen Bild noch über ${MAIN_BUSY_MS} ms beschäftigt (hauptfaden_ms: Stil, Layout und Zeichnen der Oberfläche). ruckler_mit_blockiertem_hauptfaden: ein Wächter (setTimeout-Schleife; iOS lässt sie unter Last nur etwa alle 28 ms dran) kam zwischen dem vorigen und diesem Bild über ${STALL_MS} ms später dran als üblich (blockiert_ms = Lücke über dem Median aller Lücken; −1: kein Aufruf in diesem Bild): Speicherbereinigung oder andere Arbeit der Seite – nicht die Grafik. takt_versatz_ms: Stempel der gezeichneten Bilder gegenüber ihrem Takt im Raster (Safari stempelt mit der Zeit, zu der das Skript drankommt). Auflösung und Sichtweite regelt die Automatik (Ereignisse quality und range)`,
     },
     orte: places,
+    wechseltest: ab ? { einstellung: ab.name, wechsel_alle_s: AB_PERIOD_S, hinweis: 'A und B wechseln sich alle 20 s ab; je Variante zählen nur gefahrene Bilder ab zwei Sekunden nach dem Wechsel', varianten: abRows } : undefined,
     grafik_probe: probeAll ?? 'keine Probebilder',
     bildzeit_ms: stats(dtK), cpu_ms: stats(cpu), verspaetung_ms: stats(late), hauptfaden_ms: afterAll.length ? stats(afterAll) : 'nicht gemessen', blockiert_ms: stallAll.length ? { ...stats(stallAll), waechter_takt_ms: r1(gapBase) } : 'nicht gemessen', takt_versatz_ms: offHist,
     verteilung_ms: hist, bausteine_ms: secStats,

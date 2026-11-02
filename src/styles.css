@@ -1347,6 +1347,8 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 }
 .abf-close { position: absolute; z-index: 3; top: calc(var(--safe-t) + 10px); right: calc(12px + var(--safe-r)); }
 
+/* Messfahrt-Wechseltest „Oberfläche aus“: Anzeigen und 2D-Ebene weg (die Messanzeige bleibt) */
+.mess-ohne-hud .abf-hud, .mess-ohne-hud .abf__overlay { display: none !important; }
 .abf-hud { position: absolute; inset: 0; pointer-events: none; padding: calc(var(--safe-t) + 10px) calc(12px + var(--safe-r)) 0 calc(12px + var(--safe-l)); }
 .abf-hud__top { display: grid; grid-template-columns: 76px minmax(0, 1fr) 76px; align-items: start; gap: 6px; }
 .abf-hud__score { justify-self: center; display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }

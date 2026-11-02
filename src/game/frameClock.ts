@@ -43,6 +43,11 @@ const SLACK = 0.15;
  */
 const LATE_MS = 7;
 
+/** fester Bildtakt für alle Uhren aus (Wechseltest der Messfahrt: jeder Aufruf zeichnet) */
+let paceOff = false;
+export function setPaceOff(off: boolean) { paceOff = off; }
+export function isPaceOff(): boolean { return paceOff; }
+
 export class FrameClock {
   /** Bildschirmtakt (ms): kürzester regelmäßiger Abstand der Aufrufe (60, 90, 120, 144 Hz …) */
   period = 1000 / 60;
@@ -109,7 +114,7 @@ export class FrameClock {
       if ((this.k & 15) === 0 && this.n >= 16) this.measure();
     }
     this.calls += 1;
-    if (!this.pace || this.div <= 1) return true;
+    if (!this.pace || paceOff || this.div <= 1) return true;
     // dran, wenn seit dem letzten Bild so viele Aufrufe kamen, wie Takte je Bild gelten (Safari ruft zu jedem Takt,
     // auch während die Grafik noch arbeitet) – oder, fehlte ein Aufruf (der Browser war aufgehalten), wenn das
     // nächste Bild im Raster fast erreicht ist. Nicht nach der Zeit allein: ein Aufruf, der 5 ms spät dran ist, sähe
@@ -139,8 +144,8 @@ export class FrameClock {
     }
     // ganze Bildschirmtakte seit dem letzten Bild im Raster (mindestens der feste Bildtakt); ein Stempel bis LATE_MS
     // nach seinem Takt gehört noch zu diesem
-    const steps = Math.max(this.div, 1 + Math.floor((now - this.due - LATE_MS) / P));
-    this.slip = steps - this.div;
+    const steps = Math.max(paceOff ? 1 : this.div, 1 + Math.floor((now - this.due - LATE_MS) / P));
+    this.slip = Math.max(0, steps - this.div);
     this.off = now - (this.due + this.div * P);
     this.callsLast = this.calls;
     this.calls = 0;

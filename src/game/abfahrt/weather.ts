@@ -126,6 +126,11 @@ export function weatherOverride(): WeatherId | 'none' | null {
 
 export type GfxTier = 'high' | 'mid' | 'low';
 
+/** Schattenkarte jedes n-te Bild (1 = jedes; Wechseltest der Messfahrt) */
+let shadowEvery = 1;
+export function setShadowEvery(n: number) { shadowEvery = Math.max(1, Math.round(n)); }
+export function shadowEveryN(): number { return shadowEvery; }
+
 export function gfxTier(): GfxTier {
   if (/[?&](lowgfx|nogl)\b/.test(window.location.search)) return 'low';
   // (Wetter mit Nachbearbeitung gibt es ab Stufe 8 – darüber in voller Güte)
@@ -478,6 +483,12 @@ export class WeatherFx {
 
   /** ein Bild: Fahrtzähler und Tageszeit pflegen, dann zeichnen – direkt oder über die Nachbearbeitung */
   private frame(draw: () => void, g: RaceView) {
+    // Schattenkarte nur jedes n-te Bild (Wechseltest der Messfahrt): sonst jedes Bild (three.js: autoUpdate)
+    if (this.shadows) {
+      const gl = this.env.gl;
+      if (shadowEvery <= 1) { if (!gl.shadowMap.autoUpdate) gl.shadowMap.autoUpdate = true; }
+      else { gl.shadowMap.autoUpdate = false; if (this.frames % shadowEvery === 0) gl.shadowMap.needsUpdate = true; }
+    }
     // Fahrt gestartet: zählen; auf der Startkarte und nach dem Ziel schon den Stil der nächsten Fahrt zeigen
     const phase = g.phase as string;
     if (phase !== this.lastPhase) {

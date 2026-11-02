@@ -381,7 +381,7 @@ export function ZeitfahrenPage() {
 
       {ui === 'ready' ? (
         <StartSheet game="zeitfahren" title="Zeitfahren" sub={sub} cta="Auf die Rampe" onStart={start} onClose={() => navigate('/')} plain={showBoard}
-          after={meas.m.can ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); meas.m.start(); }}>Auf die Rampe mit Messfahrt</button> : null}>
+          after={meas.m.can ? <><button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); meas.m.start(); }}>Auf die Rampe mit Messfahrt</button>{meas.abSelect}</> : null}>
           {showBoard ? boardView : (
             <>
               <TtProfile track={track} ref_={ref} />

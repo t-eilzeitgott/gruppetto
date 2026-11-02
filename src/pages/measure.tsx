@@ -5,17 +5,29 @@
  */
 import { Fragment, useEffect, useRef, useState, type RefObject } from 'react';
 import { BUILD_ID } from '../app/config';
-import { Perf3D, type Report } from '../game/abfahrt/perf3d';
+import { AB_PERIOD_S, Perf3D, type AbTest, type Report } from '../game/abfahrt/perf3d';
+import { setPaceOff } from '../game/frameClock';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import type { RaceView } from '../game/abfahrt/engine';
 import { autoRangeDrop, chosenRange, viewRange } from '../game/abfahrt/viewRange';
 import { gfxAA, gfxAuto, gfxDescribe, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
 import { fmtRes } from '../game/abfahrt/autoGfx';
-import { nextWeatherName } from '../game/abfahrt/weather';
+import { nextWeatherName, setShadowEvery } from '../game/abfahrt/weather';
 import { copyText, shareFile } from './admin/gpuKit';
 import { lsGet, lsSet } from './gameKit';
 
 const PLACE_LABEL: Record<string, string> = { frei: 'freie Strecke', ortsdurchfahrt: 'Ortsdurchfahrten', dorf: 'Dörfer' };
+
+/**
+ * Wechseltests: eine Einstellung wechselt während der Messfahrt alle 20 s zwischen A (normal) und B – der Bericht
+ * vergleicht beide auf derselben Strecke (Ruckler je Minute, Taktfehler, Bildrate)
+ */
+const AB_TESTS: Record<string, AbTest> = {
+  schatten: { name: 'Sonnenschatten', labels: ['Schattenkarte jedes Bild', 'Schattenkarte alle 8 Bilder'], apply: (b) => setShadowEvery(b ? 8 : 1) },
+  hud: { name: 'Oberfläche', labels: ['Oberfläche an', 'Oberfläche aus'], apply: (b) => document.body.classList.toggle('mess-ohne-hud', b) },
+  takt: { name: 'fester Bildtakt', labels: ['fester Bildtakt', 'ohne festen Takt (jeder Aufruf zeichnet)'], apply: (b) => setPaceOff(b) },
+};
+const AB_KEY = 'gruppetto.mess.wechsel';
 
 /**
  * Anzeige „Messung 1:23 · 4 Ruckler“ während der Messfahrt: schreibt ihren Text selbst (zweimal je Sekunde) –
@@ -65,6 +77,7 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
   const [cost, setCost] = useState<{ i: number; n: number; label: string } | null>(null);
   const [costText, setCostText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [abKey, setAbKey] = useState<string>(() => lsGet(AB_KEY) ?? '');
 
   const deviceInfo = () => {
     const r = o.renderer();
@@ -81,7 +94,8 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
     };
   };
   const start = () => {
-    perf.current.startRec({ art: `gruppetto ${o.game} (WebGL) Messfahrt`, version: BUILD_ID, aufnahme: new Date().toISOString(), wetter: nextWeatherName() ?? 'aus', ...o.meta(), ...deviceInfo() });
+    const ab = AB_TESTS[abKey] ?? null;
+    perf.current.startRec({ art: `gruppetto ${o.game} (WebGL) Messfahrt`, version: BUILD_ID, aufnahme: new Date().toISOString(), wetter: nextWeatherName() ?? 'aus', ...o.meta(), ...deviceInfo(), ...(ab ? { wechseltest_einstellung: ab.name } : {}) }, ab);
     setMeasuring(true);
     setReport(null);
     setCopied(false);
@@ -111,9 +125,19 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
       .catch((e: unknown) => { setCost(null); setCostText(`Kostenanalyse abgebrochen: ${String(e)}`); });
   };
 
+  const abSelect = (
+    <label className="abf-range__hint">Wechseltest (alle {AB_PERIOD_S} s A ↔ B):{' '}
+      <select value={abKey} onChange={(e) => { setAbKey(e.target.value); lsSet(AB_KEY, e.target.value); }}>
+        <option value="">keiner</option>
+        {Object.entries(AB_TESTS).map(([k, t]) => <option key={k} value={k}>{t.name}: {t.labels[0]} ↔ {t.labels[1]}</option>)}
+      </select>
+    </label>
+  );
   const m: Measure = { can, perf, measuring, start, stop };
   return {
     m,
+    /** Auswahl des Wechseltests (Startkarte) */
+    abSelect: can ? abSelect : null,
     /** Abschnitt im Pausenmenü */
     menu: (eng: () => RaceView | null) => (can ? (
       <div className="abf-gfx">
@@ -124,6 +148,7 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
           <button type="button" className="btn btn--secondary btn--sm" onClick={() => runCost(eng())} disabled={!!cost || measuring}>{cost ? `Messe ${cost.i + 1}/${cost.n} …` : 'Kostenanalyse'}</button>
         </div>
         {cost ? <span className="abf-range__hint">{cost.label}</span> : null}
+        {!measuring ? abSelect : null}
         {lastReport ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => { void copyText(lastReport).then((ok) => setCopied(ok)); }}>{copied ? 'Kopiert ✓' : 'Letzten Bericht kopieren'}</button> : null}
       </div>
     ) : null),
@@ -156,6 +181,12 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
                 <Fragment key={p.name}>
                   <span>{PLACE_LABEL[p.name] ?? p.name}</span>
                   <b>{p.fps.toFixed(0)} fps · 60 % unter {p.p60.toFixed(1)} ms{p.gpu !== null ? ` · Grafik ${p.gpu.toFixed(1)} ms` : ''}</b>
+                </Fragment>
+              ))}
+              {report.summary.ab?.map((a) => (
+                <Fragment key={a.label}>
+                  <span>{a.label}</span>
+                  <b>{a.hitchesPerMin.toFixed(1)} Ruckler/min · {a.late.toFixed(1)} % zu spät · {a.fps.toFixed(0)} fps ({a.s.toFixed(0)} s)</b>
                 </Fragment>
               ))}
             </div>
