@@ -66,7 +66,10 @@ export interface FrameInfo {
   screen: number;
   /** Stempel dieses Bildes gegenüber seinem Takt im Raster (ms; frameClock.off) */
   off: number;
+  /** Zeichenaufrufe nach Art (render3d.ts, nur in der Messfahrt): Schattendurchgang, Fahrer (Skinned), Instanzen, kleine Netze */
+  callsBy?: CallsBy;
 }
+export interface CallsBy { shadow: number; skinned: number; inst: number; tiny: number }
 
 /** Probebild: Rückstau (Warten auf das vorige Bild), Abschicken, Grafikzeit dieses Bildes (ms) */
 export interface Probe { drain: number; submit: number; gpu: number }
@@ -117,6 +120,11 @@ class Rec {
   off = new Float32Array(CAP);
   /** Wechseltest: Variante dieses Bildes (0/1; 255: kein Wechseltest) */
   ab = new Uint8Array(CAP).fill(255);
+  /** Zeichenaufrufe nach Art: Schattendurchgang, Fahrer, Instanzen, kleine Netze (< 100 Ecken) */
+  cShadow = new Uint16Array(CAP);
+  cSkin = new Uint16Array(CAP);
+  cInst = new Uint16Array(CAP);
+  cTiny = new Uint16Array(CAP);
   events: { t: number; f: number; kind: string; text: string }[] = [];
   constructor(readonly meta: Record<string, unknown>) {}
 }
@@ -227,6 +235,7 @@ export class Perf3D {
       r.sec.set(this.sec, i * NS);
       r.calls[i] = Math.min(65535, f.calls);
       r.tris[i] = f.tris;
+      if (f.callsBy) { r.cShadow[i] = f.callsBy.shadow; r.cSkin[i] = f.callsBy.skinned; r.cInst[i] = f.callsBy.inst; r.cTiny[i] = f.callsBy.tiny; }
       r.progs[i] = Math.min(65535, f.progs);
       r.quality[i] = f.quality;
       r.px[i] = f.px;
@@ -463,8 +472,11 @@ function makeReport(r: Rec, ab: AbTest | null): Report {
   const places = PLACES.map((name, p) => {
     const list = keep.filter((i) => r.place[i] === p && r.phase[i] === playing);
     if (!list.length) return null;
-    let secs = 0, calls = 0, tris = 0, q = 0, px = 0, c = 0, rd = 0;
-    for (const i of list) { secs += dt[i] / 1000; calls += r.calls[i]; tris += r.tris[i]; q += r.quality[i]; px += r.px[i]; c += cpu[i]; rd += r.riders[i]; }
+    let secs = 0, calls = 0, tris = 0, q = 0, px = 0, c = 0, rd = 0, cSh = 0, cSk = 0, cIn = 0, cTi = 0;
+    for (const i of list) {
+      secs += dt[i] / 1000; calls += r.calls[i]; tris += r.tris[i]; q += r.quality[i]; px += r.px[i]; c += cpu[i]; rd += r.riders[i];
+      cSh += r.cShadow[i]; cSk += r.cSkin[i]; cIn += r.cInst[i]; cTi += r.cTiny[i];
+    }
     const m = list.length;
     const d = stats(list.map((i) => dt[i]));
     const pr = probes.filter((i) => r.place[i] === p && r.phase[i] === playing);
@@ -472,6 +484,8 @@ function makeReport(r: Rec, ab: AbTest | null): Report {
     return {
       name, sekunden: r1(secs), bilder: m, fps: r1(m / Math.max(0.001, secs)), bildzeit_p60_ms: d.p60, bildzeit_p90_ms: d.p90, bildzeit_max_ms: d.max,
       cpu_mittel_ms: r2(c / m), groesste_bausteine_ms: Object.fromEntries(top), aufrufe: Math.round(calls / m), dreiecke_k: Math.round(tris / m / 1000),
+      // (Aufrufe nach Art: Schattendurchgang gesondert; Fahrer, Instanzen und kleine Netze aus dem Hauptdurchgang)
+      aufrufe_schatten: Math.round(cSh / m), aufrufe_fahrer: Math.round(cSk / m), aufrufe_instanzen: Math.round(cIn / m), aufrufe_klein: Math.round(cTi / m),
       aufloesung_fach: r2(q / m), pixel_je_punkt: r2(px / m), fahrer_als_modell: r1(rd / m), grafik_probe: probeStats(pr),
     };
   }).filter((x) => x !== null);

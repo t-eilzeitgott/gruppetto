@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Speicher vor dem Laden der Module (sie lesen beim Start): Stufe 7 „Hoch“ (Sichtweite Max), 2-fache Auflösung
+// Speicher vor dem Laden der Module (sie lesen beim Start): Stufe 7 „Hoch“ (Sichtweite Max, Sonnenschatten), 2-fache Auflösung
 const store = new Map<string, string>([['gruppetto.gfx.stufe', '7'], ['gruppetto.gfx.aufl', '2']]);
 (globalThis as { localStorage?: unknown }).localStorage = {
   getItem: (k: string) => store.get(k) ?? null,
@@ -10,6 +10,7 @@ const store = new Map<string, string>([['gruppetto.gfx.stufe', '7'], ['gruppetto
 };
 const G = await import('./gfxOpts.ts');
 const V = await import('./viewRange.ts');
+const S = await import('./shadowRate.ts');
 const { AutoGfx, RES_STEPS, autoView } = await import('./autoGfx.ts');
 type Gov = InstanceType<typeof AutoGfx>;
 
@@ -18,19 +19,22 @@ const FRAME = 1000 / 60;
 const fresh = (scope: string) => { store.delete(`gruppetto.gfx.auto3.${scope}`); return new AutoGfx(scope); };
 
 /**
- * Gerät als Modell: Grafikzeit je Bild aus der Auflösung (Bildpunkte) und der Sichtweite (je Stufe kürzer gut 12 %
- * weniger, rangeK), dazu ein fester Anteil (fixed – z. B. das ganze Fahrerfeld, unabhängig von beidem). Wie in den
- * Messfahrten auf dem iPhone: bis gut 12 ms Grafikzeit verpassen nur wenige Bilder ihren Takt (Bodensatz 3 %),
- * darüber schnell immer mehr (15 ms: die Hälfte). Extra: Ruckler unabhängig von der Last.
+ * Gerät als Modell: Grafikzeit je Bild aus der Auflösung (Bildpunkte), der Sichtweite (je Stufe kürzer gut 12 %
+ * weniger, rangeK) und der Schattenkarte (jedes Bild: 15 % der Grafik; seltener entsprechend weniger), dazu ein
+ * fester Anteil (fixed – z. B. das ganze Fahrerfeld). Wie in den Wechselfahrten auf dem iPhone (Version 261–264):
+ * bis 8 ms Grafik fast kein Bild zu spät (3–4 je Minute), ab 9 ms gut ein Dutzend je Minute und je ms mehr noch
+ * einmal so viele, ab 17 ms (die Grafik braucht länger als der Takt) jedes zweite. Extra: Ruckler unabhängig von
+ * der Last (Hochladen, Hauptfaden)
  */
 interface Dev { pix: number; fixed?: number; rangeK?: number; cpu?: number; extra?: number }
 function gpuOf(g: Gov, d: Dev) {
-  return d.pix * g.quality ** 2 * (1 - (d.rangeK ?? 0.12) * V.autoRangeDrop()) + (d.fixed ?? 0);
+  const shade = 1 - 0.15 * (1 - 1 / g.shadowEvery);
+  return d.pix * g.quality ** 2 * (1 - (d.rangeK ?? 0.12) * V.autoRangeDrop()) * shade + (d.fixed ?? 0);
 }
 /** Anteil verspäteter Bilder und Bildzeit eines verspäteten (ms) */
 function lateOf(gpu: number, extra = 0): [number, number] {
-  const p = Math.min(1, Math.max(0, (gpu - 12.5) / 6) + 0.03 + extra);
-  return [p, Math.max(25, Math.ceil(gpu / (1000 / 120)) * (1000 / 120))];
+  const p = Math.min(1, (gpu >= 17 ? 0.5 : gpu <= 8 ? 0.001 : 0.004 * (gpu - 8)) + extra);
+  return [p, gpu >= 17 ? Math.ceil(gpu / (1000 / 120)) * (1000 / 120) : 33.3];
 }
 /** n Bilder fahren (mit Modell oder fester Vorgabe je Zustand); liefert die Änderungen */
 function run(g: Gov, n: number, model: (g: Gov) => { p: number; lateMs: number; cpu?: number; gpu: number }): string[] {
@@ -51,8 +55,9 @@ function drive(g: Gov, d: Dev, n: number): string[] {
   return run(g, n, (gg) => { const gpu = gpuOf(gg, d); const [p, lateMs] = lateOf(gpu, d.extra); return { p, lateMs, gpu, cpu: d.cpu }; });
 }
 const changes = (ch: string[]) => ch.filter((c) => !c.startsWith('info:'));
+const kindsOf = (ch: string[]) => ch.map((c) => c.split(':')[0]);
 /** Gerät, das nur in voller Auflösung zu langsam ist (Grafik 14 ms, darunter 3 ms) */
-const onlyFull = (p = 0.3) => (gg: Gov) => ({ p: gg.quality === 1 ? p : 0.03, lateMs: 25, gpu: gg.quality === 1 ? 14 : 3 });
+const onlyFull = (p = 0.3) => (gg: Gov) => ({ p: gg.quality === 1 ? p : 0.001, lateMs: 33, gpu: gg.quality === 1 ? 14 : 3 });
 
 test('Grafik am Limit: erst die Auflösung bis drei Viertel (weit daneben: zwei Schritte auf einmal), dann die Sichtweite – bis die Grafik unter der Grenze liegt', () => {
   const g = fresh('zeitfahren');
@@ -61,14 +66,14 @@ test('Grafik am Limit: erst die Auflösung bis drei Viertel (weit daneben: zwei 
   const dev: Dev = { pix: 26 };
   // die ersten Sekunden zählen nicht
   assert.deepEqual(drive(g, dev, 80), []);
-  const ch = changes(drive(g, dev, 70 * 40));
+  const ch = changes(drive(g, dev, 70 * 60));
   assert.ok(ch[0].startsWith('res:Auflösung 2-fach → 1,5-fach'), ch[0]);
   assert.ok(ch[1].startsWith('range:Sichtweite Max → Weit'), ch[1]);
   assert.ok(!ch.some((c) => c.includes('zurück')), ch.join(' | '));
   assert.equal(g.quality, RES_STEPS[2]);
-  // bis die Grafik unter der Grenze (13 ms) liegt – nicht weiter, auch wenn noch jedes zehnte Bild zu spät kommt
+  // bis die Grafik unter der Grenze (9,2 ms) liegt
   const gpu = gpuOf(g, dev);
-  assert.ok(gpu < 0.78 * FRAME && gpu > 0.7 * FRAME, `Grafik ${gpu.toFixed(1)} ms`);
+  assert.ok(gpu < 0.55 * FRAME, `Grafik ${gpu.toFixed(1)} ms`);
   assert.equal(autoView().reduced, true);
   assert.equal(autoView().res, 1.5);
   g.dispose();
@@ -90,23 +95,47 @@ test('weit daneben (alle Bilder zu spät): der erste Schritt fällt nach einem h
   g.dispose();
 });
 
-test('reicht auch die kürzeste Sicht nicht: die Auflösung weiter bis zur Hälfte', () => {
+test('reicht auch die kürzeste Sicht nicht: Schattenkarte jedes zweite Bild, dann die Auflösung weiter bis zur Hälfte – und hinauf in umgekehrter Folge', () => {
   const g = fresh('zeitfahren');
-  const ch = changes(drive(g, { pix: 48 }, 70 * 80));
-  const kinds = ch.map((c) => c.split(':')[0]);
-  assert.equal(kinds[0], 'res');
+  const ch = changes(drive(g, { pix: 52 }, 70 * 120));
+  const kinds = kindsOf(ch);
   assert.ok(ch[0].startsWith('res:Auflösung 2-fach → 1,5-fach'), ch[0]);
-  const firstRes2 = kinds.indexOf('res', 1);
-  assert.ok(firstRes2 > 1 && kinds.slice(1, firstRes2).every((k) => k === 'range'), ch.join(' | '));
+  const shadow = kinds.indexOf('shadow');
+  const res2 = kinds.indexOf('res', 1);
+  assert.ok(shadow > 1 && kinds.slice(1, shadow).every((k) => k === 'range'), ch.join(' | '));
+  assert.ok(res2 > shadow, `Schatten (${shadow}) vor der zweiten Auflösungsphase (${res2}): ${ch.join(' | ')}`);
+  assert.ok(ch[shadow].includes('Schattenkarte jedes Bild → alle 2 Bilder'), ch[shadow]);
   assert.equal(V.autoRangeDrop(), V.rangeDropMax());
-  assert.ok(g.quality < 0.75 && g.quality >= 0.5, String(g.quality));
-  // wieder Luft: zuerst die Auflösung bis drei Viertel zurück, dann die Sicht
-  const up = changes(drive(g, { pix: 5 }, 70 * 400));
-  assert.ok(up[0]?.startsWith('res:Auflösung'), String(up[0]));
-  assert.ok(up.some((c) => c.startsWith('range:')), up.join(' | '));
+  assert.equal(S.shadowEveryN(), 2);
+  assert.equal(g.quality, 0.5);
+  assert.equal(autoView().shadow, 2);
+  const gpu = gpuOf(g, { pix: 52 });
+  assert.ok(gpu < 0.55 * FRAME, `Grafik ${gpu.toFixed(1)} ms`);
+  // wieder Luft: die Auflösung bis drei Viertel zurück, dann die Schattenkarte jedes Bild, dann die Sicht, dann ganz
+  const up = changes(drive(g, { pix: 5 }, 70 * 500));
+  const uk = kindsOf(up);
+  assert.deepEqual(uk, ['res', 'res', 'shadow', 'range', 'range', 'range', 'range', 'res', 'res'], up.join(' | '));
   assert.equal(g.quality, 1);
   assert.equal(V.autoRangeDrop(), 0);
+  assert.equal(S.shadowEveryN(), 1);
   g.dispose();
+});
+
+test('ohne Sonnenschatten (Stufe 5) wird der Schatten-Schritt übersprungen; mit Schatten geht es bis „alle 4 Bilder“', () => {
+  G.setGfxLevel(5);
+  const g = fresh('zeitfahren');
+  const ch = changes(drive(g, { pix: 52 }, 70 * 120));
+  assert.ok(!kindsOf(ch).includes('shadow'), ch.join(' | '));
+  assert.equal(g.quality, 0.5);
+  g.dispose();
+  G.setGfxLevel(7);
+  // (ein fester Anteil, den weder Auflösung noch Sicht senken – nur die Schattenkarte)
+  const h = fresh('zeitfahren');
+  const ch2 = changes(drive(h, { pix: 20, fixed: 7 }, 70 * 160));
+  assert.ok(ch2.some((c) => c.includes('alle 2 Bilder → alle 4 Bilder')), ch2.join(' | '));
+  assert.equal(S.shadowEveryN(), 4);
+  h.dispose();
+  assert.equal(S.shadowEveryN(), 1);
 });
 
 test('die Sichtweite gehört dem laufenden Spiel: ein altes, das sich später verabschiedet, setzt sie nicht zurück', () => {
@@ -119,16 +148,18 @@ test('die Sichtweite gehört dem laufenden Spiel: ein altes, das sich später ve
   const g2 = new AutoGfx('berg');
   old.dispose();
   assert.equal(V.autoRangeDrop(), d);
-  // und hat es doch jemand zurückgesetzt: beim nächsten Bild wieder der eigene Stand
+  // und hat es doch jemand zurückgesetzt (auch die Schattenkarte): beim nächsten Bild wieder der eigene Stand
   V.setAutoRangeDrop(0);
+  S.setShadowEvery(8);
   g2.frame(false, FRAME, 3, DT, true);
   assert.equal(V.autoRangeDrop(), d);
+  assert.equal(S.shadowEveryN(), g2.shadowEvery);
   g.dispose();
   g2.dispose();
   assert.equal(V.autoRangeDrop(), 0);
 });
 
-test('leicht zu spät bei kleiner Grafik (Ruckler, die kein Senken behebt): Probebild, dann nichts gesenkt', () => {
+test('Ruckler bei kleiner Grafik (die kein Senken behebt): Probebild, dann nichts gesenkt – auch in Schüben von 30 oder 60 %', () => {
   const g = fresh('abfahrt');
   const ch = drive(g, { pix: 4, extra: 0.15 }, 70 * 60);
   assert.equal(g.quality, 1);
@@ -138,30 +169,32 @@ test('leicht zu spät bei kleiner Grafik (Ruckler, die kein Senken behebt): Prob
   // (nicht jedes Fenster ein Probebild – jedes wartet auf die Grafik)
   assert.ok(ch.length <= 8, `${ch.length} Notizen`);
   g.dispose();
-});
-
-test('Schub zu später Bilder bei kleiner Grafik (Hauptfaden stand): nichts gesenkt – auch bei 30 oder 60 %', () => {
   for (const p of [0.3, 0.6]) {
-    const g = fresh('abfahrt');
-    const ch = run(g, 70 * 6, () => ({ p, lateMs: 33, gpu: 6 }));
-    assert.deepEqual(changes(ch), [], ch.join(' | '));
-    assert.ok(ch.some((c) => c.includes('nicht gesenkt')), ch.join(' | '));
-    g.dispose();
+    const h = fresh('abfahrt');
+    const ch2 = run(h, 70 * 6, () => ({ p, lateMs: 33, gpu: 8 }));
+    assert.deepEqual(changes(ch2), [], ch2.join(' | '));
+    assert.ok(ch2.some((c) => c.includes('nicht gesenkt')), ch2.join(' | '));
+    h.dispose();
   }
 });
 
-test('leicht zu spät, aber die Grafik über der Grenze: wird gesenkt; knapp darunter (12 ms) nicht', () => {
+test('ein gutes Dutzend Ruckler je Minute genügt – wenn die Grafik über der Grenze liegt (10 ms: gesenkt; 8 ms: nicht)', () => {
+  // 0,5 % der Bilder zu spät (18 je Minute), Probebild 10 ms
   const g = fresh('abfahrt');
-  // 13 % zu spät, Probebild 14 ms
-  const ch = changes(run(g, 70 * 6, (gg) => ({ p: gg.quality === 1 ? 0.13 : 0, lateMs: 25, gpu: gg.quality === 1 ? 14 : 6 })));
+  const ch = changes(run(g, 70 * 14, (gg) => ({ p: gg.quality === 1 ? 0.005 : 0, lateMs: 33, gpu: gg.quality === 1 ? 10 : 6 })));
   assert.ok(ch[0]?.startsWith('res:Auflösung 2-fach → 1,75-fach'), String(ch[0]));
-  assert.ok(ch[0].includes('Grafik 14.0 ms'), ch[0]);
+  assert.ok(ch[0].includes('Grafik 10.0 ms'), ch[0]);
   g.dispose();
-  // 13 % zu spät bei 12 ms Grafik (die Zone, in der das iPhone am rundesten läuft): bleibt
+  // dieselben Ruckler bei 8 ms Grafik (der saubere Bereich): bleibt
   const h = fresh('abfahrt');
-  const ch2 = run(h, 70 * 10, () => ({ p: 0.13, lateMs: 25, gpu: 12 }));
+  const ch2 = run(h, 70 * 20, () => ({ p: 0.005, lateMs: 33, gpu: 8 }));
   assert.deepEqual(changes(ch2), [], ch2.join(' | '));
   h.dispose();
+  // nur ein Ruckler in zehn Sekunden (6 je Minute): kein Urteil, kein Probebild
+  const k = fresh('abfahrt');
+  const ch3 = run(k, 70 * 20, () => ({ p: 1 / 600, lateMs: 33, gpu: 12 }));
+  assert.deepEqual(ch3, []);
+  k.dispose();
 });
 
 test('Rechenzeit ist die Grenze: die Auflösung bleibt, gleich die Sichtweite', () => {
@@ -179,17 +212,17 @@ test('Rechenzeit ist die Grenze: die Auflösung bleibt, gleich die Sichtweite', 
 
 test('das Telefon drosselt mitten in der Fahrt (Grafik plötzlich doppelt so teuer): weiter senken, nie zurück, solange es ruckelt', () => {
   const g = fresh('berg');
-  // erst kühl: 11 % zu spät bei 8 ms Grafik – bleibt oben (Messfahrt 255, die ersten 16 s)
+  // erst kühl: Ruckler bei 8 ms Grafik – bleibt oben
   const cool = drive(g, { pix: 8, extra: 0.08 }, 70 * 12);
   assert.deepEqual(changes(cool), [], cool.join(' | '));
   assert.equal(g.quality, 1);
-  // dann gedrosselt: dieselbe Szene kostet das Doppelte (16 → 20 ms) – hinab, bis die Grafik unter der Grenze liegt
-  const hot = drive(g, { pix: 22 }, 70 * 40);
+  // dann gedrosselt: dieselbe Szene kostet das Doppelte (16 → 22 ms) – hinab, bis die Grafik unter der Grenze liegt
+  const hot = drive(g, { pix: 22 }, 70 * 60);
   const ch = changes(hot);
   assert.ok(ch.length >= 1, hot.join(' | '));
   assert.ok(!hot.some((c) => c.includes('zurück') || c.includes('brachte nichts')), hot.join(' | '));
   const gpu = gpuOf(g, { pix: 22 });
-  assert.ok(gpu < 0.78 * FRAME, `am Ende ${gpu.toFixed(1)} ms Grafik`);
+  assert.ok(gpu < 0.55 * FRAME, `am Ende ${gpu.toFixed(1)} ms Grafik`);
   // ein Schub zu später Bilder bei kleiner Grafik (Ausreißer-Fenster) ändert nichts
   const q = g.quality;
   const d = V.autoRangeDrop();
@@ -198,17 +231,21 @@ test('das Telefon drosselt mitten in der Fahrt (Grafik plötzlich doppelt so teu
   g.dispose();
 });
 
-test('wieder Luft: erst ein Probebild, dann zuerst die Sichtweite zurück, dann die Auflösung – mit zu wenig Luft nicht', () => {
+test('wieder Luft: erst ein Probebild, dann Schritt für Schritt zurück – mit zu wenig Luft nicht, und nicht, solange es noch ein Dutzend mal je Minute ruckelt', () => {
   const g = fresh('berg');
-  drive(g, { pix: 30 }, 70 * 40);
-  assert.equal(g.quality, 0.75);
+  drive(g, { pix: 30 }, 70 * 60);
+  assert.ok(g.quality <= 0.75, String(g.quality));
   const d0 = V.autoRangeDrop();
   assert.ok(d0 >= 1);
   // gleiche Last: bleibt (Luft reicht nicht für den nächsten Schritt)
-  assert.deepEqual(changes(drive(g, { pix: 30 }, 70 * 30)), []);
-  // Last fällt weg (Fahrerfeld zieht davon): Sicht zurück, dann Auflösung
-  const up = changes(drive(g, { pix: 5 }, 70 * 300));
-  assert.ok(up[0]?.startsWith('range:Sichtweite'), String(up[0]));
+  assert.deepEqual(changes(drive(g, { pix: 30 }, 70 * 40)), []);
+  // etwas Luft, aber noch gut ein Dutzend Ruckler je Minute (alle 250 Bilder): bleibt
+  const q = g.quality;
+  assert.deepEqual(changes(run(g, 70 * 40, () => ({ p: 1 / 250, lateMs: 33, gpu: 3 }))), []);
+  assert.equal(g.quality, q);
+  // Last fällt weg (Fahrerfeld zieht davon): zurück bis ganz oben
+  const up = changes(drive(g, { pix: 5 }, 70 * 400));
+  assert.ok(up.length >= 2, up.join(' | '));
   assert.equal(V.autoRangeDrop(), 0);
   assert.equal(g.quality, 1);
   g.dispose();
@@ -225,7 +262,7 @@ test('Schritt hinauf ruckelt gleich wieder: zurück, der nächste Versuch erst n
   const up: string[] = [];
   for (let i = 0; i < 70 * 2 && !up.length; i++) { const ch = g.frame(false, FRAME, 3, DT, true); if (ch) up.push(ch.text); }
   assert.ok(up[0]?.startsWith('Auflösung 1,75-fach → 2-fach'), String(up[0]));
-  const back = run(g, 70 * 3, onlyFull());
+  const back = run(g, 70 * 4, onlyFull());
   assert.ok(back[0]?.startsWith('res:Auflösung 2-fach → 1,75-fach (zurück'), String(back[0]));
   // jetzt dauert es länger bis zum nächsten Probebild
   n = 0;
@@ -234,7 +271,7 @@ test('Schritt hinauf ruckelt gleich wieder: zurück, der nächste Versuch erst n
   g.dispose();
 });
 
-test('merkt sich den Stand je Spiel und Wahl; eine neue Wahl beginnt bei derselben Pixeldichte; Automatik aus regelt nichts; 120er-Takt zählt nicht', () => {
+test('merkt sich den Stand je Spiel und Wahl (auch die Schattenkarte); eine neue Wahl beginnt bei derselben Pixeldichte; Automatik aus regelt nichts; 120er-Takt zählt nicht', () => {
   const g = fresh('zeitfahren');
   run(g, 70 * 6, onlyFull());
   assert.equal(g.quality, 0.875);
@@ -269,4 +306,20 @@ test('merkt sich den Stand je Spiel und Wahl; eine neue Wahl beginnt bei derselb
   G.setGfxAuto(true);
   k.dispose();
   G.setGfxRes(2);
+  // Schattenkarte gemerkt: nach der Fahrt beginnt die nächste gleich mit „alle 2 Bilder“ – eine Stufe ohne Schatten nicht
+  const s = fresh('berg');
+  drive(s, { pix: 20, fixed: 7 }, 70 * 100);
+  assert.ok(s.shadow >= 1, `Schatten-Schritt ${s.shadow}`);
+  const every = s.shadowEvery;
+  s.dispose();
+  assert.equal(S.shadowEveryN(), 1);
+  const s2 = new AutoGfx('berg');
+  assert.equal(s2.shadowEvery, every);
+  assert.equal(S.shadowEveryN(), every);
+  s2.dispose();
+  G.setGfxLevel(5);
+  const s3 = new AutoGfx('berg');
+  assert.equal(s3.shadowEvery, 1);
+  s3.dispose();
+  G.setGfxLevel(7);
 });

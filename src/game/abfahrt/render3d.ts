@@ -35,7 +35,7 @@ import { LAMP_GLSL, LAMP_N, LAMP_U, haloMaterial, lampFrag, lampHalos, pickLamps
 import { SunsetGlow } from './sunset3d';
 import { TT_PODIUM, TtStart3D, ttCrowdGap } from './ttstart3d';
 import { DescentStart3D } from './descstart3d';
-import { EV, SEC, type Perf3D } from './perf3d';
+import { EV, SEC, type CallsBy, type Perf3D } from './perf3d';
 import { uiBusy } from '../uiBusy';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
@@ -1978,11 +1978,21 @@ export class Renderer3D {
     const pairs = new WeakMap<THREE.Material, WeakMap<THREE.BufferGeometry, unknown[]>>();
     const lay = new WeakMap<THREE.BufferGeometry, string>();
     const seen = this.pipeSeen;
+    const by = this.callsBy;
     let quiet = 2;
     gl.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
       orig.call(gl, camera, scene, geometry, material, object, group);
       try {
         const rt = gl.getRenderTarget() as unknown;
+        // Aufrufe nach Art (je Bild; Schattendurchgang: Tiefenmaterial ins Zwischenbild)
+        if (rt && (material as THREE.Material).type === 'MeshDepthMaterial') by.shadow += 1;
+        else {
+          const ob = object as THREE.Object3D & { isInstancedMesh?: boolean; isSkinnedMesh?: boolean };
+          if (ob.isSkinnedMesh) by.skinned += 1;
+          if (ob.isInstancedMesh) by.inst += 1;
+          const pos = geometry.attributes.position as THREE.BufferAttribute | undefined;
+          if (pos && pos.count < 100) by.tiny += 1;
+        }
         let byGeo = pairs.get(material);
         if (!byGeo) { byGeo = new WeakMap(); pairs.set(material, byGeo); }
         let rts = byGeo.get(geometry);
@@ -2009,12 +2019,19 @@ export class Renderer3D {
       } catch { /* Messung darf nie stören */ }
     };
     undo.push(() => { gl.renderBufferDirect = orig; });
-    // nach zwei ganzen Bildern zählt jeder neue Zustand
-    this.instrTick = () => { if (quiet > 0) quiet--; };
+    // nach zwei ganzen Bildern zählt jeder neue Zustand; die Aufrufe nach Art je Bild abholen
+    this.instrTick = () => {
+      if (quiet > 0) quiet--;
+      this.lastCallsBy = { ...by };
+      by.shadow = 0; by.skinned = 0; by.inst = 0; by.tiny = 0;
+    };
     undo.push(() => { this.instrTick = null; });
     return () => { for (const u of undo.reverse()) u(); };
   }
   private instrTick: (() => void) | null = null;
+  /** Zeichenaufrufe nach Art (Messfahrt): im laufenden Bild gezählt, nach dem Bild in lastCallsBy */
+  private callsBy: CallsBy = { shadow: 0, skinned: 0, inst: 0, tiny: 0 };
+  lastCallsBy: CallsBy = { shadow: 0, skinned: 0, inst: 0, tiny: 0 };
   /** Hauptdurchgang des letzten Bilds: Zeichenaufrufe, Dreiecke */
   lastCalls = 0;
   lastTris = 0;

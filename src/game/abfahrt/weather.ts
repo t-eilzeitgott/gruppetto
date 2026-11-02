@@ -21,6 +21,7 @@
  * Nachbearbeitung. Sinkt die Auflösung während der Fahrt stark, schaltet die Nachbearbeitung ab.
  */
 import * as THREE from 'three';
+import { shadowEveryN, shadowSizeOverrideN } from './shadowRate';
 import type { RaceView } from './engine';
 import { MOUNTAIN_FINISH, SPRINT_FINISH } from './track';
 import { berlinDayKey } from './rng';
@@ -126,13 +127,8 @@ export function weatherOverride(): WeatherId | 'none' | null {
 
 export type GfxTier = 'high' | 'mid' | 'low';
 
-/** Schattenkarte jedes n-te Bild (1 = jedes; Wechseltest der Messfahrt) */
-let shadowEvery = 1;
-export function setShadowEvery(n: number) { shadowEvery = Math.max(1, Math.round(n)); }
-export function shadowEveryN(): number { return shadowEvery; }
-/** Schattenkarte probeweise klein (Wechseltest): 0 = wie eingestellt, sonst Kantenlänge in Texeln */
-let shadowSizeOverride = 0;
-export function setShadowSizeOverride(px: number) { shadowSizeOverride = px; }
+// (Schattenkarte jedes n-te Bild / probeweise klein: shadowRate.ts – Automatik und Wechseltests)
+export { setShadowEvery, setShadowSizeOverride, shadowEveryN } from './shadowRate';
 
 export function gfxTier(): GfxTier {
   if (/[?&](lowgfx|nogl)\b/.test(window.location.search)) return 'low';
@@ -493,9 +489,10 @@ export class WeatherFx {
     // (three.js: autoUpdate) in der eingestellten Größe
     if (this.shadows) {
       const { gl, sun } = this.env;
-      if (shadowEvery <= 1) { if (!gl.shadowMap.autoUpdate) gl.shadowMap.autoUpdate = true; }
-      else { gl.shadowMap.autoUpdate = false; if (this.frames % shadowEvery === 0) gl.shadowMap.needsUpdate = true; }
-      const want = shadowSizeOverride || this.shadowSize;
+      const every = shadowEveryN();
+      if (every <= 1) { if (!gl.shadowMap.autoUpdate) gl.shadowMap.autoUpdate = true; }
+      else { gl.shadowMap.autoUpdate = false; if (this.frames % every === 0) gl.shadowMap.needsUpdate = true; }
+      const want = shadowSizeOverrideN() || this.shadowSize;
       if (sun.shadow.mapSize.x !== want) {
         sun.shadow.mapSize.set(want, want);
         sun.shadow.map?.dispose();

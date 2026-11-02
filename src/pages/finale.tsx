@@ -182,7 +182,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           P!.mark(SEC.anzeige);
           P!.end({
             dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
-            quality: gfxRes() * renderer.quality, px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown, screen: clock.period, off: clock.off,
+            quality: gfxRes() * renderer.quality, px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown, screen: clock.period, off: clock.off, callsBy: renderer.lastCallsBy,
           });
         }
         raf = requestAnimationFrame(loop);

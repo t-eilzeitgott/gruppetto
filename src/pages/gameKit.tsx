@@ -229,9 +229,9 @@ export function GfxSliders({ page }: { page?: boolean }) {
 }
 
 /**
- * Automatik (autoGfx.ts): die Schieberegler sind die Obergrenze; reicht die Leistung nicht, senkt das Spiel erst die
- * Auflösung (bis drei Viertel), dann die Sichtweite und zuletzt die Auflösung bis zur Hälfte. Darunter steht, was sie
- * gerade eingestellt hat.
+ * Automatik (autoGfx.ts): die Schieberegler sind die Obergrenze; ruckelt es, senkt das Spiel erst die Auflösung (bis
+ * drei Viertel), dann die Sichtweite, dann die Schattenkarte (seltener) und die Auflösung bis zur Hälfte. Darunter
+ * steht, was sie gerade eingestellt hat.
  */
 function AutoSwitch({ res }: { res: number }) {
   const [on, setOn] = useState(gfxAuto);
@@ -239,7 +239,7 @@ function AutoSwitch({ res }: { res: number }) {
   useEffect(() => onGfxSettings(() => setOn(gfxAuto())), []);
   useEffect(() => onAutoView(() => setV(autoView())), []);
   const floor = res * RES_STEPS[RES_STEPS.length - 1];
-  const hint = v.on && v.reduced ? `Gerade ${fmtX(v.res)} · Sicht ${v.range}` : `Bei Bedarf bis ${fmtX(floor)} und kürzere Sicht`;
+  const hint = v.on && v.reduced ? `Gerade ${fmtX(v.res)} · Sicht ${v.range}${v.shadow > 1 ? ` · Schatten alle ${v.shadow} Bilder` : ''}` : `Bei Bedarf bis ${fmtX(floor)}, kürzere Sicht, seltener Schatten`;
   return (
     <button type="button" role="switch" aria-checked={on} className={cx('abf-switch', 'gfx-auto', on && 'is-on')} onClick={() => setGfxAuto(!on)}>
       <span className="abf-switch__text"><span>Automatisch anpassen</span>{on ? <small>{hint}</small> : <small>Immer genau wie eingestellt</small>}</span>
