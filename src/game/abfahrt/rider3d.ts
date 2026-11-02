@@ -886,6 +886,28 @@ export class RiderModel {
   get isFar() { return this.far; }
   static readonly FAR_HIDE = FAR1 + 1.5;
 
+  /**
+   * wirft dieser Fahrer einen Sonnenschatten? (im dichten Feld nur die nächsten – jeder Schattenwerfer wird im
+   * Schattendurchgang ein zweites Mal gezeichnet, Netz für Netz; die übrigen behalten ihren Schattenfleck am Boden)
+   * Die Sonnenschatten markieren neue Netze nach und nach – abgeschaltet wird darum jedes Bild nachgesehen.
+   */
+  setCastShadow(on: boolean) {
+    if (on) {
+      if (!this.muted) return;
+      for (const m of this.muted) m.castShadow = true;
+      this.muted = null;
+      return;
+    }
+    if (!this.casters) {
+      this.casters = [];
+      this.group.traverse((o) => { if ((o as THREE.Mesh).isMesh && o !== this.shadow) this.casters!.push(o as THREE.Mesh); });
+    }
+    this.muted ??= new Set();
+    for (const m of this.casters) if (m.castShadow) { m.castShadow = false; this.muted.add(m); }
+  }
+  private muted: Set<THREE.Mesh> | null = null;
+  private casters: THREE.Mesh[] | null = null;
+
   setFar(far: boolean) {
     if (far === this.far) return;
     this.far = far;

@@ -14,6 +14,15 @@
  *
  * Bericht: kompakt zum Kopieren (Zusammenfassung, Vergleich der Orte, Verteilung, Bausteine, die schlimmsten
  * Ruckler mit Umfeld, Verlauf je 2 s, Ereignisse) – und vollständig als Datei (zusätzlich jedes einzelne Bild).
+ *
+ * Ruckler ohne Last (Rechnen und Grafik weit unter dem Takt) suchen: je Bild zusätzlich
+ * - die Bildaufrufe des Browsers seit dem vorigen Bild und ihr größter Abstand – fehlt ein Aufruf (Abstand über
+ *   anderthalb Bildschirmtakte), war der Browser selbst aufgehalten (Seite, Speicherbereinigung, Grafikprozess);
+ *   kamen die Aufrufe pünktlich und eines wurde ausgelassen, lag es am festen Bildtakt;
+ * - was auf die Grafikkarte geladen wurde (kB, Texturen);
+ * - neue Zeichenzustände: Programm × Aufbau der Geometrie × Mischung/Tiefe × Ziel – beim ersten Zeichnen baut der
+ *   Grafiktreiber (Metal) dafür eine Pipeline, das kostet ihn Zeit, die weder Rechen- noch Grafikzeit des Spiels ist;
+ * - Änderungen an der Oberfläche (Elemente kommen hinzu oder gehen: Ansagen, Werbung, Hinweise).
  */
 
 /** Bausteine je Bild (Reihenfolge wie im Bildablauf) */
@@ -23,7 +32,9 @@ const NS = SECTIONS.length;
 export const SEC = Object.fromEntries(SECTIONS.map((s, i) => [s, i])) as Record<Section, number>;
 
 /** Ereignisse (als Bits je Bild, mit Text auch als Liste) */
-export const EV = { chunk: 1, sync: 2, tile: 4, shader: 8, quality: 16, range: 32, phase: 64, resize: 128, lost: 256, mtn: 512, probe: 1024, error: 2048, pace: 4096 } as const;
+export const EV = { chunk: 1, sync: 2, tile: 4, shader: 8, quality: 16, range: 32, phase: 64, resize: 128, lost: 256, mtn: 512, probe: 1024, error: 2048, pace: 4096, ui: 8192, pipe: 16384, tex: 32768 } as const;
+/** Ereignisse, deren Text auch in der Rucklerliste steht (was genau neu war) */
+const DETAIL_KINDS = new Set(['ui', 'pipe', 'tex', 'mtn', 'quality', 'range']);
 const EV_NAMES: [number, string][] = Object.entries(EV).map(([k, v]) => [v, k]);
 
 /** Ort auf der Strecke */
@@ -51,6 +62,8 @@ export interface FrameInfo {
   place: number;
   /** Fahrer im Bild (Modelle) */
   riders: number;
+  /** Bildschirmtakt (ms; 8,3 auf 120 Hz) */
+  screen: number;
 }
 
 /** Probebild: Rückstau (Warten auf das vorige Bild), Abschicken, Grafikzeit dieses Bildes (ms) */
@@ -81,6 +94,12 @@ class Rec {
   riders = new Uint8Array(CAP);
   ev = new Uint16Array(CAP);
   period = new Float32Array(CAP);
+  screen = new Float32Array(CAP);
+  /** Bildaufrufe des Browsers seit dem vorigen Bild (mit diesem) und ihr größter Abstand (ms) */
+  calls2 = new Uint8Array(CAP);
+  gap = new Float32Array(CAP);
+  /** auf die Grafikkarte geladen (kB) */
+  up = new Float32Array(CAP);
   drain = new Float32Array(CAP).fill(-1);
   gpu = new Float32Array(CAP).fill(-1);
   submit = new Float32Array(CAP).fill(-1);
@@ -100,6 +119,27 @@ export class Perf3D {
   private lastProbe = 0;
   /** Ruckler der laufenden Messung (für die Anzeige) */
   hitches = 0;
+  /** Bildaufrufe seit dem letzten Bild, ihr größter Abstand, Zeit des letzten */
+  private calls = 0;
+  private gapMax = 0;
+  private lastCall = 0;
+  /** in diesem Bild hochgeladen (Bytes) */
+  private upBytes = 0;
+  private uiObs: MutationObserver | null = null;
+
+  /** jeder Bildaufruf des Browsers (auch die, die der feste Takt auslässt) – vor clock.ready */
+  call() {
+    const t = performance.now();
+    if (this.lastCall && t - this.lastCall > this.gapMax) this.gapMax = t - this.lastCall;
+    this.lastCall = t;
+    this.calls++;
+  }
+
+  /** etwas wird auf die Grafikkarte geladen (Bytes); tex: eine Textur (Text fürs Ereignis) */
+  upload(bytes: number, tex?: string) {
+    this.upBytes += bytes;
+    if (tex !== undefined) this.event(EV.tex, tex);
+  }
 
   /** Bildbeginn: rafTime = Zeitstempel des Bildaufrufs */
   begin(rafTime: number) {
@@ -163,15 +203,51 @@ export class Perf3D {
       r.riders[i] = Math.min(255, f.riders);
       r.ev[i] = this.evBits;
       r.period[i] = f.period;
+      r.screen[i] = f.screen;
+      r.calls2[i] = Math.min(255, this.calls);
+      r.gap[i] = this.gapMax;
+      r.up[i] = this.upBytes / 1024;
       if (this.probe) { r.drain[i] = this.probe.drain; r.submit[i] = this.probe.submit; r.gpu[i] = this.probe.gpu; }
       // (das Bild nach einem Probebild läuft spät an: beide zählen nicht als Ruckler)
       const prevProbe = i > 0 && (r.ev[i - 1] & EV.probe) !== 0;
       if (f.dt > hitchLimit(f.period) && !(this.evBits & EV.probe) && !prevProbe) this.hitches++;
     }
     this.evBits = 0;
+    this.calls = 0;
+    this.gapMax = 0;
+    this.upBytes = 0;
   }
 
-  startRec(meta: Record<string, unknown>) { this.rec = new Rec(meta); this.hitches = 0; this.lastProbe = performance.now(); }
+  startRec(meta: Record<string, unknown>) {
+    this.rec = new Rec(meta);
+    this.hitches = 0;
+    this.lastProbe = performance.now();
+    this.calls = 0;
+    this.gapMax = 0;
+    this.lastCall = 0;
+    this.upBytes = 0;
+    // Oberfläche: Elemente, die hinzukommen oder gehen (Ansagen, Werbung, Hinweise) – nur Elemente, kein Text
+    // (Tempo und Zeit wechseln jedes Bild ihren Text)
+    try {
+      this.uiObs?.disconnect();
+      this.uiObs = new MutationObserver((list) => {
+        const names = new Set<string>();
+        for (const m of list) {
+          for (const [nodes, sign] of [[m.addedNodes, '+'], [m.removedNodes, '−']] as const) {
+            for (const nd of nodes) {
+              if (nd.nodeType !== 1) continue;
+              const el = nd as Element;
+              if (el.closest?.('.gpu-rec, .fps-meter') || el.classList.contains('fps-meter')) continue;
+              const cls = typeof el.className === 'string' && el.className ? el.className.split(/\s+/)[0] : el.tagName.toLowerCase();
+              names.add(`${sign}${cls}`);
+            }
+          }
+        }
+        if (names.size) this.event(EV.ui, [...names].slice(0, 4).join(' '));
+      });
+      this.uiObs.observe(document.body, { childList: true, subtree: true });
+    } catch { this.uiObs = null; }
+  }
 
   /** laufende Messung: Sekunden seit Beginn */
   get recSeconds(): number { return this.rec ? (performance.now() - this.rec.t0) / 1000 : 0; }
@@ -180,6 +256,8 @@ export class Perf3D {
   stopRec(extra?: Record<string, unknown>): Report | null {
     const r = this.rec;
     this.rec = null;
+    this.uiObs?.disconnect();
+    this.uiObs = null;
     if (!r || r.n < 30) return null;
     if (extra) Object.assign(r.meta, extra);
     return makeReport(r);
@@ -234,6 +312,11 @@ function makeReport(r: Rec): Report {
   const hist: Record<string, number> = { '<9': 0, '9-13': 0, '13-18': 0, '18-25': 0, '25-34': 0, '34-50': 0, '50-100': 0, '>100': 0 };
   const edges: [number, string][] = [[9, '<9'], [13, '9-13'], [18, '13-18'], [25, '18-25'], [34, '25-34'], [50, '34-50'], [100, '50-100'], [Infinity, '>100']];
   let hitches = 0, missed = 0, cpuBound = 0, lateBound = 0;
+  // ohne Last: fehlender Bildaufruf (Browser aufgehalten) oder ausgelassener (fester Takt); dabei Neues gezeichnet,
+  // hochgeladen oder an der Oberfläche geändert (Ereignisse dieses und der drei Bilder davor)
+  let noCall = 0, skipped = 0, withPipe = 0, withUp = 0, withUi = 0;
+  const near = (i: number, bit: number) => { for (let j = Math.max(0, i - 3); j <= i; j++) if (r.ev[j] & bit) return true; return false; };
+  const upNear = (i: number) => { let kb = 0; for (let j = Math.max(0, i - 1); j <= i; j++) kb += r.up[j]; return kb; };
   // Taktfehler: ein Bild kam später als im festen Bildtakt (auch die kleinen, z. B. 25 statt 16,7 ms auf 120 Hz –
   // die fühlen sich als Mikroruckler an, obwohl sie unter der Rucklergrenze bleiben)
   let offBeat = 0;
@@ -248,6 +331,12 @@ function makeReport(r: Rec): Report {
       idx.push(i);
       if (cpu[i] > period * 0.8) cpuBound++;
       if (late[i] > period * 0.5) lateBound++;
+      const scr = r.screen[i] || period;
+      if (r.gap[i] > scr * 1.5) noCall++;
+      else if (r.calls2[i] > Math.max(1, Math.round(r.period[i] / scr))) skipped++;
+      if (near(i, EV.pipe)) withPipe++;
+      if (near(i, EV.tex) || upNear(i) > 256) withUp++;
+      if (near(i, EV.ui)) withUi++;
     }
   }
   const secAvg = (list: number[]) => {
@@ -293,7 +382,10 @@ function makeReport(r: Rec): Report {
     let bits = 0;
     for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 1); j++) bits |= r.ev[j];
     const secs = SECTIONS.map((s, k) => [s, r.sec[i * NS + k]] as const).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([s, v]) => `${s}:${r1(v)}`).join(' ');
-    return [r1(r.t[i]), r1(dt[i]), r1(cpu[i]), r1(late[i]), secs, r.calls[i], Math.round(r.tris[i] / 1000), r2(r.quality[i]), Math.round(r.z[i]), Math.round(r.v[i] * 3.6), PLACES[r.place[i]], PHASES[r.phase[i]], r.riders[i], evText(bits)];
+    // was genau neu war (Zeichenzustand, Textur, Oberfläche …) in diesem und den drei Bildern davor
+    const det = r.events.filter((e) => e.f >= i - 3 && e.f <= i && DETAIL_KINDS.has(e.kind)).map((e) => `${e.kind}: ${e.text}`);
+    const detail = det.length > 4 ? [...det.slice(0, 4), `… ${det.length - 4} weitere`] : det;
+    return [r1(r.t[i]), r1(dt[i]), r1(cpu[i]), r1(late[i]), secs, r.calls[i], Math.round(r.tris[i] / 1000), r2(r.quality[i]), Math.round(r.z[i]), Math.round(r.v[i] * 3.6), PLACES[r.place[i]], PHASES[r.phase[i]], r.riders[i], evText(bits), r.calls2[i], r1(r.gap[i]), Math.round(r.up[i] + (i > 0 ? r.up[i - 1] : 0)), detail.join(' | ')];
   });
   // Verlauf je 2 s
   const timeline: (number | string)[][] = [];
@@ -326,17 +418,18 @@ function makeReport(r: Rec): Report {
       dauer_s: summary.s, bilder: n, takt_ms: summary.period, fps_mittel: summary.fps, fps_1pct_low: summary.low1,
       taktfehler: offBeat, taktfehler_prozent: r1((offBeat / Math.max(1, keep.length)) * 100),
       ruckler: hitches, verpasste_bilder: missed, ruckler_cpu_gebunden: cpuBound, ruckler_spaeter_aufruf: lateBound, ruckler_grenze_ms: r1(hitchMs),
-      hinweis: 'takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. Grafikstufe und Auflösung sind fest gewählt (Schieberegler), nichts wird automatisch gesenkt',
+      ruckler_ohne_bildaufruf: noCall, ruckler_aufruf_ausgelassen: skipped, ruckler_mit_neuem_zeichenzustand: withPipe, ruckler_mit_hochladen: withUp, ruckler_mit_oberflaeche: withUi,
+      hinweis: 'takt_ms = fester Bildtakt (frameClock.ts); Taktfehler = Bild später als dieser Takt. ruckler_ohne_bildaufruf: der Browser rief länger als anderthalb Bildschirmtakte nicht auf (Seite, Speicherbereinigung oder Grafikprozess hielten ihn auf); ruckler_aufruf_ausgelassen: Aufrufe kamen, der feste Takt ließ einen aus. Zeichenzustand = erstes Zeichnen einer neuen Kombination (Pipeline im Grafiktreiber). Auflösung und Sichtweite regelt die Automatik (Ereignisse quality und range)',
     },
     orte: places,
     grafik_probe: probeAll ?? 'keine Probebilder',
     bildzeit_ms: stats(dtK), cpu_ms: stats(cpu), verspaetung_ms: stats(late),
     verteilung_ms: hist, bausteine_ms: secStats,
-    ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse'],
+    ruckler_spalten: ['t_s', 'bild_ms', 'cpu_ms', 'verspaetung_ms', 'groesste_bausteine', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'z_m', 'kmh', 'ort', 'phase', 'fahrer_modelle', 'ereignisse', 'bildaufrufe', 'aufruf_luecke_ms', 'hochgeladen_kb', 'neu'],
     ruckler_liste: hitchRows,
     verlauf_spalten: ['t_s', 'z_m', 'kmh', 'fps', 'p60_ms', 'max_ms', 'cpu_ms', 'cpu_max', 'verspaetung_max', 'grafik_probe_ms', 'rueckstau_probe_ms', 'ruckler', 'aufrufe', 'dreiecke_k', 'aufloesung_fach', 'grafikstufe', 'ort', 'phase', 'fahrer_modelle', 'takt_ms'],
     verlauf_2s: timeline,
-    ereignisse: r.events.slice(0, 250).map((e) => [r1(e.t), e.kind, e.text]),
+    ereignisse: r.events.slice(0, 400).map((e) => [r1(e.t), e.kind, e.text]),
   };
   const text = JSON.stringify(base);
   // vollständig: zusätzlich jedes Bild
@@ -344,12 +437,12 @@ function makeReport(r: Rec): Report {
   for (let i = 0; i < n; i++) {
     const row = [r2(r.t[i]), r2(dt[i]), r2(late[i]), r2(cpu[i])];
     for (let k = 0; k < NS; k++) row.push(r2(r.sec[i * NS + k]));
-    row.push(r.calls[i], Math.round(r.tris[i] / 1000), r.progs[i], r2(r.quality[i]), r2(r.px[i]), r.range[i], Math.round(r.z[i]), r1(r.v[i] * 3.6), r.place[i], r.phase[i], r2(r.drain[i]), r2(r.submit[i]), r2(r.gpu[i]), r.ev[i]);
+    row.push(r.calls[i], Math.round(r.tris[i] / 1000), r.progs[i], r2(r.quality[i]), r2(r.px[i]), r.range[i], Math.round(r.z[i]), r1(r.v[i] * 3.6), r.place[i], r.phase[i], r2(r.drain[i]), r2(r.submit[i]), r2(r.gpu[i]), r.ev[i], r.calls2[i], r1(r.gap[i]), r1(r.up[i]));
     frames.push(row);
   }
   const full = JSON.stringify({
     ...base,
-    bilder_spalten: ['t_s', 'bild_ms', 'verspaetung_ms', 'cpu_ms', ...SECTIONS, 'aufrufe', 'dreiecke_k', 'programme', 'aufloesung_fach', 'pixel_je_punkt', 'grafikstufe', 'z_m', 'kmh', 'ort', 'phase', 'rueckstau_ms', 'abschicken_ms', 'grafik_ms', 'ereignis_bits'],
+    bilder_spalten: ['t_s', 'bild_ms', 'verspaetung_ms', 'cpu_ms', ...SECTIONS, 'aufrufe', 'dreiecke_k', 'programme', 'aufloesung_fach', 'pixel_je_punkt', 'grafikstufe', 'z_m', 'kmh', 'ort', 'phase', 'rueckstau_ms', 'abschicken_ms', 'grafik_ms', 'ereignis_bits', 'bildaufrufe', 'aufruf_luecke_ms', 'hochgeladen_kb'],
     orte_codes: PLACES, phasen_codes: PHASES, ereignis_bits: EV, alle_ereignisse: r.events.map((e) => [r2(e.t), e.f, e.kind, e.text]),
     bilder: frames,
   });

@@ -63,7 +63,7 @@ export class FpsMeter {
     const avg = this.sum / this.n;
     const f = (x: number) => x.toFixed(1).replace('.', ',');
     // Auflösungsstufe und wirksame Sichtweite (↓ = automatisch kürzer als gewählt)
-    const q = quality !== undefined ? ` · ${String(quality).replace('.', ',')}× · ${viewRange().label}` : '';
+    const q = quality !== undefined ? ` · ${String(Math.round(quality * 100) / 100).replace('.', ',')}× · ${viewRange().label}` : '';
     const bad = shaderErrors > 0 ? ` · ${shaderErrors} Shader kaputt` : '';
     el.textContent = `${Math.round(1000 / avg)} fps · ${f(avg)} ms · max ${Math.round(this.max)} · CPU ${f(this.cpu / this.n)}${q}${bad}`;
     // einbrechende Bildrate (und kaputte Shader) dezent markieren

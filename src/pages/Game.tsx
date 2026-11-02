@@ -31,6 +31,7 @@ import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
 import { PauseIcon, PlayIcon, useCountUp } from './gameKit';
+import { RecBadge } from './measure';
 import { healFixedSoon } from '../ui/fixedHeal';
 import { teamKit } from '../game/teams';
 
@@ -135,7 +136,6 @@ export function GamePage() {
   const perfRef = useRef(new Perf3D());
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [measuring, setMeasuring] = useState(false);
-  const [recInfo, setRecInfo] = useState({ s: 0, hitches: 0 });
   const [report, setReport] = useState<Report | null>(null);
   const [copied, setCopied] = useState(false);
   const [lastReport, setLastReport] = useState<string | null>(() => lsGet(LS_REPORT));
@@ -314,6 +314,8 @@ export function GamePage() {
       let lastGfx = '';
       let lastPace = -1;
       const loop = (now: number) => {
+        // Messfahrt: jeder Aufruf des Browsers zählt (auch die ausgelassenen – fehlt einer, war der Browser aufgehalten)
+        if (P.rec) P.call();
         // fester Bildtakt (frameClock.ts): zu frühe Aufrufe auslassen – jedes Bild kommt im gleichen Abstand
         if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
         const rec = !!P.rec;
@@ -340,7 +342,7 @@ export function GamePage() {
         hudRef.current(eng, dt);
         const cpu = performance.now() - c0;
         fps.frame(raw * 1000, cpu, gfxRes() * renderer.quality, renderer.shaderErrors);
-        if (!low) autoStep(gov, renderer, clock, cpu, raw, uiRef.current === 'playing' && eng.phase === 'playing', rec ? (ch) => P.event(ch.kind === 'res' ? EV.quality : EV.range, ch.text) : null);
+        if (!low) autoStep(gov, renderer, clock, cpu, raw, uiRef.current === 'playing' && eng.phase === 'playing', rec ? (ch) => P.event(ch.kind === 'range' ? EV.range : EV.quality, ch.text) : null);
         // Bildrate beobachten und notfalls die Qualität senken
         acc += dt;
         frames += 1;
@@ -353,7 +355,7 @@ export function GamePage() {
           P.mark(SEC.anzeige);
           P.end({
             dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
-            quality: gfxRes() * renderer.quality, px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+            quality: gfxRes() * renderer.quality, px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown, screen: clock.period,
           });
         }
         raf = requestAnimationFrame(loop);
@@ -598,7 +600,6 @@ export function GamePage() {
   const startMeasure = () => {
     perfRef.current.startRec({ version: BUILD_ID, aufnahme: new Date().toISOString(), strecke: track.title, tag: day, fahrerfeld: FIELD, wetter: nextWeatherName() ?? 'aus', ...deviceInfo() });
     setMeasuring(true);
-    setRecInfo({ s: 0, hitches: 0 });
     setReport(null);
     setCopied(false);
     if (uiRef.current === 'paused') setUi('playing');
@@ -609,11 +610,6 @@ export function GamePage() {
     setMeasuring(false);
     if (r) { setReport(r); setCopied(false); lsSet(LS_REPORT, r.text); setLastReport(r.text); }
   }
-  useEffect(() => {
-    if (!measuring) return undefined;
-    const id = window.setInterval(() => { const p = perfRef.current; setRecInfo({ s: p.recSeconds, hitches: p.hitches }); }, 500);
-    return () => window.clearInterval(id);
-  }, [measuring]);
   const runCost = () => {
     const r = rendererRef.current;
     const eng = engineRef.current;
@@ -727,13 +723,7 @@ export function GamePage() {
         ) : null} />
       ) : null}
 
-      {measuring && ui !== 'paused' ? (
-        <div className="gpu-rec abf-rec">
-          <i />
-          <span>Messung {Math.floor(recInfo.s / 60)}:{String(Math.floor(recInfo.s % 60)).padStart(2, '0')} · {recInfo.hitches} Ruckler</span>
-          <button type="button" onClick={stopMeasure}>Stopp</button>
-        </div>
-      ) : null}
+      {measuring && ui !== 'paused' ? <RecBadge perf={perfRef.current} onStop={stopMeasure} /> : null}
 
       {costText ? (
         <div className="gpu-report">

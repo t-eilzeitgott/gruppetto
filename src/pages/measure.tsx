@@ -17,6 +17,32 @@ import { lsGet, lsSet } from './gameKit';
 
 const PLACE_LABEL: Record<string, string> = { frei: 'freie Strecke', ortsdurchfahrt: 'Ortsdurchfahrten', dorf: 'Dörfer' };
 
+/**
+ * Anzeige „Messung 1:23 · 4 Ruckler“ während der Messfahrt: schreibt ihren Text selbst (zweimal je Sekunde) –
+ * früher stieß das jedes Mal einen Neuaufbau der ganzen Spielseite an, mitten in der Messung
+ */
+export function RecBadge({ perf, onStop }: { perf: Perf3D; onStop: () => void }) {
+  const txt = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    let last = '';
+    const tick = () => {
+      const s = perf.recSeconds;
+      const t = `Messung ${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')} · ${perf.hitches} Ruckler`;
+      if (t !== last && txt.current) { last = t; txt.current.textContent = t; }
+    };
+    tick();
+    const id = window.setInterval(tick, 500);
+    return () => window.clearInterval(id);
+  }, [perf]);
+  return (
+    <div className="gpu-rec abf-rec">
+      <i />
+      <span ref={txt} />
+      <button type="button" onClick={onStop}>Stopp</button>
+    </div>
+  );
+}
+
 export interface Measure {
   can: boolean;
   perf: RefObject<Perf3D>;
@@ -33,7 +59,6 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
   const can = o.admin || /[?&]mess\b/.test(window.location.search);
   const perf = useRef(new Perf3D());
   const [measuring, setMeasuring] = useState(false);
-  const [recInfo, setRecInfo] = useState({ s: 0, hitches: 0 });
   const [report, setReport] = useState<Report | null>(null);
   const key = `gruppetto.${o.game.toLowerCase()}.messbericht`;
   const [lastReport, setLastReport] = useState<string | null>(() => lsGet(key));
@@ -58,7 +83,6 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
   const start = () => {
     perf.current.startRec({ art: `gruppetto ${o.game} (WebGL) Messfahrt`, version: BUILD_ID, aufnahme: new Date().toISOString(), wetter: nextWeatherName() ?? 'aus', ...o.meta(), ...deviceInfo() });
     setMeasuring(true);
-    setRecInfo({ s: 0, hitches: 0 });
     setReport(null);
     setCopied(false);
     o.onResume();
@@ -70,11 +94,6 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
     setMeasuring(false);
     if (r) { setReport(r); setCopied(false); lsSet(key, r.text); setLastReport(r.text); }
   };
-  useEffect(() => {
-    if (!measuring) return undefined;
-    const id = window.setInterval(() => { const p = perf.current; setRecInfo({ s: p.recSeconds, hitches: p.hitches }); }, 500);
-    return () => window.clearInterval(id);
-  }, [measuring]);
   const runCost = (eng: RaceView | null) => {
     const r = o.renderer();
     if (!r || !eng || cost) return;
@@ -111,13 +130,7 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
     /** Aufnahme-Anzeige, fertige Berichte */
     overlays: (paused: boolean) => (
       <>
-        {measuring && !paused ? (
-          <div className="gpu-rec abf-rec">
-            <i />
-            <span>Messung {Math.floor(recInfo.s / 60)}:{String(Math.floor(recInfo.s % 60)).padStart(2, '0')} · {recInfo.hitches} Ruckler</span>
-            <button type="button" onClick={stop}>Stopp</button>
-          </div>
-        ) : null}
+        {measuring && !paused ? <RecBadge perf={perf.current} onStop={stop} /> : null}
         {costText ? (
           <div className="gpu-report">
             <strong>Kostenanalyse fertig</strong>

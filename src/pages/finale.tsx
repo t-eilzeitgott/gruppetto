@@ -129,9 +129,11 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       let lastGfx = '';
       let lastPace = -1;
       const loop = (now: number) => {
+        const P = cb.current.perf?.current ?? null;
+        // Messfahrt: jeder Aufruf des Browsers zählt (auch die ausgelassenen – fehlt einer, war der Browser aufgehalten)
+        if (P?.rec) P.call();
         // fester Bildtakt (frameClock.ts): zu frühe Aufrufe auslassen – jedes Bild kommt im gleichen Abstand
         if (!clock.ready(now)) { raf = requestAnimationFrame(loop); return; }
-        const P = cb.current.perf?.current ?? null;
         const rec = !!P?.rec;
         if (rec) P!.begin(now);
         const dt = clock.tick(now);
@@ -166,7 +168,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         cb.current.onFrame(eng, dt);
         const cpu = performance.now() - c0;
         fps.frame(lastDraw ? now - lastDraw : 0, cpu, gfxRes() * renderer.quality, renderer.shaderErrors);
-        if (!low) autoStep(gov, renderer, clock, cpu, raw, uiRef.current === 'playing' && eng.phase === 'playing', rec ? (ch) => P!.event(ch.kind === 'res' ? EV.quality : EV.range, ch.text) : null);
+        if (!low) autoStep(gov, renderer, clock, cpu, raw, uiRef.current === 'playing' && eng.phase === 'playing', rec ? (ch) => P!.event(ch.kind === 'range' ? EV.range : EV.quality, ch.text) : null);
         lastDraw = now;
         if (idle) { frames += 1; raf = requestAnimationFrame(loop); return; }
         acc += dt;
@@ -180,7 +182,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           P!.mark(SEC.anzeige);
           P!.end({
             dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
-            quality: gfxRes() * renderer.quality, px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+            quality: gfxRes() * renderer.quality, px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown, screen: clock.period,
           });
         }
         raf = requestAnimationFrame(loop);

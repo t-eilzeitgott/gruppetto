@@ -274,6 +274,8 @@ const SPRINT_BACK = 7.4;
 const SPRINT_UP = 3.7;
 /** Fahrerfeld: als Bild bis so weit voraus (m), davor weich ausgeblendet */
 const FIELD_FAR = 650;
+/** so viele der nächsten Gegner werfen einen Sonnenschatten (die übrigen nur ihren Fleck am Boden) */
+const SUN_CASTERS = 8;
 /**
  * Aussehen der Gegner in der Abfahrt: 16 feste Trikots (Teams, Hautton, Startnummer). Jedes Aussehen baut eigene
  * Netze (~0,6 MB) und eine Trikottextur und behält sie – mit einem neuen je Fahrer kämen im Fahrerfeld Hunderte
@@ -1749,6 +1751,9 @@ export class Renderer3D {
     // Kostenanalyse: sie zeichnet selbst (Spiel steht)
     if (this.analysing) return;
     const P = this.prof;
+    // Messfahrt: Hochladen und erste Zeichenzustände mitschreiben (nur solange gemessen wird)
+    if (P && !this.instr) this.instr = this.instrument(P);
+    else if (!P && this.instr) { this.instr(); this.instr = null; }
     this.applyRange();
     const d0 = performance.now();
     // Größenwechsel genau hier: die Leinwand wird gleich danach neu bemalt
@@ -1894,6 +1899,7 @@ export class Renderer3D {
     if (this.post) this.post(() => { this.gl.render(this.scene, this.camera); this.takeCounts(); }, g);
     else { this.gl.render(this.scene, this.camera); this.takeCounts(); }
     this.justDrew = true;
+    this.instrTick?.();
     if (probe) {
       const tS = performance.now();
       this.syncGl();
@@ -1921,6 +1927,89 @@ export class Renderer3D {
 
   /** Messfahrt: Bausteine je Bild und Ereignisse (null: keine Messung) */
   prof: Perf3D | null = null;
+  /** Messfahrt: Mitschnitt an der Grafikschnittstelle läuft (Aufruf nimmt ihn zurück) */
+  private instr: (() => void) | null = null;
+  /** schon gezeichnete Zustände (Programm × Geometrie-Aufbau × Mischung/Tiefe × Ziel) – bleiben über Messungen */
+  private pipeSeen = new Set<string>();
+
+  /**
+   * Messfahrt: an der WebGL-Schnittstelle mitzählen, was auf die Grafikkarte geht (Puffer, Texturen), und jedes
+   * erste Zeichnen eines neuen Zustands melden. Für so einen baut der Grafiktreiber (auf dem iPhone Metal) beim
+   * ersten Zeichnen eine Pipeline – Arbeit, die weder in der Rechenzeit noch in der Grafikzeit des Spiels auftaucht.
+   * Die ersten Bilder lernen still (was schon vor der Messung gezeichnet wurde, ist nicht neu).
+   */
+  private instrument(P: Perf3D): () => void {
+    const ctx = this.gl.getContext() as WebGL2RenderingContext & Record<string, unknown>;
+    const undo: (() => void)[] = [];
+    // (Texturen ab 64 kB auch als Ereignis mit Größe – kleine Teil-Updates kommen jedes Bild)
+    const wrap = (name: string, size: (a: unknown[]) => number, label?: string) => {
+      const own = Object.prototype.hasOwnProperty.call(ctx, name);
+      const f = ctx[name] as ((...a: unknown[]) => unknown) | undefined;
+      if (typeof f !== 'function') return;
+      ctx[name] = function (this: unknown, ...a: unknown[]) {
+        let b = 0;
+        try { b = size(a); } catch { /* egal */ }
+        P.upload(b, label && b >= 65536 ? `${label} ${Math.round(b / 1024)} kB` : undefined);
+        return f.apply(ctx, a);
+      };
+      undo.push(() => { if (own) ctx[name] = f; else delete ctx[name]; });
+    };
+    const bytesOf = (x: unknown) => (x && typeof x === 'object' && 'byteLength' in x ? Number((x as ArrayBufferView).byteLength) : 0);
+    const srcPx = (x: unknown) => {
+      const o = x as { width?: number; height?: number; naturalWidth?: number; naturalHeight?: number; videoWidth?: number; videoHeight?: number } | null;
+      if (!o || typeof o !== 'object') return 0;
+      return ((o.videoWidth || o.naturalWidth || o.width) ?? 0) * ((o.videoHeight || o.naturalHeight || o.height) ?? 0) * 4;
+    };
+    wrap('bufferData', (a) => (typeof a[1] === 'number' ? a[1] : bytesOf(a[1])));
+    wrap('bufferSubData', (a) => bytesOf(a[2]));
+    wrap('texImage2D', (a) => (a.length >= 9 ? Number(a[3]) * Number(a[4]) * 4 : srcPx(a[5])), 'Textur');
+    wrap('texSubImage2D', (a) => (a.length >= 9 ? Number(a[4]) * Number(a[5]) * 4 : srcPx(a[6])), 'Textur (Teil)');
+    wrap('texImage3D', (a) => Number(a[3]) * Number(a[4]) * Number(a[5]) * 4, 'Texturstapel');
+    wrap('texSubImage3D', (a) => Number(a[5]) * Number(a[6]) * Number(a[7]) * 4, 'Texturstapel (Teil)');
+    wrap('compressedTexImage2D', (a) => bytesOf(a[6]), 'Textur');
+    // erstes Zeichnen je Zustand: je Material × Geometrie nur einmal ausrechnen (je Ziel)
+    const gl = this.gl;
+    const orig = gl.renderBufferDirect;
+    const pairs = new WeakMap<THREE.Material, WeakMap<THREE.BufferGeometry, unknown[]>>();
+    const lay = new WeakMap<THREE.BufferGeometry, string>();
+    const seen = this.pipeSeen;
+    let quiet = 2;
+    gl.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
+      orig.call(gl, camera, scene, geometry, material, object, group);
+      try {
+        const rt = gl.getRenderTarget() as unknown;
+        let byGeo = pairs.get(material);
+        if (!byGeo) { byGeo = new WeakMap(); pairs.set(material, byGeo); }
+        let rts = byGeo.get(geometry);
+        if (!rts) { rts = []; byGeo.set(geometry, rts); }
+        if (rts.includes(rt)) return;
+        rts.push(rt);
+        let l = lay.get(geometry);
+        if (!l) {
+          l = Object.keys(geometry.attributes).sort().map((n) => {
+            const at = geometry.attributes[n] as THREE.BufferAttribute & { isInstancedBufferAttribute?: boolean; isInterleavedBufferAttribute?: boolean; data?: { stride: number } };
+            return `${n}${at.itemSize}${at.isInstancedBufferAttribute ? 'i' : ''}${at.isInterleavedBufferAttribute ? `s${at.data?.stride}` : ''}`;
+          }).join(',') + (geometry.index ? '#' : '');
+          lay.set(geometry, l);
+        }
+        const o = object as THREE.Object3D & { isInstancedMesh?: boolean; isSkinnedMesh?: boolean; isPoints?: boolean; isLine?: boolean };
+        const prog = (gl.properties.get(material) as { currentProgram?: { id: number } }).currentProgram?.id ?? -1;
+        const m = material;
+        const key = `${prog}|${l}|${o.isInstancedMesh ? 'I' : ''}${o.isSkinnedMesh ? 'S' : ''}${o.isPoints ? 'P' : ''}${o.isLine ? 'L' : ''}|${m.blending}|${+m.transparent}${+m.depthWrite}${+m.depthTest}${+m.colorWrite}|${m.side}|${rt ? (rt as { texture?: { uuid: string } }).texture?.uuid ?? 'rt' : 'c'}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        if (quiet > 0) return;
+        const name = m.name || m.type.replace('Material', '');
+        P.event(EV.pipe, `${name} · ${o.name || o.type}${rt ? ' (Zwischenbild)' : ''}`);
+      } catch { /* Messung darf nie stören */ }
+    };
+    undo.push(() => { gl.renderBufferDirect = orig; });
+    // nach zwei ganzen Bildern zählt jeder neue Zustand
+    this.instrTick = () => { if (quiet > 0) quiet--; };
+    undo.push(() => { this.instrTick = null; });
+    return () => { for (const u of undo.reverse()) u(); };
+  }
+  private instrTick: (() => void) | null = null;
   /** Hauptdurchgang des letzten Bilds: Zeichenaufrufe, Dreiecke */
   lastCalls = 0;
   lastTris = 0;
@@ -6679,6 +6768,9 @@ export class Renderer3D {
     const cp = this.camera.position;
     const rsOn = this.rs.ready;
     this.rs.begin();
+    // Sonnenschatten: nur die nächsten Fahrer werfen einen (jeder Werfer wird im Schattendurchgang noch einmal
+    // gezeichnet – ein ganzes Finalfeld verdoppelte die Arbeit der Grafik)
+    let casters = 0;
     for (const o of list) {
       seen.add(o.id);
       const kit = this.kitOf(o, sprint);
@@ -6704,6 +6796,7 @@ export class Renderer3D {
       if (o.wreck) this.ragdoll(o.id, m, o.wreck, rp, g);
       else m.resetCrash();
       m.shadow.visible = !o.wreck;
+      m.setCastShadow(sa < 1 && casters++ < SUN_CASTERS);
       m.setSprite(sa >= 1);
       m.setBodyAp(sa > 0 && sa < 1 ? apOut(sa) : undefined);
       if (sa > 0) {
