@@ -130,6 +130,9 @@ export type GfxTier = 'high' | 'mid' | 'low';
 let shadowEvery = 1;
 export function setShadowEvery(n: number) { shadowEvery = Math.max(1, Math.round(n)); }
 export function shadowEveryN(): number { return shadowEvery; }
+/** Schattenkarte probeweise klein (Wechseltest): 0 = wie eingestellt, sonst Kantenlänge in Texeln */
+let shadowSizeOverride = 0;
+export function setShadowSizeOverride(px: number) { shadowSizeOverride = px; }
 
 export function gfxTier(): GfxTier {
   if (/[?&](lowgfx|nogl)\b/.test(window.location.search)) return 'low';
@@ -369,6 +372,8 @@ export class WeatherFx {
   private last = performance.now();
   private lastPhase = '';
   private frames = 0;
+  /** eingestellte Kantenlänge der Schattenkarte (Texel) */
+  private shadowSize = 1024;
   private flagged = new WeakSet<THREE.Object3D>();
   private fixed: WeatherId | 'none' | null;
   private env: WeatherEnv;
@@ -454,6 +459,7 @@ export class WeatherFx {
     // Schatten) mit weichen Kanten (gestreute Abtastung über gut zwei Texel)
     const pc = this.pc;
     const size = pc ? Math.min(4096, gl.capabilities.maxTextureSize) : high ? 2048 : 1024;
+    this.shadowSize = size;
     sun.shadow.mapSize.set(size, size);
     sun.shadow.bias = pc ? -0.0007 : -0.0006;
     sun.shadow.normalBias = pc ? 0.085 : 0.06;
@@ -483,11 +489,19 @@ export class WeatherFx {
 
   /** ein Bild: Fahrtzähler und Tageszeit pflegen, dann zeichnen – direkt oder über die Nachbearbeitung */
   private frame(draw: () => void, g: RaceView) {
-    // Schattenkarte nur jedes n-te Bild (Wechseltest der Messfahrt): sonst jedes Bild (three.js: autoUpdate)
+    // Schattenkarte nur jedes n-te Bild oder probeweise klein (Wechseltest der Messfahrt): sonst jedes Bild
+    // (three.js: autoUpdate) in der eingestellten Größe
     if (this.shadows) {
-      const gl = this.env.gl;
+      const { gl, sun } = this.env;
       if (shadowEvery <= 1) { if (!gl.shadowMap.autoUpdate) gl.shadowMap.autoUpdate = true; }
       else { gl.shadowMap.autoUpdate = false; if (this.frames % shadowEvery === 0) gl.shadowMap.needsUpdate = true; }
+      const want = shadowSizeOverride || this.shadowSize;
+      if (sun.shadow.mapSize.x !== want) {
+        sun.shadow.mapSize.set(want, want);
+        sun.shadow.map?.dispose();
+        sun.shadow.map = null;
+        gl.shadowMap.needsUpdate = true;
+      }
     }
     // Fahrt gestartet: zählen; auf der Startkarte und nach dem Ziel schon den Stil der nächsten Fahrt zeigen
     const phase = g.phase as string;

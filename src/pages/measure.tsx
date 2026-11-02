@@ -12,7 +12,7 @@ import type { RaceView } from '../game/abfahrt/engine';
 import { autoRangeDrop, chosenRange, viewRange } from '../game/abfahrt/viewRange';
 import { gfxAA, gfxAuto, gfxDescribe, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
 import { fmtRes } from '../game/abfahrt/autoGfx';
-import { nextWeatherName, setShadowEvery } from '../game/abfahrt/weather';
+import { nextWeatherName, setShadowEvery, setShadowSizeOverride } from '../game/abfahrt/weather';
 import { copyText, shareFile } from './admin/gpuKit';
 import { lsGet, lsSet } from './gameKit';
 
@@ -24,6 +24,7 @@ const PLACE_LABEL: Record<string, string> = { frei: 'freie Strecke', ortsdurchfa
  */
 const AB_TESTS: Record<string, AbTest> = {
   schatten: { name: 'Sonnenschatten', labels: ['Schattenkarte jedes Bild', 'Schattenkarte alle 8 Bilder'], apply: (b) => setShadowEvery(b ? 8 : 1) },
+  schattenKlein: { name: 'Schattenkarte klein', labels: ['Schattenkarte wie eingestellt', 'Schattenkarte 256 Texel'], apply: (b) => setShadowSizeOverride(b ? 256 : 0) },
   hud: { name: 'Oberfläche', labels: ['Oberfläche an', 'Oberfläche aus'], apply: (b) => document.body.classList.toggle('mess-ohne-hud', b) },
   takt: { name: 'fester Bildtakt', labels: ['fester Bildtakt', 'ohne festen Takt (jeder Aufruf zeichnet)'], apply: (b) => setPaceOff(b) },
 };
