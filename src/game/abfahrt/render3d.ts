@@ -421,6 +421,9 @@ function texturesOf(m: THREE.Material, out: Set<THREE.Texture>) {
 interface TileFade { lv: number; a: number; dur: number; inc: Tile[]; out: Tile[] }
 interface AtlasEntry { u0: number; v0: number; u1: number; v1: number; w: number; h: number; du: number }
 
+/** Füllarbeit (Wechseltest): Obergrenze der Schleifen je Bildpunkt */
+const HEAT_MAX = 2048;
+
 export class Renderer3D {
   quality = 1;
   /** PC-Grafik (gfxOpts „pc“, gilt ab dem Start): höhere Auflösung, feinere Berge, Gras, alle Fahrer voll detailliert */
@@ -1899,6 +1902,7 @@ export class Renderer3D {
     if (probe) { tA = performance.now(); this.syncGl(); tB = performance.now(); }
     if (this.post) this.post(() => { this.gl.render(this.scene, this.camera); this.takeCounts(); }, g);
     else { this.gl.render(this.scene, this.camera); this.takeCounts(); }
+    this.runHeater(probe);
     this.justDrew = true;
     this.instrTick?.();
     if (probe) {
@@ -2020,6 +2024,59 @@ export class Renderer3D {
   private px1 = new Uint8Array(4);
   private takeCounts() { const i = this.gl.info.render; this.lastCalls = i.calls; this.lastTris = i.triangles; }
   /** auf die Grafik warten (ein Bildpunkt lesen erzwingt, dass alles Gezeichnete fertig ist) */
+  /**
+   * Wechseltest „Füllarbeit“ (Messfahrt): so viele ms Grafik je Bild zusätzlich verbrennen (0 = aus). Prüft, ob das
+   * iPhone bei kleiner Last seine Grafik heruntertaktet und dann gerade die leichten Bilder verpasst: dieselbe Szene,
+   * dieselben Aufrufe, nur mehr Grafikzeit – ein Quadrat mit vielen Rechenschritten je Bildpunkt in ein kleines
+   * Ziel. Die Kosten misst er nur in Probebildern nach (die zählen ohnehin nicht als Ruckler) und stellt die
+   * Schleifenzahl danach ein
+   */
+  heaterMs = 0;
+  private heater: { rt: THREE.WebGLRenderTarget; scene: THREE.Scene; cam: THREE.OrthographicCamera; mat: THREE.ShaderMaterial; iters: number; frames: number; calibAt: number } | null = null;
+  private runHeater(probe: boolean) {
+    if (this.heaterMs <= 0) {
+      if (this.heater) { this.heater.rt.dispose(); this.heater.mat.dispose(); this.heater = null; }
+      return;
+    }
+    let h = this.heater;
+    if (!h) {
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { uN: { value: 64 } },
+        vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: `uniform int uN; void main() {
+          vec2 p = gl_FragCoord.xy * 0.01;
+          float v = 0.0;
+          for (int i = 0; i < ${HEAT_MAX}; i++) { if (i >= uN) break; v = sin(v * 1.17 + p.x + float(i) * 0.37) * cos(v - p.y * 0.73) + 0.001 * float(i); }
+          gl_FragColor = vec4(fract(v), fract(v * 3.1), fract(v * 7.3), 1.0);
+        }`,
+        depthTest: false, depthWrite: false,
+      });
+      const scene = new THREE.Scene();
+      const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+      q.frustumCulled = false;
+      scene.add(q);
+      h = this.heater = { rt: new THREE.WebGLRenderTarget(512, 512, { depthBuffer: false, stencilBuffer: false, generateMipmaps: false }), scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), mat, iters: 64, frames: 0, calibAt: -1 };
+    }
+    const gl = this.gl;
+    const prev = gl.getRenderTarget();
+    // nachmessen (nur in Probebildern, dort wartet die Bühne ohnehin auf die Grafik): zuerst, dann alle 180 Bilder
+    const calib = probe && (h.calibAt < 0 || h.frames - h.calibAt >= 180);
+    if (calib) this.syncGl();
+    const t0 = performance.now();
+    gl.setRenderTarget(h.rt);
+    gl.render(h.scene, h.cam);
+    gl.setRenderTarget(prev);
+    if (calib) {
+      this.syncGl();
+      const cost = Math.max(0.05, performance.now() - t0);
+      h.iters = Math.max(1, Math.min(HEAT_MAX, Math.round(h.iters * this.heaterMs / cost)));
+      h.mat.uniforms.uN.value = h.iters;
+      h.calibAt = h.frames;
+      this.prof?.event(EV.probe, `Füllarbeit: ${cost.toFixed(1)} ms – jetzt ${h.iters} Schleifen für ${this.heaterMs} ms`);
+    }
+    h.frames += 1;
+  }
+
   /** nächstes Bild als Probebild: auf die Grafik warten und ihre Zeit messen (Ergebnis in gpuProbe, ms) */
   probeNext = false;
   gpuProbe: number | null = null;

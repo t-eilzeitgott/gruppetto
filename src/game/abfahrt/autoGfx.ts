@@ -162,6 +162,9 @@ export function fmtRes(d: number): string {
 
 /** der Regler, dem die Sichtweite gerade gehört (es gibt nur eine, viewRange.ts) */
 let owner: AutoGfx | null = null;
+/** Automatik ausgesetzt (Wechseltest der Messfahrt stellt Auflösung oder Last selbst) */
+let suspended = false;
+export function setAutoSuspended(on: boolean) { suspended = on; }
 
 export class AutoGfx {
   /** Auflösungsschritt (Index in RES_STEPS) */
@@ -246,7 +249,7 @@ export class AutoGfx {
    * (renderer.setQuality(quality) – wirkt direkt vor dem nächsten Bild).
    */
   frame(missed: boolean, target: number, cpu: number, dt: number, active: boolean): AutoChange | null {
-    if (!gfxAuto() || !active || !(dt > 0) || dt > 0.25) return null;
+    if (!gfxAuto() || suspended || !active || !(dt > 0) || dt > 0.25) return null;
     // die Sichtweite gehört dem Regler des laufenden Spiels: hat sie jemand anderes zurückgesetzt (ein Spiel, das
     // sich erst nach diesem verabschiedet hat), wieder auf den eigenen Stand
     if (owner !== this || autoRangeDrop() !== Math.min(this.range, rangeDropMax())) { owner = this; setAutoRangeDrop(this.range); }

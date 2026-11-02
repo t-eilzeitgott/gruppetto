@@ -325,7 +325,7 @@ export class Perf3D {
     this.uiObs?.disconnect();
     this.uiObs = null;
     clearTimeout(this.guardTimer);
-    if (this.ab) { try { this.ab.apply(false); } catch { /* egal */ } }
+    if (this.ab) { try { if (this.ab.end) this.ab.end(); else this.ab.apply(false); } catch { /* egal */ } }
     const ab = this.ab;
     this.ab = null;
     try { this.chan?.port1.close(); this.chan?.port2.close(); } catch { /* egal */ }
@@ -336,8 +336,9 @@ export class Perf3D {
   }
 }
 
-/** Wechseltest: Name, Beschriftung der Varianten (A = aus/normal, B = an), Umschalten */
-export interface AbTest { name: string; labels: [string, string]; apply: (b: boolean) => void }
+/** Wechseltest: Name, Beschriftung der Varianten (A = aus/normal, B = an), Umschalten; end: Aufräumen am Ende
+ *  (sonst apply(false)) */
+export interface AbTest { name: string; labels: [string, string]; apply: (b: boolean) => void; end?: () => void }
 /** Abstand der Wechsel (s) */
 export const AB_PERIOD_S = 20;
 

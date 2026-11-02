@@ -11,7 +11,7 @@ import type { Renderer3D } from '../game/abfahrt/render3d';
 import type { RaceView } from '../game/abfahrt/engine';
 import { autoRangeDrop, chosenRange, viewRange } from '../game/abfahrt/viewRange';
 import { gfxAA, gfxAuto, gfxDescribe, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
-import { fmtRes } from '../game/abfahrt/autoGfx';
+import { autoView, fmtRes, setAutoSuspended } from '../game/abfahrt/autoGfx';
 import { nextWeatherName, setShadowEvery, setShadowSizeOverride } from '../game/abfahrt/weather';
 import { copyText, shareFile } from './admin/gpuKit';
 import { lsGet, lsSet } from './gameKit';
@@ -22,12 +22,24 @@ const PLACE_LABEL: Record<string, string> = { frei: 'freie Strecke', ortsdurchfa
  * Wechseltests: eine Einstellung wechselt während der Messfahrt alle 20 s zwischen A (normal) und B – der Bericht
  * vergleicht beide auf derselben Strecke (Ruckler je Minute, Taktfehler, Bildrate)
  */
-const AB_TESTS: Record<string, AbTest> = {
+const abTests = (renderer: () => Renderer3D | null): Record<string, AbTest> => ({
   schatten: { name: 'Sonnenschatten', labels: ['Schattenkarte jedes Bild', 'Schattenkarte alle 8 Bilder'], apply: (b) => setShadowEvery(b ? 8 : 1) },
   schattenKlein: { name: 'Schattenkarte klein', labels: ['Schattenkarte wie eingestellt', 'Schattenkarte 256 Texel'], apply: (b) => setShadowSizeOverride(b ? 256 : 0) },
+  // Grafik absichtlich beschäftigen: taktet das iPhone bei kleiner Last herunter und verpasst dann die leichten Bilder?
+  heizer: {
+    name: 'Grafik-Füllarbeit', labels: ['ohne Füllarbeit', 'plus 4 ms Füllarbeit je Bild'],
+    apply: (b) => { setAutoSuspended(true); const r = renderer(); if (r) r.heaterMs = b ? 4 : 0; },
+    end: () => { setAutoSuspended(false); const r = renderer(); if (r) r.heaterMs = 0; },
+  },
+  // Auflösung fest halbe ↔ drei Viertel der gewählten (die Automatik setzt so lange aus)
+  aufl: {
+    name: 'Auflösung', labels: ['halbe gewählte Auflösung', 'drei Viertel der gewählten'],
+    apply: (b) => { setAutoSuspended(true); renderer()?.setQuality(b ? 0.75 : 0.5); },
+    end: () => { setAutoSuspended(false); renderer()?.setQuality(autoView().res / gfxRes()); },
+  },
   hud: { name: 'Oberfläche', labels: ['Oberfläche an', 'Oberfläche aus'], apply: (b) => document.body.classList.toggle('mess-ohne-hud', b) },
   takt: { name: 'fester Bildtakt', labels: ['fester Bildtakt', 'ohne festen Takt (jeder Aufruf zeichnet)'], apply: (b) => setPaceOff(b) },
-};
+});
 const AB_KEY = 'gruppetto.mess.wechsel';
 
 /**
@@ -94,6 +106,7 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
       grafik: `${gfxDescribe()}${r && r.pc !== gfxOn('pc') ? ' – PC-Grafik erst ab dem nächsten Spiel' : ''}${r && r.aa !== gfxAA() ? ` – Kantenglättung ${r.aa ? 'noch an' : 'noch aus'} bis zum nächsten App-Start` : ''}`,
     };
   };
+  const AB_TESTS = abTests(o.renderer);
   const start = () => {
     const ab = AB_TESTS[abKey] ?? null;
     perf.current.startRec({ art: `gruppetto ${o.game} (WebGL) Messfahrt`, version: BUILD_ID, aufnahme: new Date().toISOString(), wetter: nextWeatherName() ?? 'aus', ...o.meta(), ...deviceInfo(), ...(ab ? { wechseltest_einstellung: ab.name } : {}) }, ab);
