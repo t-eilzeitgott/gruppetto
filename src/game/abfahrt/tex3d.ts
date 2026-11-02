@@ -376,6 +376,110 @@ export function bannerTex(text: string, sub: string, bg: string, fg: string, spo
   return cv;
 }
 
+/** Charakter der offiziellen Bögen – je Wertung eigene Farben, wie in der Übertragung */
+export type ArchStyle = 'finish' | 'start' | 'gpm' | 'sprint' | 'flamme' | 'split';
+export const ARCH_LOOK: Record<ArchStyle, { bg: string; fg: string; a: string; b: string }> = {
+  finish: { bg: '#111214', fg: '#ffffff', a: '#111214', b: '#ffffff' },
+  start: { bg: '#1f2a44', fg: '#ffffff', a: '#1f2a44', b: '#ff5fa2' },
+  gpm: { bg: '#ffffff', fg: '#d6202a', a: '#d6202a', b: '#ffffff' },
+  sprint: { bg: '#15a34a', fg: '#ffffff', a: '#15a34a', b: '#ffffff' },
+  flamme: { bg: '#d62a2a', fg: '#ffffff', a: '#d62a2a', b: '#ffffff' },
+  split: { bg: '#ffd23f', fg: '#141414', a: '#141414', b: '#ffd23f' },
+};
+
+/**
+ * Schriftzug eines offiziellen Bogens (Ziel, Start, Bergwertung, Sprint, letzter Kilometer, Zwischenzeit): groß,
+ * ohne Werbung, im Charakter der Wertung – Ziel mit Zielflaggen-Karo oben und unten, Bergwertung weiß mit roten
+ * Punkten (Bergtrikot), Sprint grün (Punktetrikot). Querformat 1024 × 224 (≈ 9 m × 2 m).
+ */
+export function officialBannerTex(text: string, sub: string, style: ArchStyle): HTMLCanvasElement {
+  const W = 1024;
+  const H = 224;
+  const L = ARCH_LOOK[style];
+  const cv = canvas(W, H);
+  const c = cv.getContext('2d')!;
+  c.fillStyle = L.bg;
+  c.fillRect(0, 0, W, H);
+  let top = 0;
+  let bot = H;
+  if (style === 'finish') {
+    // Zielflagge: zwei Reihen Karo oben und unten
+    const q = 22;
+    for (const y0 of [0, H - q * 2]) {
+      for (let r = 0; r < 2; r++) for (let x = 0; x < W; x += q) {
+        c.fillStyle = ((x / q + r) & 1) ? '#ffffff' : '#111214';
+        c.fillRect(x, y0 + r * q, q, q);
+      }
+    }
+    top = q * 2;
+    bot = H - q * 2;
+  } else if (style === 'gpm') {
+    c.fillStyle = '#d6202a';
+    for (let y = 18, row = 0; y < H; y += 40, row++) for (let x = row & 1 ? 30 : 10; x < W; x += 40) { c.beginPath(); c.arc(x, y, 9, 0, Math.PI * 2); c.fill(); }
+    // Feld für die Schrift
+    c.fillStyle = '#ffffff';
+    c.fillRect(W * 0.08, 26, W * 0.84, H - 52);
+    c.fillStyle = '#d6202a';
+    c.fillRect(W * 0.08, 26, W * 0.84, 6);
+    c.fillRect(W * 0.08, H - 32, W * 0.84, 6);
+    top = 32;
+    bot = H - 32;
+  } else {
+    // Kante oben und unten in der Zweitfarbe
+    c.fillStyle = L.b;
+    c.fillRect(0, 0, W, 10);
+    c.fillRect(0, H - 10, W, 10);
+    if (style === 'sprint') {
+      c.globalAlpha = 0.14;
+      c.fillStyle = '#ffffff';
+      for (let k = -4; k < 30; k++) { c.beginPath(); c.moveTo(k * 44, H); c.lineTo(k * 44 + 22, H); c.lineTo(k * 44 + 82, 0); c.lineTo(k * 44 + 60, 0); c.fill(); }
+      c.globalAlpha = 1;
+    }
+    top = 10;
+    bot = H - 10;
+  }
+  const font = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Arial, sans-serif';
+  const h = bot - top;
+  c.fillStyle = L.fg;
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  fitFont(c, text, W * 0.8, Math.round(h * (sub ? 0.56 : 0.72)), 4, 20, (fs) => `900 ${fs}px ${font}`);
+  c.fillText(text, W / 2, top + h * (sub ? 0.4 : 0.53));
+  if (sub) {
+    c.globalAlpha = 0.9;
+    fitFont(c, sub, W * 0.8, Math.round(h * 0.24), 2, 14, (fs) => `700 ${fs}px ${font}`);
+    c.fillText(sub, W / 2, top + h * 0.8);
+    c.globalAlpha = 1;
+  }
+  return cv;
+}
+
+/** Mast eines offiziellen Bogens: Streifen bzw. Karo in den Farben der Wertung (64 × 256, senkrecht wiederholt) */
+export function archPostTex(style: ArchStyle): HTMLCanvasElement {
+  const L = ARCH_LOOK[style];
+  const cv = canvas(64, 256);
+  const c = cv.getContext('2d')!;
+  if (style === 'finish') {
+    const q = 32;
+    for (let y = 0; y < 256; y += q) for (let x = 0; x < 64; x += q) { c.fillStyle = ((x + y) / q) & 1 ? '#ffffff' : '#111214'; c.fillRect(x, y, q, q); }
+  } else {
+    for (let y = 0; y < 256; y += 32) { c.fillStyle = (y / 32) & 1 ? L.b : L.a; c.fillRect(0, y, 64, 32); }
+  }
+  return cv;
+}
+
+/** Linie auf der Fahrbahn unter einem offiziellen Bogen: Ziel kariert, sonst weiß (u quer, 512 × 32) */
+export function roadLineTex(finish: boolean): HTMLCanvasElement {
+  const cv = canvas(512, 32);
+  const c = cv.getContext('2d')!;
+  c.fillStyle = '#f4f4f0';
+  c.fillRect(0, 0, 512, 32);
+  if (finish) {
+    for (let r = 0; r < 2; r++) for (let x = 0; x < 512; x += 16) { if (((x / 16 + r) & 1) === 0) { c.fillStyle = '#141414'; c.fillRect(x, r * 16, 16, 16); } }
+  }
+  return cv;
+}
+
 /**
  * Werbefläche eines Teams im Querformat (Bande, Ende eines Bogens, Fernsehen): Grundfarbe, Teammuster als Andeutung,
  * links ein Block mit dem Teamkürzel, rechts der Sponsorschriftzug in der Teamschrift, darunter der Slogan.

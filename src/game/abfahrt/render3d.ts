@@ -14,7 +14,7 @@ import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
 import { mistTexture, waterTexture } from './falls3d';
-import { adCell, adsTex, AD_COUNT, TEAM_ADS, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex } from './tex3d';
+import { adCell, adsTex, archPostTex, officialBannerTex, roadLineTex, ARCH_LOOK, type ArchStyle, AD_COUNT, TEAM_ADS, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex } from './tex3d';
 import { CURB_CHAMFER, CURB_FACE, CURB_TOP, CURB_V, COVER_PATCH, GUTTER_W, asphaltTex as groundAsphalt, cobbleTex, coverAtlas, curbTex, grainTex, groundCached, gutterTex, vergeTex, walkTex, type GroundTex } from './groundTex';
 import { GROUND_STYLES, coverLang } from './groundStyle';
 import { SkyLife } from './sky3d';
@@ -365,6 +365,8 @@ interface Row { x: number; y: number; z: number; rx: number; rz: number; th: num
 /** ab hier (|x|, m) gehört ein Punkt zum Fahrbahnrand und rückt mit der Breite nach außen; die Mitte bleibt */
 const EDGE_IN = ROAD_HALF - 0.5;
 /** Querlage x an einer Stelle mit zusätzlicher halber Breite e */
+/** offizielle Bögen (Wertungen): eigener, auffälliger Aufbau (officialArch) */
+const OFFICIAL = new Set(['finish', 'start', 'gpm', 'sprint', 'flamme', 'split']);
 const widen = (x: number, e: number) => (x >= EDGE_IN ? x + e : x <= -EDGE_IN ? x - e : x);
 /** Zuschauergruppe: 3D-Netze (fein, einfach) für 10 m Straße, die Bilder (spr) decken 20 m (zwei Gruppen teilen sich eins) */
 interface CrowdBatch { near: THREE.Mesh[]; mid: THREE.Mesh[]; spr: THREE.Mesh | null; c: THREE.Vector3; r: number; sc: THREE.Vector3; sr: number; lod: number }
@@ -6098,11 +6100,11 @@ export class Renderer3D {
   }
 
   private arch(group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], a: Row, banner: Banner | { kind: string; text: string; sub?: string }, color: string) {
+    if (OFFICIAL.has(banner.kind)) { this.officialArch(group, disp, a, banner, banner.kind as ArchStyle); return; }
     const light = color === '#ffffff' || color === '#ffd23f';
     const main = banner.kind === 'gpm' ? `GPM · ${banner.text}` : banner.kind === 'welcome' ? `Benvenuti a ${banner.text}` : banner.text;
-    // offizielle Bögen tragen links und rechts Werbung: Start und Ziel Team gruppetto (Veranstalter), sonst ein
-    // Team, fest je Bogen (Bestmarken-Bögen ohne)
-    const sponsor = banner.kind === 'arch' ? null : banner.kind === 'start' || banner.kind === 'finish' ? TEAMS[0] : TEAMS[1 + Math.floor(hash(a.seg.i * 13 + 5) * (TEAMS.length - 1))];
+    // übrige Bögen (Willkommen im Ort) tragen links und rechts Werbung eines Teams, fest je Bogen; Bestmarken ohne
+    const sponsor = banner.kind === 'arch' ? null : TEAMS[1 + Math.floor(hash(a.seg.i * 13 + 5) * (TEAMS.length - 1))];
     const key = `arch:${main}:${banner.sub ?? ''}:${color}:${sponsor?.id ?? ''}`;
     let tex = this.labelTex.get(key);
     if (!tex) {
@@ -6129,6 +6131,90 @@ export class Renderer3D {
     const bm = new THREE.Mesh(box, [sideMat, sideMat, sideMat, sideMat, bannerMat, bannerMat]);
     bm.position.set(0, 5.1, 0);
     g.add(bm);
+    g.position.set(a.x, a.y, a.z);
+    g.rotation.y = -a.th;
+    group.add(g);
+  }
+
+  /**
+   * Offizieller Bogen (Ziel, Start, Bergwertung, Sprint, letzter Kilometer, Zwischenzeit) – soll man auf den ersten
+   * Blick von Werbung unterscheiden: höher und breiter als alles andere, dicke Masten im Muster der Wertung, ein
+   * großes Schild ohne Werbung, eine Linie auf der Fahrbahn (im Ziel kariert), beim letzten Kilometer das rote Dreieck.
+   */
+  private officialArch(group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], a: Row, banner: { kind: string; text: string; sub?: string }, style: ArchStyle) {
+    const L = ARCH_LOOK[style];
+    const text = style === 'gpm' ? `GPM · ${banner.text}` : style === 'finish' ? 'ZIEL' : banner.text;
+    const sub = style === 'finish' ? [banner.text, banner.sub].filter(Boolean).join(' · ')
+      : style === 'gpm' ? ['Bergwertung', banner.sub].filter(Boolean).join(' · ')
+        : style === 'sprint' ? ['Zwischensprint', banner.sub].filter(Boolean).join(' · ')
+          : style === 'flamme' ? 'Letzter Kilometer' : banner.sub ?? '';
+    const key = `official:${style}:${text}:${sub}`;
+    let tex = this.labelTex.get(key);
+    if (!tex) { tex = this.tex(officialBannerTex(text.toUpperCase(), sub.toUpperCase(), style), false); this.labelTex.set(key, tex); }
+    const pkey = `officialPost:${style}`;
+    let ptex = this.labelTex.get(pkey);
+    if (!ptex) { ptex = this.tex(archPostTex(style), true); ptex.repeat.set(1, 5); this.labelTex.set(pkey, ptex); }
+    const lkey = `roadLine:${style === 'finish' ? 1 : 0}`;
+    let ltex = this.labelTex.get(lkey);
+    if (!ltex) { ltex = this.tex(roadLineTex(style === 'finish'), true); this.labelTex.set(lkey, ltex); }
+    const t = this.track!;
+    // Masten deutlich neben dem Bankett, Schild breit darüber
+    const span = (EDGE + a.e) * 2 + 1.4;
+    const POST = 0.5;
+    const HIGH = 7.6;
+    const BH = 2.1;
+    const g = new THREE.Group();
+    const postMat = new THREE.MeshLambertMaterial({ map: ptex });
+    const bannerMat = new THREE.MeshLambertMaterial({ map: tex });
+    const sideMat = new THREE.MeshLambertMaterial({ color: L.a });
+    const lineMat = new THREE.MeshLambertMaterial({ map: ltex, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+    const post = new THREE.BoxGeometry(POST, HIGH, POST);
+    post.translate(0, HIGH / 2, 0);
+    const box = new THREE.BoxGeometry(span + POST, BH, 0.45);
+    postMat.name = bannerMat.name = sideMat.name = lineMat.name = 'arch';
+    disp.push(postMat, bannerMat, sideMat, lineMat, post, box);
+    for (const sg of [-1, 1]) {
+      const m = new THREE.Mesh(post, postMat);
+      m.position.set(sg * span / 2, 0, 0);
+      g.add(m);
+    }
+    const bm = new THREE.Mesh(box, [sideMat, sideMat, sideMat, sideMat, bannerMat, bannerMat]);
+    bm.position.set(0, HIGH - BH / 2 - 0.15, 0);
+    g.add(bm);
+    if (style === 'flamme') {
+      // das rote Dreieck unter dem Schild
+      const tri = new THREE.BufferGeometry();
+      const yb = HIGH - BH - 0.15;
+      tri.setAttribute('position', new THREE.Float32BufferAttribute([-0.9, yb, 0, 0.9, yb, 0, 0, yb - 1.5, 0], 3));
+      tri.computeVertexNormals();
+      const triMat = new THREE.MeshLambertMaterial({ color: L.a, side: THREE.DoubleSide });
+      triMat.name = 'arch';
+      disp.push(tri, triMat);
+      g.add(new THREE.Mesh(tri, triMat));
+    }
+    // Linie auf der Fahrbahn, dem Relief folgend (im Ziel breit und kariert)
+    const depth = style === 'finish' ? 0.9 : 0.4;
+    const N = 24;
+    const half = EDGE - 0.08;
+    const pos: number[] = [];
+    const uv: number[] = [];
+    const idx: number[] = [];
+    for (let i = 0; i <= N; i++) {
+      const x0 = -half + (2 * half * i) / N;
+      const x = widen(x0, a.e);
+      const y = t.lift(a.m, x) + 0.02;
+      const u = (i / N) * (span / 4);
+      pos.push(x, y, -depth / 2, x, y, depth / 2);
+      uv.push(u, 0, u, 1);
+      if (i < N) { const k = i * 2; idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+    }
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    lg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    lg.setIndex(idx);
+    lg.computeVertexNormals();
+    disp.push(lg);
+    g.add(new THREE.Mesh(lg, lineMat));
     g.position.set(a.x, a.y, a.z);
     g.rotation.y = -a.th;
     group.add(g);
