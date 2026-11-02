@@ -1833,6 +1833,7 @@ export class Renderer3D {
 
     this.updateLight(g, biome, seg, dt);
     if (!this.warmGroup) this.warmAll();
+    this.warmStep(g.phase);
     if (!this.rs.ready && this.rs.bakeStep(this.gl, performance.now() + (this.idleBuild ? Math.max(1.5, this.idleMs(8)) : 1.5))) {
       // Material jetzt übersetzen (nicht erst, wenn der erste Fahrer in die Ferne rückt)
       this.rs.mesh.visible = true;
@@ -1978,6 +1979,8 @@ export class Renderer3D {
     const pairs = new WeakMap<THREE.Material, WeakMap<THREE.BufferGeometry, unknown[]>>();
     const lay = new WeakMap<THREE.BufferGeometry, string>();
     const seen = this.pipeSeen;
+    // (Programme, die es beim Start der Messung schon gibt, sind nicht neu)
+    const progSeen = new Set<number>((this.gl.info.programs ?? []).map((p) => p.id));
     const by = this.callsBy;
     let quiet = 2;
     gl.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
@@ -2015,7 +2018,13 @@ export class Renderer3D {
         seen.add(key);
         if (quiet > 0) return;
         const name = m.name || m.type.replace('Material', '');
-        P.event(EV.pipe, `${name} · ${o.name || o.type}${rt ? ' (Zwischenbild)' : ''}`);
+        // neues Programm (Shader übersetzt) oder nur neue Pipeline (Programm × Ziel × Layout)? Dazu die Züge des
+        // Materials – damit das Vorwärmen (warmAll) die fehlende Kombination bekommt
+        const mm = m as THREE.Material & { map?: unknown; vertexColors?: boolean; emissiveMap?: unknown; alphaMap?: unknown; flatShading?: boolean };
+        const traits = [mm.map && 'map', mm.vertexColors && 'vcol', mm.emissiveMap && 'emis', mm.alphaMap && 'amap', mm.flatShading && 'flat', m.transparent && 'transp', m.alphaTest > 0 && 'atest', m.side === THREE.DoubleSide && 'dside', m.alphaToCoverage && 'a2c', o.isInstancedMesh && 'inst', o.isSkinnedMesh && 'skin', !geometry.attributes.normal && 'nonormal', geometry.attributes.color && `col${(geometry.attributes.color as THREE.BufferAttribute).itemSize}`].filter(Boolean).join(' ');
+        const newProg = !progSeen.has(prog);
+        progSeen.add(prog);
+        P.event(EV.pipe, `${name} · ${o.name || o.type}${rt ? ' (Zwischenbild)' : ''} – ${newProg ? 'neues Programm' : 'neue Pipeline'}${traits ? ` [${traits}]` : ''}`);
       } catch { /* Messung darf nie stören */ }
     };
     undo.push(() => { gl.renderBufferDirect = orig; });
@@ -3949,7 +3958,41 @@ export class Renderer3D {
     this.uploadShared(all);
     // (nicht wegwerfen: sonst gäbe three.js die eben übersetzten Programme wieder frei)
     this.warmGroup = g;
+    // … und alle einmal wirklich zeichnen (Probezug, unten)
+    this.warmQueue = [...g.children];
     warmRoadText();
+  }
+
+  /**
+   * Probezug: die vorgewärmten Stellvertreter einmal wirklich zeichnen – unsichtbar, tief unter der Welt, aber in
+   * der echten Szene mit ihrem Licht, Nebel und Ziel (Schattenkarte, Wetterbild oder Leinwand). compile() übersetzt
+   * nur die Shader; Metal legt je Programm × Ziel × Geometrie-Layout erst beim ersten Zeichnen seine Pipeline an –
+   * 10–40 ms, unterwegs ein Ruckler je neuem Stück („pipe“ in der Messfahrt, Version 269: fünf von sieben Rucklern).
+   * Ein paar je Bild auf der Startkarte, im Countdown und nach dem Ziel; während der Fahrt nie
+   */
+  private warmQueue: THREE.Object3D[] = [];
+  private warmLive: THREE.Object3D[] = [];
+  private warmStep(phase: string) {
+    for (const o of this.warmLive) { this.scene.remove(o); this.warmGroup?.add(o); }
+    this.warmLive = [];
+    if (!this.warmQueue.length || phase === 'playing' || !this.warmGroup) return;
+    const n = Math.min(4, this.warmQueue.length);
+    for (let i = 0; i < n; i++) {
+      const o = this.warmQueue.shift()!;
+      o.position.set(0, -5000, 0);
+      o.traverse((x) => {
+        x.frustumCulled = false;
+        const m = x as THREE.Mesh;
+        if (!m.isMesh && !(x as THREE.InstancedMesh).isInstancedMesh) return;
+        const mat = m.material as THREE.Material;
+        // wie flagShadows (weather.ts): feste Körper werfen Schatten – so entsteht auch der Tiefen-Durchgang je Layout
+        m.receiveShadow = true;
+        m.castShadow = !!mat && !(mat as THREE.ShaderMaterial).isShaderMaterial && !mat.transparent;
+      });
+      this.scene.add(o);
+      this.warmLive.push(o);
+    }
+    if (!this.warmQueue.length) this.prof?.event(EV.probe, 'Probezug fertig: alle Stellvertreter einmal gezeichnet');
   }
 
   /**
