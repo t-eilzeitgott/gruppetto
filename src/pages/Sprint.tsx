@@ -146,7 +146,7 @@ export function SprintPage() {
     setCoach(null);
     lsSet(LS_RUNS, String((Number(lsGet(LS_RUNS)) || 0) + 1));
     if (r.score > (Number(lsGet(LS_BEST)) || 0)) { lsSet(LS_BEST, String(r.score)); setBest(r.score); }
-    if (r.score > 0) source.submitScore('sprint', r.score, SPRINT_FINISH).then(() => invalidate('game:sprint')).catch(() => undefined);
+    if (r.score > 0) source.submitScore('sprint', r.score, SPRINT_FINISH, { avg_kmh: r.avgKmh, top_kmh: r.topKmh, reserve: r.reserve, place: r.place, riders: r.riders, bike: bikes.current, type: TYPE_STATS[chosen.type].label }).then(() => invalidate('game:sprint')).catch(() => undefined);
     gh.save({ score: r.score, meters: SPRINT_FINISH, trace: r.trace, bike: bikes.current });
   };
 
@@ -220,7 +220,7 @@ export function SprintPage() {
   const wetter = nextWeatherName();
   const flammePct = ((SPRINT_FINISH - 1000) / SPRINT_FINISH) * 100;
   const boardView = (
-    <FinaleBoard title="Bestenliste Sprint" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Sprint', 'Sprints']} />
+    <FinaleBoard game="sprint" title="Bestenliste Sprint" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Sprint', 'Sprints']} />
   );
 
   return (

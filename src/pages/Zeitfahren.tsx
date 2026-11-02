@@ -200,7 +200,7 @@ export function ZeitfahrenPage() {
     const lb = `${LS_BEST}.${day}`;
     const prev = Number(lsGet(lb)) || 0;
     if (!prev || r.timeMs < prev) lsSet(lb, String(r.timeMs));
-    source.submitScore('zeitfahren', ttScore(r.timeMs), TT_FINISH).then(() => invalidate('game:zeitfahren')).catch(() => setSaveFailed(true));
+    source.submitScore('zeitfahren', ttScore(r.timeMs), TT_FINISH, { avg_kmh: r.avgKmh, top_kmh: r.topKmh, reserve: r.reserve, place: r.place, riders: r.riders, bike: bikes.current, slides: r.slides }).then(() => invalidate('game:zeitfahren')).catch(() => setSaveFailed(true));
     if (r.pb) {
       const row: TtGhostRow = { user_id: me.id, day, time_ms: r.timeMs, bike: bikes.current, splits: r.splits, trace: r.trace, created_at: new Date().toISOString() };
       setLocal(row);
@@ -311,7 +311,7 @@ export function ZeitfahrenPage() {
   const fmtBest = (b: number) => fmtTime(ttMs(b));
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
   const boardView = (
-    <FinaleBoard title="Bestenliste Zeitfahren" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Fahrt', 'Fahrten']} fmt={fmtBest} />
+    <FinaleBoard game="zeitfahren" title="Bestenliste Zeitfahren" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Fahrt', 'Fahrten']} fmt={fmtBest} />
   );
   const sub = gameSubFor('zeitfahren', day, ref);
 

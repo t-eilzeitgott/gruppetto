@@ -154,6 +154,8 @@ export type GameEvent =
 
 export interface RunResult {
   score: number; meters: number; topKmh: number; reason: string;
+  /** Durchschnitt vom Startschuss bis zum Ende (km/h) */
+  avgKmh: number;
   parts: Record<ScoreCat, number>;
   stats: Record<MissionStat, number>;
   missionsDone: string[];
@@ -229,6 +231,9 @@ export class Abfahrt {
   shake = 0;
   heading = 0;              // aufsummierte Richtungsänderung (für den Hintergrund)
   crashReason = '';
+  /** Rennzeit und Lage beim Startschuss (für den Schnitt) */
+  private goT = 0;
+  private goZ = 0;
   crashSpin = 0;
   timeScale = 1;
   sectionIdx = -1;
@@ -437,6 +442,8 @@ export class Abfahrt {
       if (this.phaseT >= 2.25) {
         this.phase = 'playing';
         this.phaseT = 0;
+        this.goT = this.time;
+        this.goZ = this.p.z;
         // von der Rampe: anrollen (das Gefälle der Rampe bringt den Schwung)
         this.p.v = this.track.ramp ? 1.5 : 5;
         for (const o of this.opps) o.v = 5;
@@ -1512,6 +1519,7 @@ export class Abfahrt {
       score: this.total,
       meters: Math.floor(this.p.z),
       topKmh: Math.round(this.stats.topKmh),
+      avgKmh: this.time > this.goT + 1 ? Math.round(((this.p.z - this.goZ) / (this.time - this.goT)) * 36) / 10 : 0,
       reason: this.crashReason,
       parts: { ...this.score, dist: Math.round(this.score.dist), draft: Math.round(this.score.draft) },
       stats: { ...this.stats },

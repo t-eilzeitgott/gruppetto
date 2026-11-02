@@ -72,6 +72,10 @@ export interface BergResult {
   /** Sekunden hinter dem Sieger (als Sieger: Vorsprung auf den Zweiten) */
   gap: number;
   topKmh: number;
+  /** Durchschnitt vom Startschuss bis ins Ziel (km/h) */
+  avgKmh: number;
+  /** Kraft im Ziel (0 … 1) */
+  reserve: number;
   /** Platz in der Bergwertung (Reihenfolge auf der Passhöhe) */
   gpmPlace: number;
   slides: number;
@@ -216,6 +220,8 @@ export class BergRace {
   private wantEase = false;
   private viewW = 390;
   private finT = -1;
+  /** Rennzeit beim Startschuss (für den Schnitt) */
+  private goT = 0;
   private topT = -1;
   private topV = 0;
   private flags = new Set<string>();
@@ -407,6 +413,7 @@ export class BergRace {
       if (n !== this.countShown) { this.countShown = n; this.opts.onEvent?.({ type: 'count', n: Math.max(0, n) }); }
       if (this.phaseT >= 2.25) {
         this.phase = 'playing';
+        this.goT = this.time;
         this.phaseT = 0;
         const real = this.track.ref?.climb;
         const mate = this.opps.find((o) => o.role === 'mate');
@@ -1129,6 +1136,8 @@ export class BergRace {
       winner: win.me ? this.opts.rider.name : win.name,
       gap: place === 1 ? -Math.max(0, lead) : Math.max(0, this.finT - win.t),
       topKmh: Math.round(this.topV * 3.6),
+      avgKmh: Math.round((MOUNTAIN_FINISH / Math.max(1, this.finT - this.goT)) * 36) / 10,
+      reserve: Math.round(this.energy * 100) / 100,
       gpmPlace,
       slides: this.slides,
       podium: all.slice(0, 3).map((x) => ({ name: x.me ? this.opts.rider.name : x.name, me: x.me })),

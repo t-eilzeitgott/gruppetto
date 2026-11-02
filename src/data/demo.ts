@@ -9,7 +9,7 @@ import { ttScore, type GameGhostRow, type TtGhostRow } from '../game/tt';
 import { berlinDayKey, hashStr } from '../game/abfahrt/rng';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
-  type StageInput, type TourInput, type GameId, type GameBest, type GameRun,
+  type StageInput, type TourInput, type GameId, type GameBest, type GameRun, type RunStats, cleanStats,
 } from './source';
 import {
   DEMO_BONUS_RESULTS, DEMO_BONUS_TIPS, DEMO_ME, DEMO_NOW, DEMO_PROFILES, DEMO_RESULTS, DEMO_RIDERS, DEMO_STAGES,
@@ -17,6 +17,17 @@ import {
 } from './demoData';
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+/** Demo: Kennzahlen eines Laufs, je Fahrer und Lauf fest (nicht bei jedem Laden neu gewürfelt) */
+function demoStats(game: GameId, key: string): RunStats {
+  const r = (n: number) => (hashStr(`${key}:${n}`) % 1000) / 1000;
+  const bikes = ['aero', 'acciaio', 'zeit', 'feder', 'titan', 'pave', 'allround'];
+  const types = ['Allrounder', 'Sprinter', 'Puncheur', 'Rouleur', 'Kletterer'];
+  const bike = bikes[Math.floor(r(9) * bikes.length)];
+  if (game === 'abfahrt') return { avg_kmh: Math.round((54 + r(1) * 14) * 10) / 10, top_kmh: Math.round(78 + r(2) * 24), bike, slides: Math.floor(r(3) * 3) };
+  if (game === 'sprint') return { avg_kmh: Math.round((45 + r(1) * 5) * 10) / 10, top_kmh: Math.round(62 + r(2) * 10), reserve: Math.round(r(3) * r(3) * 40) / 100, place: 1 + Math.floor(r(4) * 12), riders: 30, bike, type: types[Math.floor(r(5) * types.length)] };
+  return { avg_kmh: Math.round((21 + r(1) * 6) * 10) / 10, top_kmh: Math.round(64 + r(2) * 18), reserve: Math.round(r(3) * r(3) * 45) / 100, place: 1 + Math.floor(r(4) * 10), riders: 24, bike, type: types[Math.floor(r(5) * types.length)], slides: Math.floor(r(6) * 3) };
+}
+
 /** Demo: Antwortzeit (zum Prüfen der Ladezustände: ?langsam=ms) */
 const SLOW = (() => { try { const m = /[?&]langsam=(\d+)/.exec(window.location.search); return m ? Number(m[1]) : 0; } catch { return 0; } })();
 const wait = (ms = 120) => new Promise((r) => setTimeout(r, Math.max(ms, SLOW)));
@@ -195,28 +206,28 @@ export class DemoSource implements DataSource {
     return stageIds.filter((id) => this.heightProfiles.has(id) || !!DEMO_REAL_PROFILES[id] || !!demoProfile(this.stages.find((s) => s.id === id)!));
   }
 
-  private scores: { user_id: string; game: GameId; score: number; meters: number; at: string }[] = [
+  private scores: { user_id: string; game: GameId; score: number; meters: number; at: string; stats?: RunStats }[] = [
     ['u-felix', 14210, 3480, 2], ['u-julian', 11885, 2950, 30], ['u-lena', 9630, 2610, 5], ['u-christoph', 7410, 2080, 50],
     ['u-tobi', 6190, 1760, 70], ['u-anna', 4860, 1320, 3], ['u-ben', 2540, 860, 90], ['u-felix', 9800, 2400, 1], ['u-julian', 7300, 2010, 1],
     [DEMO_ME, 5120, 2210, 6], [DEMO_ME, 8450, 4120, 29], [DEMO_ME, 3310, 1400, 52],
   ].map(([user_id, score, meters, h]) => ({
     user_id: user_id as string, game: 'abfahrt' as GameId, score: score as number, meters: meters as number,
-    at: new Date(Date.now() - (h as number) * 3600e3).toISOString(),
+    at: new Date(Date.now() - (h as number) * 3600e3).toISOString(), stats: demoStats('abfahrt', `${user_id}:${score}`),
   })).concat([
     ['u-julian', 1480, 1], ['u-lena', 1210, 2], ['u-felix', 960, 26], ['u-tobi', 720, 4],
   ].map(([user_id, score, h]) => ({
     user_id: user_id as string, game: 'sprint' as GameId, score: score as number, meters: 2400,
-    at: new Date(Date.now() - (h as number) * 3600e3).toISOString(),
+    at: new Date(Date.now() - (h as number) * 3600e3).toISOString(), stats: demoStats('sprint', `${user_id}:${score}`),
   }))).concat([
     ['u-lena', 1420, 3], ['u-ben', 1180, 2], ['u-julian', 760, 30], [DEMO_ME, 640, 28],
   ].map(([user_id, score, h]) => ({
     user_id: user_id as string, game: 'berg' as GameId, score: score as number, meters: 2000,
-    at: new Date(Date.now() - (h as number) * 3600e3).toISOString(),
+    at: new Date(Date.now() - (h as number) * 3600e3).toISOString(), stats: demoStats('berg', `${user_id}:${score}`),
   })));
 
-  async submitScore(game: GameId, score: number, meters = 0): Promise<void> {
+  async submitScore(game: GameId, score: number, meters = 0, stats?: RunStats): Promise<void> {
     await wait(80);
-    this.scores.push({ user_id: DEMO_ME, game, score: Math.round(score), meters: Math.round(meters), at: new Date().toISOString() });
+    this.scores.push({ user_id: DEMO_ME, game, score: Math.round(score), meters: Math.round(meters), at: new Date().toISOString(), stats: stats ? cleanStats(stats) : undefined });
   }
 
   // Zeitfahren: Geister der Demo-Runde werden je Tag einmal durchgerechnet (Tempomacher-Simulation mit
@@ -243,7 +254,14 @@ export class DemoSource implements DataSource {
       return { user_id: id, day, time_ms: g.timeMs, bike: bikes[i % bikes.length], splits: g.splits, trace: g.trace, created_at: new Date(today ? Date.now() - (i + 1) * 1700e3 : noon + i * 1700e3).toISOString() };
     }).filter((g) => g.time_ms > 0);
     this.ttDays.set(key, rows);
-    for (const g of rows) if (g.user_id !== 'u-me-demo') this.scores.push({ user_id: g.user_id, game: 'zeitfahren', score: ttScore(g.time_ms), meters: 3000, at: g.created_at });
+    for (const g of rows) {
+      if (g.user_id === 'u-me-demo') continue;
+      const r = (hashStr(`${g.user_id}:${day}:k`) % 1000) / 1000;
+      this.scores.push({
+        user_id: g.user_id, game: 'zeitfahren', score: ttScore(g.time_ms), meters: 3000, at: g.created_at,
+        stats: { avg_kmh: Math.round(3000 / (g.time_ms / 1000) * 36) / 10, top_kmh: 62 + Math.round(r * 14), reserve: Math.round((0.02 + r * r * 0.4) * 100) / 100, bike: g.bike },
+      });
+    }
     return rows;
   }
 
@@ -295,8 +313,9 @@ export class DemoSource implements DataSource {
     const by = new Map<string, GameBest>();
     for (const s of this.scores.filter((x) => x.game === game && (!since || x.at >= since))) {
       const b = by.get(s.user_id);
-      if (!b) by.set(s.user_id, { user_id: s.user_id, best: s.score, best_m: s.meters, runs: 1, total_m: s.meters, last_at: s.at });
+      if (!b) by.set(s.user_id, { user_id: s.user_id, best: s.score, best_m: s.meters, runs: 1, total_m: s.meters, last_at: s.at, best_at: s.at, stats: s.stats ?? null });
       else {
+        if (s.score > b.best) { b.best_at = s.at; b.stats = s.stats ?? null; }
         b.best = Math.max(b.best, s.score);
         b.best_m = Math.max(b.best_m, s.meters);
         b.runs += 1;

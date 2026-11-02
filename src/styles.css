@@ -1273,6 +1273,8 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   color: rgba(255, 255, 255, 0.5); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); white-space: nowrap;
 }
 .fps-meter.is-slow { color: rgba(255, 196, 120, 0.75); }
+/* über einem Blatt (Start, Pause, Ergebnis) nicht über dem Text – dort läuft die Welt ohnehin gedrosselt */
+body:has(.abf-layer--sheet:not(.is-leaving), .abf-layer--pause, .abf-layer--over) .fps-meter { opacity: 0; }
 /* Sichtweite im Pausenmenü */
 .abf-range { display: flex; flex-direction: column; gap: 6px; width: 100%; padding-top: 6px; }
 .abf-range__label { font-size: 15px; font-weight: 600; }
@@ -1646,6 +1648,9 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   padding: 18px 20px calc(var(--safe-b) + 16px); border-radius: 26px 26px 0 0; background: var(--bg); color: var(--text);
   box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.35); -webkit-user-select: none; user-select: none;
 }
+/* unter dem Blatt weiter dieselbe Fläche: als Web-App auf dem Homescreen ist 100dvh anfangs kürzer als der Bildschirm,
+   sonst bliebe unten ein Streifen der unscharfen Welt */
+.abf-sheet::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 100vh; background: inherit; pointer-events: none; }
 .abf-sheet__head { padding: 0 12px; }
 .abf-sheet__body {
   display: flex; flex-direction: column; gap: 12px; min-height: 0; padding: 2px 0; overflow-y: auto; overflow-x: hidden;
@@ -1787,6 +1792,83 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
    sonst verschwinden die letzten Ziffern der Zeiten rechts */
 .abf-list .person-row { margin: 0; padding-left: 10px; padding-right: 10px; }
 .abf-list .points { font-variant-numeric: tabular-nums; }
+/* ---------- Bestenliste der Minispiele (runBoard.tsx): Podium der ersten drei, darunter die übrigen mit Ø km/h und
+   Kraft übrig; ein Tipp klappt den besten Lauf eines Fahrers auf. Farbe des Spiels für Werte, Medaillen für die Plätze */
+.rb { --hue: var(--accent); --gold: #f2c94c; --silver: #c3ccd6; --bronze: #d6905c; }
+.rb--zeitfahren { --hue: #5aa9ff; }
+.rb--sprint { --hue: #ffb02e; }
+.rb--berg { --hue: #3ddc84; }
+[data-theme="light"] .rb { --gold: #c79a0a; --silver: #8794a3; --bronze: #b0672f; }
+[data-theme="light"] .rb--zeitfahren { --hue: #1d6fd6; }
+[data-theme="light"] .rb--sprint { --hue: #b86f00; }
+[data-theme="light"] .rb--berg { --hue: #0f7d3e; }
+.rb-podium { list-style: none; margin: 6px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 8px; }
+.rb-step { --medal: var(--gold); min-width: 0; animation: rb-rise 0.5s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.rb-step--2 { --medal: var(--silver); animation-delay: 0.06s; }
+.rb-step--3 { --medal: var(--bronze); animation-delay: 0.12s; }
+.rb-step__btn {
+  width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0; border: 0; background: none;
+  color: inherit; font: inherit; text-align: center; -webkit-tap-highlight-color: transparent; cursor: pointer;
+}
+.rb-step__av { display: grid; place-items: center; padding: 3px; margin-bottom: 4px; border-radius: 50%; background: conic-gradient(from 210deg, var(--medal), color-mix(in srgb, var(--medal) 25%, transparent) 50%, var(--medal)); transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.rb-step__av > * { box-shadow: 0 0 0 2px var(--bg); }
+.rb-step__btn:active .rb-step__av { transform: scale(0.95); }
+.rb-step__name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.rb-step.is-me .rb-step__name { color: var(--accent); }
+.rb-step__best { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.rb-step--1 .rb-step__best { font-size: 20px; }
+.rb-step__v { font-size: 11.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rb-step .rb-kraft { font-size: 11.5px; color: var(--muted); }
+.rb-step__plinth {
+  align-self: stretch; display: grid; place-items: start center; height: 34px; margin-top: 7px; padding-top: 7px; border-radius: 12px 12px 4px 4px;
+  font: 800 18px/1 var(--font); color: var(--medal); font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--medal) 20%, var(--surface)) 0%, var(--surface) 85%);
+  box-shadow: inset 0 2px 0 color-mix(in srgb, var(--medal) 75%, transparent); transition: background 0.2s;
+}
+.rb-step--1 .rb-step__plinth { height: 56px; font-size: 24px; }
+.rb-step--2 .rb-step__plinth { height: 44px; }
+.rb-step.is-open .rb-step__plinth { background: linear-gradient(180deg, color-mix(in srgb, var(--medal) 38%, var(--surface)) 0%, var(--surface) 90%); }
+@keyframes rb-rise { from { opacity: 0; transform: translateY(14px); } }
+.rb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.rb-row { border-top: 1px solid var(--line); }
+.rb-row:last-child { border-bottom: 1px solid var(--line); }
+.rb-row__btn {
+  width: 100%; display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 8px 2px; border: 0; background: none;
+  color: inherit; font: inherit; text-align: left; -webkit-tap-highlight-color: transparent; cursor: pointer;
+}
+.rb-row__btn:active { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.rb-row__rank { width: 20px; flex: none; text-align: center; font-size: 14px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rb-row--1 .rb-row__rank { color: var(--gold); }
+.rb-row--2 .rb-row__rank { color: var(--silver); }
+.rb-row--3 .rb-row__rank { color: var(--bronze); }
+.rb-row__main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.rb-row__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
+.rb-row.is-me .rb-row__name, .rb-row.is-me .rb-row__best { color: var(--accent); }
+.rb-row__best { flex: none; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rb-line { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 11px; font-size: 12px; }
+.rb-stat { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rb-stat svg { color: var(--hue); }
+.rb-stat small { font-size: 11px; font-weight: 600; color: var(--muted); }
+.rb-stat--muted { font-weight: 500; color: var(--muted); }
+/* Kraft übrig als kleine Batterie */
+.rb-kraft { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rb-kraft__cell { position: relative; flex: none; width: 22px; height: 10px; border-radius: 3px; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--text) 42%, transparent); }
+.rb-kraft__cell::after { content: ""; position: absolute; right: -3px; top: 3px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: color-mix(in srgb, var(--text) 42%, transparent); }
+.rb-kraft__cell i { position: absolute; left: 2.5px; top: 2.5px; bottom: 2.5px; width: calc((100% - 5px) * var(--k)); min-width: 1.5px; border-radius: 1px; background: var(--hue); }
+/* aufgeklappter Lauf */
+.rb-detail { display: flex; flex-direction: column; gap: 8px; padding: 0 2px 12px 30px; animation: rb-open 0.28s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.rb-podium + .rb-detail { padding: 12px; border-radius: 16px; background: var(--surface); }
+.rb-tiles { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.rb-tiles > div { min-width: 0; padding: 8px 10px 9px; border-radius: 12px; background: var(--surface2); }
+.rb-podium + .rb-detail .rb-tiles > div { background: var(--surface2); }
+.rb-tiles dt { font-size: 11px; font-weight: 600; color: var(--muted); }
+.rb-tiles dd { margin: 3px 0 0; font-size: 15px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: break-word; hyphens: auto; -webkit-hyphens: auto; }
+.rb-tiles dd small { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.rb-tiles dd .rb-kraft { font-size: 15px; font-weight: 700; }
+.rb-when { margin: 0; display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+.rb-none { margin: 0; font-size: 13px; line-height: 1.4; color: var(--muted); }
+@keyframes rb-open { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .rb-step, .rb-detail { animation: none; } }
 
 .abf-summary { display: flex; flex-direction: column; gap: 12px; }
 .abf-sum-top { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left; }

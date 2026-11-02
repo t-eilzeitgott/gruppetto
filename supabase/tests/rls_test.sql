@@ -253,6 +253,10 @@ select pg_temp.expect_eq((select best_m from public.game_leaderboard('abfahrt') 
 select pg_temp.expect_eq((select total_m from public.game_leaderboard('abfahrt') limit 1)::int, 1900, 'Bestenliste: Gesamtstrecke');
 select pg_temp.expect_eq((select count(*) from public.game_leaderboard('abfahrt', now() + interval '1 hour'))::int, 0, 'Bestenliste: Zeitfilter');
 select pg_temp.expect_error($q$ insert into public.game_scores (game, score, meters) values ('abfahrt', 10, -5) $q$, 'check');
+-- Kennzahlen: die des besten Laufs (nicht des letzten)
+insert into public.game_scores (game, score, meters, stats) values ('sprint', 700, 2400, '{"avg_kmh": 48.2, "reserve": 0.12}'), ('sprint', 500, 2400, '{"avg_kmh": 44.0, "reserve": 0.4}');
+select pg_temp.expect_eq((select ((stats->>'avg_kmh')::numeric * 10)::bigint from public.game_leaderboard('sprint') limit 1), 482, 'Bestenliste: Kennzahlen des besten Laufs');
+select pg_temp.expect_error($q$ insert into public.game_scores (game, score, stats) values ('sprint', 10, '[1,2]') $q$, 'check');
 -- Zeitfahren: Zeit als Punktzahl (1.000.000 − ms), Geist je Tag – nur die schnellere Fahrt ersetzt die gespeicherte
 insert into public.game_scores (game, score, meters) values ('zeitfahren', 1000000 - 224300, 3000);
 insert into public.tt_ghosts (day, time_ms, bike, splits, trace) values (current_date, 224300, 'aero', '{77900,159300}', '[0,30,0,35,28,0]');

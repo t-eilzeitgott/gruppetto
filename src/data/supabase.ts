@@ -6,7 +6,7 @@ import type {
 } from '../lib/types';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
-  type StageInput, type TourInput, type GameId, type GameBest, type GameRun,
+  type StageInput, type TourInput, type GameId, type GameBest, type GameRun, type RunStats, cleanStats,
 } from './source';
 
 interface StoredSession {
@@ -287,9 +287,14 @@ export class SupabaseSource implements DataSource {
     }
   }
 
-  async submitScore(game: GameId, score: number, meters?: number): Promise<void> {
+  async submitScore(game: GameId, score: number, meters?: number, stats?: RunStats): Promise<void> {
     const body: Record<string, unknown> = { game, score: Math.round(score) };
     if (meters !== undefined) body.meters = Math.max(0, Math.round(meters));
+    if (stats && Object.keys(stats).length) {
+      // ältere Datenbank ohne Spalte „stats“: Lauf trotzdem speichern, nur ohne Kennzahlen
+      try { await this.rest('game_scores', { method: 'POST', body: { ...body, stats: cleanStats(stats) }, prefer: 'return=minimal' }); return; }
+      catch (e) { if (!/stats/i.test(String(e))) throw e; }
+    }
     await this.rest('game_scores', { method: 'POST', body, prefer: 'return=minimal' });
   }
 
@@ -302,7 +307,7 @@ export class SupabaseSource implements DataSource {
 
   async gameLeaderboard(game: GameId, since?: string): Promise<GameBest[]> {
     const rows = await this.rpc<GameBest[]>('game_leaderboard', since ? { p_game: game, p_since: since } : { p_game: game });
-    return rows.map((r) => ({ ...r, best_m: Number(r.best_m ?? 0), total_m: Number(r.total_m ?? 0), runs: Number(r.runs) }));
+    return rows.map((r) => ({ ...r, best_m: Number(r.best_m ?? 0), total_m: Number(r.total_m ?? 0), runs: Number(r.runs), stats: r.stats && typeof r.stats === 'object' ? r.stats : null }));
   }
 
   async ttGhosts(day: string): Promise<TtGhostRow[]> {

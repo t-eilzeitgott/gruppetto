@@ -150,7 +150,7 @@ export function BergPage() {
     setCoach(null);
     lsSet(LS_RUNS, String((Number(lsGet(LS_RUNS)) || 0) + 1));
     if (r.score > (Number(lsGet(LS_BEST)) || 0)) { lsSet(LS_BEST, String(r.score)); setBest(r.score); }
-    if (r.score > 0) source.submitScore('berg', r.score, MOUNTAIN_FINISH).then(() => invalidate('game:berg')).catch(() => undefined);
+    if (r.score > 0) source.submitScore('berg', r.score, MOUNTAIN_FINISH, { avg_kmh: r.avgKmh, top_kmh: r.topKmh, reserve: r.reserve, place: r.place, riders: r.riders, bike: bikes.current, slides: r.slides, type: BERG_STATS[chosen.type].label }).then(() => invalidate('game:berg')).catch(() => undefined);
     gh.save({ score: r.score, meters: MOUNTAIN_FINISH, trace: r.trace, bike: bikes.current });
   };
 
@@ -251,7 +251,7 @@ export function BergPage() {
   // Wetter der nächsten Fahrt (wechselt über den Tag, siehe weather.ts)
   const wetter = nextWeatherName();
   const boardView = (
-    <FinaleBoard title="Bestenliste Bergfinale" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Bergfinale', 'Bergfinals']} />
+    <FinaleBoard game="berg" title="Bestenliste Bergfinale" rows={boardRows} board={board} setBoard={setBoard} members={members.data ?? []} meId={me.id} onBack={() => setShowBoard(false)} unit={['Bergfinale', 'Bergfinals']} />
   );
 
   return (

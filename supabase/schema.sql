@@ -152,6 +152,10 @@ create index if not exists game_scores_time_idx on public.game_scores (game, cre
 -- Spiele nachträglich erweitern (Sprintfinale, Bergfinale, Zeitfahren – dort ist score = 1.000.000 − Millisekunden)
 alter table public.game_scores drop constraint if exists game_scores_game_check;
 alter table public.game_scores add constraint game_scores_game_check check (game in ('abfahrt', 'sprint', 'berg', 'zeitfahren'));
+-- Kennzahlen eines Laufs für die Bestenlisten: Ø km/h, Spitze, Kraft übrig, Platz im Rennen, Rad (klein gehalten)
+alter table public.game_scores add column if not exists stats jsonb;
+alter table public.game_scores drop constraint if exists game_scores_stats_check;
+alter table public.game_scores add constraint game_scores_stats_check check (stats is null or (jsonb_typeof(stats) = 'object' and octet_length(stats::text) < 600));
 
 -- Zeitfahren: die beste Fahrt des Tages je Mitglied als Geist – Zeit, Zwischenzeiten, gewähltes Rad und die
 -- Fahrspur (alle 0,25 s Rennzeit: Streckenmeter ×10, seitliche Lage in cm, Haltung), siehe src/game/tt.ts
@@ -655,17 +659,27 @@ drop policy if exists game_ghosts_write on public.game_ghosts;
 create policy game_ghosts_write on public.game_ghosts
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member());
 
--- Bestenliste: beste Punktzahl, weiteste Strecke und Gesamtstrecke je Mitglied (optional ab einem Zeitpunkt)
+-- Bestenliste: beste Punktzahl, weiteste Strecke und Gesamtstrecke je Mitglied (optional ab einem Zeitpunkt),
+-- dazu Kennzahlen und Zeitpunkt des besten Laufs
 drop function if exists public.game_leaderboard(text);
+drop function if exists public.game_leaderboard(text, timestamptz);
 create or replace function public.game_leaderboard(p_game text, p_since timestamptz default null)
-returns table (user_id uuid, best int, best_m int, runs bigint, total_m bigint, last_at timestamptz)
+returns table (user_id uuid, best int, best_m int, runs bigint, total_m bigint, last_at timestamptz, best_at timestamptz, stats jsonb)
 language sql stable set search_path = public as $$
-  select g.user_id, max(g.score)::int, coalesce(max(g.meters), 0)::int, count(*), coalesce(sum(g.meters), 0)::bigint, max(g.created_at)
-    from public.game_scores g
-   where g.game = p_game
-     and (p_since is null or g.created_at >= p_since)
-   group by g.user_id
-   order by max(g.score) desc
+  select s.user_id, s.score, s.best_m, s.runs, s.total_m, s.last_at, s.created_at, s.stats
+    from (
+      select g.user_id, g.score, g.created_at, g.stats,
+             row_number() over (partition by g.user_id order by g.score desc, g.created_at asc) as rn,
+             coalesce(max(g.meters) over (partition by g.user_id), 0)::int as best_m,
+             count(*) over (partition by g.user_id) as runs,
+             coalesce(sum(g.meters) over (partition by g.user_id), 0)::bigint as total_m,
+             max(g.created_at) over (partition by g.user_id) as last_at
+        from public.game_scores g
+       where g.game = p_game
+         and (p_since is null or g.created_at >= p_since)
+    ) s
+   where s.rn = 1
+   order by s.score desc
    limit 100;
 $$;
 revoke execute on function public.game_leaderboard(text, timestamptz) from public, anon;

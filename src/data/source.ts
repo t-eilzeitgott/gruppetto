@@ -18,6 +18,41 @@ export interface GameRun {
   created_at: string;
 }
 
+/** Kennzahlen eines Laufs (gespeichert mit dem Lauf, in den Bestenlisten die des besten Laufs) */
+export interface RunStats {
+  /** Durchschnitt in km/h */
+  avg_kmh?: number;
+  /** Spitze in km/h */
+  top_kmh?: number;
+  /** Kraft im Ziel (0 … 1) */
+  reserve?: number;
+  /** Platz im Rennen (Sprint, Berg) bzw. unter den Geistern (Zeitfahren) */
+  place?: number;
+  riders?: number;
+  /** gefahrenes Rad (Garage) */
+  bike?: string;
+  /** Rutscher bzw. Stürze */
+  slides?: number;
+  /** Fahrertyp im Finale (Allrounder, Sprinter …) */
+  type?: string;
+}
+
+/** Kennzahlen fürs Speichern: gerundet, nur bekannte Felder, kurze Texte */
+export function cleanStats(s: RunStats): RunStats {
+  const out: RunStats = {};
+  const num = (v: unknown, d: number, lo: number, hi: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.min(hi, Math.max(lo, v)) * 10 ** d) / 10 ** d : undefined);
+  const put = <K extends keyof RunStats>(k: K, v: RunStats[K] | undefined) => { if (v !== undefined) out[k] = v; };
+  put('avg_kmh', num(s.avg_kmh, 1, 0, 200));
+  put('top_kmh', num(s.top_kmh, 0, 0, 200));
+  put('reserve', num(s.reserve, 2, 0, 1));
+  put('place', num(s.place, 0, 1, 999));
+  put('riders', num(s.riders, 0, 1, 999));
+  put('slides', num(s.slides, 0, 0, 999));
+  if (typeof s.bike === 'string' && s.bike) out.bike = s.bike.slice(0, 24);
+  if (typeof s.type === 'string' && s.type) out.type = s.type.slice(0, 24);
+  return out;
+}
+
 export interface GameBest {
   user_id: string;
   best: number;
@@ -27,6 +62,9 @@ export interface GameBest {
   /** Gesamtstrecke aller Läufe in m */
   total_m: number;
   last_at: string;
+  /** Zeitpunkt und Kennzahlen des besten Laufs (ältere Datenbank: fehlen) */
+  best_at?: string;
+  stats?: RunStats | null;
 }
 
 export interface TourInput {
@@ -93,7 +131,7 @@ export interface DataSource {
   /** Etappen-IDs mit hinterlegtem Höhenprofil */
   listStageProfiles(stageIds: number[]): Promise<number[]>;
   /** Minispiele: Lauf speichern und Bestenliste der Runde */
-  submitScore(game: GameId, score: number, meters?: number): Promise<void>;
+  submitScore(game: GameId, score: number, meters?: number, stats?: RunStats): Promise<void>;
   /** beste Läufe je Mitglied, optional nur seit einem Zeitpunkt (z. B. heute) */
   gameLeaderboard(game: GameId, since?: string): Promise<GameBest[]>;
   /** eigene Läufe (Spiel, Strecke, Zeitpunkt) seit einem Zeitpunkt – für Passbuch und Reisetagebuch */

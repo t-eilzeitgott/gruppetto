@@ -652,7 +652,7 @@ export class TimeTrial {
     const bestRider = bi >= 0 ? ranked[bi].rider : null;
     const gapMs = best !== null ? Math.round((t - best) * 1000) : null;
     const place = 1 + times.filter((x) => x < t).length;
-    const bestName = bestRider ? (bestRider.bot ? 'Tempomacher' : bestRider.me ? 'dein Bestlauf' : firstName(bestRider.name)) : null;
+    const bestName = bestRider ? (bestRider.bot ? 'Tempomacher' : bestRider.me ? 'deinem Bestlauf' : firstName(bestRider.name)) : null;
     this.opts.onEvent?.({ type: 'split', index: i, timeMs: Math.round(t * 1000), gapMs, place, riders: this.riders, bestName });
     this.pop(`Zwischenzeit ${i + 1}`, gapMs !== null && gapMs <= 0 ? 'gold' : 'white', gapMs === null ? undefined : `${gapMs <= 0 ? '−' : '+'}${(Math.abs(gapMs) / 1000).toFixed(1).replace('.', ',')} s`, true);
   }
@@ -766,7 +766,7 @@ export class TimeTrial {
         const m1 = i === marks.length - 2 ? o.rider.timeMs : s[i];
         if (m0 === undefined || m1 === undefined) continue;
         const t = m1 - m0;
-        if (best === null || t < best) { best = t; bestName = o.rider.bot ? 'Tempomacher' : o.rider.me ? 'Dein Bestlauf' : firstName(o.rider.name); }
+        if (best === null || t < best) { best = t; bestName = o.rider.bot ? 'Tempomacher' : o.rider.me ? 'deinen Bestlauf' : firstName(o.rider.name); }
         if (o === bestO) leader = t;
       }
       sectors.push({ me, best, bestName, leader });

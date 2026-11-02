@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { RunBoard } from './runBoard';
 import { acquireStage, hasWarmStage, prewarm, releaseStage, watchStage, type Stage } from '../game/abfahrt/pool';
 import type { WarmArgs } from '../app/warm';
 import { afterPaint } from '../lib/afterPaint';
@@ -23,7 +24,7 @@ import { AutoGfx, autoStep, fmtRes } from '../game/abfahrt/autoGfx';
 import { copyText, shareFile } from './admin/gpuKit';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
-import { Avatar, Segmented, cx, useTitle } from '../ui/kit';
+import { Avatar, cx, useTitle } from '../ui/kit';
 import { useBikes, type Bikes } from '../ui/useBikes';
 import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
@@ -238,7 +239,7 @@ export function GamePage() {
     lsSet(LS_COACH, String((Number(lsGet(LS_COACH)) || 0) + 1));
     if (r.score > (Number(lsGet(LS_BEST)) || 0)) { lsSet(LS_BEST, String(r.score)); setBest(r.score); }
     if (r.score > 0) {
-      source.submitScore('abfahrt', r.score, r.meters).then(() => invalidate('game:abfahrt')).catch(() => undefined);
+      source.submitScore('abfahrt', r.score, r.meters, { avg_kmh: r.avgKmh, top_kmh: r.topKmh, bike: bikes.current }).then(() => invalidate('game:abfahrt')).catch(() => undefined);
       gh.save({ score: r.score, meters: r.meters, trace: r.trace, bike: bikes.current });
     }
   };
@@ -909,32 +910,9 @@ function BoardView({ rows, board, setBoard, members, meId, onBack }: {
   rows: GameBest[]; board: Board; setBoard: (b: Board) => void; members: Profile[]; meId: string; onBack: () => void;
 }) {
   return (
-    <section className="abf-board" aria-label="Bestenliste">
-      <div className="abf-row">
-        <button type="button" className="abf-link" onClick={onBack}><Icon name="back" size={16} />Zurück</button>
-        <h2 className="abf-eyebrow">Bestenliste</h2>
-      </div>
-      <Segmented<Board> label="Zeitraum" value={board} onChange={setBoard} options={[{ value: 'day', label: 'Heute' }, { value: 'season', label: 'Saison' }]} />
-      {rows.length === 0 ? <p className="abf-muted">{board === 'day' ? 'Heute ist noch niemand gefahren.' : 'Noch keine Läufe.'}</p> : (
-        <ol className="list abf-list">
-          {rows.slice(0, 30).map((r, i) => {
-            const m = members.find((x) => x.id === r.user_id);
-            const rank = rankFor(r.total_m / 1000);
-            return (
-              <li key={r.user_id} className={cx('person-row', r.user_id === meId && 'is-me')}>
-                <span className="rank">{i + 1}</span>
-                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={30} />
-                <span className="person-row__main">
-                  <span className="person-row__name">{m?.display_name ?? 'Ehemaliges Mitglied'}{r.user_id === meId ? ' (du)' : ''}</span>
-                  <span className="person-row__sub">{km(r.best_m)} weit · {rank.name}</span>
-                </span>
-                <span className="points">{nf(r.best)}</span>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-    </section>
+    <RunBoard title="Bestenliste" game="abfahrt" rows={rows} board={board} setBoard={setBoard} members={members} meId={meId} onBack={onBack}
+      unit={['Abfahrt', 'Abfahrten']} fmt={nf}
+      extra={(r) => ({ line: `${km(r.best_m)} weit · ${rankFor(r.total_m / 1000).name}`, tile: ['Weiteste Fahrt', km(r.best_m)] })} />
   );
 }
 

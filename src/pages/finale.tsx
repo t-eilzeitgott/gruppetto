@@ -12,19 +12,21 @@ import { EV, SEC, type Perf3D } from '../game/abfahrt/perf3d';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { viewRange } from '../game/abfahrt/viewRange';
 import { afterPaint } from '../lib/afterPaint';
-import type { GameBest } from '../data/source';
+import type { GameBest, GameId } from '../data/source';
+import { RunBoard } from './runBoard';
 import type { Profile } from '../lib/types';
 import type { RaceView } from '../game/abfahrt/engine';
 import type { RiderType } from '../game/abfahrt/sprint';
 import type { RiderOption } from '../game/abfahrt/sprintRiders';
-import { Avatar, Segmented, cx } from '../ui/kit';
+import { Avatar, cx } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { readAccent } from './Game';
 
 export { lsGet, lsSet, useGameLock } from './gameKit';
 
 export type Ui = 'ready' | 'countdown' | 'playing' | 'paused' | 'over';
-export type Board = 'day' | 'season';
+export type { Board } from './runBoard';
+import type { Board } from './runBoard';
 
 export const nf = (n: number) => Math.round(n).toLocaleString('de-DE');
 export const dist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(m)} m`);
@@ -380,40 +382,14 @@ export function FinaleMini({ rows, label, members, meId, onOpen, empty, fmt = nf
   );
 }
 
-export function FinaleBoard({ title, rows, board, setBoard, members, meId, onBack, unit, fmt = nf }: {
-  title: string; rows: GameBest[]; board: Board; setBoard: (b: Board) => void; members: Profile[]; meId: string; onBack: () => void;
+export function FinaleBoard({ title, game, rows, board, setBoard, members, meId, onBack, unit, fmt = nf }: {
+  title: string; game: GameId; rows: GameBest[]; board: Board; setBoard: (b: Board) => void; members: Profile[]; meId: string; onBack: () => void;
   /** Läufe benennen: „1 Sprint“ / „3 Sprints“ */
   unit: [string, string];
   /** Bestwert anzeigen (Punkte; im Zeitfahren eine Zeit) */
   fmt?: (best: number) => string;
 }) {
-  return (
-    <section className="abf-board" aria-label="Bestenliste">
-      <div className="abf-row">
-        <button type="button" className="abf-link" onClick={onBack}><Icon name="back" size={16} />Zurück</button>
-        <h2 className="abf-eyebrow">{title}</h2>
-      </div>
-      <Segmented<Board> label="Zeitraum" value={board} onChange={setBoard} options={[{ value: 'day', label: 'Heute' }, { value: 'season', label: 'Saison' }]} />
-      {rows.length === 0 ? <p className="abf-muted">{board === 'day' ? 'Heute ist noch niemand gefahren.' : `Noch keine ${unit[1]}.`}</p> : (
-        <ol className="list abf-list">
-          {rows.slice(0, 30).map((r, i) => {
-            const m = members.find((x) => x.id === r.user_id);
-            return (
-              <li key={r.user_id} className={cx('person-row', r.user_id === meId && 'is-me')}>
-                <span className="rank">{i + 1}</span>
-                <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={30} />
-                <span className="person-row__main">
-                  <span className="person-row__name">{m?.display_name ?? 'Ehemaliges Mitglied'}{r.user_id === meId ? ' (du)' : ''}</span>
-                  <span className="person-row__sub">{r.runs === 1 ? `1 ${unit[0]}` : `${r.runs} ${unit[1]}`}</span>
-                </span>
-                <span className="points">{fmt(r.best)}</span>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-    </section>
-  );
+  return <RunBoard title={title} game={game} rows={rows} board={board} setBoard={setBoard} members={members} meId={meId} onBack={onBack} unit={unit} fmt={fmt} />;
 }
 
 /** Podium eines Rennens */
