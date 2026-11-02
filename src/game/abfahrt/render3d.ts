@@ -742,6 +742,8 @@ export class Renderer3D {
     // Grafikstufen aus
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: this.aa, powerPreference: 'high-performance', alpha: false, stencil: false });
     { const c = this.gl.getContext(); this.msaa = (c.getParameter(c.SAMPLES) as number) >= 2; }
+    // einmal verloren, immer verloren (siehe lost): auch wenn der Browser den Kontext zurückgibt
+    canvas.addEventListener('webglcontextlost', () => { this.wasLost = true; });
     // Shader, die nicht übersetzen, bleiben unsichtbar (ganze Landschaftsstufen!): zählen und in der
     // Bildraten-Anzeige zeigen, dazu wie üblich in der Konsole melden
     this.gl.debug.onShaderError = (gl, program, vs, fs) => {
@@ -7534,10 +7536,17 @@ export class Renderer3D {
     c.restore();
   }
 
-  /** hat der Browser den 3D-Kontext entzogen (App im Hintergrund, Speicherdruck)? */
+  /**
+   * hat der Browser den 3D-Kontext entzogen (App im Hintergrund, Speicherdruck)? Bleibt wahr, auch wenn er ihn
+   * zurückgibt: three.js lädt dann zwar Geometrie und Texturen neu, aber was nur in Zwischenbildern lebt – die
+   * gebackenen Zuschauer und Fahrer als Bilder – ist leer. Die Bühne wird verworfen und neu gebaut (sonst fehlten
+   * nach einem Wechsel in eine andere App alle Zuschauer, bis zum Neustart).
+   */
   get lost(): boolean {
+    if (this.wasLost) return true;
     try { return this.gl.getContext().isContextLost(); } catch { return true; }
   }
+  private wasLost = false;
 
   dispose() {
     this.offGfx();
