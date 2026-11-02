@@ -24,6 +24,8 @@ export interface RiderState {
   stand: number;
   /** Sprint 1 (Unterlenker, tief) oder Wiegetritt am Berg 0 */
   sprint: number;
+  /** Erschöpfung im Sprint 0 … 1: das Rad pendelt wilder, der Kopf geht mit, schneller atmen */
+  strain?: number;
   /** Tempo (m/s) */
   v: number;
   /** Höhe über der Straße (m) – Sprünge */
@@ -51,6 +53,8 @@ export class RiderAnim {
   private lurch = spring();
   private shake = spring();
   private effort = spring();
+  private strain = spring();
+  private sprintK = spring();
   private prevPedal = 0;
   private cad = 0;
   private prevLean = 0;
@@ -63,7 +67,7 @@ export class RiderAnim {
   /** persönliche Note: Tempo der Federn, Schwung des Oberkörpers (0,85 … 1,15) */
   private readonly vary: number;
   private readonly seed: number;
-  private readonly out: RiderPose = { lean: 0, pedal: 0, tuck: 0, brake: 0, light: 0, roll: 0, stand: 0, sprint: 0, pump: 0, shake: 0, absorb: 0, breath: 0, t: 0, leanRate: 0, lurch: 0, look: 0, seed: 0 };
+  private readonly out: RiderPose = { lean: 0, pedal: 0, tuck: 0, brake: 0, light: 0, roll: 0, stand: 0, sprint: 0, strain: 0, pump: 0, shake: 0, absorb: 0, breath: 0, t: 0, leanRate: 0, lurch: 0, look: 0, seed: 0 };
 
   /**
    * seed: beliebige Zahl je Fahrer (Startnummer, Kennung); player: der eigene Fahrer folgt der Eingabe straffer,
@@ -89,6 +93,8 @@ export class RiderAnim {
     springSet(this.lurch, 0);
     springSet(this.shake, 0);
     springSet(this.effort, s.effort ?? 0.4);
+    springSet(this.strain, s.strain ?? 0);
+    springSet(this.sprintK, s.sprint);
     this.prevPedal = s.pedal;
     this.cad = 0;
     this.prevLean = s.lean;
@@ -144,7 +150,8 @@ export class RiderAnim {
     if (landed) this.absorb.v += 12 * clamp01(-vy / 5 + 0.25);
     springStep(this.absorb, s.air > 0.02 ? 0.65 : 0, 9, dt);
     // Atmen: ruhig beim Rollen, schnell unter Last
-    this.breath += dt * (2.0 + 3.6 * effort * (0.4 + eff) + 2.5 * stand);
+    const strain = springStep(this.strain, s.strain ?? 0, 5, dt);
+    this.breath += dt * (2.0 + 3.6 * effort * (0.4 + eff) + 2.5 * stand + 3 * strain * stand);
     // Rütteln: Untergrund (mehr bei Tempo), Wind bei hohem Tempo, Taumeln
     const rough = ROUGH[s.surface] ?? 0.12;
     springStep(this.shake, clamp01(rough * (0.3 + 0.7 * smooth(3, 15, s.v)) + 0.3 * (s.v / 32) ** 2 + s.wobble * 0.9), 6, dt);
@@ -155,7 +162,9 @@ export class RiderAnim {
     o.tuck = tuck;
     o.brake = brake;
     o.stand = stand;
-    o.sprint = s.sprint;
+    // Wechsel Berg ↔ Sprint (Zielgerade) weich überblenden
+    o.sprint = springStep(this.sprintK, s.sprint, 6, dt);
+    o.strain = strain * stand;
     o.light = s.light;
     o.roll = s.roll;
     o.pump = this.pump.x;

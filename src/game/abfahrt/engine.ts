@@ -42,6 +42,10 @@ export interface Player {
   cad?: number;
   /** Anstrengung 0 (locker) … 1 (alles) – für die Darstellung (Oberkörper, Atmung), siehe motion.ts effortFor */
   effort?: number;
+  /** Art des Wiegetritts (Darstellung): 1 Sprint (Unterlenker, tief, Rad pendelt weit), 0 am Berg; ohne Angabe nach Spiel */
+  sprint?: number;
+  /** Erschöpfung im Sprint (0–1, Darstellung): je leerer der Kraftvorrat, desto wilder pendelt das Rad */
+  strain?: number;
 }
 
 export interface Opp {
@@ -54,6 +58,10 @@ export interface Opp {
   cad?: number;
   /** Anstrengung 0 … 1 (Darstellung) */
   effort?: number;
+  /** Art des Wiegetritts (Darstellung): 1 Sprint (Unterlenker, tief, Rad pendelt weit), 0 am Berg; ohne Angabe nach Spiel */
+  sprint?: number;
+  /** Erschöpfung im Sprint (0–1, Darstellung): je leerer der Kraftvorrat, desto wilder pendelt das Rad */
+  strain?: number;
   /** Geist (Zeitfahren): halbdurchsichtig mit dieser Deckkraft (0 = unsichtbar) */
   ghost?: number;
   /** gestürzt (Massensturz, WebGPU-Abfahrt): liegt und rutscht nach wreck.ts */

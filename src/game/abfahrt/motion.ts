@@ -96,3 +96,9 @@ export function effortFor(grade: number, push: number, out: Effort = { tuck: 0, 
   out.effort = (0.28 + 0.12 * climb) * (1 - push) + push * (down > 0.5 ? 0.55 : 0.62 + 0.38 * Math.max(climb, steep));
   return out;
 }
+
+/** Erschöpfung im Sprint aus dem Kraftvorrat (0 … 1): ab knapp der Hälfte steigt sie, leer ist sie voll */
+export function strainOf(energy: number): number {
+  const k = Math.max(0, Math.min(1, (0.5 - energy) / 0.45));
+  return k * k * (3 - 2 * k);
+}

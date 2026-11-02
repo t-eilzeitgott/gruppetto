@@ -17,7 +17,7 @@ import { ROAD_HALF, SEG, TT_FINISH, TT_SPLITS, TT_TOP, Track } from './track';
 import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup, type RiderTag, type Standing } from './engine';
 import { between, hashStr, mulberry32, type Rng } from './rng';
 import { SKINS, type Kit } from './rider';
-import { STEEP, pedalStep, smooth } from './motion';
+import { STEEP, pedalStep, smooth, strainOf } from './motion';
 import type { StageRef } from './stageRef';
 import { TRACE_DT, firstName, ghostAt, ghostName, ghostTimeAt, type GhostRider } from '../tt';
 import type { Wreck } from './wreck';
@@ -139,6 +139,8 @@ const STAND = 1.08;
 const HOODS = 0.9;
 const TUCK = 0.5;
 const BRAKING = 1.1;
+/** Zielgerade (m vor dem Ziel): ab hier wird gesprintet */
+const FINALE = 260;
 
 /** Fahrwiderstand je kg (N/kg) */
 const resist = (v: number, grade: number, aero: number) => G * (grade + CRR) + aero * v * v;
@@ -465,6 +467,14 @@ export class TimeTrial {
       // Startrampe: erst mal auf Tempo kommen (die ersten Meter sind geschenkt)
       if (p.z < 40) P = Math.max(P, this.cp + KICK * 0.6);
     }
+    // Zielgerade: wer Druck macht, sprintet aus dem Sattel wie im Sprint-Spiel (nur die Haltung – die Physik bleibt);
+    // je leerer der Vorrat, desto wilder pendelt das Rad
+    const finale = racing && !descent && TT_FINISH - p.z < FINALE;
+    // (die letzten 80 m immer – zur Linie sprintet jeder)
+    const sprinting = finale && (go || TT_FINISH - p.z < 80);
+    if (sprinting) standTarget = 1;
+    p.sprint = finale ? 1 : 0;
+    p.strain = (p.strain ?? 0) + ((sprinting ? strainOf(this.energy) : 0) - (p.strain ?? 0)) * Math.min(1, dt * 3);
     this.stand += (standTarget - this.stand) * Math.min(1, dt * 6);
     const a = P / Math.max(p.v, 2.5) - resist(p.v, grade, CDA * posture) - B;
     p.v = clamp(p.v + a * dt, 0, 30);
@@ -689,7 +699,10 @@ export class TimeTrial {
       const downhill = seg.grade < -0.03;
       // Haltung aus der Spur: drücken am steilen Stück im Wiegetritt (flacher auf dem Auflieger), bergab geduckt,
       // sonst auf dem Auflieger
-      const standT = o.m === 1 ? smooth(STEEP[0], STEEP[1], seg.grade) : 0;
+      // auf der Zielgeraden: Druck heißt Sprint aus dem Sattel (wie beim Spieler)
+      const fin = TT_FINISH - o.z < FINALE && TT_FINISH - o.z > -2;
+      const standT = o.m === 1 ? (fin ? 1 : smooth(STEEP[0], STEEP[1], seg.grade)) : 0;
+      o.sprint = fin ? 1 : 0;
       o.stand = (o.stand ?? 0) + (standT - (o.stand ?? 0)) * Math.min(1, dt * 6);
       const tuckT = downhill ? (o.m === 1 ? 1 : 0.5) : o.m === 2 ? 0.3 : o.m === 1 ? 0.62 * (1 - (o.stand ?? 0)) + 0.15 * (o.stand ?? 0) : climbing ? 0.35 : 0.7;
       o.effort = downhill ? (o.m === 1 ? 0.55 : 0.2) : o.m === 1 ? 1 : o.m === 2 ? 0.3 : 0.55;

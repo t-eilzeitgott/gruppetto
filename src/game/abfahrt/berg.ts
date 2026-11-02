@@ -21,7 +21,7 @@ import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { RiderType, SprintRider } from './sprint';
 import type { StageRef } from './stageRef';
-import { STEEP, effortFor, pedalStep, smooth } from './motion';
+import { STEEP, effortFor, pedalStep, smooth, strainOf } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
@@ -588,7 +588,12 @@ export class BergRace {
       if (!go && !final && this.letMateBy()) P = Math.min(P, s.cp * 0.86);
       P = Math.max(0, P);
     }
+    // die letzten 80 m immer aus dem Sattel – zur Linie sprintet jeder (nur die Haltung)
+    if (stage === 'final' && racing && MOUNTAIN_FINISH - p.z < 80 && MOUNTAIN_FINISH - p.z > -2) standTarget = 1;
     this.stand += (standTarget - this.stand) * Math.min(1, dt * 6);
+    // Zielsprint: Sprinthaltung wie im Sprint-Spiel; je leerer der Vorrat, desto wilder
+    p.sprint = stage === 'final' ? 1 : 0;
+    p.strain = (p.strain ?? 0) + ((stage === 'final' && standTarget > 0.5 ? strainOf(this.energy) : 0) - (p.strain ?? 0)) * Math.min(1, dt * 3);
     const aero = CDA * posture * (1 - 0.35 * this.draft);
     const a = P / Math.max(p.v, 2.5) - resist(p.v, grade, aero) - B;
     p.v = clamp(p.v + a * dt, 0, 30);
@@ -949,6 +954,8 @@ export class BergRace {
         if (wheel && wheel.z - o.z < 3.2 && toGo < o.launch) this.changeLane(o);
       }
       o.stand += (standTarget - o.stand) * Math.min(1, dt * 6);
+      o.sprint = stage === 'final' ? 1 : 0;
+      o.strain = (o.strain ?? 0) + ((stage === 'final' && standTarget > 0.5 ? strainOf(o.w) : 0) - (o.strain ?? 0)) * Math.min(1, dt * 3);
       const aero = CDA * posture * (1 - 0.35 * dr);
       const a = P / Math.max(o.v, 2.5) - resist(o.v, grade, aero) - B;
       o.v = clamp(o.v + a * dt, 0, 30);

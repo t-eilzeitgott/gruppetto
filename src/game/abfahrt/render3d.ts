@@ -6749,7 +6749,7 @@ export class Renderer3D {
     else {
       pm.resetCrash();
       pm.pose(this.playerAnim.step({
-        lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, stand: p.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0,
+        lean: p.lean, pedal: p.pedal, tuck: p.tuck, brake: p.brake, stand: p.stand ?? 0, sprint: p.sprint ?? (track.kind === 'sprint' ? 1 : 0), strain: p.strain,
         v: p.v, air, surface: track.segAt(p.z).surface, wobble: p.wobble, light: this.bikeLight(), roll: p.z / 0.34, effort: p.effort,
       }, this.lastDt, this.time.value));
     }
@@ -7166,7 +7166,7 @@ export class Renderer3D {
     let an = this.anims.get(o.id);
     if (!an) { an = new RiderAnim(o.id * 7.31 + 3); this.anims.set(o.id, an); }
     const rp = an.step({
-      lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, stand: o.stand ?? 0, sprint: track.kind === 'sprint' ? 1 : 0,
+      lean: o.lean, pedal: o.pedal, tuck: o.tuck, brake: o.brake, stand: o.stand ?? 0, sprint: o.sprint ?? (track.kind === 'sprint' ? 1 : 0), strain: o.strain,
       v: o.v, air: 0, surface: track.segAt(o.z).surface, wobble: o.bump, light: this.bikeLight(), roll: o.z / 0.34, effort: o.effort,
     }, this.lastDt, this.time.value);
     if (pose) m.pose(rp);

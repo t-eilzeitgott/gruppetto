@@ -12,7 +12,7 @@ import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, t
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { StageRef } from './stageRef';
-import { pedalStep } from './motion';
+import { pedalStep, strainOf } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
@@ -489,6 +489,8 @@ export class SprintRace {
     p.tuck += ((go ? 0.15 : 0.6) - p.tuck) * Math.min(1, dt * 5);
     // Antritt im Wiegetritt
     p.stand = (p.stand ?? 0) + ((go ? 1 : 0) - (p.stand ?? 0)) * Math.min(1, dt * 6);
+    // je leerer der Vorrat, desto wilder pendelt das Rad
+    p.strain = (p.strain ?? 0) + ((go ? strainOf(this.energy) : 0) - (p.strain ?? 0)) * Math.min(1, dt * 3);
     // Anstrengung (Darstellung): im Windschatten locker, im Wind kräftiger, Antritt alles
     p.effort = go ? 1 : ease ? 0.25 : 0.62 - 0.3 * this.draft;
     // Ansagen
@@ -634,6 +636,7 @@ export class SprintRace {
       pedalStep(o, o.v * 0.62, dt);
       o.tuck += ((o.going ? 0.15 : 0.6) - o.tuck) * Math.min(1, dt * 5);
       o.stand = (o.stand ?? 0) + ((o.going && o.e > 0.2 ? 1 : 0) - (o.stand ?? 0)) * Math.min(1, dt * 6);
+      o.strain = (o.strain ?? 0) + ((o.going ? strainOf(o.e) : 0) - (o.strain ?? 0)) * Math.min(1, dt * 3);
       o.effort = o.going ? 1 : o.order === 0 && o.team >= 0 && !o.peeled ? 0.8 : 0.4;
     }
   }
