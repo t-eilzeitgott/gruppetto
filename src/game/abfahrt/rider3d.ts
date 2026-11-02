@@ -1016,9 +1016,9 @@ export class RiderModel {
     this.crank.rotation.x = -th;
     // aus dem Sattel pendelt das Rad im Takt der Tritte unter dem Fahrer (beim Tritt rechts nach links) –
     // im Sprint weit, am Berg ruhiger. Der Oberkörper geht nur zum Teil mit: Arme ziehen abwechselnd am Lenker
-    // erschöpft (strain): das Rad schlägt deutlich weiter aus, unrund – man sieht, dass nichts mehr geht
+    // erschöpft (strain): das Rad schlägt etwas weiter aus, leicht unrund – dezent, man soll es nur merken
     const sn = Math.max(0, Math.min(1, p.strain ?? 0));
-    const alpha = st * (0.1 + 0.12 * kind) * (1 + 0.75 * sn) * Math.sin(th) * (1 + 0.12 * sn * Math.sin(th * 0.5 + 1.3));
+    const alpha = st * (0.1 + 0.12 * kind) * (1 + 0.28 * sn) * Math.sin(th) * (1 + 0.04 * sn * Math.sin(th * 0.5 + 1.3));
     this.body.rotation.z = -p.lean + alpha;
     const counter = -alpha * (0.62 + 0.18 * kind);
     // im Sitzen schwingt die Hüfte mit jedem Tritt (die Seite des gestreckten Beins sinkt), die Schultern gehen
@@ -1048,7 +1048,7 @@ export class RiderModel {
     // Sprung und Landung: aus dem Sattel, Knie und Arme weich
     if (ab > 0) pelvis.lerp(this.v3.copy(PELVIS_ABSORB).add(bb), ab);
     // im Sitzen bleibt das Becken ruhig auf dem Sattel (nur Stöße der Straße kommen leicht durch)
-    pelvis.y += st * (0.016 + 0.02 * sn) * Math.cos(2 * th) + shk * 0.0015 * n1;
+    pelvis.y += st * (0.016 + 0.006 * sn) * Math.cos(2 * th) + shk * 0.0015 * n1;
     pelvis.x += Math.sin(-counter) * pelvis.y * 0.85 - pump * 0.01 * Math.cos(th) + shk * 0.003 * n2;
     // Zeitfahrrad: auf den Polstern liegen, außer beim Bremsen und im Wiegetritt
     const aero = fit.aero ? Math.max(0, 1 - brake * 1.6) * (1 - st) : 0;
@@ -1086,12 +1086,12 @@ export class RiderModel {
     // er bleibt in der Kurve aufrechter als Rad und Rumpf und schaut in die Kurve
     const flat = Math.max(0, Math.min(1, (0.7 - beta) / 0.45));
     const neck = this.v1.set(0, SPINE + 0.07, 0.01).applyQuaternion(this.sq).add(pelvis);
-    const headRoll = -counter * (0.4 - 0.25 * sn) + alpha * (0.25 + 0.35 * sn) - hipRoll * 0.3 + p.lean * 0.3 + shk * 0.008 * n1;
+    const headRoll = -counter * (0.4 - 0.08 * sn) + alpha * (0.25 + 0.1 * sn) - hipRoll * 0.3 + p.lean * 0.3 + shk * 0.008 * n1;
     const up = 0.11 - flat * 0.016 - spr * 0.045;
     this.head.position.set(neck.x - Math.sin(headRoll) * up, neck.y + Math.cos(headRoll) * up, neck.z - 0.05 - flat * 0.035 - ab * 0.02);
     // der Blick bleibt ruhig auf der Straße (wie bei echten Fahrern: der Kopf gleicht die Bewegung des Rumpfs aus)
-    // erschöpft: Kopf sinkt und nickt im Takt der Tritte
-    this.head.rotation.x = 0.08 + flat * 0.14 - brake * 0.05 + spr * 0.08 - lurch * 0.1 + shk * 0.006 * n3 - sn * st * (0.16 + 0.07 * Math.cos(2 * th));
+    // erschöpft: Kopf sinkt ein wenig und nickt leicht im Takt der Tritte
+    this.head.rotation.x = 0.08 + flat * 0.14 - brake * 0.05 + spr * 0.08 - lurch * 0.1 + shk * 0.006 * n3 - sn * st * (0.06 + 0.025 * Math.cos(2 * th));
     this.head.rotation.y = -(p.look ?? 0);
     // Kopf bleibt beim Pendeln fast waagrecht, im Sprint wippt er leicht mit
     this.head.rotation.z = headRoll;

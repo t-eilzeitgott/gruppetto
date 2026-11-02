@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { prewarm } from '../game/abfahrt/pool';
 import type { WarmArgs } from '../app/warm';
 import { useApp } from '../app/context';
@@ -23,10 +23,11 @@ import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
 import type { Renderer3D } from '../game/abfahrt/render3d';
-import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, useCountUp } from './Game';
+import { PauseIcon, PlayIcon, useCountUp } from './Game';
+import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
 import { teamKit } from '../game/teams';
 import {
-  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
+  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 
@@ -36,8 +37,8 @@ const LS_BEST = 'gruppetto.berg.best';
 
 type Coach = 'attack' | 'tuck';
 const COACH: Record<Coach, { t: string; s: string; g: string }> = {
-  attack: { t: 'Mitgehen oder angreifen', s: 'Daumen hoch und halten – kostet Kraft', g: 'is-tuck' },
-  tuck: { t: 'Abfahrt: ducken', s: 'Daumen hoch = schneller · vor Kehren loslassen', g: 'is-tuck' },
+  attack: { t: 'Mitgehen oder angreifen', s: 'Rechte Taste halten – kostet Kraft', g: 'is-tuck' },
+  tuck: { t: 'Abfahrt: ducken', s: 'Rechte Taste = schneller · vor Kehren loslassen, dann bremst die Automatik', g: 'is-tuck' },
 };
 
 const bars = (t: RiderOption['type']): [string, number][] => {
@@ -91,6 +92,8 @@ export function BergPage() {
   const [board, setBoard] = useState<Board>('day');
   const [showBoard, setShowBoard] = useState(false);
   const [coach, setCoach] = useState<Coach | null>(null);
+  /** Steuerung (controls.tsx): Beschriftung nach Lage, Warnung vor Kehren */
+  const controls = useRef<ControlsHandle | null>(null);
   const coachRef = useRef<{ on: boolean; t: number; shown: Set<Coach>; cur: Coach | null; attacked: boolean }>({ on: false, t: 0, shown: new Set(), cur: null, attacked: false });
   const [best, setBest] = useState(() => Number(lsGet(LS_BEST)) || 0);
   const hud = useRef<Record<string, HTMLElement | null>>({});
@@ -167,7 +170,14 @@ export function BergPage() {
     if (uiRef.current !== 'playing' && uiRef.current !== 'paused') return;
     const h = eng.hud();
     runCoach(h, dt);
-    placeThumb(hud.current.thumb, h.touch, uiRef.current === 'playing', h.mode === 'go', h.mode === 'ease');
+    // Tasten nach Lage benennen; bergab warnt die Gas-Taste vor zu schnellen Kehren
+    const c = controls.current;
+    if (c) {
+      if (h.stage === 'descent') c.labels('Ducken', 'Bremse');
+      else if (h.stage === 'final') c.labels('Sprint', 'Erholen');
+      else c.labels('Angreifen', 'Erholen');
+      c.warn(h.warn && uiRef.current === 'playing');
+    }
     const set = (key: string, val: string) => {
       if (last.current[key] === val) return;
       last.current[key] = val;
@@ -236,16 +246,6 @@ export function BergPage() {
     lsSet(LS_RIDER, keyOf(o));
   };
 
-  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (ui !== 'playing' && ui !== 'countdown') return;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    engineRef.current?.pointerDown(e.clientX, e.clientY);
-  };
-  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
-    if (e.pointerType === 'mouse' && e.buttons === 0) return;
-    engineRef.current?.pointerMove(e.clientX, e.clientY);
-  };
-  const onPointerUp = () => engineRef.current?.pointerUp();
 
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
   // Wetter der nächsten Fahrt (wechselt über den Tag, siehe weather.ts)
@@ -262,12 +262,11 @@ export function BergPage() {
         ref={stageEl}
         className="abf__stage"
         role="application"
-        aria-label="Spielfeld: Daumen seitlich ziehen wechselt das Hinterrad, nach oben angreifen (bergab ducken), nach unten Tempo rausnehmen (bergab bremsen)"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        aria-label="Spielfeld: Finger seitlich ziehen wechselt das Hinterrad, rechte Taste halten zum Angreifen (bergab ducken), linke Taste halten zum Erholen (bergab bremsen)"
       />
+      {ui === 'playing' || ui === 'countdown' || ui === 'paused' ? (
+        <RaceControls eng={() => engineRef.current} enabled={ui === 'playing' || ui === 'countdown'} gas="Angreifen" brake="Erholen" hint={coach ? 'gas' : null} ctl={controls} />
+      ) : null}
       {glError ? (
         <div className="abf-layer">
           <div className="abf-card abf-card--small">
@@ -289,11 +288,6 @@ export function BergPage() {
             <PowerRing bind={bind} badge />
           </div>
           {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
-          <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
-            <span className="abf-thumb__up"><TuckIcon /></span>
-            <span className="abf-thumb__dot" />
-            <span className="abf-thumb__down"><BrakeIcon /></span>
-          </div>
           <button type="button" className="hud-mate is-off" ref={bind('mate')} onClick={() => engineRef.current?.swapMate()} aria-label="Führung mit dem Helfer tauschen">
             <span className="hud-mate__ico"><SwapIcon /></span>
             <small ref={bind('mateState')}>Helfer vorn</small>
@@ -328,7 +322,7 @@ export function BergPage() {
             <>
               <BergProfile track={track} />
               <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => BERG_STATS[t]} bars={bars} />
-              <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Angreifen'], ['↓', 'Erholen'], ['⇄', 'Helfer'], ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
+              <HowTo items={[...controlsHowTo('Angreifen', 'Erholen'), ['⇄', 'Helfer'], ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
               <BikeChip bikes={bikes} />
               <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={nf} />
             </>

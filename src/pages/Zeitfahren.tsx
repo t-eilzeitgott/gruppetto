@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { prewarm } from '../game/abfahrt/pool';
 import type { WarmArgs } from '../app/warm';
 import { useApp } from '../app/context';
@@ -23,9 +23,10 @@ import { Skel, SkelText } from '../ui/skeleton';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
 import type { Renderer3D } from '../game/abfahrt/render3d';
-import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon } from './Game';
+import { PauseIcon, PlayIcon } from './Game';
+import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
 import {
-  FinaleBoard, HowTo, dist, lsGet, lsSet, placeIn, placeThumb,
+  FinaleBoard, HowTo, dist, lsGet, lsSet, placeIn,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 import type { Profile } from '../lib/types';
@@ -36,9 +37,9 @@ const LS_BEST = 'gruppetto.zeitfahren.best';
 
 type Coach = 'line' | 'climb' | 'tuck';
 const COACH: Record<Coach, { t: string; s: string; g: string }> = {
-  line: { t: 'Die Linie zählt', s: 'Innen durch die Kurve ist der Weg kürzer – Daumen seitlich', g: 'is-steer' },
-  climb: { t: 'Jetzt drücken', s: 'Daumen hoch – am Berg lohnt sich der Vorrat am meisten', g: 'is-tuck' },
-  tuck: { t: 'Abfahrt: ducken', s: 'Daumen hoch = schneller · vor engen Kurven loslassen', g: 'is-tuck' },
+  line: { t: 'Die Linie zählt', s: 'Innen durch die Kurve ist der Weg kürzer – Finger seitlich ziehen', g: 'is-steer' },
+  climb: { t: 'Jetzt drücken', s: 'Rechte Taste halten – am Berg lohnt sich der Vorrat am meisten', g: 'is-tuck' },
+  tuck: { t: 'Abfahrt: ducken', s: 'Rechte Taste = schneller · vor engen Kurven loslassen, dann bremst die Automatik', g: 'is-tuck' },
 };
 
 /** Tempomacher des Tages (einmal je Tag durchgerechnet) */
@@ -118,6 +119,8 @@ export function ZeitfahrenPage() {
   const [board, setBoard] = useState<Board>('day');
   const [showBoard, setShowBoard] = useState(false);
   const [coach, setCoach] = useState<Coach | null>(null);
+  /** Steuerung (controls.tsx): Beschriftung nach Lage, Warnung vor Kurven */
+  const controls = useRef<ControlsHandle | null>(null);
   const coachRef = useRef<{ on: boolean; t: number; shown: Set<Coach>; cur: Coach | null }>({ on: false, t: 0, shown: new Set(), cur: null });
   const [saveFailed, setSaveFailed] = useState(false);
   /** eigene Bestzeit beim Start des Laufs (für „Persönliche Bestzeit“ im Ergebnis) */
@@ -225,7 +228,14 @@ export function ZeitfahrenPage() {
     if (uiRef.current !== 'playing' && uiRef.current !== 'paused') return;
     const h = eng.hud();
     runCoach(h, dt);
-    placeThumb(hud.current.thumb, h.touch, uiRef.current === 'playing', h.mode === 'go', h.mode === 'ease');
+    // Tasten nach Lage benennen; bergab warnt die Gas-Taste vor zu schnellen Kurven
+    const c = controls.current;
+    if (c) {
+      if (h.down) c.labels('Ducken', 'Bremse');
+      else if (h.toGo < 260) c.labels('Sprint', 'Erholen');
+      else c.labels('Drücken', 'Erholen');
+      c.warn(h.warn && uiRef.current === 'playing');
+    }
     const set = (key: string, val: string) => {
       if (last.current[key] === val) return;
       last.current[key] = val;
@@ -297,16 +307,6 @@ export function ZeitfahrenPage() {
 
   useRaceKeys(engineRef, uiRef, start, togglePause);
 
-  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (ui !== 'playing' && ui !== 'countdown') return;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    engineRef.current?.pointerDown(e.clientX, e.clientY);
-  };
-  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
-    if (e.pointerType === 'mouse' && e.buttons === 0) return;
-    engineRef.current?.pointerMove(e.clientX, e.clientY);
-  };
-  const onPointerUp = () => engineRef.current?.pointerUp();
 
   const fmtBest = (b: number) => fmtTime(ttMs(b));
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
@@ -323,12 +323,11 @@ export function ZeitfahrenPage() {
         ref={stageEl}
         className="abf__stage"
         role="application"
-        aria-label="Spielfeld: Daumen seitlich ziehen lenkt (Linie), nach oben drücken (bergab ducken), nach unten erholen (bergab bremsen)"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        aria-label="Spielfeld: Finger seitlich ziehen lenkt (Linie), rechte Taste halten zum Drücken (bergab ducken), linke Taste halten zum Erholen (bergab bremsen)"
       />
+      {ui === 'playing' || ui === 'countdown' || ui === 'paused' ? (
+        <RaceControls eng={() => engineRef.current} enabled={ui === 'playing' || ui === 'countdown'} gas="Drücken" brake="Erholen" hint={coach === 'climb' || coach === 'tuck' ? 'gas' : null} ctl={controls} />
+      ) : null}
       {glError ? (
         <div className="abf-layer">
           <div className="abf-card abf-card--small">
@@ -355,11 +354,6 @@ export function ZeitfahrenPage() {
           </div>
           <TtStrip strip={strip} ghosts={ghosts} bind={bind} />
           {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
-          <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
-            <span className="abf-thumb__up"><TuckIcon /></span>
-            <span className="abf-thumb__dot" />
-            <span className="abf-thumb__down"><BrakeIcon /></span>
-          </div>
           <TvAd hidden={!!coach || ui !== 'playing'} seed={8} />
         </div>
       ) : null}
@@ -387,7 +381,7 @@ export function ZeitfahrenPage() {
               <TtProfile track={track} ref_={ref} />
               <HotSeat leader={leader} myBest={myBest} today={today.data ?? []} meId={me.id} members={members.data ?? []} error={!!ghostQ.error && !ghostQ.data} />
               <GhostRow ghosts={ghosts} members={members.data ?? []} me={me} loading={ghostQ.loading} />
-              <HowTo items={[['↔', 'Linie'], ['↑', 'Drücken'], ['↓', 'Erholen']]} />
+              <HowTo items={controlsHowTo('Drücken', 'Erholen')} />
               <BikeChip bikes={bikes} />
               <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={fmtBest} />
             </>

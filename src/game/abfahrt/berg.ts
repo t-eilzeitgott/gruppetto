@@ -8,7 +8,7 @@
  * nur noch knapp unter der Dauerleistung – man wird abgehängt. Die Favoriten greifen an, Helfer
  * machen das Tempo und fallen ab, schwächere Fahrer gehen hinten raus.
  *
- * Bergab zählt die Linie: Daumen hoch = ducken (schneller, aber ohne Bremshilfe). Vor Kehren
+ * Bergab zählt die Linie: Taste rechts = ducken (schneller, aber ohne Bremshilfe). Vor Kehren
  * loslassen – dann bremst die Hilfe auf ein fahrbares Tempo –, sonst rutscht man nach außen.
  *
  * Fahrphysik je Kilogramm: Vortrieb = Leistung / Tempo, dagegen Hangabtrieb, Rollwiderstand und
@@ -21,7 +21,7 @@ import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { RiderType, SprintRider } from './sprint';
 import type { StageRef } from './stageRef';
-import { STEEP, effortFor, pedalStep, smooth, strainOf } from './motion';
+import { STEEP, STEER_KD, STEER_KEYS, STEER_KP, STEER_MAX, STEER_PACK_GAIN, STEER_PACK_MAX, STEER_SMOOTH, STEER_SPAN, effortFor, pedalStep, smooth, strainOf } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
@@ -92,6 +92,8 @@ export interface BergHud {
   stage: BergStage;
   mode: 'sit' | 'go' | 'ease';
   touch: { x: number; y: number } | null;
+  /** bergab mit Gas zu schnell für die Kehre voraus (Warnung an der Taste) */
+  warn: boolean;
   /** Abstand zur Spitze (s); vorne: Vorsprung auf den Nächsten (negativ) */
   lead: { name: string; gap: number } | null;
   ahead: string | null;
@@ -229,6 +231,12 @@ export class BergRace {
   private emptyT = 0;
   private slideCool = 0;
   private stand = 0;
+  /** Tasten der Steuerung (controls.tsx): 1 Angreifen/Ducken, −1 Erholen/Bremsen */
+  private pedal = 0;
+  /** ein Finger liegt auf – dann wechselt die Spur nicht von selbst */
+  private touching = false;
+  /** bergab zu schnell für die Kehre voraus */
+  private tooFast = false;
 
   constructor(opts: BergOptions) {
     this.opts = opts;
@@ -371,6 +379,11 @@ export class BergRace {
   }
   pointerUp() { this.steer.active = false; this.wantGo = false; this.wantEase = false; }
   key(name: 'left' | 'right' | 'down' | 'up', down: boolean) { this.keys[name] = down; }
+  /** Lenken (Steuerung): Finger um dx Bildpunkte seitlich verschoben */
+  steerBy(dx: number) { this.tx = clamp(this.tx + dx * (STEER_SPAN / this.viewW), -XMAX, XMAX); }
+  /** Angreifen/Ducken (1) oder Erholen/Bremsen (−1) gehalten, sonst 0 */
+  setPedal(v: number) { this.pedal = v; }
+  setTouch(on: boolean) { this.touching = on; }
 
   // ------------------------------------------------------------ Schleife
 
@@ -387,8 +400,8 @@ export class BergRace {
     const dt = dr * this.warp;
     this.time += dt;
     this.phaseT += dr;
-    if (this.keys.left) this.tx = clamp(this.tx - 3.5 * dr, -XMAX, XMAX);
-    if (this.keys.right) this.tx = clamp(this.tx + 3.5 * dr, -XMAX, XMAX);
+    if (this.keys.left) this.tx = clamp(this.tx - STEER_KEYS * dr, -XMAX, XMAX);
+    if (this.keys.right) this.tx = clamp(this.tx + STEER_KEYS * dr, -XMAX, XMAX);
     if (this.phase === 'countdown') {
       const n = 3 - Math.floor(this.phaseT / 0.75);
       if (n !== this.countShown) { this.countShown = n; this.opts.onEvent?.({ type: 'count', n: Math.max(0, n) }); }
@@ -445,6 +458,7 @@ export class BergRace {
       stage: BergRace.stageAt(this.p.z),
       mode: this.mode,
       touch: this.steer.active ? { x: this.steer.sx, y: this.steer.sy } : null,
+      warn: this.tooFast && this.mode === 'go',
       lead: this.lead(),
       ahead: ahead?.name ?? null,
       board: standings(this.opps, this.p, this.finT),
@@ -544,9 +558,10 @@ export class BergRace {
     const grade = seg.grade;
     const stage = BergRace.stageAt(p.z);
     const racing = this.phase === 'playing' && this.finT < 0;
-    const go = racing && (this.wantGo || this.keys.up);
-    const ease = racing && !go && (this.wantEase || this.keys.down);
+    const go = racing && (this.wantGo || this.keys.up || this.pedal > 0);
+    const ease = racing && !go && (this.wantEase || this.keys.down || this.pedal < 0);
     this.mode = go ? 'go' : ease ? 'ease' : 'sit';
+    this.tooFast = false;
     const dr = this.draftFor(p.z, p.x);
     this.draft += (dr - this.draft) * Math.min(1, dt * 6);
     const wheel = this.wheelAhead(p.z, p.x, 12);
@@ -564,6 +579,7 @@ export class BergRace {
       // geduckt schneller, aber ohne Bremshilfe; sonst bremst die Hilfe vor Kurven aufs fahrbare Tempo
       // Bremshilfe mit etwas Reserve zur Haftgrenze (0,8 g)
       const vSafe = this.safeSpeed(p.z, ASSIST_G * G * s.desc);
+      this.tooFast = p.v > vSafe + 0.6;
       // geduckt: viel weniger Luftwiderstand und aus den Kurven heraus voll antreten – schnell auf Tempo
       posture = go ? 0.5 : 0.88;
       if (go) P = p.v < 19 ? s.cp + s.kick * 0.9 : 0;
@@ -581,7 +597,7 @@ export class BergRace {
         const vd = clamp(wheel.v + (wheel.z - p.z - 1.8) * 0.8, wheel.v - 1.2, wheel.v + 1.2);
         P = Math.min(powerTo(vd, p.v, grade, CDA * (1 - 0.35 * this.draft)), s.cp + 0.7);
         // hinter einem, der nicht mehr mitkommt (abgefallener Helfer, Abgehängter): von selbst vorbei
-        if (!this.steer.active && wheel.z - p.z < 6 && this.losing(wheel, speedAt(s.cp * 0.98, grade, CDA))) this.passWheel();
+        if (!this.steer.active && !this.touching && wheel.z - p.z < 6 && this.losing(wheel, speedAt(s.cp * 0.98, grade, CDA))) this.passWheel();
       } else P = final ? s.cp * 0.92 : s.cp * 0.98;
       if (empty) P = Math.min(P, s.cp * 0.92);
       // Helfer soll wieder nach vorn: kurz Tempo raus, damit er vor dich kommt
@@ -621,7 +637,7 @@ export class BergRace {
       if (this.emptyT > 0.2 && !this.flags.has('empty')) {
         this.flags.add('empty');
         this.pop('Am Limit!', 'red', 'Kraft ist alle', true);
-        this.opts.onEvent?.({ type: 'banner', title: 'Am Limit', sub: 'Daumen runter zum Erholen', tone: 'red' });
+        this.opts.onEvent?.({ type: 'banner', title: 'Am Limit', sub: 'Links „Erholen“ halten', tone: 'red' });
       }
       if (this.energy > 0.3) this.flags.delete('empty');
       this.topV = Math.max(this.topV, p.v);
@@ -656,22 +672,22 @@ export class BergRace {
     }
   }
 
-  /** seitlich: bergauf direkt zum Daumen, bergab mit Fliehkraft und Haftgrenze */
+  /** seitlich: bergauf direkt zum Finger, bergab mit Fliehkraft und Haftgrenze */
   private lateral(dt: number, physical: boolean) {
     const p = this.p;
     const seg = this.track.segAt(p.z);
-    this.txs += (this.tx - this.txs) * Math.min(1, dt * 12);
+    this.txs += (this.tx - this.txs) * Math.min(1, dt * STEER_SMOOTH);
     let nx: number;
     if (physical) {
       const grip = GRIP_G * G * this.stats.desc;
       const ac = seg.curve * p.v * p.v;
-      const want = clamp(46 * (this.txs - p.x) - 13.5 * p.vx, -7, 7);
+      const want = clamp(STEER_KP * (this.txs - p.x) - STEER_KD * p.vx, -STEER_MAX, STEER_MAX);
       const arel = clamp(want, -grip - ac, grip - ac);
       p.vx += arel * dt;
       nx = p.x + p.vx * dt;
       p.lean += (clamp(Math.atan2(ac + arel * 0.4, G) * 0.85, -0.6, 0.6) - p.lean) * Math.min(1, dt * 3.5);
     } else {
-      const want = clamp((this.txs - p.x) * 5, -2.4, 2.4);
+      const want = clamp((this.txs - p.x) * STEER_PACK_GAIN, -STEER_PACK_MAX, STEER_PACK_MAX);
       nx = p.x + want * dt;
       p.vx = want;
       p.lean += (clamp(-want * 0.12 + Math.atan2(seg.curve * p.v * p.v, G) * 0.8, -0.4, 0.4) - p.lean) * Math.min(1, dt * 6);
@@ -797,15 +813,15 @@ export class BergRace {
         this.flags.add(`limit:${o.id}`);
         this.limitCues += 1;
         this.lastCue = this.time;
-        this.opts.onEvent?.({ type: 'banner', title: `${lastName(o.name)} ist am Limit`, sub: this.energy > 0.3 ? 'Jetzt kontern – Daumen hoch!' : 'Bleib dran, er wird langsamer', tone: 'accent' });
+        this.opts.onEvent?.({ type: 'banner', title: `${lastName(o.name)} ist am Limit`, sub: this.energy > 0.3 ? 'Jetzt kontern – rechts halten!' : 'Bleib dran, er wird langsamer', tone: 'accent' });
         break;
       }
     }
     if (toTop < 300 && toTop > 0) once('300', () => this.opts.onEvent?.({ type: 'banner', title: 'Noch 300 m bis zum Gipfel', sub: 'Bergwertung: Punkte für die ersten drei' }));
-    if (stage === 'descent') once('down', () => this.opts.onEvent?.({ type: 'banner', title: 'Abfahrt!', sub: 'Daumen hoch = ducken · vor Kehren loslassen', tone: 'accent' }));
+    if (stage === 'descent') once('down', () => this.opts.onEvent?.({ type: 'banner', title: 'Abfahrt!', sub: 'Rechts halten = ducken · vor Kehren loslassen', tone: 'accent' }));
     const toGo = MOUNTAIN_FINISH - p.z;
     if (toGo < 1000) once('1k', () => this.opts.onEvent?.({ type: 'banner', title: 'Flamme Rouge', sub: 'Letzter Kilometer', tone: 'red' }));
-    if (stage === 'final') once('final', () => this.opts.onEvent?.({ type: 'banner', title: 'Zielsprint', sub: 'Daumen hoch – alles raus!', tone: 'accent' }));
+    if (stage === 'final') once('final', () => this.opts.onEvent?.({ type: 'banner', title: 'Zielsprint', sub: 'Rechts halten – alles raus!', tone: 'accent' }));
     void z0;
   }
 
@@ -1050,7 +1066,7 @@ export class BergRace {
     }
     const near = Math.abs(o.z - this.p.z) < 60;
     if (near && this.attacks <= 3) {
-      this.opts.onEvent?.({ type: 'banner', title: `Attacke: ${o.name}!`, sub: this.attacks === 1 ? 'Daumen hoch zum Mitgehen' : undefined, tone: 'red' });
+      this.opts.onEvent?.({ type: 'banner', title: `Attacke: ${o.name}!`, sub: this.attacks === 1 ? 'Rechts halten zum Mitgehen' : undefined, tone: 'red' });
     }
   }
 

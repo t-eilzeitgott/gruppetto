@@ -102,3 +102,20 @@ export function strainOf(energy: number): number {
   const k = Math.max(0, Math.min(1, (0.5 - energy) / 0.45));
   return k * k * (3 - 2 * k);
 }
+
+// ------------------------------------------------------------------ Lenken (alle Spiele gleich, controls.tsx)
+
+/** so viele Meter Straße je Bildschirmbreite Fingerweg – eine halbe Breite reicht von Rand zu Rand */
+export const STEER_SPAN = 10;
+/** Finger nur leicht geglättet (gegen Zittern), sonst folgt der Fahrer direkt (1/s) */
+export const STEER_SMOOTH = 28;
+/** Regler zur Fingerposition (mit Fliehkraft und Haftgrenze): kräftig und kritisch gedämpft */
+export const STEER_KP = 64;
+export const STEER_KD = 16;
+/** größte Querbeschleunigung beim Lenken (m/s²) – die Haftgrenze in Kurven bleibt davon unberührt */
+export const STEER_MAX = 9;
+/** im Feld (ohne Fliehkraft): Seitentempo je Meter Abstand zum Ziel und höchstens so schnell (m/s) */
+export const STEER_PACK_GAIN = 9;
+export const STEER_PACK_MAX = 4.5;
+/** Pfeiltasten: so schnell wandert das Ziel (m/s) */
+export const STEER_KEYS = 6;

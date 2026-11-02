@@ -34,6 +34,7 @@ import { PauseIcon, PlayIcon, useCountUp } from './gameKit';
 import { RecBadge } from './measure';
 import { healFixedSoon } from '../ui/fixedHeal';
 import { teamKit } from '../game/teams';
+import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
 
 export { PauseIcon, PlayIcon, useCountUp };
 
@@ -50,9 +51,9 @@ const PLACE_LABEL: Record<string, string> = { frei: 'freie Strecke', ortsdurchfa
 type Step = 'steer' | 'tuck' | 'brake';
 const STEPS: Step[] = ['steer', 'tuck', 'brake'];
 const COACH: Record<Step, { t: string; s: string }> = {
-  steer: { t: 'Lenken', s: 'Daumen seitlich ziehen' },
-  tuck: { t: 'Druck machen = schneller', s: 'Daumen hoch: bergab ducken, sonst kräftiger treten' },
-  brake: { t: 'Bremsen', s: 'Daumen nach unten ziehen' },
+  steer: { t: 'Lenken', s: 'Finger irgendwo seitlich ziehen' },
+  tuck: { t: 'Gas = schneller', s: 'Rechte Taste halten – bergab ducken, sonst kräftiger treten' },
+  brake: { t: 'Bremsen', s: 'Linke Taste halten – oder Gas loslassen, dann bremst die Automatik' },
 };
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* egal */ } };
@@ -129,6 +130,8 @@ export function GamePage() {
   const uiRef = useRef<Ui>('ready');
   uiRef.current = ui;
   const [coach, setCoach] = useState<Step | null>(null);
+  /** Steuerung (controls.tsx): Warnung an der Gas-Taste */
+  const controls = useRef<ControlsHandle | null>(null);
   const coachRef = useRef<{ on: boolean; step: Step | null; t: number; hold: number; learned: Set<Step> }>({ on: false, step: null, t: 0, hold: 0, learned: new Set() });
 
   // Messmodus (Admin oder ?mess): Messfahrt (jedes Bild) und Kostenanalyse (je Ebene an einer Stelle)
@@ -501,17 +504,8 @@ export function GamePage() {
     if (uiRef.current !== 'playing' && uiRef.current !== 'paused') return;
     const h = eng.hud();
     runCoach(h, dt);
-    // Daumenring: zeigt Ankerpunkt, oben ducken, unten bremsen
-    const th = hud.current.thumb;
-    if (th) {
-      if (h.touch && uiRef.current === 'playing') {
-        th.style.opacity = '1';
-        th.style.visibility = 'visible';
-        th.style.transform = `translate(${h.touch.x.toFixed(0)}px, ${h.touch.y.toFixed(0)}px)`;
-        th.classList.toggle('is-tuck', h.wantTuck);
-        th.classList.toggle('is-brake', h.wantBrake > 0.3);
-      } else { th.style.opacity = '0'; th.style.visibility = 'hidden'; }
-    }
+    // Gas-Taste warnt: zu schnell für die Kurve voraus (loslassen – dann bremst die Automatik)
+    controls.current?.warn(h.warn && uiRef.current === 'playing');
     const set = (key: string, val: string) => {
       if (last.current[key] === val) return;
       last.current[key] = val;
@@ -630,17 +624,6 @@ export function GamePage() {
       .catch((e: unknown) => { setCost(null); setCostText(`Kostenanalyse abgebrochen: ${String(e)}`); });
   };
 
-  // Daumensteuerung
-  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (ui !== 'playing' && ui !== 'countdown') return;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    engineRef.current?.pointerDown(e.clientX, e.clientY);
-  };
-  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
-    if (e.pointerType === 'mouse' && e.buttons === 0) return;
-    engineRef.current?.pointerMove(e.clientX, e.clientY);
-  };
-  const onPointerUp = () => engineRef.current?.pointerUp();
 
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
   // Wetter der nächsten Fahrt (wechselt über den Tag, siehe weather.ts)
@@ -654,12 +637,14 @@ export function GamePage() {
         ref={stageRef}
         className="abf__stage"
         role="application"
-        aria-label="Spielfeld: Daumen seitlich ziehen zum Lenken, nach oben Druck machen (bergab ducken), nach unten zum Bremsen"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        aria-label="Spielfeld: Finger seitlich ziehen zum Lenken, rechte Taste halten für Gas (bergab ducken), linke Taste halten zum Bremsen"
       />
+      {ui === 'playing' || ui === 'countdown' || ui === 'paused' ? (
+        <RaceControls
+          eng={() => engineRef.current} enabled={ui === 'playing' || ui === 'countdown'} gas="Gas" brake="Bremse"
+          hint={coach === 'tuck' ? 'gas' : coach === 'brake' ? 'brake' : null} ctl={controls}
+        />
+      ) : null}
       {glError ? (
         <div className="abf-layer">
           <div className="abf-card abf-card--small">
@@ -690,11 +675,6 @@ export function GamePage() {
           </div>
           <RaceBar bind={bind} wide marks={friends.map((f) => ({ at: f.meters / profileMax, kind: 'friend' as const, color: f.color }))} />
           {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
-          <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
-            <span className="abf-thumb__up"><TuckIcon /></span>
-            <span className="abf-thumb__dot" />
-            <span className="abf-thumb__down"><BrakeIcon /></span>
-          </div>
           <TvAd hidden={!!coach || ui !== 'playing'} />
         </div>
       ) : null}
@@ -787,7 +767,7 @@ export function GamePage() {
             <>
               <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />
               <Missions missions={missions} done={doneIds} compact />
-              <HowTo items={[['↔', 'Lenken'], ['↑', 'Druck'], ['↓', 'Bremsen'], ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
+              <HowTo items={[...controlsHowTo('Gas', 'Bremse'), ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
               <BikeChip bikes={bikes} />
               <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={nf} />
             </>

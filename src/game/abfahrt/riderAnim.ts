@@ -151,7 +151,7 @@ export class RiderAnim {
     springStep(this.absorb, s.air > 0.02 ? 0.65 : 0, 9, dt);
     // Atmen: ruhig beim Rollen, schnell unter Last
     const strain = springStep(this.strain, s.strain ?? 0, 5, dt);
-    this.breath += dt * (2.0 + 3.6 * effort * (0.4 + eff) + 2.5 * stand + 3 * strain * stand);
+    this.breath += dt * (2.0 + 3.6 * effort * (0.4 + eff) + 2.5 * stand + 1.2 * strain * stand);
     // Rütteln: Untergrund (mehr bei Tempo), Wind bei hohem Tempo, Taumeln
     const rough = ROUGH[s.surface] ?? 0.12;
     springStep(this.shake, clamp01(rough * (0.3 + 0.7 * smooth(3, 15, s.v)) + 0.3 * (s.v / 32) ** 2 + s.wobble * 0.9), 6, dt);

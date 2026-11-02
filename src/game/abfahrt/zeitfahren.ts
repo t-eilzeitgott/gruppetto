@@ -6,9 +6,10 @@
  * an jeder Stelle der Strecke („virtueller Abstand“) und an den Zwischenzeit-Stationen.
  *
  * Fahrphysik je Kilogramm wie im Bergfinale: eine Dauerleistung (W/kg) und ein Kraftvorrat für alles darüber.
- * Daumen neutral = Zeitfahrhaltung auf dem Auflieger an der Dauerleistung (bergab: Bremshilfe vor Kurven).
- * Daumen hoch = Druck machen (über der Dauerleistung, leert den Vorrat; bergauf im Wiegetritt) – bergab stattdessen
- * ducken ohne Bremshilfe. Daumen runter = erholen (unter der Dauerleistung, füllt den Vorrat; bergab bremsen).
+ * Keine Taste = Zeitfahrhaltung auf dem Auflieger an der Dauerleistung (bergab: Bremshilfe vor Kurven).
+ * Taste rechts = Druck machen (über der Dauerleistung, leert den Vorrat; bergauf im Wiegetritt) – bergab stattdessen
+ * ducken ohne Bremshilfe. Taste links = erholen (unter der Dauerleistung, füllt den Vorrat; bergab bremsen).
+ * Finger seitlich ziehen lenkt (controls.tsx).
  * Die Linie zählt: innen durch die Kurve ist der Weg kürzer, zu schnell in die Kurve rutscht man nach außen.
  * Alle fahren dieselbe Physik – kein Fahrertyp, kein Bonus: nur die Uhr. Zeitraffer 1,45 (bergab 1,15):
  * Tempo und Zeiten bleiben echt, ein Lauf dauert knapp drei Minuten.
@@ -17,7 +18,7 @@ import { ROAD_HALF, SEG, TT_FINISH, TT_SPLITS, TT_TOP, Track } from './track';
 import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, type Popup, type RiderTag, type Standing } from './engine';
 import { between, hashStr, mulberry32, type Rng } from './rng';
 import { SKINS, type Kit } from './rider';
-import { STEEP, pedalStep, smooth, strainOf } from './motion';
+import { STEEP, STEER_KD, STEER_KEYS, STEER_KP, STEER_MAX, STEER_SMOOTH, STEER_SPAN, pedalStep, smooth, strainOf } from './motion';
 import type { StageRef } from './stageRef';
 import { TRACE_DT, firstName, ghostAt, ghostName, ghostTimeAt, type GhostRider } from '../tt';
 import type { Wreck } from './wreck';
@@ -101,6 +102,8 @@ export interface TtHud {
   /** Abstand zur Tagesbestzeit an dieser Stelle (s, + = dahinter), null ohne Geister */
   gapBest: number | null;
   bestName: string | null;
+  /** bergab mit Druck zu schnell für die Kurve voraus (Warnung an der Taste) */
+  warn: boolean;
 }
 
 /** Geist auf der Strecke: ein Gegner ohne Physik, der seiner Spur folgt */
@@ -205,6 +208,10 @@ export class TimeTrial {
   private passedNames: string[] = [];
   private cp = CP;
   private botTx = 0;
+  /** Tasten der Steuerung (controls.tsx): 1 Drücken/Ducken, −1 Erholen/Bremsen */
+  private pedal = 0;
+  /** bergab zu schnell für die Kurve voraus */
+  private tooFast = false;
 
   constructor(opts: TtOptions) {
     this.opts = opts;
@@ -304,6 +311,10 @@ export class TimeTrial {
   }
   pointerUp() { this.steer.active = false; this.wantGo = false; this.wantEase = false; }
   key(name: 'left' | 'right' | 'down' | 'up', down: boolean) { this.keys[name] = down; }
+  /** Lenken (Steuerung): Finger um dx Bildpunkte seitlich verschoben – die Linie folgt direkt */
+  steerBy(dx: number) { this.tx = clamp(this.tx + dx * (STEER_SPAN / this.viewW), -XMAX, XMAX); }
+  /** Drücken/Ducken (1) oder Erholen/Bremsen (−1) gehalten, sonst 0 */
+  setPedal(v: number) { this.pedal = v; }
 
   // ------------------------------------------------------------ Schleife
 
@@ -316,8 +327,8 @@ export class TimeTrial {
     const dt = dr * (WARP + (WARP_DOWN - WARP) * this.down);
     this.warp = dt / Math.max(1e-6, dr);
     this.phaseT += dr;
-    if (this.keys.left) this.tx = clamp(this.tx - 3.5 * dr, -XMAX, XMAX);
-    if (this.keys.right) this.tx = clamp(this.tx + 3.5 * dr, -XMAX, XMAX);
+    if (this.keys.left) this.tx = clamp(this.tx - STEER_KEYS * dr, -XMAX, XMAX);
+    if (this.keys.right) this.tx = clamp(this.tx + STEER_KEYS * dr, -XMAX, XMAX);
     if (this.phase === 'countdown') {
       // Starter zählt die Hand herunter: 5 … 1, dann Los
       const n = 5 - Math.floor(this.phaseT / 0.6);
@@ -377,6 +388,7 @@ export class TimeTrial {
       ghosts: this.opps.map((o) => ({ id: o.rider.id, z: o.z, color: o.rider.bot ? '#9aa0a8' : o.rider.color })),
       gapBest: best ? this.gapTo(best) : null,
       bestName: best ? (best.rider.me ? 'Bestzeit' : firstName(best.rider.name)) : null,
+      warn: this.tooFast && this.mode === 'go',
     };
   }
 
@@ -422,10 +434,11 @@ export class TimeTrial {
     const seg = this.track.segAt(p.z);
     const grade = seg.grade;
     const racing = this.phase === 'playing' && this.finT < 0;
-    const go = racing && (this.wantGo || this.keys.up);
-    const ease = racing && !go && (this.wantEase || this.keys.down);
+    const go = racing && (this.wantGo || this.keys.up || this.pedal > 0);
+    const ease = racing && !go && (this.wantEase || this.keys.down || this.pedal < 0);
     this.mode = go ? 'go' : ease ? 'ease' : 'sit';
     const descent = this.down > 0.5;
+    this.tooFast = false;
     const empty = this.energy <= 0.001;
     let P = 0;
     let B = 0;
@@ -448,6 +461,7 @@ export class TimeTrial {
     } else if (descent) {
       // bergab: geduckt schneller, aber ohne Bremshilfe; sonst bremst die Hilfe vor Kurven aufs fahrbare Tempo
       const vSafe = this.safeSpeed(p.z, ASSIST_G * G);
+      this.tooFast = p.v > vSafe + 0.6;
       posture = go ? TUCK : HOODS;
       if (go) P = p.v < 19 ? this.cp + KICK * 0.8 : 0;
       else if (p.v < 12) P = this.cp * 0.8;
@@ -493,7 +507,7 @@ export class TimeTrial {
       if (this.emptyT > 0.2 && !this.flags.has('empty')) {
         this.flags.add('empty');
         this.pop('Am Limit!', 'red', 'Vorrat leer', true);
-        this.opts.onEvent?.({ type: 'banner', title: 'Am Limit', sub: 'Daumen runter – kurz erholen', tone: 'red' });
+        this.opts.onEvent?.({ type: 'banner', title: 'Am Limit', sub: 'Links „Erholen“ halten', tone: 'red' });
       }
       if (this.energy > 0.3) this.flags.delete('empty');
       this.topV = Math.max(this.topV, p.v);
@@ -538,10 +552,10 @@ export class TimeTrial {
   private lateral(dt: number, racing: boolean) {
     const p = this.p;
     const seg = this.track.segAt(p.z);
-    this.txs += (this.tx - this.txs) * Math.min(1, dt * 12);
+    this.txs += (this.tx - this.txs) * Math.min(1, dt * STEER_SMOOTH);
     const grip = GRIP_G * G;
     const ac = seg.curve * p.v * p.v;
-    const want = clamp(46 * (this.txs - p.x) - 13.5 * p.vx, -7, 7);
+    const want = clamp(STEER_KP * (this.txs - p.x) - STEER_KD * p.vx, -STEER_MAX, STEER_MAX);
     const arel = clamp(want, -grip - ac, grip - ac);
     p.vx += arel * dt;
     let nx = p.x + p.vx * dt;
@@ -650,9 +664,9 @@ export class TimeTrial {
     const ref = this.track.ref;
     const real = ref?.climb;
     if (at(1000)) once('cote', () => this.opts.onEvent?.({ type: 'banner', title: `Gleich: ${this.track.climbName}`, sub: real?.grad && real.len ? `${real.len.toLocaleString('de-DE', { maximumFractionDigits: 1 })} km mit ${real.grad.toLocaleString('de-DE', { maximumFractionDigits: 1 })} % – hier zählt der Vorrat` : '460 m mit bis zu 8,5 % – hier zählt der Vorrat' }));
-    if (at(TT_TOP)) once('top', () => this.opts.onEvent?.({ type: 'banner', title: 'Kuppe – Abfahrt!', sub: 'Daumen hoch = ducken · vor engen Kurven loslassen', tone: 'accent' }));
+    if (at(TT_TOP)) once('top', () => this.opts.onEvent?.({ type: 'banner', title: 'Kuppe – Abfahrt!', sub: 'Rechts halten = ducken · vor engen Kurven loslassen', tone: 'accent' }));
     if (at(2000)) once('1k', () => this.opts.onEvent?.({ type: 'banner', title: 'Letzter Kilometer', sub: this.energy > 0.25 ? 'Alles raus – der Vorrat zählt nicht mehr' : 'Durchhalten bis zur Linie', tone: 'red' }));
-    if (at(TT_FINISH - 250)) once('final', () => this.opts.onEvent?.({ type: 'banner', title: 'Zielgerade', sub: 'Daumen hoch und halten', tone: 'accent' }));
+    if (at(TT_FINISH - 250)) once('final', () => this.opts.onEvent?.({ type: 'banner', title: 'Zielgerade', sub: 'Rechts halten bis zur Linie', tone: 'accent' }));
     // Geister: überholen und überholt werden
     for (const o of this.opps) {
       if (o.ghost <= 0) continue;

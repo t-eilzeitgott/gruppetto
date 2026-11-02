@@ -7,7 +7,7 @@ import { mulberry32, between, chance, pick, type Rng } from './rng';
 import { EDGE, ROAD_HALF, SEG, Track, difficulty, type Obj, type Seg, type Side, type BiomeId } from './track';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { Mission, MissionStat } from './missions';
-import { cadenceFor, effortFor, pedalStep, smooth, type Effort } from './motion';
+import { cadenceFor, effortFor, pedalStep, smooth, type Effort, STEER_KD, STEER_KEYS, STEER_KP, STEER_MAX, STEER_SMOOTH, STEER_SPAN } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import { wreckSettled, wreckTravel, type Wreck } from './wreck';
 import { BOOST, CAR_HALF, CAR_LEN, carBlock, spawnCar, stepCar, type TeamCar } from './teamcar';
@@ -140,6 +140,8 @@ export interface HudState {
   /** Daumenhaltung: ducken (hoch) und bremsen (runter), für Anzeige und Tutorial */
   tuck: number; wantTuck: boolean; wantBrake: number; steered: number;
   touch: { x: number; y: number } | null; curveIn: number;
+  /** mit Gas zu schnell für die Kurve voraus (Warnung an der Gas-Taste: loslassen, dann bremst die Automatik) */
+  warn: boolean;
 }
 
 export type GameEvent =
@@ -261,6 +263,10 @@ export class Abfahrt {
   private ef: Effort = { tuck: 0, stand: 0, effort: 0, down: 0, steep: 0 };
   private efO: Effort = { tuck: 0, stand: 0, effort: 0, down: 0, steep: 0 };
   private wantBrake = 0;
+  /** Tasten der Steuerung (controls.tsx): 1 Gas, −1 Bremse, 0 nichts */
+  private pedal = 0;
+  /** schneller, als die Kurve voraus erlaubt (ohne Rücksicht auf die Tasten) */
+  private tooFast = false;
   /** wie weit insgesamt gelenkt wurde (für das Tutorial) */
   private steered = 0;
   tx = 0;
@@ -383,6 +389,20 @@ export class Abfahrt {
     this.keys[name] = down;
   }
 
+  /** Lenken (Steuerung): Finger um dx Bildpunkte seitlich verschoben – der Fahrer folgt direkt */
+  steerBy(dx: number) {
+    const ew = EDGE + this.track.extraAt(this.p.z);
+    const nx = clamp(this.tx + dx * (STEER_SPAN / this.viewW), -ew - 1.2, ew + 1.2);
+    this.steered += Math.abs(nx - this.tx);
+    this.tx = nx;
+  }
+  /** Gas (1) oder Bremse (−1) gehalten, sonst 0 */
+  setPedal(v: number) { this.pedal = v; }
+  /** Gas gehalten (Taste, Pfeil hoch oder alter Daumen) */
+  private get gas(): boolean { return this.wantTuck || this.keys.up || this.pedal > 0; }
+  /** Bremse gehalten (0–1) */
+  private get brakeIn(): number { return Math.max(this.wantBrake, this.keys.down ? 1 : 0, this.pedal < 0 ? 1 : 0); }
+
   // ------------------------------------------------------------ Hauptschleife
 
   /** Testfahrt: Zeitraffer (1–5), Stehenbleiben, Vor- und Zurückschieben (−1/0/1) – vom Prüfpult aus gesetzt */
@@ -404,8 +424,8 @@ export class Abfahrt {
     this.phaseT += dtReal;
     {
       const ew = EDGE + this.track.extraAt(this.p.z);
-      if (this.keys.left) { this.tx = clamp(this.tx - 6 * dt, -ew - 1.2, ew + 1.2); this.steered += 6 * dt; }
-      if (this.keys.right) { this.tx = clamp(this.tx + 6 * dt, -ew - 1.2, ew + 1.2); this.steered += 6 * dt; }
+      if (this.keys.left) { this.tx = clamp(this.tx - STEER_KEYS * dt, -ew - 1.2, ew + 1.2); this.steered += STEER_KEYS * dt; }
+      if (this.keys.right) { this.tx = clamp(this.tx + STEER_KEYS * dt, -ew - 1.2, ew + 1.2); this.steered += STEER_KEYS * dt; }
     }
 
     if (this.phase === 'countdown') {
@@ -511,11 +531,12 @@ export class Abfahrt {
       brake: this.p.brake,
       air: this.p.air,
       tuck: this.p.tuck,
-      wantTuck: this.wantTuck || this.keys.up,
-      wantBrake: Math.max(this.wantBrake, this.keys.down ? 1 : 0),
+      wantTuck: this.gas,
+      wantBrake: this.brakeIn,
       steered: this.steered,
       touch: this.steer.active ? { x: this.steer.sx, y: this.steer.sy } : null,
       curveIn: this.curveAhead(),
+      warn: this.tooFast && this.gas && !this.p.air,
     };
   }
 
@@ -562,23 +583,32 @@ export class Abfahrt {
     }
     this.draft += (draft - this.draft) * Math.min(1, dt * 6);
     const steering = Math.abs(this.tx - p.x);
-    // Bremsassistent: vor Kurven automatisch auf ein fahrbares Tempo bremsen
+    // Bremsassistent: vor Kurven automatisch auf ein fahrbares Tempo bremsen – aber nie, solange Gas gehalten wird
+    // (dann entscheidet der Spieler; die Gas-Taste warnt, wenn es zu schnell wird)
     let vSafe = 99;
     for (let d = 0; d <= 48; d += 4) {
       const kk = Math.abs(this.track.segAt(p.z + d).curve);
       if (kk > 0.002) vSafe = Math.min(vSafe, Math.sqrt((0.92 * mu * G) / kk) + d * 0.12);
     }
-    const assist = clamp((p.v - vSafe) / 2.5, 0, 1);
-    const manual = Math.max(this.wantBrake, this.keys.down ? 1 : 0);
+    const gas = this.gas;
+    // Warnung etwas vorausschauender als die Bremshilfe (Reaktionszeit): weiter voraus, knapper bemessen
+    let vWarn = 99;
+    for (let d = 0; d <= 68; d += 4) {
+      const kk = Math.abs(this.track.segAt(p.z + d).curve);
+      if (kk > 0.002) vWarn = Math.min(vWarn, Math.sqrt((0.92 * mu * G) / kk) + d * 0.09);
+    }
+    this.tooFast = p.v > Math.min(vSafe + 0.5, vWarn + 1);
+    const assist = gas ? 0 : clamp((p.v - vSafe) / 2.5, 0, 1);
+    const manual = this.brakeIn;
     const wantBrake = p.air ? 0 : Math.max(assist, manual);
     p.brake += (wantBrake - p.brake) * Math.min(1, dt * 8);
     // Daumen hoch = Druck machen – was der Fahrer daraus macht, hängt an der Steigung (motion.ts effortFor):
     // bergab ducken (und rollen lassen, sobald Treten nichts mehr bringt), in der Ebene und am leichten Anstieg
     // kräftiger treten, am steilen Stück aus dem Sattel. Beim Bremsen und in der Luft richtet man sich auf.
-    const pushOn = (this.wantTuck || this.keys.up) && p.brake < 0.3 && !p.air;
-    this.push += ((pushOn ? 1 : 0) - this.push) * Math.min(1, dt * 5);
+    const pushOn = gas && p.brake < 0.3 && !p.air;
+    this.push += ((pushOn ? 1 : 0) - this.push) * Math.min(1, dt * 8);
     const ef = effortFor(seg.grade, this.push, this.ef);
-    p.tuck += (ef.tuck * (1 - p.brake) - p.tuck) * Math.min(1, dt * 4);
+    p.tuck += (ef.tuck * (1 - p.brake) - p.tuck) * Math.min(1, dt * 5);
     p.stand = (p.stand ?? 0) + (ef.stand * (1 - p.brake) - (p.stand ?? 0)) * Math.min(1, dt * 5);
     void steering;
     const cd = CD * (1 + 0.45 * (1 - p.tuck)) * (1 - 0.42 * this.draft) * (1 + p.brake * 0.4) * (1 + 0.12 * (p.stand ?? 0));
@@ -596,12 +626,12 @@ export class Abfahrt {
 
     // --- Querdynamik mit Fliehkraft und Grip-Grenze
     const ac = k * p.v * p.v;
-    // Daumen geglättet, damit kleine Zitterbewegungen nicht durchschlagen
-    this.txs += (this.tx - this.txs) * Math.min(1, dt * 12);
-    const kp = 46;
-    const kd = 13.5;
+    // Finger nur ganz leicht geglättet (Zittern), sonst folgt der Fahrer direkt; kräftiger Regler, kritisch gedämpft
+    this.txs += (this.tx - this.txs) * Math.min(1, dt * STEER_SMOOTH);
+    const kp = STEER_KP;
+    const kd = STEER_KD;
     // geduckt lenkt man etwas träger
-    const steerMax = 7 - 1.6 * p.tuck;
+    const steerMax = STEER_MAX - 1.6 * p.tuck;
     let want = clamp(kp * (this.txs - p.x) - kd * p.vx, -steerMax, steerMax);
     let arel: number;
     if (p.air) {
@@ -890,7 +920,7 @@ export class Abfahrt {
       Object.assign(c, { active: true, sign: Math.sign(seg.curve), hairpin: seg.hairpin > 0, minV: p.v, clean: true, maxK: k });
       if (seg.hairpin > 0 && this.opts.tutorial && !this.tipsShown.has('brake') && p.v > 12) {
         this.tipsShown.add('brake');
-        this.opts.onEvent?.({ type: 'tip', text: 'Kehre! Daumen runter = bremsen' });
+        this.opts.onEvent?.({ type: 'tip', text: 'Kehre! Gas loslassen oder links bremsen' });
       }
     }
     if (c.active) {
@@ -1442,7 +1472,7 @@ export class Abfahrt {
   /** eigene Spur mitschreiben, Geister nachfahren lassen, Namensschild für den nächsten voraus */
   private stepGhosts(dt: number) {
     const p = this.p;
-    if (this.phase === 'playing') this.rec.step(dt, p.z, p.x, p.v, this.wantTuck ? 1 : this.wantBrake > 0.3 ? 2 : 0);
+    if (this.phase === 'playing') this.rec.step(dt, p.z, p.x, p.v, this.gas ? 1 : this.brakeIn > 0.3 ? 2 : 0);
     const live = this.phase === 'playing' || this.phase === 'crash' || this.phase === 'over';
     if (live) this.ghostT += dt;
     if (!this.pack.count) return;

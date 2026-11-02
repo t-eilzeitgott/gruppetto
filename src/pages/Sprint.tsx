@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { prewarm } from '../game/abfahrt/pool';
 import type { WarmArgs } from '../app/warm';
 import { useApp } from '../app/context';
@@ -23,10 +23,11 @@ import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { useMeasure } from './measure';
 import type { Renderer3D } from '../game/abfahrt/render3d';
-import { BrakeIcon, PauseIcon, PlayIcon, TuckIcon, useCountUp } from './Game';
+import { PauseIcon, PlayIcon, useCountUp } from './Game';
+import { RaceControls, controlsHowTo } from './controls';
 import { teamKit } from '../game/teams';
 import {
-  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn, placeThumb,
+  FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf, placeIn,
   useGameLock, useRaceKeys, useRaceLoop, type Board, type Ui,
 } from './finale';
 
@@ -36,8 +37,8 @@ const LS_BEST = 'gruppetto.sprint.best';
 
 type Coach = 'steer' | 'go';
 const COACH: Record<Coach, { t: string; s: string; g: string }> = {
-  steer: { t: 'Hinterrad wechseln', s: 'Daumen seitlich ziehen – im Windschatten sparst du Kraft', g: 'is-steer' },
-  go: { t: 'Antreten!', s: 'Daumen nach oben schieben und halten', g: 'is-tuck' },
+  steer: { t: 'Hinterrad wechseln', s: 'Finger seitlich ziehen – im Windschatten sparst du Kraft', g: 'is-steer' },
+  go: { t: 'Antreten!', s: 'Rechte Taste halten – bis über die Linie', g: 'is-tuck' },
 };
 
 const sprintBars = (t: RiderOption['type']): [string, number][] => {
@@ -165,7 +166,6 @@ export function SprintPage() {
     if (uiRef.current !== 'playing' && uiRef.current !== 'paused') return;
     const h = eng.hud();
     runCoach(h, dt);
-    placeThumb(hud.current.thumb, h.touch, uiRef.current === 'playing', h.mode === 'go', h.mode === 'ease');
     writeBar(hud.current, last.current, raceBar(h.board, h.toGo > 0 ? dist(h.toGo) : 'Ziel', 'flag', 1 - h.toGo / SPRINT_FINISH));
     writeRing(hud.current, last.current, { kmh: h.kmh, fill: h.energy, tone: 'energy', mode: h.mode, draft: h.draft });
   };
@@ -214,16 +214,6 @@ export function SprintPage() {
     lsSet(LS_RIDER, keyOf(o));
   };
 
-  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (ui !== 'playing' && ui !== 'countdown') return;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    engineRef.current?.pointerDown(e.clientX, e.clientY);
-  };
-  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
-    if (e.pointerType === 'mouse' && e.buttons === 0) return;
-    engineRef.current?.pointerMove(e.clientX, e.clientY);
-  };
-  const onPointerUp = () => engineRef.current?.pointerUp();
 
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
   // Wetter der nächsten Fahrt (wechselt über den Tag, siehe weather.ts)
@@ -241,12 +231,11 @@ export function SprintPage() {
         ref={stageEl}
         className="abf__stage"
         role="application"
-        aria-label="Spielfeld: Daumen seitlich ziehen wechselt das Hinterrad, nach oben antreten, nach unten Tempo rausnehmen"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        aria-label="Spielfeld: Finger seitlich ziehen wechselt das Hinterrad, rechte Taste halten zum Antreten, linke Taste halten nimmt Tempo raus"
       />
+      {ui === 'playing' || ui === 'countdown' || ui === 'paused' ? (
+        <RaceControls eng={() => engineRef.current} enabled={ui === 'playing' || ui === 'countdown'} gas="Antreten" brake="Tempo raus" hint={coach === 'go' ? 'gas' : null} />
+      ) : null}
       {glError ? (
         <div className="abf-layer">
           <div className="abf-card abf-card--small">
@@ -268,11 +257,6 @@ export function SprintPage() {
             <PowerRing bind={bind} />
           </div>
           {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
-          <div className="abf-thumb" ref={bind('thumb')} aria-hidden="true">
-            <span className="abf-thumb__up"><TuckIcon /></span>
-            <span className="abf-thumb__dot" />
-            <span className="abf-thumb__down"><BrakeIcon /></span>
-          </div>
           <TvAd hidden={!!coach || ui !== 'playing'} seed={2} />
         </div>
       ) : null}
@@ -302,7 +286,7 @@ export function SprintPage() {
           {showBoard ? boardView : (
             <>
               <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => TYPE_STATS[t]} bars={sprintBars} />
-              <HowTo items={[['↔', 'Hinterrad'], ['↑', 'Antreten'], ['↓', 'Tempo raus'], ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
+              <HowTo items={[...controlsHowTo('Antreten', 'Tempo raus'), ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
               <BikeChip bikes={bikes} />
               <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={nf} />
             </>

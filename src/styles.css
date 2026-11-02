@@ -1613,8 +1613,9 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf-coach__gesture.is-tuck i { animation: abf-g-tuck 1.2s ease-in-out infinite; }
 .abf-coach__gesture.is-brake i { background: #e5484d; animation: abf-g-brake 1.2s ease-in-out infinite; }
 @keyframes abf-g-steer { 0%, 100% { transform: translateX(-11px); } 50% { transform: translateX(11px); } }
-@keyframes abf-g-tuck { 0% { transform: translateY(10px); opacity: 0.4; } 60%, 100% { transform: translateY(-11px); opacity: 1; } }
-@keyframes abf-g-brake { 0% { transform: translateY(-10px); opacity: 0.4; } 60%, 100% { transform: translateY(11px); opacity: 1; } }
+/* Taste halten: Punkt drückt sich hinein und bleibt (statt Daumen-Wischen) */
+@keyframes abf-g-tuck { 0%, 15% { transform: scale(1.35); opacity: 0.45; } 40%, 85% { transform: scale(0.85); opacity: 1; } 100% { transform: scale(1.35); opacity: 0.45; } }
+@keyframes abf-g-brake { 0%, 15% { transform: scale(1.35); opacity: 0.45; } 40%, 85% { transform: scale(0.85); opacity: 1; } 100% { transform: scale(1.35); opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .abf-coach__gesture i { animation: none !important; } }
 
 /* Countdown (startSheet.tsx): ein Ring läuft je Zahl ab, dann „Los“ in der Akzentfarbe */
@@ -3062,3 +3063,53 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 .team-radio__badge i { font-style: normal; color: #ff5fa2; }
 .team-radio__text { min-width: 0; }
 .team-radio__text b { font-weight: 700; color: var(--text); margin-right: 3px; }
+
+/* ---------- Steuerung der Rennspiele (controls.tsx): rechts Gas, links Bremse, Finger ziehen lenkt ---------- */
+/* liegt über der 3D-Bühne und unter dem HUD (das HUD lässt Berührungen durch, nur seine Knöpfe nicht);
+   so hoch wie der sichtbare Bereich, damit die Tasten nie unter der Safari-Leiste verschwinden */
+.rc { position: absolute; left: 0; top: 0; right: 0; height: 100%; height: 100dvh; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.rc.is-off .rc-pedal { opacity: 0.55; }
+.rc-pedal {
+  --slide: 0px;
+  position: absolute; bottom: calc(var(--safe-b) + 22px); width: 84px; height: 84px; pointer-events: none;
+  transition: opacity 0.25s;
+  animation: rc-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+.rc-pedal--gas { right: calc(18px + var(--safe-r)); animation-delay: 0.08s; }
+.rc-pedal--brake { left: calc(18px + var(--safe-l)); width: 74px; height: 74px; bottom: calc(var(--safe-b) + 27px); }
+@keyframes rc-in { from { opacity: 0; transform: translateY(16px) scale(0.92); } }
+.rc-pedal__knob {
+  position: absolute; inset: 0; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  color: #fff; background: rgba(12, 14, 20, 0.58); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.22), 0 8px 22px rgba(0, 0, 0, 0.28);
+  transform: translateX(var(--slide)); transition: transform 0.09s ease-out, background 0.12s, box-shadow 0.12s;
+}
+.rc-pedal__label { font-size: 10.5px; font-weight: 750; letter-spacing: 0.02em; line-height: 1.1; max-width: 68px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.92; }
+.rc-pedal--gas .rc-pedal__knob { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent), 0 8px 22px rgba(0, 0, 0, 0.28); }
+.rc-pedal.is-down .rc-pedal__knob { transform: translateX(var(--slide)) scale(0.93); transition: transform 0.05s ease-out, background 0.06s; }
+.rc-pedal--gas.is-down .rc-pedal__knob { background: var(--accent); color: var(--on-accent, #fff); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent), 0 8px 22px rgba(0, 0, 0, 0.3); }
+.rc-pedal--brake.is-down .rc-pedal__knob { background: #e5484d; box-shadow: 0 0 0 6px rgba(229, 72, 77, 0.3), 0 8px 22px rgba(0, 0, 0, 0.3); }
+/* Tutorial: diese Taste pulsiert */
+.rc-pedal.is-hint::after { content: ''; position: absolute; inset: -8px; border-radius: 50%; border: 2.5px solid #fff; animation: rc-hint 1.2s ease-out infinite; }
+@keyframes rc-hint { from { opacity: 0.9; transform: scale(0.92); } to { opacity: 0; transform: scale(1.25); } }
+/* zu schnell für die Kurve, obwohl Gas: Taste glüht gelb, „Kurve!“ darüber */
+.rc-pedal__warn {
+  position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%) translateY(4px); padding: 4px 10px; border-radius: 999px;
+  background: #ffd23f; color: #1a1400; font-size: 12px; font-weight: 800; white-space: nowrap; opacity: 0; transition: opacity 0.15s, transform 0.15s;
+}
+.rc-pedal--gas.is-warn .rc-pedal__warn { opacity: 1; transform: translateX(-50%) translateY(0); }
+.rc-pedal--gas.is-warn .rc-pedal__knob { box-shadow: inset 0 0 0 3px #ffd23f, 0 0 0 6px rgba(255, 210, 63, 0.35), 0 8px 22px rgba(0, 0, 0, 0.3); animation: rc-warn 0.5s ease-in-out infinite alternate; }
+@keyframes rc-warn { to { box-shadow: inset 0 0 0 3px #ffd23f, 0 0 0 12px rgba(255, 210, 63, 0.12), 0 8px 22px rgba(0, 0, 0, 0.3); } }
+/* Lenkfinger: kleiner Ring mit Pfeilen, der gerade gezogene leuchtet */
+.rc-ring {
+  position: absolute; left: -36px; top: -36px; width: 72px; height: 72px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2px; pointer-events: none; opacity: 0; transition: opacity 0.15s; color: rgba(255, 255, 255, 0.45);
+}
+.rc-ring.is-on { opacity: 1; }
+.rc-ring i { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.6); background: rgba(255, 255, 255, 0.08); }
+.rc-ring.is-left .rc-ring__left, .rc-ring.is-right .rc-ring__right { color: #fff; }
+@media (prefers-reduced-motion: reduce) { .rc-pedal, .rc-pedal.is-hint::after, .rc-pedal--gas.is-warn .rc-pedal__knob { animation: none; } }
+/* Platz über den Tasten: Fernsehwerbung, Tutorial und der Helfer-Knopf rücken nach oben */
+.abf .tv-ad { bottom: calc(var(--safe-b) + 124px); }
+.abf .abf-coach { bottom: calc(var(--safe-b) + 128px); bottom: calc(var(--safe-b) + 128px + 100lvh - 100dvh); }
+.abf .hud-mate { bottom: calc(var(--safe-b) + 152px); }

@@ -1,9 +1,9 @@
 /**
  * Sprintfinale: die letzten 2,4 km einer flachen Etappe im Feld.
  *
- * Kern ist ein Kraftbalken: im Wind kostet Fahren Kraft, im Windschatten erholt man sich. Mit dem
- * Daumen wechselt man das Hinterrad, Daumen hoch heißt antreten (kostet viel Kraft), Daumen runter
- * Tempo rausnehmen. Die Sprinterteams bringen ihre Anfahrerzüge nach vorn, die Anfahrer fallen
+ * Kern ist ein Kraftbalken: im Wind kostet Fahren Kraft, im Windschatten erholt man sich. Finger seitlich ziehen
+ * wechselt das Hinterrad, die Taste rechts heißt antreten (kostet viel Kraft), die Taste links Tempo rausnehmen
+ * (controls.tsx). Die Sprinterteams bringen ihre Anfahrerzüge nach vorn, die Anfahrer fallen
  * nacheinander ab, die Sprinter treten zwischen 320 und 180 m an. Wer zu früh losfährt, wird
  * überholt; wer eingeklemmt ist, kommt nicht vorbei.
  */
@@ -12,7 +12,7 @@ import { clamp, type Friend, type Opp, type Particle, type Phase, type Player, t
 import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { StageRef } from './stageRef';
-import { pedalStep, strainOf } from './motion';
+import { STEER_KEYS, STEER_PACK_GAIN, STEER_PACK_MAX, STEER_SPAN, pedalStep, strainOf } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
@@ -159,6 +159,8 @@ export class SprintRace {
   private keys = { left: false, right: false, down: false, up: false };
   private wantGo = false;
   private wantEase = false;
+  /** Tasten der Steuerung: 1 Antreten, −1 Tempo raus */
+  private pedal = 0;
   private viewW = 390;
   private blocked = false;
   private blockedT = 0;
@@ -314,6 +316,10 @@ export class SprintRace {
   }
   pointerUp() { this.steer.active = false; this.wantGo = false; this.wantEase = false; }
   key(name: 'left' | 'right' | 'down' | 'up', down: boolean) { this.keys[name] = down; }
+  /** Lenken (Steuerung): Finger um dx Bildpunkte seitlich verschoben */
+  steerBy(dx: number) { this.tx = clamp(this.tx + dx * (STEER_SPAN / this.viewW), -XMAX, XMAX); }
+  /** Antreten (1) oder Tempo raus (−1) gehalten, sonst 0 */
+  setPedal(v: number) { this.pedal = v; }
 
   // ------------------------------------------------------------ Schleife
 
@@ -321,8 +327,8 @@ export class SprintRace {
     const dt = Math.min(0.05, dtReal);
     this.time += dt;
     this.phaseT += dt;
-    if (this.keys.left) this.tx = clamp(this.tx - 3.5 * dt, -XMAX, XMAX);
-    if (this.keys.right) this.tx = clamp(this.tx + 3.5 * dt, -XMAX, XMAX);
+    if (this.keys.left) this.tx = clamp(this.tx - STEER_KEYS * dt, -XMAX, XMAX);
+    if (this.keys.right) this.tx = clamp(this.tx + STEER_KEYS * dt, -XMAX, XMAX);
     if (this.phase === 'countdown') {
       const n = 3 - Math.floor(this.phaseT / 0.75);
       if (n !== this.countShown) { this.countShown = n; this.opts.onEvent?.({ type: 'count', n: Math.max(0, n) }); }
@@ -425,8 +431,8 @@ export class SprintRace {
     const racing = this.phase === 'playing' && this.finT < 0;
     const V = this.phase === 'countdown' ? 9 : packSpeed(d);
     // Eingabe → Fahrweise
-    const go = racing && (this.wantGo || this.keys.up);
-    const ease = racing && !go && (this.wantEase || this.keys.down);
+    const go = racing && (this.wantGo || this.keys.up || this.pedal > 0);
+    const ease = racing && !go && (this.wantEase || this.keys.down || this.pedal < 0);
     this.mode = go ? 'go' : ease ? 'ease' : 'sit';
     const dr = this.draftFor(p.z, p.x);
     this.draft += (dr - this.draft) * Math.min(1, dt * 6);
@@ -470,8 +476,8 @@ export class SprintRace {
       if (go && !this.launchAt && d < 900) this.launchAt = Math.round(d);
       this.topV = Math.max(this.topV, p.v);
     }
-    // seitlich: zum Ziel des Daumens, aber nicht in einen Nebenmann hinein
-    const want = clamp((this.tx - p.x) * 5, -2.4, 2.4);
+    // seitlich: direkt zum Ziel des Fingers, aber nicht in einen Nebenmann hinein
+    const want = clamp((this.tx - p.x) * STEER_PACK_GAIN, -STEER_PACK_MAX, STEER_PACK_MAX);
     let nx = p.x + want * dt;
     for (const o of this.opps) {
       if (o.wreck || Math.abs(o.z - p.z) > 1.5) continue;
@@ -527,7 +533,7 @@ export class SprintRace {
     if (d < 1000) once('1k', () => this.opts.onEvent?.({ type: 'banner', title: 'Flamme Rouge', sub: 'Letzter Kilometer', tone: 'red' }));
     if (d < 300) {
       once('300', () => { this.placeAt300 = this.place(); });
-      if (!this.launchAt) once('now', () => this.opts.onEvent?.({ type: 'banner', title: 'Jetzt antreten!', sub: 'Daumen hoch', tone: 'accent' }));
+      if (!this.launchAt) once('now', () => this.opts.onEvent?.({ type: 'banner', title: 'Jetzt antreten!', sub: 'Rechts „Antreten“ halten', tone: 'accent' }));
     }
   }
 
