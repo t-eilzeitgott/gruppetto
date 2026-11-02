@@ -10,7 +10,6 @@
  * schieben lenkt immer. Bremse schlägt Gas. Alles läuft ohne React-Neuzeichnen: Klassen und Lage direkt am Element.
  */
 import { useEffect, useLayoutEffect, useRef, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
-import { cx } from '../ui/kit';
 
 /** was die Steuerung von einem Spiel braucht */
 export interface SteerEngine {
@@ -33,6 +32,29 @@ interface Ptr { role: Role; x: number; x0: number; sum: number }
 
 /** Trefferfläche der Tasten etwas größer als ihr Bild (Daumen treffen selten genau) */
 const SLOP = 18;
+
+/**
+ * Spürbar: kurzes Tippen beim Drücken und Loslassen einer Taste – so merkt man am Daumen, ob sie noch hält.
+ * Android: Vibrations-API. iOS kennt keine – dort löst ein umgelegter Schalter (input switch) das Haptik-Tick
+ * des Systems aus (ab iOS 17.4; muss aus einer Berührung heraus geschehen, darum direkt im Pointer-Ereignis).
+ */
+let hapticSwitch: HTMLInputElement | null = null;
+function haptic(strong: boolean) {
+  try {
+    if (typeof navigator.vibrate === 'function') { navigator.vibrate(strong ? 18 : 8); return; }
+    if (!hapticSwitch) {
+      const el = document.createElement('input');
+      el.type = 'checkbox';
+      el.setAttribute('switch', '');
+      el.tabIndex = -1;
+      el.setAttribute('aria-hidden', 'true');
+      el.style.cssText = 'position:fixed;left:-100px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+      document.body.appendChild(el);
+      hapticSwitch = el;
+    }
+    hapticSwitch.click();
+  } catch { /* egal */ }
+}
 
 export function RaceControls({ eng, enabled, gas, brake, hint = null, ctl }: {
   eng: () => SteerEngine | null;
@@ -68,6 +90,7 @@ export function RaceControls({ eng, enabled, gas, brake, hint = null, ctl }: {
       else steer = p;
     }
     const v = b ? -1 : g ? 1 : 0;
+    if (v !== pedal.current) haptic(v !== 0);
     gasEl.current?.classList.toggle('is-down', g);
     brakeEl.current?.classList.toggle('is-down', b);
     if (!steer) ring.current?.classList.remove('is-on');
@@ -87,6 +110,14 @@ export function RaceControls({ eng, enabled, gas, brake, hint = null, ctl }: {
     if (!enabled) releaseAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
+  // Zustandsklassen (gedrückt, Warnung, Tipp, aus) nur über classList – nie über className aus React: ein
+  // Neuzeichnen (Tutorial-Hinweis kommt oder geht) überschrieb sonst die Klasse der gerade gehaltenen Taste, und
+  // die sah losgelassen aus, obwohl der Finger noch drauf lag
+  useLayoutEffect(() => {
+    root.current?.classList.toggle('is-off', !enabled);
+    gasEl.current?.classList.toggle('is-hint', hint === 'gas');
+    brakeEl.current?.classList.toggle('is-hint', hint === 'brake');
+  }, [enabled, hint]);
   useEffect(() => {
     const off = () => releaseAll();
     const vis = () => { if (document.hidden) releaseAll(); };
@@ -172,7 +203,7 @@ export function RaceControls({ eng, enabled, gas, brake, hint = null, ctl }: {
   return (
     <div
       ref={root}
-      className={cx('rc', !enabled && 'is-off')}
+      className="rc"
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
@@ -180,10 +211,10 @@ export function RaceControls({ eng, enabled, gas, brake, hint = null, ctl }: {
       onContextMenu={(e: { preventDefault(): void }) => e.preventDefault()}
     >
       <div className="rc-ring" ref={ring} aria-hidden="true"><Chevron dir="left" /><i /><Chevron dir="right" /></div>
-      <div className={cx('rc-pedal rc-pedal--brake', hint === 'brake' && 'is-hint')} ref={brakeEl} aria-hidden="true">
+      <div className="rc-pedal rc-pedal--brake" ref={brakeEl} aria-hidden="true">
         <span className="rc-pedal__knob"><BrakeGlyph /><span className="rc-pedal__label" ref={brakeLabel}>{brake}</span></span>
       </div>
-      <div className={cx('rc-pedal rc-pedal--gas', hint === 'gas' && 'is-hint')} ref={gasEl} aria-hidden="true">
+      <div className="rc-pedal rc-pedal--gas" ref={gasEl} aria-hidden="true">
         <span className="rc-pedal__warn">Kurve!</span>
         <span className="rc-pedal__knob"><GasGlyph /><span className="rc-pedal__label" ref={gasLabel}>{gas}</span></span>
       </div>
