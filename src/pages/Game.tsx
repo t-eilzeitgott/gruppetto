@@ -17,8 +17,9 @@ import { Track } from '../game/abfahrt/track';
 import { HowTo } from './finale';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { EV, Perf3D, PLACES, SEC, type Report } from '../game/abfahrt/perf3d';
-import { viewRange } from '../game/abfahrt/viewRange';
-import { gfxAA, gfxDescribe, gfxLevel, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
+import { autoRangeDrop, chosenRange, viewRange } from '../game/abfahrt/viewRange';
+import { gfxAA, gfxAuto, gfxDescribe, gfxLevel, gfxOn, gfxRes, onGfxSettings } from '../game/abfahrt/gfxOpts';
+import { AutoGfx, autoStep, fmtRes } from '../game/abfahrt/autoGfx';
 import { copyText, shareFile } from './admin/gpuKit';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
@@ -282,8 +283,12 @@ export function GamePage() {
       // Testmodus (?lowgfx): winzige Auflösung, selten zeichnen – für schnelle automatische Layout-Checks
       const low = /[?&]lowgfx\b/.test(window.location.search);
       if (low) { renderer.quality = 0.25; renderer.resize(); }
-      // Auflösung: wie im Schieberegler gewählt (gfxOpts) – keine automatische Regelung
-      else if (renderer.quality !== 1) { renderer.quality = 1; renderer.resize(); }
+      // Auflösung und Sichtweite: die Schieberegler sind die Obergrenze, die Automatik (autoGfx.ts) senkt bei knapper
+      // Leistung (und beginnt dort, wo sie in diesem Spiel zuletzt stand)
+      const gov = new AutoGfx('abfahrt');
+      if (!low && renderer.quality !== gov.quality) { renderer.quality = gov.quality; renderer.resize(); }
+      // neue Wahl im Menü (Stufe, Auflösung, Automatik): von deren Stand aus weiter
+      const offGov = onGfxSettings(() => { gov.reset(true); if (!low) renderer.setQuality(gov.quality); });
       // beim Neuaufbau läuft die Fahrt weiter
       if (!engineRef.current || (glGen === 0 && uiRef.current === 'ready')) engineRef.current = makeEngine(false);
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
@@ -333,7 +338,9 @@ export function GamePage() {
         if (!drawn) { drawn = true; canvas.classList.add('is-drawn'); }
         if (!low && watch()) { rebuild(); return; }
         hudRef.current(eng, dt);
-        fps.frame(raw * 1000, performance.now() - c0, gfxRes(), renderer.shaderErrors);
+        const cpu = performance.now() - c0;
+        fps.frame(raw * 1000, cpu, gfxRes() * renderer.quality, renderer.shaderErrors);
+        if (!low) autoStep(gov, renderer, clock, cpu, raw, uiRef.current === 'playing' && eng.phase === 'playing', rec ? (ch) => P.event(ch.kind === 'res' ? EV.quality : EV.range, ch.text) : null);
         // Bildrate beobachten und notfalls die Qualität senken
         acc += dt;
         frames += 1;
@@ -346,7 +353,7 @@ export function GamePage() {
           P.mark(SEC.anzeige);
           P.end({
             dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
-            quality: gfxRes(), px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+            quality: gfxRes() * renderer.quality, px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
           });
         }
         raf = requestAnimationFrame(loop);
@@ -383,6 +390,8 @@ export function GamePage() {
       (window as unknown as { __abfahrt?: unknown }).__abfahrt = { engine: () => engineRef.current, renderer };
       return () => {
         cancelAnimationFrame(raf);
+        offGov();
+        gov.dispose();
         fps.dispose();
         canvas.removeEventListener('webglcontextlost', onLost);
         canvas.removeEventListener('webglcontextrestored', onRestored);
@@ -579,8 +588,9 @@ export function GamePage() {
       geraet: navigator.userAgent,
       bildschirm: `${window.innerWidth}×${window.innerHeight} ×${window.devicePixelRatio || 1}`,
       zeichenflaeche: cv ? `${cv.width}×${cv.height}` : '?',
-      aufloesung: r ? `${String(gfxRes()).replace('.', ',')}-fach (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
-      sichtweite: viewRange().label,
+      aufloesung: r ? `${fmtRes(gfxRes() * r.quality)}${r.quality < 1 ? ` (Automatik; gewählt ${fmtRes(gfxRes())})` : ''} (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
+      sichtweite: `${viewRange().label}${autoRangeDrop() ? ` (Automatik; gewählt ${chosenRange().label})` : ''}`,
+      automatik: gfxAuto() ? 'an' : 'aus',
       // (PC-Grafik und Kantenglättung gehören zur Bühne: nach einem Wechsel gelten sie erst im nächsten Spiel)
       grafik: `${gfxDescribe()}${r && r.pc !== gfxOn('pc') ? ' – PC-Grafik erst ab dem nächsten Spiel' : ''}${r && r.aa !== gfxAA() ? ` – Kantenglättung ${r.aa ? 'noch an' : 'noch aus'} bis zum nächsten App-Start` : ''}`,
     };

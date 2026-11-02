@@ -8,8 +8,9 @@ import { BUILD_ID } from '../app/config';
 import { Perf3D, type Report } from '../game/abfahrt/perf3d';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import type { RaceView } from '../game/abfahrt/engine';
-import { viewRange } from '../game/abfahrt/viewRange';
-import { gfxAA, gfxDescribe, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
+import { autoRangeDrop, chosenRange, viewRange } from '../game/abfahrt/viewRange';
+import { gfxAA, gfxAuto, gfxDescribe, gfxOn, gfxRes } from '../game/abfahrt/gfxOpts';
+import { fmtRes } from '../game/abfahrt/autoGfx';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { copyText, shareFile } from './admin/gpuKit';
 import { lsGet, lsSet } from './gameKit';
@@ -47,8 +48,9 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
       geraet: navigator.userAgent,
       bildschirm: `${window.innerWidth}×${window.innerHeight} ×${window.devicePixelRatio || 1}`,
       zeichenflaeche: cv ? `${cv.width}×${cv.height}` : '?',
-      aufloesung: r ? `${String(gfxRes()).replace('.', ',')}-fach (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
-      sichtweite: viewRange().label,
+      aufloesung: r ? `${fmtRes(gfxRes() * r.quality)}${r.quality < 1 ? ` (Automatik; gewählt ${fmtRes(gfxRes())})` : ''} (${r.gl.getPixelRatio().toFixed(2)} Pixel je Punkt)` : '?',
+      sichtweite: `${viewRange().label}${autoRangeDrop() ? ` (Automatik; gewählt ${chosenRange().label})` : ''}`,
+      automatik: gfxAuto() ? 'an' : 'aus',
       // (PC-Grafik und Kantenglättung gehören zur Bühne: nach einem Wechsel gelten sie erst im nächsten Spiel)
       grafik: `${gfxDescribe()}${r && r.pc !== gfxOn('pc') ? ' – PC-Grafik erst ab dem nächsten Spiel' : ''}${r && r.aa !== gfxAA() ? ` – Kantenglättung ${r.aa ? 'noch an' : 'noch aus'} bis zum nächsten App-Start` : ''}`,
     };

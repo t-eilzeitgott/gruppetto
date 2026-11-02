@@ -1,7 +1,8 @@
 /**
  * Sichtweite (Teil der Grafikstufe, gfxOpts.ts): wie weit die feine und mittlere Landschaft, Bäume und Strecke
  * reichen, wie viel Rechenzeit je Bild ins Nachladen gehen darf und wie dicht der Dunst ist. Der Renderer liest sie
- * in jedem Bild und stellt sich bei einer Änderung um (ohne Neuaufbau).
+ * in jedem Bild und stellt sich bei einer Änderung um (ohne Neuaufbau). Bei knapper Leistung kürzt die Automatik
+ * (autoGfx.ts) sie stufenweise, höchstens bis zur kürzesten.
  */
 import { gfxRange, onGfxSettings } from './gfxOpts';
 export type RangeId = 'eco' | 'normal' | 'far' | 'max' | 'ultra' | 'extreme';
@@ -45,10 +46,33 @@ let ver = 1;
 let last = gfxRange();
 onGfxSettings(() => { const r = gfxRange(); if (r !== last) { last = r; ver += 1; } });
 
-/** wirksame Sichtweite (aus der Grafikstufe) */
-export function viewRange(): ViewRange {
+/** alle Sichtweiten von der kürzesten (Einfach) bis zur weitesten – die Automatik (autoGfx.ts) geht darin hinab */
+const LADDER: ViewRange[] = [LITE, ...RANGES];
+/** gewählte Sichtweite der Grafikstufe (ohne Automatik) */
+function chosen(): ViewRange {
   const r = gfxRange();
   return r === 'lite' ? LITE : RANGES.find((x) => x.id === r) ?? RANGES[3];
 }
+/** von der Automatik gekürzt: so viele Stufen unter der gewählten */
+let drop = 0;
+
+/** wirksame Sichtweite: die der Grafikstufe, bei knapper Leistung automatisch kürzer (bis „Einfach“) */
+export function viewRange(): ViewRange {
+  const c = chosen();
+  if (!drop) return c;
+  return LADDER[Math.max(0, LADDER.indexOf(c) - drop)];
+}
+/** wie viele Stufen die Sichtweite unter der gewählten noch kürzer werden kann (bis „Einfach“) */
+export function rangeDropMax(): number { return LADDER.indexOf(chosen()); }
+/** Automatik: so viele Stufen kürzer als gewählt (0 = wie gewählt) */
+export function autoRangeDrop(): number { return drop; }
+export function setAutoRangeDrop(n: number) {
+  const d = Math.max(0, Math.min(rangeDropMax(), Math.round(n)));
+  if (d === drop) return;
+  drop = d;
+  ver += 1;
+}
+/** Name der Sichtweite (gewählt oder wirksam) */
+export function chosenRange(): ViewRange { return chosen(); }
 /** zählt bei jeder Änderung hoch (der Renderer vergleicht) */
 export function viewRangeVersion(): number { return ver; }

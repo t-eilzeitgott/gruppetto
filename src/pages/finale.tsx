@@ -6,7 +6,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import { acquireStage, hasWarmStage, releaseStage, watchStage, type Stage } from '../game/abfahrt/pool';
 import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock, paceText } from '../game/frameClock';
-import { gfxLevel, gfxRes } from '../game/abfahrt/gfxOpts';
+import { gfxLevel, gfxRes, onGfxSettings } from '../game/abfahrt/gfxOpts';
+import { AutoGfx, autoStep } from '../game/abfahrt/autoGfx';
 import { EV, SEC, type Perf3D } from '../game/abfahrt/perf3d';
 import type { Renderer3D } from '../game/abfahrt/render3d';
 import { viewRange } from '../game/abfahrt/viewRange';
@@ -97,8 +98,12 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       renderer.setTheme(readAccent(), document.documentElement.dataset.theme === 'dark');
       const low = /[?&]lowgfx\b/.test(window.location.search);
       if (low) { renderer.quality = 0.25; renderer.resize(); }
-      // Auflösung: wie im Schieberegler gewählt (gfxOpts) – keine automatische Regelung
-      else if (renderer.quality !== 1) { renderer.quality = 1; renderer.resize(); }
+      // Auflösung und Sichtweite: die Schieberegler sind die Obergrenze, die Automatik (autoGfx.ts) senkt bei knapper
+      // Leistung (und beginnt dort, wo sie in diesem Spiel zuletzt stand)
+      const gov = new AutoGfx(cb.current.game);
+      if (!low && renderer.quality !== gov.quality) { renderer.quality = gov.quality; renderer.resize(); }
+      // neue Wahl im Menü (Stufe, Auflösung, Automatik): von deren Stand aus weiter
+      const offGov = onGfxSettings(() => { gov.reset(true); if (!low) renderer.setQuality(gov.quality); });
       // beim Neuaufbau läuft das Rennen weiter
       if (!engineRef.current || (gen === 0 && uiRef.current === 'ready')) engineRef.current = cb.current.make();
       // vorgewärmt: gleich ein Bild zeichnen – die Welt steht, bevor die Seite erscheint
@@ -159,7 +164,9 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         if (!low && watch()) { rebuild(); return; }
         idleT = 0;
         cb.current.onFrame(eng, dt);
-        fps.frame(lastDraw ? now - lastDraw : 0, performance.now() - c0, gfxRes(), renderer.shaderErrors);
+        const cpu = performance.now() - c0;
+        fps.frame(lastDraw ? now - lastDraw : 0, cpu, gfxRes() * renderer.quality, renderer.shaderErrors);
+        if (!low) autoStep(gov, renderer, clock, cpu, raw, uiRef.current === 'playing' && eng.phase === 'playing', rec ? (ch) => P!.event(ch.kind === 'res' ? EV.quality : EV.range, ch.text) : null);
         lastDraw = now;
         if (idle) { frames += 1; raf = requestAnimationFrame(loop); return; }
         acc += dt;
@@ -173,7 +180,7 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
           P!.mark(SEC.anzeige);
           P!.end({
             dt: raw * 1000, period: clock.target, calls: renderer.lastCalls, tris: renderer.lastTris, progs: renderer.gl.info.programs?.length ?? 0,
-            quality: gfxRes(), px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
+            quality: gfxRes() * renderer.quality, px: renderer.gl.getPixelRatio(), range: gfxLevel(), z: eng.p.z, v: eng.p.v, phase: ph, place: renderer.placeAt(eng.p.z), riders: renderer.ridersShown,
           });
         }
         raf = requestAnimationFrame(loop);
@@ -209,6 +216,8 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
       g.__abfahrt = { engine: () => engineRef.current, renderer };
       return () => {
         cancelAnimationFrame(raf);
+        offGov();
+        gov.dispose();
         fps.dispose();
         canvas.removeEventListener('webglcontextlost', onLost);
         canvas.removeEventListener('webglcontextrestored', onRestored);

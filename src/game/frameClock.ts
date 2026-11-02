@@ -38,6 +38,8 @@ export class FrameClock {
   pace = true;
   /** zählt bei jeder Änderung von Takt oder Takten je Bild hoch (für die Messfahrt) */
   changes = 0;
+  /** das zuletzt gezeichnete Bild kam so viele Bildschirmtakte zu spät (0 = pünktlich; für die Automatik) */
+  slip = 0;
   /** echte Zeit, die das Spiel noch nachholen muss (ms; negativ: ist voraus) */
   private owed = 0;
   private prev: number;
@@ -94,6 +96,7 @@ export class FrameClock {
     const raw = now - this.prev;
     this.prev = now;
     this.raw = Math.max(0, raw) / 1000;
+    this.slip = 0;
     if (!(raw > 0)) return 0;
     // lange Pause (Hintergrund, Ladepause): nichts nachholen, Raster neu beginnen
     if (raw > 250) {
@@ -110,6 +113,7 @@ export class FrameClock {
     }
     // ganze Bildschirmtakte seit dem letzten Bild im Raster (mindestens der feste Bildtakt)
     const steps = Math.max(this.div, Math.round((now - this.due) / P));
+    this.slip = steps - this.div;
     this.due += steps * P;
     // dem Zeitstempel langsam folgen (Lage des Takts, kleine Abweichung des Takts), sein Rauschen herausfiltern – nie
     // voraus (sonst ließe ready danach zu viele Aufrufe aus)

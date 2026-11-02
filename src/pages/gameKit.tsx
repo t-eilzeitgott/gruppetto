@@ -4,7 +4,8 @@
  */
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { fpsMeterOn, setFpsMeter } from '../game/fpsMeter';
-import { GFX_LEVELS, GFX_MAX, GFX_MIN, gfxLevel, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxLevel, setGfxRes, stageAA } from '../game/abfahrt/gfxOpts';
+import { GFX_LEVELS, GFX_MAX, GFX_MIN, gfxAuto, gfxLevel, gfxOn, gfxRes, onGfxSettings, resSteps, setGfxAuto, setGfxLevel, setGfxRes, stageAA } from '../game/abfahrt/gfxOpts';
+import { autoView, onAutoView, RES_STEPS } from '../game/abfahrt/autoGfx';
 import { cx } from '../ui/kit';
 import { healFixedSoon } from '../ui/fixedHeal';
 
@@ -222,7 +223,27 @@ export function GfxSliders({ page }: { page?: boolean }) {
           onPreview={setRi} onCommit={(i) => { setRi(i); setGfxRes(steps[i]); }} />
         <div className="gfx-sl__ends" aria-hidden="true"><span>{fmtX(steps[0])}</span><span>{fmtX(steps[steps.length - 1])}</span></div>
       </div>
+      <AutoSwitch res={cur.res} />
     </div>
+  );
+}
+
+/**
+ * Automatik (autoGfx.ts): die Schieberegler sind die Obergrenze; reicht die Leistung nicht, senkt das Spiel erst die
+ * Auflösung (bis drei Viertel) und dann die Sichtweite. Darunter steht, was sie gerade eingestellt hat.
+ */
+function AutoSwitch({ res }: { res: number }) {
+  const [on, setOn] = useState(gfxAuto);
+  const [v, setV] = useState(autoView);
+  useEffect(() => onGfxSettings(() => setOn(gfxAuto())), []);
+  useEffect(() => onAutoView(() => setV(autoView())), []);
+  const floor = res * RES_STEPS[RES_STEPS.length - 1];
+  const hint = v.on && v.reduced ? `Gerade ${fmtX(v.res)} · Sicht ${v.range}` : `Bei Bedarf bis ${fmtX(floor)} und kürzere Sicht`;
+  return (
+    <button type="button" role="switch" aria-checked={on} className={cx('abf-switch', 'gfx-auto', on && 'is-on')} onClick={() => setGfxAuto(!on)}>
+      <span className="abf-switch__text"><span>Automatisch anpassen</span>{on ? <small>{hint}</small> : <small>Immer genau wie eingestellt</small>}</span>
+      <span className="abf-switch__track" aria-hidden="true"><span className="abf-switch__knob" /></span>
+    </button>
   );
 }
 

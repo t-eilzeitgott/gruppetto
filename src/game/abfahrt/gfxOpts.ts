@@ -272,6 +272,24 @@ export function setGfxRes(d: number) {
   notify(OPTS.map((k) => gfxOn(k)));
 }
 
+// ------------------------------------------------------------------ Automatik
+
+const K_AUTO = 'gruppetto.gfx.auto';
+const autoFixed = /[?&]auto=(an|aus)\b/.exec(search())?.[1];
+let auto = autoFixed ? autoFixed === 'an' : lsGet(K_AUTO) !== '0';
+/**
+ * Automatik an (Vorgabe): reicht die Leistung nicht für 60 Bilder je Sekunde, senkt sie im Spiel erst die Auflösung
+ * (bis auf drei Viertel der gewählten) und dann die Sichtweite (bis zur kürzesten) – und hebt beides wieder, wenn
+ * Luft ist (autoGfx.ts). Die Schieberegler sind dann die Obergrenze. ?auto=an|aus zum Prüfen.
+ */
+export function gfxAuto(): boolean { return auto; }
+export function setGfxAuto(on: boolean) {
+  if (on === auto) return;
+  auto = on;
+  if (!autoFixed) lsSet(K_AUTO, on ? '1' : '0');
+  notify(OPTS.map((k) => gfxOn(k)));
+}
+
 /** bei jeder wirksamen Änderung eines Schalters benachrichtigen; gibt die Abmeldung zurück */
 export function onGfxChange(f: (k: GfxOpt, on: boolean) => void): () => void {
   subs.add(f);

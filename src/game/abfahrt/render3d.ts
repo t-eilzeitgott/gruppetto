@@ -1881,16 +1881,22 @@ export class Renderer3D {
     P?.mark(SEC.dinge);
     // Messfahrt: etwa alle 1,5 s ein Probebild – vorher auf die Grafik warten (Rückstau), danach auf ihr Ende
     // (Grafikzeit dieses Bildes; WebGL auf dem iPhone kennt keine Zeitstempel)
-    const probe = P?.wantProbe() ?? false;
+    // (dazu ein Probebild auf Wunsch der Automatik für Auflösung und Sichtweite, autoGfx.ts: probeNext → gpuProbe)
+    const pWant = P?.wantProbe() ?? false;
+    const own = this.probeNext;
+    this.probeNext = false;
+    const probe = pWant || own;
     let tA = 0, tB = 0;
     if (probe) { tA = performance.now(); this.syncGl(); tB = performance.now(); }
     if (this.post) this.post(() => { this.gl.render(this.scene, this.camera); this.takeCounts(); }, g);
     else { this.gl.render(this.scene, this.camera); this.takeCounts(); }
     this.justDrew = true;
-    if (probe && P) {
+    if (probe) {
       const tS = performance.now();
       this.syncGl();
-      P.setProbe({ drain: tB - tA, submit: tS - tB, gpu: performance.now() - tB });
+      const gpu = performance.now() - tB;
+      if (pWant && P) P.setProbe({ drain: tB - tA, submit: tS - tB, gpu });
+      if (own) this.gpuProbe = gpu;
     }
     this.drawOverlay(g);
     P?.mark(SEC.zeichnen);
@@ -1921,6 +1927,9 @@ export class Renderer3D {
   private px1 = new Uint8Array(4);
   private takeCounts() { const i = this.gl.info.render; this.lastCalls = i.calls; this.lastTris = i.triangles; }
   /** auf die Grafik warten (ein Bildpunkt lesen erzwingt, dass alles Gezeichnete fertig ist) */
+  /** nächstes Bild als Probebild: auf die Grafik warten und ihre Zeit messen (Ergebnis in gpuProbe, ms) */
+  probeNext = false;
+  gpuProbe: number | null = null;
   private syncGl() {
     const c = this.gl.getContext();
     c.readPixels(0, 0, 1, 1, c.RGBA, c.UNSIGNED_BYTE, this.px1);
