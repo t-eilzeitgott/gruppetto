@@ -17,7 +17,9 @@ import {
 } from './demoData';
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
-const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+/** Demo: Antwortzeit (zum Prüfen der Ladezustände: ?langsam=ms) */
+const SLOW = (() => { try { const m = /[?&]langsam=(\d+)/.exec(window.location.search); return m ? Number(m[1]) : 0; } catch { return 0; } })();
+const wait = (ms = 120) => new Promise((r) => setTimeout(r, Math.max(ms, SLOW)));
 
 /** Demo-Modus: alle Daten im Speicher, gleiche Regeln wie in der Datenbank. */
 /** Demo-Zeitfahrer: Stärke, Linie */

@@ -353,8 +353,8 @@ a.card--row:hover, a.card:hover { background: var(--surface2); }
 :root { --skel: rgba(255, 255, 255, 0.075); }
 [data-theme=light] { --skel: rgba(0, 0, 0, 0.065); }
 .skel { display: block; flex: none; max-width: 100%; background: var(--skel); border-radius: 8px; animation: skel-pulse 1.8s ease-in-out infinite; }
-.skel-t { display: block; flex: none; max-width: 100%; height: 1.4em; position: relative; }
-.skel-t::before { content: ""; position: absolute; left: 0; right: 0; top: 0.3em; bottom: 0.3em; border-radius: 6px; background: var(--skel); animation: skel-pulse 1.8s ease-in-out infinite; }
+.skel-t { display: block; flex: none; max-width: 100%; height: calc(var(--lh, 1.4) * 1em); position: relative; }
+.skel-t::before { content: ""; position: absolute; left: 0; right: 0; top: calc((var(--lh, 1.4) - 0.8) * 0.5em); bottom: calc((var(--lh, 1.4) - 0.8) * 0.5em); border-radius: 6px; background: var(--skel); animation: skel-pulse 1.8s ease-in-out infinite; }
 .skel-right { margin-left: auto; }
 .skel--dark { --skel: rgba(255, 255, 255, 0.09); }
 /* Zahl „0/3“ als Platzhalter: gleiche Breite, grau verdeckt */
@@ -2019,11 +2019,20 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 }
 [data-theme="light"] .arena__ind { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); }
 .arena__tab {
-  position: relative; z-index: 1; min-height: 34px; border: 0; padding: 0 4px; background: none; border-radius: 10px;
+  position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; text-align: center;
+  min-height: 34px; border: 0; padding: 0 4px; background: none; border-radius: 10px;
   font: 600 13.5px/1 var(--font); color: var(--muted); letter-spacing: -0.01em; transition: color 0.2s; -webkit-tap-highlight-color: transparent;
 }
 .arena__tab.is-on { color: var(--text); }
 .arena__tab:active { color: var(--text); }
+/* Platzhalter (skeleton.tsx): markiert das zuletzt gewählte Spiel (data-game setzt das Startskript bzw. die Karte) */
+:root[data-game="abfahrt"] .arena--skel .arena__tabs { --i: 1; }
+:root[data-game="sprint"] .arena--skel .arena__tabs { --i: 2; }
+:root[data-game="berg"] .arena--skel .arena__tabs { --i: 3; }
+:root:not([data-game="abfahrt"]):not([data-game="sprint"]):not([data-game="berg"]) .arena--skel .arena__tab[data-g="zeitfahren"],
+:root[data-game="abfahrt"] .arena--skel .arena__tab[data-g="abfahrt"],
+:root[data-game="sprint"] .arena--skel .arena__tab[data-g="sprint"],
+:root[data-game="berg"] .arena--skel .arena__tab[data-g="berg"] { color: var(--text); }
 .arena__tab.is-dot::after { content: ""; position: absolute; top: 7px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 /* die vier Spiele nebeneinander: echtes Scrollen mit Einrasten (flüssig auch, wenn die Seite gerade rechnet);
    die Karte ist so hoch wie das höchste Spiel – beim Wischen springt nichts */
@@ -2032,6 +2041,8 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
   -webkit-overflow-scrolling: touch; scrollbar-width: none; touch-action: pan-x pan-y;
 }
 .arena__scroller::-webkit-scrollbar { display: none; }
+/* solange die Bestenlisten laden: so hoch wie beim letzten Mal (--arena-h, gemessen in GamesCard.tsx) */
+.arena--skel .arena__scroller, .arena.is-loading .arena__scroller { min-height: var(--arena-h, 0px); }
 .arena__pane { flex: 0 0 100%; min-width: 0; padding: 0 16px; display: flex; flex-direction: column; gap: 12px; scroll-snap-align: start; scroll-snap-stop: always; contain: layout paint; }
 .arena__hero { display: block; color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent; }
 /* Kopf eines Spiels (GameHead.tsx): hier und im Startblatt des Spiels gleich, damit er hinüberfliegen kann */

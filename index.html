@@ -29,6 +29,11 @@
         var seite = h.indexOf('/spiel/garage') === 0 ? 'garage' : h.indexOf('/spiel') === 0 ? 'full' : h && h !== '/' ? 'page' : 'home';
         if (/*LIVE*/false && !localStorage.getItem('gruppetto.session')) seite = 'none';
         d.dataset.boot = seite;
+        // Spielkarte der Startseite: zuletzt gewähltes Spiel und Höhe der Spiele (bei gleicher Breite), damit sie beim Laden nicht springt
+        var g = localStorage.getItem('gruppetto.games.sel');
+        if (g) d.dataset.game = g;
+        var ah = /^(\d+):(\d+(?:\.\d+)?)$/.exec(localStorage.getItem('gruppetto.games.h') || '');
+        if (ah && +ah[1] === window.innerWidth) d.style.setProperty('--arena-h', ah[2] + 'px');
       } catch (e) {}
     })();
   </script>

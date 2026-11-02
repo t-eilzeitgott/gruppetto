@@ -30,6 +30,10 @@ import { passStamps } from '../game/passbook';
 import { BoardSkeleton, SkelText } from './skeleton';
 
 const LS_SEL = 'gruppetto.games.sel';
+/** Höhe der Spiele beim letzten Mal („Fensterbreite:Höhe“) – hält Platzhalter und Ladezustand gleich hoch (index.html) */
+const LS_H = 'gruppetto.games.h';
+/** gewähltes Spiel auch für die Platzhalter der Karte (skeleton.tsx, data-game) */
+const markGame = (id: GameId) => { document.documentElement.dataset.game = id; };
 /** kurze Namen für die Spielwahl */
 const SHORT: Record<GameId, string> = { zeitfahren: 'Zeitfahren', abfahrt: 'Abfahrt', sprint: 'Sprint', berg: 'Berg' };
 
@@ -160,8 +164,22 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
     const el = scroller.current;
     if (el) el.scrollLeft = idxRef.current * width();
     tabs.current?.style.setProperty('--i', String(idxRef.current));
+    markGame(GAMES[idxRef.current].id);
     warmGame(GAMES[idxRef.current].id);
   }, []);
+  // Bestenlisten geladen: Höhe der Spiele merken – beim nächsten Laden (Platzhalter, Ladezustand) genauso hoch,
+  // statt erst mit drei grauen Zeilen und dann mit der vierten Zeile oder dem Hinweis „überholt“ zu springen
+  const loading = !boards.every((b) => b.loaded || b.error);
+  const alertSig = JSON.stringify(alerts.map((a) => a.alert));
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (loading || !el) return;
+    const h = Math.round(el.getBoundingClientRect().height * 10) / 10;
+    if (!h) return;
+    document.documentElement.style.setProperty('--arena-h', `${h}px`);
+    try { localStorage.setItem(LS_H, `${window.innerWidth}:${h}`); } catch { /* egal */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, alertSig, ...boards]);
   const onScroll = () => {
     // ein laufender Umbau der 3D-Bühne tritt zurück, solange gewischt wird
     markUiBusy(500);
@@ -181,6 +199,7 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
     settle.current = window.setTimeout(() => {
       const id = GAMES[idxRef.current].id;
       try { localStorage.setItem(LS_SEL, id); } catch { /* egal */ }
+      markGame(id);
       warmGame(id);
     }, 700);
   };
@@ -200,7 +219,7 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
   }, []);
 
   return (
-    <section className="card arena" aria-label="Minispiele">
+    <section className={cx('card arena', loading && 'is-loading')} aria-label="Minispiele" aria-busy={loading || undefined}>
       <div className="arena__tabs" role="tablist" aria-label="Spiel wählen" ref={tabs}>
         <span className="arena__ind" aria-hidden="true" />
         {GAMES.map((g, i) => (
@@ -307,7 +326,7 @@ function Tiles({ tourName, stages }: { tourName: string | null; stages: Stage[] 
       <Link to="/spiel/garage" className={cx('arena__tile', fresh && 'is-fresh')} ariaLabel={`Radgarage – ${n} von ${BIKES.length} Rädern freigeschaltet${fresh ? ', neues Rad' : ''}`}>
         <AreaIcon area="garage" size={34} />
         <span className="arena__tile-text">
-          {bikes.loaded ? <strong>{n}<small>/{BIKES.length}</small></strong> : <SkelText w={36} size={17} />}
+          {bikes.loaded ? <strong>{n}<small>/{BIKES.length}</small></strong> : <SkelText w={36} size={17} lh={1.15} />}
           <span>{fresh ? 'Neues Rad' : 'Räder'}</span>
         </span>
         {bikes.loaded && next ? <i className="arena__tile-bar" style={{ '--p': frac } as CSSProperties} aria-hidden="true" /> : null}
@@ -315,7 +334,7 @@ function Tiles({ tourName, stages }: { tourName: string | null; stages: Stage[] 
       <Link to="/spiel/reise" className="arena__tile" ariaLabel={`Europareise – ${fmtKm(pos.meters / 1000)}${j.loaded && !done && pos.meters > 0 ? `, noch ${fmtKm(pos.toNext)} bis ${nextStop.name}` : ''}`}>
         <AreaIcon area="reise" size={34} />
         <span className="arena__tile-text">
-          {j.loaded ? <strong>{fmtKm(pos.meters / 1000)}</strong> : <SkelText w={44} size={17} />}
+          {j.loaded ? <strong>{fmtKm(pos.meters / 1000)}</strong> : <SkelText w={44} size={17} lh={1.15} />}
           <span>{j.loaded ? reiseSub : 'Reise'}</span>
         </span>
         {j.loaded && pos.meters > 0 ? <i className="arena__tile-bar" style={{ '--p': Math.min(1, pos.km / ROUTE_KM) } as CSSProperties} aria-hidden="true" /> : null}
@@ -323,7 +342,7 @@ function Tiles({ tourName, stages }: { tourName: string | null; stages: Stage[] 
       <Link to="/spiel/reise" className="arena__tile" ariaLabel={`Passbuch – ${passes ?? 0} Pässe`}>
         <AreaIcon area="paesse" size={34} />
         <span className="arena__tile-text">
-          {passes !== null ? <strong>{passes}</strong> : <SkelText w={22} size={17} />}
+          {passes !== null ? <strong>{passes}</strong> : <SkelText w={22} size={17} lh={1.15} />}
           <span>{passes === 1 ? 'Pass' : 'Pässe'}</span>
         </span>
       </Link>

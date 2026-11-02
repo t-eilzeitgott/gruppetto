@@ -23,9 +23,12 @@ export function Skel({ w, h, r, className, style }: { w?: number | string; h?: n
   return <span className={cx('skel', className)} style={{ width: w, height: h, borderRadius: r, ...style }} aria-hidden="true" />;
 }
 
-/** Textzeile: so hoch wie eine Zeile in dieser Schriftgröße, der graue Balken in der Mitte */
-export function SkelText({ w, size = 16, className }: { w: number | string; size?: number; className?: string }) {
-  return <span className={cx('skel-t', className)} style={{ width: w, fontSize: size }} aria-hidden="true" />;
+/**
+ * Textzeile: so hoch wie eine Zeile in dieser Schriftgröße (lh = Zeilenhöhe des echten Texts, sonst 1,4),
+ * der graue Balken in der Mitte
+ */
+export function SkelText({ w, size = 16, lh, className }: { w: number | string; size?: number; lh?: number; className?: string }) {
+  return <span className={cx('skel-t', className)} style={{ width: w, fontSize: size, ...(lh ? { '--lh': lh } : null) } as CSSProperties} aria-hidden="true" />;
 }
 
 /** für Bildschirmleser: „Lädt …“ */
@@ -111,21 +114,28 @@ export function HomeSkeleton() {
   );
 }
 
-/** Spielkarte: Spielwahl, Kopf mit Symbol, kleine Bestenliste, Startknopf, drei Kacheln */
+/** Spiele der Karte in ihrer Reihenfolge (wie GAMES) – hier ohne die Spieldaten, die Startansicht bleibt klein */
+const ARENA_TABS = [['zeitfahren', 'Zeitfahren'], ['abfahrt', 'Abfahrt'], ['sprint', 'Sprint'], ['berg', 'Berg']] as const;
+
+/**
+ * Spielkarte: Spielwahl, Kopf mit Symbol, kleine Bestenliste, Startknopf, drei Kacheln – in den Maßen der echten
+ * Karte. Welches Spiel markiert ist und wie hoch die Spiele zuletzt waren, setzt das Startskript in index.html
+ * (data-game, --arena-h), damit beim Laden nichts springt.
+ */
 export function GamesCardSkeleton() {
   return (
-    <section className="card arena" aria-hidden="true">
+    <section className="card arena arena--skel" aria-hidden="true">
       <div className="arena__tabs">
         <span className="arena__ind" />
-        {['Zeitfahren', 'Abfahrt', 'Sprint', 'Berg'].map((n, i) => <span key={n} className={cx('arena__tab', i === 0 && 'is-on')}>{n}</span>)}
+        {ARENA_TABS.map(([id, n]) => <span key={id} className="arena__tab" data-g={id}>{n}</span>)}
       </div>
       <div className="arena__scroller">
         <div className="arena__pane">
           <div className="ghead">
             <Skel w={44} h={44} r={13} />
             <div className="ghead__text">
-              <SkelText w={120} size={22} />
-              <SkelText w={200} size={13.5} />
+              <SkelText w={120} size={22} lh={1.15} />
+              <SkelText w={200} size={13.5} lh={1.3} />
             </div>
           </div>
           <BoardSkeleton />
@@ -137,8 +147,8 @@ export function GamesCardSkeleton() {
           <div key={i} className="arena__tile">
             <Skel w={34} h={34} r={10} />
             <div className="arena__tile-text">
-              <SkelText w={36} size={17} />
-              <SkelText w={48} size={11.5} />
+              <SkelText w={36} size={17} lh={1.15} />
+              <SkelText w={48} size={11.5} lh={1.25} />
             </div>
           </div>
         ))}
@@ -151,7 +161,7 @@ export function GamesCardSkeleton() {
 export function BoardSkeleton() {
   return (
     <span className="arena__board" aria-hidden="true">
-      <SkelText w={44} size={11} className="arena__board-label" />
+      <span className="arena__board-label"><SkelText w={44} size={11} /></span>
       {[0, 1, 2].map((i) => (
         <span key={i} className="arena__row">
           <SkelText w={10} size={13} />
