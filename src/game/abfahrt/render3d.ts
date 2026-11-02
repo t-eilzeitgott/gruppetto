@@ -47,7 +47,7 @@ import { mulberry32 } from './rng';
 import { ATMO } from './grade';
 import { viewRange, viewRangeVersion } from './viewRange';
 import { setGlossEnv } from './gloss';
-import { apIn, apOut, apQ, appearify, appearifyTree, setAp, setApDiscard } from './appear';
+import { apBase, apFrame, apIn, apOut, apQ, apTwinIfAny, apUseTwins, appearify, appearifyTree, setAp, setApAll } from './appear';
 import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
 import type { WeatherEnv } from './weather';
 import { gfxAA, gfxOn, gfxRes, onGfxChange, onGfxSettings } from './gfxOpts';
@@ -237,7 +237,8 @@ vec3 roadWear(vec3 col, float um, float vm, float e, float rd) {
   // ausgefranster Rand: die letzten Dezimeter bröckeln – heller Splitt, dunkle Löcher, unregelmäßig breit
   float ed = min(um + e, 5.6 + e - um) + (vn1(vm * 2.3, 73.0).x - 0.5) * 0.24;
   float rav = smoothstep(0.34, 0.02, ed);
-  float pit = rd < 40.0 ? step(0.6, vn2(vec2(um * 9.0, vm * 7.0))) : 0.5;
+  float kPit = smoothstep(44.0, 34.0, rd);
+  float pit = kPit > 0.0 ? mix(0.4, step(0.6, vn2(vec2(um * 9.0, vm * 7.0))), kPit) : 0.4;
   col = mix(col, col * vec3(1.2, 1.14, 1.02), rav * 0.6);
   col = mix(col, col * 0.42, rav * pit * 0.7);
 #endif
@@ -1765,6 +1766,8 @@ export class Renderer3D {
     // Kostenanalyse: sie zeichnet selbst (Spiel steht)
     if (this.analysing) return;
     const P = this.prof;
+    // Materialien mit Ausblend-Raster (nur beim Ein- und Ausblenden in Gebrauch) mit ihrem Original abgleichen
+    apFrame();
     // Messfahrt: Hochladen und erste Zeichenzustände mitschreiben (nur solange gemessen wird)
     if (P && !this.instr) this.instr = this.instrument(P);
     else if (!P && this.instr) { this.instr(); this.instr = null; }
@@ -2108,7 +2111,7 @@ export class Renderer3D {
       if (inObj.has(o) || o === this.sunset.mesh) return;
       const ms = (o as THREE.Mesh).material;
       if (!ms) return;
-      for (const m of Array.isArray(ms) ? ms : [ms]) if (!known.has(m)) (m.name === 'arch' ? signs : rest).add(m);
+      for (const m0 of Array.isArray(ms) ? ms : [ms]) { const m = apBase(m0); if (!known.has(m)) (m.name === 'arch' ? signs : rest).add(m); }
     });
     if (rest.size) cats.set(`Sonstiges (${[...rest].map((m) => m.name || m.type).join(', ')})`, rest);
     // Zustand merken und wiederherstellen
@@ -2120,7 +2123,12 @@ export class Renderer3D {
     const sunVis0 = this.sunset.mesh.visible;
     const shadowAuto0 = gl.shadowMap.autoUpdate;
     let usePost = true;
-    const hideMats = (set: Set<THREE.Material> | undefined) => { for (const m of set ?? []) { if (!matVis.has(m)) matVis.set(m, m.visible); m.visible = false; } };
+    // (auch den Zwilling mit Ausblend-Raster, falls gerade etwas ein- oder ausblendet)
+    const hideMats = (set: Set<THREE.Material> | undefined) => {
+      for (const m0 of set ?? []) {
+        for (const m of [m0, apTwinIfAny(m0)]) { if (!m) continue; if (!matVis.has(m)) matVis.set(m, m.visible); m.visible = false; }
+      }
+    };
     const hideObjs = (list: THREE.Object3D[] | undefined) => { for (const o of list ?? []) { if (!objVis.has(o)) objVis.set(o, o.visible); o.visible = false; } };
     const setQ = (q: number) => { if (this.quality !== q) { this.quality = q; this.resize(); } };
     const restore = () => {
@@ -2134,7 +2142,7 @@ export class Renderer3D {
       gl.shadowMap.autoUpdate = shadowAuto0;
       usePost = true;
       setQ(q0);
-      setApDiscard(true, this.scene);
+      setApAll(false, this.scene);
     };
     const weather = !!this.post && this.debugTod !== null;
     const steps: [string, () => void][] = [['Basis', () => undefined]];
@@ -2144,8 +2152,9 @@ export class Renderer3D {
       ['ohne Lichtkegel der Laternen am Boden', () => { for (const v of LAMP_U.uLampP.value) v.w = 0; }],
       ['ohne dramatischen Himmel (Wolken, Türme, Strahlen)', () => { this.skyMat.uniforms.uDrama.value = 0; }],
       ['ohne Sonnenuntergangs-Licht', () => { this.sunset.mesh.visible = false; }],
-      // (ein Shader, der verwerfen kann, hindert Apple-Grafikchips daran, Verdecktes zu überspringen – appear.ts)
-      ['ohne Ausblend-Raster in Straße, Häusern, Dingen (Shader ohne discard)', () => { setApDiscard(false, this.scene); }],
+      // (ein Shader, der verwerfen kann, hindert Apple-Grafikchips daran, Verdecktes zu überspringen – appear.ts; seit
+      // Version 253 nur noch beim Ein- und Ausblenden – hier zum Vergleich wie vorher überall)
+      ['mit Ausblend-Raster in allen Materialien (discard, wie bis Version 252)', () => { setApAll(true, this.scene); }],
     );
     if (gl.shadowMap.enabled) steps.push(['ohne Schattenkarte (Durchgang je Bild)', () => { gl.shadowMap.autoUpdate = false; gl.shadowMap.needsUpdate = false; }]);
     if (weather) steps.push(['ohne Wetter-Nachbearbeitung', () => { usePost = false; }]);
@@ -2189,13 +2198,12 @@ export class Renderer3D {
         progress?.(i, steps.length, name);
         const mB: number[] = [], cB: number[] = [], mV: number[] = [], cV: number[] = [];
         let c = 0, t = 0;
+        // im Wechsel A B B A: ein Telefon, das während der Messung schneller oder langsamer taktet, verzerrt so
+        // den Unterschied nicht (A B A B schöbe jede Drift auf die zweite Messung)
+        const runB = async () => { restore(); await block(mB, cB); };
+        const runV = async () => { restore(); set(); await block(mV, cV); c = calls; t = tris; };
         for (let round = 0; round < (quick ? 1 : 2); round++) {
-          restore();
-          await block(mB, cB);
-          restore();
-          set();
-          await block(mV, cV);
-          c = calls; t = tris;
+          if (round % 2 === 0) { await runB(); await runV(); } else { await runV(); await runB(); }
         }
         gl.getDrawingBufferSize(size);
         rows.push({ name, ms: med(mV), base: med(mB), cpu: med(cV), calls: c, tris: t, size: `${size.x}×${size.y}` });
@@ -3894,9 +3902,22 @@ export class Renderer3D {
     return `${m.type}|${m.customProgramCacheKey().length > 200 ? m.uuid : m.customProgramCacheKey()}|${!!mm.map}|${!!mm.emissiveMap}|${!!mm.vertexColors}|${m.transparent}|${m.alphaTest > 0}|${m.side}|${!!mm.flatShading}|${m.alphaToCoverage}|${!!oo.isInstancedMesh}|${!!oo.isPoints}|${!!oo.instanceColor}|${!!at?.normal}|${at?.color?.itemSize ?? 0}`;
   }
 
-  /** Arbeit des Grafiktreibers (Shader) für neue Objekte vorab anstoßen */
+  /**
+   * Arbeit des Grafiktreibers (Shader) für neue Objekte vorab anstoßen – auch für die Zwillinge mit Ausblend-Raster
+   * (appear.ts), die erst beim Ein- und Ausblenden gebraucht werden
+   */
   private parallel: boolean | null = null;
   private warmUp(o: THREE.Object3D): Warm | null {
+    const a = this.warmOne(o);
+    const back = apUseTwins(o);
+    if (!back) return a;
+    let b: Warm | null = null;
+    try { b = this.warmOne(o); } finally { back(); }
+    if (!a || !b) return a ?? b;
+    return { progs: [...a.progs, ...b.progs], t: Math.min(a.t, b.t) };
+  }
+
+  private warmOne(o: THREE.Object3D): Warm | null {
     let fresh = false;
     o.traverse((x) => {
       const ms = (x as THREE.Mesh).material;

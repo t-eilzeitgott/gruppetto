@@ -42,8 +42,12 @@ const WARMUP_S = 2.5;
 const SLOW = 0.08;
 /** ruhig: höchstens so viele */
 const CALM = 0.015;
-/** ruhige Urteile in Folge vor dem ersten Versuch hinauf; nach jedem Fehlschlag doppelt so viele (höchstens MAX) */
-const NEED0 = 5;
+/**
+ * ruhige Urteile in Folge vor dem ersten Versuch hinauf (gut 9 s); nach jedem Fehlschlag doppelt so viele (höchstens
+ * MAX). Nicht kürzer: jeder Wechsel der Auflösung ruckelt selbst – zwischen Ort und freier Strecke hin und her wäre
+ * schlimmer als eine etwas kleinere Auflösung
+ */
+const NEED0 = 8;
 const NEED_MAX = 96;
 /**
  * hinauf nur, wenn die geschätzte Grafikzeit des Probebilds danach höchstens so viel vom Bildtakt braucht – knapp,

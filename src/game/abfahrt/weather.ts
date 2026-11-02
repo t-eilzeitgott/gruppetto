@@ -26,6 +26,7 @@ import { MOUNTAIN_FINISH, SPRINT_FINISH } from './track';
 import { berlinDayKey } from './rng';
 import { gfxLevel, gfxOn, onGfxChange } from './gfxOpts';
 import type { SkyMood } from './sky';
+import { apBase } from './appear';
 
 export type WeatherId = 'gold' | 'storm' | 'nebel';
 
@@ -472,7 +473,7 @@ export class WeatherFx {
       const mat = m.material as THREE.Material;
       if (!mat || (mat as THREE.ShaderMaterial).isShaderMaterial || (mat as THREE.SpriteMaterial).isSpriteMaterial) return;
       m.receiveShadow = true;
-      m.castShadow = !noCast.includes(mat) && !mat.transparent && !o.userData.noShadow;
+      m.castShadow = !noCast.includes(apBase(mat)) && !mat.transparent && !o.userData.noShadow;
     });
   }
 

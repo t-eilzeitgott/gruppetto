@@ -16,7 +16,7 @@ import { alphaTex, lin, type RGBf } from './models3d';
 import { BIKE_BB, bikeBuild, type BikeFit } from './bike3d';
 import { FAR1, LambertFarMaterial, glossFarMat, glossMat } from './gloss';
 import { headBuild, shoeBuild } from './gear3d';
-import { appearify, setAp } from './appear';
+import { apBase, apRefresh, appearify, setAp } from './appear';
 
 /**
  * Haltung: Schräglage, Kurbelwinkel, geduckt, bremsen, Licht, Radumdrehung, Wiegetritt (0–1) und dessen Art:
@@ -936,8 +936,9 @@ export class RiderModel {
     const list: THREE.Material[] = [];
     const cache = new Map<THREE.Material, THREE.Material>();
     for (const m of this.meshes) {
-      if (Array.isArray(m.material)) { this.solidOf.push(m.material[0]); this.fadeOf.push(m.material[0]); continue; }
-      const src = m.material as THREE.Material;
+      if (Array.isArray(m.material)) { this.solidOf.push(apBase(m.material[0])); this.fadeOf.push(apBase(m.material[0])); continue; }
+      // (das gewöhnliche Material, nicht den Zwilling mit Ausblend-Raster, falls der Fahrer gerade überblendet)
+      const src = apBase(m.material as THREE.Material);
       let c = cache.get(src);
       if (!c) { c = src.clone(); c.transparent = true; appearify(c); cache.set(src, c); list.push(c); }
       this.solidOf.push(src);
@@ -953,6 +954,8 @@ export class RiderModel {
     if (on === this.solid || !this.fadeMats) return;
     this.solid = on;
     this.meshes.forEach((m, i) => { if (!Array.isArray(m.material)) m.material = on ? this.solidOf[i] : this.fadeOf[i]; });
+    // überblendet er gerade zum Bild: die Zwillinge mit Ausblend-Raster (appear.ts)
+    apRefresh(this.body);
   }
 
   /** zum Vorübersetzen (render3d warmUp): kurz die durchsichtigen Materialien, danach wieder wie vorher */
