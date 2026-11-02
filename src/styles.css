@@ -2622,11 +2622,11 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .news { display: flex; flex-direction: column; gap: 22px; }
 .news-filters {
   display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
-  margin: -4px calc(-16px - var(--safe-r)) 0 calc(-16px - var(--safe-l)); padding: 2px calc(16px + var(--safe-r)) 2px calc(16px + var(--safe-l));
+  margin: -6px calc(-16px - var(--safe-r)) -2px calc(-16px - var(--safe-l)); padding: 4px calc(16px + var(--safe-r)) 4px calc(16px + var(--safe-l));
   scroll-padding-inline: 16px;
 }
 .news-filters::-webkit-scrollbar { display: none; }
-@media (min-width: 900px) { .news-filters { margin: -4px 0 0; padding: 2px 0; flex-wrap: wrap; } }
+@media (min-width: 900px) { .news-filters { margin: -6px 0 -2px; padding: 4px 0; flex-wrap: wrap; } }
 .news-chip {
   flex: none; display: inline-flex; align-items: center; min-height: 36px; padding: 6px 14px; border-radius: 999px;
   border: 1px solid var(--line); background: transparent; color: var(--muted);
@@ -3011,6 +3011,9 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
   display: flex; align-items: flex-start;
   margin: 0 calc(-16px - var(--safe-r)) 0 calc(-16px - var(--safe-l));
   overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+  /* Luft nach oben: der Pager schneidet senkrecht ab – Inhalte, die mit negativem Rand nach oben ragen (Filterchips
+     der News), blieben sonst oben angeschnitten */
+  padding-top: 8px; margin-top: -8px;
   -webkit-overflow-scrolling: touch; scrollbar-width: none;
 }
 .home-pager::-webkit-scrollbar { display: none; }
@@ -3023,7 +3026,7 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 /* die gerade nicht sichtbare Seite: nur auf Bildschirmhöhe gekürzt (die Seite ist so lang wie die sichtbare), aber
    weiter gezeichnet – gleitet sie herein, steht sie schon */
 .home-page.is-away { max-height: 100vh; max-height: 100lvh; overflow: hidden; }
-@media (min-width: 900px) { .home-pager { margin: 0 -40px; } .home-page { padding: 0 40px; } }
+@media (min-width: 900px) { .home-pager { margin: -8px -40px 0; } .home-page { padding: 0 40px; } }
 
 /* Titel: hell = aktiv, gedämpft = daneben – stufenlos nach --p (0 Heute … 1 News), gesetzt vom Pager */
 /* registriert, damit --p als Zahl im Takt der Schiene übergehen kann (Home.tsx setzt Dauer und Kurve) */
