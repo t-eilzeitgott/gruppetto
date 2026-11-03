@@ -18,7 +18,9 @@ export type FrameKind = 'modern' | 'steel' | 'alu' | 'climb' | 'aero' | 'ti' | '
   /** Triathlon (Aero, tiefe Front, Box auf dem Oberrohr, Flaschen hinter dem Sattel), Carbon-Gravel */
   | 'tri' | 'gravelc'
   /** Hollandrad mit Damenrahmen (geschwungenes Rohr statt Oberrohr), Faltrad mit 16-Zoll-Rädern */
-  | 'dutch' | 'fold';
+  | 'dutch' | 'fold'
+  /** Fatbike (breiter Hinterbau und Naben), Holzrahmen (Maserung), Monocoque-Flügel der 90er (ohne Sitzrohr, Einarmgabel) */
+  | 'fat' | 'wood' | 'wing';
 /** deep80: 80-mm-Carbonfelgen; deepv: 40-mm-Alu-Hochprofil (Deep-V), Farbe aus rim */
 export type WheelKind = 'carbon45' | 'box36' | 'box32' | 'carbon30' | 'deep60' | 'deep80' | 'deepv' | 'tt' | 'spoke4' | 'spoke144' | 'ordinary'
   /** tri: 80 mm vorn, Scheibe hinten; disc2: Scheibe vorn und hinten; cspoke: Carbonfelge mit breiten Carbonspeichen */
@@ -38,7 +40,7 @@ export interface BikeSpec {
   wheels: WheelKind;
   brakes: 'rim' | 'disc' | 'canti' | 'none';
   /** Lenker; Hochlenker (ape), Lenkrad (wheel), Schnurrbartlenker des Hochrads (moustache) */
-  bar: 'modern' | 'classic' | 'integrated' | 'tt' | 'track' | 'flare' | 'city' | 'ape' | 'wheel' | 'moustache' | 'bullhorn';
+  bar: 'modern' | 'classic' | 'integrated' | 'tt' | 'track' | 'flare' | 'city' | 'ape' | 'wheel' | 'moustache' | 'bullhorn' | 'flat';
   /** Sattel; Federsattel mit Spiralfedern (spring), langer Bananensattel (banana) */
   saddle: 'race' | 'leather' | 'tt' | 'spring' | 'banana';
   /** Pedale; Gummiklotzpedale (block) */
@@ -88,6 +90,10 @@ export interface BikeSpec {
     joints?: string;
     /** Muffen in eigener Farbe (sonst verchromt) */
     lugs?: string;
+    /** Holzmaserung: helle und dunkle Jahresringe (statt Grundfarbe) */
+    wood?: [string, string];
+    /** Punkte auf den Rohren (Bergpreis) in dieser Farbe */
+    dots?: string;
   };
   /** Schriftzug auf dem Unterrohr (erfunden) */
   wordmark: string;
@@ -383,6 +389,46 @@ export const BIKES: BikeSpec[] = [
     frame: 'fold', wheels: 'box32', brakes: 'none', bar: 'city', saddle: 'race', pedals: 'block', tires: 'black', tire: { w: 0.0155 }, drive: 'guard', fenders: 'paint', head: 'helmet', helmet: '#16171a',
     paint: { base: '#d93a22', decal: '#f4f4f2', metal: 'silver' }, wordmark: 'FALTWUNDER', tape: '#1b1c1f',
     unlock: { kind: 'km', n: 1040 },
+  },
+  {
+    id: 'fuchs', name: 'Wüstenfuchs', era: 'Fatbike · Sand und Schnee',
+    blurb: 'Reifen so breit wie eine Hand mit groben Stollen, extra breiter Hinterbau und breite Naben, flacher Lenker, Scheibenbremsen. Sandfarben mit braunen Akzenten – fährt über Strand, Düne und Neuschnee.',
+    specs: [['Rahmen', 'Aluminium, 197 mm Hinterbau'], ['Laufräder', '26" · Reifen 4,6"'], ['Gruppe', '1 × 12 mechanisch'], ['Gewicht', '14,8 kg']],
+    frame: 'fat', wheels: 'box32', brakes: 'disc', bar: 'flat', saddle: 'race', pedals: 'block', tires: 'black', tire: { w: 0.048, knobs: 0.0042 }, drive: 'single', head: 'helmet', helmet: '#c9a76a',
+    paint: { base: '#d6b98a', second: '#a9845a', fade: 'y', decal: '#4a3220', metal: 'black', finish: 'satin' }, wordmark: 'WÜSTENFUCHS', tape: '#4a3220',
+    unlock: { kind: 'km', n: 1090 },
+  },
+  {
+    id: 'holz', name: 'Holzwurm', era: 'Holzrahmen · Tischlerei',
+    blurb: 'Rahmen und Gabel aus verleimtem Nussbaum mit sichtbarer Maserung, geölt statt lackiert, dazu Holzfelgen mit silbernen Speichen, Holzschutzbleche, Korkband und Ledersattel. Riecht ein bisschen nach Werkstatt.',
+    specs: [['Rahmen', 'Nussbaum, verleimt und geölt'], ['Laufräder', 'Holzfelgen · 36 Speichen'], ['Gruppe', '2 × 10 mechanisch'], ['Gewicht', '11,2 kg']],
+    frame: 'wood', wheels: 'box36', brakes: 'rim', bar: 'classic', saddle: 'leather', pedals: 'toeclip', tires: 'tan', tire: { w: 0.0145 }, rim: '#a8743f', fenders: 'wood', head: 'cap',
+    paint: { base: '#7a4f2c', decal: '#f1e3c4', metal: 'silver', finish: 'satin', wood: ['#b07c48', '#4e2f17'] }, wordmark: 'Holzwurm', tape: '#b58b5a',
+    unlock: { kind: 'km', n: 1140 },
+  },
+  {
+    id: 'bergkoenig', name: 'Bergkönig', era: 'Kletterrad · Bergpreis',
+    blurb: 'Weiß mit roten Punkten wie das Trikot des besten Bergfahrers: schlanker Carbonrahmen, die Punkte auf jedem Rohr, rote Felgenschrift, rotes Lenkerband und rote Kappe am Helm. Wer damit oben ankommt, ist König.',
+    specs: [['Rahmen', 'Carbon, Bergpreis-Lack'], ['Laufräder', '45 mm Carbon'], ['Gruppe', '2 × 12 elektronisch'], ['Gewicht', '6,5 kg']],
+    frame: 'climb', wheels: 'carbon45', brakes: 'disc', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#d6202a',
+    paint: { base: '#f6f6f3', decal: '#d6202a', metal: 'black', dots: '#d6202a' }, rimDecal: '#d6202a', wordmark: 'BERGKÖNIG', tape: '#d6202a',
+    unlock: { kind: 'km', n: 1190 },
+  },
+  {
+    id: 'fluegel', name: "Flügel '96", era: 'Monocoque · 1990er',
+    blurb: 'Ein Flügel statt eines Rahmens: Carbon aus einem Stück ohne Sitzrohr, vom Steuerrohr bis zur Hinterachse ein einziges Profil, Einarmgabel, Dreispeiche vorn, Scheibe hinten, Auflieger. Schwarz mit Neongelb – so sahen die Rekorde der Neunziger aus.',
+    specs: [['Rahmen', 'Carbon-Monocoque, Flügelprofil'], ['Laufräder', 'Dreispeiche · Scheibe'], ['Gruppe', '1 × 9'], ['Gewicht', '8,6 kg']],
+    frame: 'wing', wheels: 'tt', brakes: 'none', bar: 'tt', saddle: 'tt', pedals: 'clipless', tires: 'black', drive: 'single', head: 'aero', helmet: '#16171a',
+    paint: { base: '#17181b', panel: '#e8f000', decal: '#e8f000', metal: 'black' }, wordmark: 'FLÜGEL', tape: '#16171a',
+    unlock: { kind: 'km', n: 1240 },
+  },
+  {
+    id: 'polarstern', name: 'Polarstern', era: 'Traumrad · Einzelstück',
+    blurb: 'Das letzte und schönste: perlweißer Schillerlack, der ins Eisblaue läuft, goldene Kettenblätter, goldene Kette und Naben, 60-mm-Felgen mit Goldschrift, weißer Sattel, weißes Band, helle Reifenflanken. Wer bis hierher gefahren ist, hat es verdient.',
+    specs: [['Rahmen', 'Carbon, Perlmuttlack'], ['Laufräder', '60 mm Carbon'], ['Gruppe', '2 × 12 elektronisch, Gold'], ['Gewicht', '6,6 kg']],
+    frame: 'climb', wheels: 'deep60', brakes: 'disc', bar: 'integrated', saddle: 'race', pedals: 'clipless', tires: 'tan', head: 'helmet', helmet: '#f6f6f3',
+    paint: { base: '#f7f6f2', stops: ['#fbfaf6', '#eef0f4', '#d9e8f6', '#bcd8f0'], fade: 'z', decal: '#c9a548', metal: 'gold', finish: 'candy' }, rimDecal: '#d9b25a', bottle: '#f7f6f2', wordmark: 'POLARSTERN', tape: '#f6f6f3',
+    unlock: { kind: 'km', n: 1290 },
   },
 ];
 

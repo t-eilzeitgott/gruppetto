@@ -52,6 +52,9 @@ export interface FrameDims {
   kind: Kind; ssLow: number; forkCurve: boolean; lugs: boolean; welds: boolean; flare: number;
   /** Hinterrad (Außenradius), sonst 0,335 */
   rR?: number;
+  /** Ausfallenden hinten und Gabelscheiden seitlich (halber Abstand), sonst 0,064 und 0,05 (Fatbike breiter) */
+  hubX?: number;
+  forkX?: number;
 }
 
 /** Lenkachse (73°, 45 mm Gabelversatz): Punkt auf der Achse in Höhe y */
