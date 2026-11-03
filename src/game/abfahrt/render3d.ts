@@ -5624,15 +5624,18 @@ export class Renderer3D {
         const cloth = lin(CLOTH[(s.i >> 2) % CLOTH.length]);
         // bedruckte Bande zur Straße, dahinter Stoff
         const x = sg * (EDGE - 0.07);
-        // wie an echten Rennen: dieselbe Bande mehrmals hintereinander (je 3 Stück), gut die Hälfte davon Teams
+        // wie an echten Rennen: dieselbe Bande mehrmals hintereinander (je 3 Stück), gut die Hälfte davon Teams –
+        // aber nur jede dritte Folge trägt Werbung (gedämpft), dazwischen schlichter Stoff
         const run = Math.floor(s.i / 3) * 2 + (sg > 0 ? 1 : 0);
         const hv = hash(run);
-        const cell = hv < 0.55 ? Math.floor(hash(run * 7 + 3) * TEAM_ADS) : TEAM_ADS + Math.floor(hash(run * 5 + 1) * (AD_COUNT - TEAM_ADS));
-        const [u0, v0, u1, v1] = adCell(cell, false);
-        const A0 = P(a, x, 0.17); const B0 = P(b, x, 0.17); const A1 = P(a, x, 0.93); const B1 = P(b, x, 0.93);
-        const back = shadeF(cloth, 0.9);
-        if (sg > 0) ads.quad(B0, A0, A1, B1, back, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
-        else ads.quad(A0, B0, B1, A1, back, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+        if (hash(run * 11 + 9) < 1 / 3) {
+          const cell = hv < 0.55 ? Math.floor(hash(run * 7 + 3) * TEAM_ADS) : TEAM_ADS + Math.floor(hash(run * 5 + 1) * (AD_COUNT - TEAM_ADS));
+          const [u0, v0, u1, v1] = adCell(cell, false);
+          const A0 = P(a, x, 0.17); const B0 = P(b, x, 0.17); const A1 = P(a, x, 0.93); const B1 = P(b, x, 0.93);
+          const back = shadeF(cloth, 0.78);
+          if (sg > 0) ads.quad(B0, A0, A1, B1, back, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+          else ads.quad(A0, B0, B1, A1, back, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+        }
         wallQ(sg * (EDGE - 0.02), 0.15, 0.95, cloth);
         wallQ(sg * (EDGE - 0.05), 0.95, 1.05, lin('#c8cdd2'));
         if ((s.i & 1) === 0) this.box(bar, a, sg * (EDGE - 0.05), 0, 0.05, 1.05, 0.05, lin('#9aa0a6'), P);
@@ -6594,7 +6597,8 @@ export class Renderer3D {
     const light = color === '#ffffff' || color === '#ffd23f';
     const main = banner.kind === 'gpm' ? `GPM · ${banner.text}` : banner.kind === 'welcome' ? `Benvenuti a ${banner.text}` : banner.text;
     // übrige Bögen (Willkommen im Ort) tragen links und rechts Werbung eines Teams, fest je Bogen; Bestmarken ohne
-    const sponsor = banner.kind === 'arch' ? null : TEAMS[1 + Math.floor(hash(a.seg.i * 13 + 5) * (TEAMS.length - 1))];
+    // (nur jeder dritte Bogen)
+    const sponsor = banner.kind === 'arch' || hash(a.seg.i * 17 + 3) >= 1 / 3 ? null : TEAMS[1 + Math.floor(hash(a.seg.i * 13 + 5) * (TEAMS.length - 1))];
     const key = `arch:${main}:${banner.sub ?? ''}:${color}:${sponsor?.id ?? ''}`;
     let tex = this.labelTex.get(key);
     if (!tex) {

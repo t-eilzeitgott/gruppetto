@@ -299,7 +299,9 @@ export class TtStart3D {
     for (const sg of [-1, 1]) {
       for (let f0 = DECK_BACK + 0.2; f0 < -0.4; f0 += 2.4) {
         const f1 = Math.min(-0.2, f0 + 2.2);
-        const [u0, v0, u1, v1] = adCell(k++ % AD_COUNT, false);
+        // nur jede dritte Fläche mit Werbung, sonst bleibt der Stoff
+        if (k++ % 3 !== 0) continue;
+        const [u0, v0, u1, v1] = adCell(k % AD_COUNT, false);
         const x = sg * (DECK_HALF + 0.005);
         const a0 = P(x, -0.95, f0), b0 = P(x, -0.95, f1), b1 = P(x, -0.15, f1), a1 = P(x, -0.15, f0);
         // von außen lesbar: rechts läuft die Schrift nach hinten, links nach vorn
@@ -364,10 +366,16 @@ export class TtStart3D {
         const b0 = this.road(f0) + 0.03, b1 = this.road(f1) + 0.03;
         for (const side of [-1, 1]) {
           const x = sg * (BOARD_X + side * 0.025);
-          const [u0, v0, u1, v1] = adCell(k++ % AD_COUNT, false);
           const A0 = P(x, b0, f0), B0 = P(x, b1, f1), B1 = P(x, b1 + 0.6, f1), A1 = P(x, b0 + 0.6, f0);
-          // lesbar von dort, wohin die Fläche zeigt (innen zur Rampe, außen zum Publikum)
+          // lesbar von dort, wohin die Fläche zeigt (innen zur Rampe, außen zum Publikum); nur jede dritte Platte
+          // trägt Werbung, die übrigen sind schlicht hellgrau
           const toRight = sg * side > 0;
+          if (k++ % 3 !== 0) {
+            const plain = lin('#dfe2e6');
+            if (toRight) props.quad(A0, B0, B1, A1, plain); else props.quad(B0, A0, A1, B1, plain);
+            continue;
+          }
+          const [u0, v0, u1, v1] = adCell(k % AD_COUNT, false);
           if (toRight) ads.quad(A0, B0, B1, A1, [1, 1, 1], [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
           else ads.quad(B0, A0, A1, B1, [1, 1, 1], [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
         }

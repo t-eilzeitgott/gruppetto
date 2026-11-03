@@ -791,8 +791,8 @@ const FAN_ROW = 224;
 /** Höhe : Breite eines Bands im Atlas */
 export const FAN_ASPECT = (FAN_ROW - 4) / 1024;
 
-/** so viele der Bänder sind gedruckte Sponsorbänder der Teams (die letzten Zellen) */
-export const FAN_SPONSORED = 3;
+/** so viele der Bänder sind gedruckte Sponsorbänder der Teams (die letzten Zellen) – nur eins, der Rest sind Fans */
+export const FAN_SPONSORED = 1;
 /** Teams auf den Sponsorbändern eines Rennens: Team gruppetto fast immer, dazu zwei andere – je Rennen andere */
 export function fanSponsors(seed: number): Team[] {
   const r = mulberry32(seed ^ 0x3c6ef372);

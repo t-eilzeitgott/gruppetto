@@ -259,8 +259,8 @@ const ADS: Ad[] = [
 ];
 
 /**
- * Werbeeinblendung wie im Fernsehen: unten als runde Leiste mit Logo, Marke und Spruch – Wischblende
- * hinein und hinaus, dünne Laufzeitlinie. Nie während der Spielhilfe; immer im sichtbaren Bereich.
+ * Werbeeinblendung wie im Fernsehen: klein unten links als runde Leiste mit Logo, Marke und Spruch – Wischblende
+ * hinein und hinaus, dünne Laufzeitlinie. Alle 90 s. Nie während der Spielhilfe; immer im sichtbaren Bereich.
  */
 export function TvAd({ hidden, seed = 0 }: { hidden: boolean; seed?: number }) {
   const [ad, setAd] = useState<number | null>(null);
@@ -272,8 +272,9 @@ export function TvAd({ hidden, seed = 0 }: { hidden: boolean; seed?: number }) {
       n += 1;
       hide = window.setTimeout(() => setAd(null), 5600);
     };
-    const first = window.setTimeout(show, 12000);
-    const every = window.setInterval(show, 30000);
+    // selten (alle 90 s, die erste nach 30 s) – das Rennen steht im Vordergrund
+    const first = window.setTimeout(show, 30000);
+    const every = window.setInterval(show, 90000);
     return () => { window.clearTimeout(first); window.clearTimeout(hide); window.clearInterval(every); };
   }, [seed]);
   if (ad === null || hidden) return null;
