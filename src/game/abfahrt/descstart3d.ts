@@ -174,7 +174,9 @@ export class DescentStart3D {
   private time = 0;
   private clockMin = -1;
   private readonly W0 = { x: 0, y: 0, z: 0, th: 0 };
-  readonly track: Track;
+  track: Track;
+  /** schon einmal losgefahren (Tauben aufgeflogen, Leute haben geklatscht) – dann für eine neue Fahrt neu bauen */
+  raced = false;
   private readonly d: DescentStartDeps;
   private readonly y0: number;
   /** Startplatz des Fahrers (Streckenmeter) */
@@ -1280,6 +1282,7 @@ export class DescentStart3D {
       if (phase === 'ready' || phase === 'countdown') this.goT = -1;
       this.lastPhase = phase;
     }
+    if (phase === 'playing') this.raced = true;
     const waiting = phase === 'ready' || phase === 'countdown';
     if (this.goT >= 0) this.goT += dt;
     const go = this.goT >= 0 && this.goT < 8;

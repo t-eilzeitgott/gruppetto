@@ -2650,8 +2650,15 @@ export class Renderer3D {
   private updateDescStart(g: RaceView, dt: number) {
     const t = g.track;
     if (t.kind !== 'descent' || t.startZ <= 0) return;
-    // neue Fahrt (neue Strecke derselben Tagesstrecke): frisch aufbauen (Tauben, Leute wieder am Platz)
-    if (this.descStart && this.descStart.track !== t && (g.phase === 'ready' || g.phase === 'countdown')) { this.descStart.dispose(); this.descStart = null; }
+    // neue Fahrt (neue Strecke derselben Tagesstrecke): frisch aufbauen (Tauben, Leute wieder am Platz) – aber nur,
+    // wenn auf diesem schon losgefahren wurde. Vom Vorwärmen her (oder nach einer Änderung im Startmenü) steht er
+    // unberührt: dann nur die neue Strecke übernehmen. Der Neubau ist ein großer Brocken in einem Bild (beim Öffnen
+    // der Abfahrt eine halbe Sekunde Stillstand unter der Startanimation).
+    if (this.descStart && this.descStart.track !== t && (g.phase === 'ready' || g.phase === 'countdown')) {
+      const old = this.descStart.track;
+      if (this.descStart.raced || old.dayKey !== t.dayKey || old.ramp !== t.ramp || old.startZ !== t.startZ) { this.descStart.dispose(); this.descStart = null; }
+      else this.descStart.track = t;
+    }
     if (this.descStart && g.phase === 'playing' && g.p.z > t.startZ + 280) { this.descStart.dispose(); this.descStart = null; return; }
     if (!this.descStart && (g.phase === 'ready' || g.phase === 'countdown') && g.p.z < t.startZ + 20) this.makeDescStart(t);
     this.descStart?.update(g, dt, this.camera);
