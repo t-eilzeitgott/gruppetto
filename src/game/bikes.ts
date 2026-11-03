@@ -16,7 +16,9 @@ export type FrameKind = 'modern' | 'steel' | 'alu' | 'climb' | 'aero' | 'ti' | '
   /** Fixie (Stahl, WIG-geschweißt, Bahn-Ausfallenden), E-Rennrad (dickes Unterrohr mit Akku, Mittelmotor) */
   | 'fixie' | 'ebike'
   /** Triathlon (Aero, tiefe Front, Box auf dem Oberrohr, Flaschen hinter dem Sattel), Carbon-Gravel */
-  | 'tri' | 'gravelc';
+  | 'tri' | 'gravelc'
+  /** Hollandrad mit Damenrahmen (geschwungenes Rohr statt Oberrohr), Faltrad mit 16-Zoll-Rädern */
+  | 'dutch' | 'fold';
 /** deep80: 80-mm-Carbonfelgen; deepv: 40-mm-Alu-Hochprofil (Deep-V), Farbe aus rim */
 export type WheelKind = 'carbon45' | 'box36' | 'box32' | 'carbon30' | 'deep60' | 'deep80' | 'deepv' | 'tt' | 'spoke4' | 'spoke144' | 'ordinary'
   /** tri: 80 mm vorn, Scheibe hinten; disc2: Scheibe vorn und hinten; cspoke: Carbonfelge mit breiten Carbonspeichen */
@@ -80,6 +82,12 @@ export interface BikeSpec {
     chromeRear?: boolean;
     /** Schnee auf Rahmen und Reifen (Flocken statt Schlamm) */
     snow?: boolean;
+    /** jedes Rohr in eigener Farbe (sonst Grundfarbe) */
+    tubes?: { tt?: string; dt?: string; st?: string; ht?: string; stays?: string; fork?: string };
+    /** Schweißnähte als kräftige Linien in dieser Farbe */
+    joints?: string;
+    /** Muffen in eigener Farbe (sonst verchromt) */
+    lugs?: string;
   };
   /** Schriftzug auf dem Unterrohr (erfunden) */
   wordmark: string;
@@ -335,6 +343,46 @@ export const BIKES: BikeSpec[] = [
     frame: 'track', wheels: 'disc2', brakes: 'none', bar: 'tt', saddle: 'tt', pedals: 'clipless', tires: 'black', drive: 'fixed', head: 'aero', helmet: '#f4f4f2',
     paint: { base: '#f2f2ef', second: '#c8102e', fade: 'z', panel: '#c8102e', decal: '#16171a', metal: 'black' }, wordmark: 'STUNDE', tape: '#16171a',
     unlock: { kind: 'km', n: 790 },
+  },
+  {
+    id: 'oma', name: 'Omafiets', era: 'Hollandrad · Amsterdam',
+    blurb: 'Schwarzer Damenrahmen mit geschwungenem Doppelrohr, geschlossener Kettenkasten, Rollenbremsen, Kleiderschutz aus bunten Schnüren am Hinterrad, Gepäckträger mit Spanngurt, Ringschloss und vorn der Weidenkorb voller Tulpen. Aufrecht sitzen, klingeln, ankommen.',
+    specs: [['Rahmen', 'Stahl, Damenrahmen'], ['Laufräder', '28" · 36 Speichen · Ballon'], ['Gruppe', '3-Gang-Nabe, Rollenbremsen'], ['Gewicht', '23 kg plus Tulpen']],
+    frame: 'dutch', wheels: 'box36', brakes: 'none', bar: 'city', saddle: 'spring', pedals: 'block', tires: 'black', tire: { w: 0.02, reflex: true }, drive: 'hub', fenders: 'paint', head: 'cap',
+    paint: { base: '#141414', decal: '#d6b25e', metal: 'silver' }, wordmark: 'Omafiets', tape: '#6b4a2e',
+    unlock: { kind: 'km', n: 840 },
+  },
+  {
+    id: 'rosso', name: 'Rosso Corsa', era: 'Superbike · Italien',
+    blurb: 'Rennrot mit Trikolore-Streifen auf Ober- und Sitzrohr, Aero-Rahmen, 60-mm-Felgen mit weißer Schrift und ein integriertes Cockpit – das Rad, das man vor dem Café so abstellt, dass es jeder sieht.',
+    specs: [['Rahmen', 'Carbon, Aero'], ['Laufräder', '60 mm Carbon'], ['Gruppe', '2 × 12 elektronisch'], ['Gewicht', '7,0 kg']],
+    frame: 'aero', wheels: 'deep60', brakes: 'disc', bar: 'integrated', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#c8102e',
+    paint: { base: '#b30f28', second: '#d6202a', fade: 'y', decal: '#f4f4f4', metal: 'black', stripes: ['#1e9a47', '#f4f4f4', '#d6202a'] }, rimDecal: '#f4f4f4', wordmark: 'ROSSO CORSA', tape: '#16171a',
+    unlock: { kind: 'km', n: 890 },
+  },
+  {
+    id: 'spiegel', name: 'Spiegelglanz', era: 'Chromrahmen · Rahmenbauer',
+    blurb: 'Der ganze Rahmen verchromt und poliert, die Muffen schwarz abgesetzt mit feinen Goldlinien, schwarze Schrift, Kastenfelgen, schwarzes Lenkerband. Spiegelt die Landschaft – und dich.',
+    specs: [['Rahmen', 'Stahl, verchromt, gemufft'], ['Laufräder', 'Kastenfelge · 32 Speichen'], ['Gruppe', '2 × 11 mechanisch'], ['Gewicht', '9,1 kg']],
+    frame: 'steel', wheels: 'box32', brakes: 'rim', bar: 'classic', saddle: 'leather', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#16171a',
+    paint: { base: '#d6dadf', decal: '#16171a', metal: 'silver', finish: 'chrome', lugs: '#16171a' }, wordmark: 'SPIEGELGLANZ', tape: '#16171a',
+    unlock: { kind: 'km', n: 940 },
+  },
+  {
+    id: 'mondrian', name: 'Komposition', era: 'Kunstrad · De Stijl',
+    blurb: 'Ein Rahmen wie ein Gemälde: Oberrohr rot, Unterrohr blau, Sitzrohr gelb, alles andere weiß – und an jeder Naht eine kräftige schwarze Linie. Schwarze Felgen, schwarzes Band, weißer Helm.',
+    specs: [['Rahmen', 'Aluminium, handlackiert'], ['Laufräder', '32 Speichen · schwarz'], ['Gruppe', '2 × 11 mechanisch'], ['Farben', 'Rot, Blau, Gelb, Weiß, Schwarz']],
+    frame: 'alu', wheels: 'box32', brakes: 'rim', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#f4f2ea',
+    paint: { base: '#f4f2ea', decal: '#111111', metal: 'black', tubes: { tt: '#d6202a', dt: '#1f4fa8', st: '#f4c20d' }, joints: '#111111' }, wordmark: 'KOMPOSITION', tape: '#111111',
+    unlock: { kind: 'km', n: 990 },
+  },
+  {
+    id: 'falt', name: 'Faltwunder', era: 'Faltrad · Stadt und Zug',
+    blurb: 'Klappt in zwanzig Sekunden auf Koffergröße: Gelenk im Hauptrohr, hoher Lenkerschaft mit Scharnier, lange Sattelstütze, gefederter Hinterbau, 16-Zoll-Räder, Schutzbleche und ein Gepäckträger mit kleinen Rollen. Feuerrot, Teile in Silber.',
+    specs: [['Rahmen', 'Stahl, Faltgelenk'], ['Laufräder', '16" · 28 Speichen'], ['Gruppe', '2-Gang-Nabe, Kettenschutz'], ['Gefaltet', '58 × 56 × 27 cm']],
+    frame: 'fold', wheels: 'box32', brakes: 'none', bar: 'city', saddle: 'race', pedals: 'block', tires: 'black', tire: { w: 0.0155 }, drive: 'guard', fenders: 'paint', head: 'helmet', helmet: '#16171a',
+    paint: { base: '#d93a22', decal: '#f4f4f2', metal: 'silver' }, wordmark: 'FALTWUNDER', tape: '#1b1c1f',
+    unlock: { kind: 'km', n: 1040 },
   },
 ];
 

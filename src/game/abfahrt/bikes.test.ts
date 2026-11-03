@@ -20,7 +20,7 @@ test('Räder: Läufe und Meter nur aus den eigenen Zeilen aller drei Spiele', ()
 });
 
 test('Räder: am Anfang 1 von allen, dann der Reihe nach erst Läufe, dann immer mehr Kilometer', () => {
-  assert.equal(BIKES.length, 30);
+  assert.equal(BIKES.length, 35);
   assert.equal(new Set(BIKES.map((b) => b.id)).size, BIKES.length, 'jede Kennung einmal');
   const ids = (p: ReturnType<typeof bikeProgress>) => BIKES.filter((b) => p[b.id].done).map((b) => b.id);
   const none = bikeProgress(bikeStats({}, 'me'));
@@ -140,7 +140,7 @@ test('volle Detailstufe (Garage): Stollen, Schlamm, Taschen und Speichenräder b
   const ctx = new Proxy({}, { get: (_t, k) => (k === 'measureText' ? () => ({ width: 100 }) : () => undefined), set: () => true });
   (globalThis as { document?: unknown }).document = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx }) };
   const kit = { jersey: '#e6007e', side: '#1b1b1b', helmet: '#ffffff', shorts: '#111111', skin: '#e2b48f', shoes: '#ffffff', number: '12' };
-  for (const id of ['matsch', 'fernweh', 'bahn', 'regenbogen', 'lastesel', 'wohnwagen', 'bonanza', 'landpost', 'gregario', 'bambus', 'lowrider', 'hochrad', 'nachtfalke', 'celeste', 'schiller', 'kiez', 'epass', 'hitze', 'schotter', 'eiszeit', 'floh', 'stunde']) {
+  for (const id of ['matsch', 'fernweh', 'bahn', 'regenbogen', 'lastesel', 'wohnwagen', 'bonanza', 'landpost', 'gregario', 'bambus', 'lowrider', 'hochrad', 'nachtfalke', 'celeste', 'schiller', 'kiez', 'epass', 'hitze', 'schotter', 'eiszeit', 'floh', 'stunde', 'oma', 'rosso', 'spiegel', 'mondrian', 'falt']) {
     const r = bikeBuild(id, kit, 1);
     for (const g of [r.frame, r.wheelF, r.wheelR, r.crank]) assert.ok(consistent(g) > 0.97, `${id}: Flächen und Normalen`);
     if (r.trailer) assert.ok(consistent(r.trailer.body) > 0.97 && consistent(r.trailer.wheel) > 0.97, `${id}: Anhänger`);
