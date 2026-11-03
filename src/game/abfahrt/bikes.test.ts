@@ -19,8 +19,8 @@ test('Räder: Läufe und Meter nur aus den eigenen Zeilen aller drei Spiele', ()
   assert.deepEqual(s, { runs: 8, meters: 21000 });
 });
 
-test('Räder: am Anfang 1 von 20, dann der Reihe nach erst Läufe, dann immer mehr Kilometer', () => {
-  assert.equal(BIKES.length, 20);
+test('Räder: am Anfang 1 von allen, dann der Reihe nach erst Läufe, dann immer mehr Kilometer', () => {
+  assert.equal(BIKES.length, 25);
   assert.equal(new Set(BIKES.map((b) => b.id)).size, BIKES.length, 'jede Kennung einmal');
   const ids = (p: ReturnType<typeof bikeProgress>) => BIKES.filter((b) => p[b.id].done).map((b) => b.id);
   const none = bikeProgress(bikeStats({}, 'me'));
@@ -39,16 +39,21 @@ test('Räder: am Anfang 1 von 20, dann der Reihe nach erst Läufe, dann immer me
   assert.deepEqual(ids(mid), ['allround', 'lastesel', 'acciaio', 'pave', 'matsch', 'bonanza', 'feder', 'landpost', 'aero']);
   assert.equal(mid.gregario.label, '70 / 72 km');
   assert.equal(mid.fernweh.after, "Gregario '53");
-  // kurz vor Schluss Wohnwagen und Hochrad, zuletzt die Legende
-  assert.deepEqual(BIKES.slice(-3).map((b) => b.id), ['wohnwagen', 'hochrad', 'legende']);
+  // erste Runde: kurz vor Schluss Wohnwagen und Hochrad, dann die Legende (bei 300 km); danach die zweite Runde
+  assert.deepEqual(BIKES.slice(17, 20).map((b) => b.id), ['wohnwagen', 'hochrad', 'legende']);
+  assert.equal(BIKES[20].id, 'nachtfalke');
   // der Reihe nach: viele Kilometer, aber zu wenige Läufe – Kilometerräder warten
   const queued = bikeProgress({ runs: 12, meters: 400000 });
   assert.ok(queued.matsch.done && !queued.bonanza.done && !queued.feder.done && !queued.legende.done);
   assert.equal(queued.feder.after, "Hochlenker '72");
   assert.equal(queued.bonanza.after, undefined);
   assert.equal(queued.bonanza.label, '12 / 14 Läufe');
-  const all = bikeProgress({ runs: 120, meters: 300000 });
-  assert.ok(BIKES.every((b) => all[b.id].done), 'mit 300 km alles frei');
+  const first = bikeProgress({ runs: 120, meters: 300000 });
+  assert.ok(BIKES.slice(0, 20).every((b) => first[b.id].done), 'mit 300 km die erste Runde frei');
+  assert.equal(nextBike(first)?.id, 'nachtfalke', 'dann geht es mit der zweiten Runde weiter');
+  const last = BIKES[BIKES.length - 1].unlock;
+  const all = bikeProgress({ runs: 400, meters: (last.kind === 'km' ? last.n : 0) * 1000 });
+  assert.ok(BIKES.every((b) => all[b.id].done), 'am Ende alles frei');
   assert.equal(nextBike(all), null);
 });
 
@@ -135,7 +140,7 @@ test('volle Detailstufe (Garage): Stollen, Schlamm, Taschen und Speichenräder b
   const ctx = new Proxy({}, { get: (_t, k) => (k === 'measureText' ? () => ({ width: 100 }) : () => undefined), set: () => true });
   (globalThis as { document?: unknown }).document = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx }) };
   const kit = { jersey: '#e6007e', side: '#1b1b1b', helmet: '#ffffff', shorts: '#111111', skin: '#e2b48f', shoes: '#ffffff', number: '12' };
-  for (const id of ['matsch', 'fernweh', 'bahn', 'regenbogen', 'lastesel', 'wohnwagen', 'bonanza', 'landpost', 'gregario', 'bambus', 'lowrider', 'hochrad']) {
+  for (const id of ['matsch', 'fernweh', 'bahn', 'regenbogen', 'lastesel', 'wohnwagen', 'bonanza', 'landpost', 'gregario', 'bambus', 'lowrider', 'hochrad', 'nachtfalke', 'celeste', 'schiller', 'kiez', 'epass']) {
     const r = bikeBuild(id, kit, 1);
     for (const g of [r.frame, r.wheelF, r.wheelR, r.crank]) assert.ok(consistent(g) > 0.97, `${id}: Flächen und Normalen`);
     if (r.trailer) assert.ok(consistent(r.trailer.body) > 0.97 && consistent(r.trailer.wheel) > 0.97, `${id}: Anhänger`);

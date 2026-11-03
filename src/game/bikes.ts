@@ -1,7 +1,8 @@
 /**
- * Räder zum Freischalten: zwanzig erfundene Modelle, gestaltet nach den großen Epochen und Gattungen des
- * Rennrads vom Hochrad bis zur Aero-Maschine – dazu Kult- und Alltagsräder (Postrad, Bonanzarad, Lowrider,
- * Bambusrad) und zwei Spaßräder (Lastenrad mit Hund, Rad mit Alu-Wohnwagen). Keine echten Marken.
+ * Räder zum Freischalten: erfundene Modelle, gestaltet nach den großen Epochen und Gattungen des Rennrads vom
+ * Hochrad bis zur Aero-Maschine – dazu Kult- und Alltagsräder (Postrad, Bonanzarad, Lowrider, Bambusrad), Spaßräder
+ * (Lastenrad mit Hund, Rad mit Alu-Wohnwagen) und nach der Legende eine zweite Runde Traumräder (Stealth-Aero,
+ * Celeste-Stahl, Schillerlack, Fixie, E-Rennrad …). Keine echten Marken.
  * Rein optisch – an der Fahrphysik ändert sich nichts, die Bestenlisten bleiben fair.
  *
  * Freigeschaltet wird der Reihe nach: Am Anfang hat man nur das Teamrad, jedes weitere Rad hat eine Aufgabe,
@@ -11,8 +12,11 @@
 import type { GameBest, GameId } from '../data/source';
 
 export type FrameKind = 'modern' | 'steel' | 'alu' | 'climb' | 'aero' | 'ti' | 'tt' | 'cross' | 'gravel' | 'track' | 'cargo'
-  | 'post' | 'bamboo' | 'bonanza' | 'lowrider' | 'ordinary';
-export type WheelKind = 'carbon45' | 'box36' | 'box32' | 'carbon30' | 'deep60' | 'tt' | 'spoke4' | 'spoke144' | 'ordinary';
+  | 'post' | 'bamboo' | 'bonanza' | 'lowrider' | 'ordinary'
+  /** Fixie (Stahl, WIG-geschweißt, Bahn-Ausfallenden), E-Rennrad (dickes Unterrohr mit Akku, Mittelmotor) */
+  | 'fixie' | 'ebike';
+/** deep80: 80-mm-Carbonfelgen; deepv: 40-mm-Alu-Hochprofil (Deep-V), Farbe aus rim */
+export type WheelKind = 'carbon45' | 'box36' | 'box32' | 'carbon30' | 'deep60' | 'deep80' | 'deepv' | 'tt' | 'spoke4' | 'spoke144' | 'ordinary';
 
 /** ab hier zählen die Läufe für die Garage (Eröffnung) */
 export const GARAGE_START = '2026-10-27T00:00:00+01:00';
@@ -28,14 +32,20 @@ export interface BikeSpec {
   wheels: WheelKind;
   brakes: 'rim' | 'disc' | 'canti' | 'none';
   /** Lenker; Hochlenker (ape), Lenkrad (wheel), Schnurrbartlenker des Hochrads (moustache) */
-  bar: 'modern' | 'classic' | 'integrated' | 'tt' | 'track' | 'flare' | 'city' | 'ape' | 'wheel' | 'moustache';
+  bar: 'modern' | 'classic' | 'integrated' | 'tt' | 'track' | 'flare' | 'city' | 'ape' | 'wheel' | 'moustache' | 'bullhorn';
   /** Sattel; Federsattel mit Spiralfedern (spring), langer Bananensattel (banana) */
   saddle: 'race' | 'leather' | 'tt' | 'spring' | 'banana';
   /** Pedale; Gummiklotzpedale (block) */
   pedals: 'clipless' | 'toeclip' | 'block';
   tires: 'black' | 'tan';
-  /** Reifen: halbe Breite (m), Stollen, Reflexstreifen an der Flanke, Weißwand */
-  tire?: { w?: number; knobs?: number; reflex?: boolean; white?: boolean };
+  /** Reifen: halbe Breite (m), Stollen, Reflexstreifen an der Flanke, Weißwand, farbiger Gummi */
+  tire?: { w?: number; knobs?: number; reflex?: boolean; white?: boolean; col?: string };
+  /** Felgen in Farbe (Deep-V, lackiert); Speichen dann schwarz */
+  rim?: string;
+  /** Schriftzug auf den Felgen (sonst hell, bei Goldteilen golden) */
+  rimDecal?: string;
+  /** Trinkflaschen in eigener Farbe (sonst weiß bzw. Alu) */
+  bottle?: string;
   /** Laufräder kleiner als 28 Zoll: Außenradius vorn und hinten (m) */
   size?: { f: number; r: number };
   /** Antrieb: zwei Kettenblätter (Standard), eins mit Schaltung, starrer Gang, Nabenschaltung im Kettenkasten,
@@ -60,6 +70,10 @@ export interface BikeSpec {
     stripes?: string[];
     /** Schlamm unten am Rahmen */
     mud?: boolean;
+    /** Verlauf über mehrere Farben (statt base → second), längs von vorn nach hinten oder senkrecht (fade) */
+    stops?: string[];
+    /** Hinterbau und Gabel verchromt (italienische Stahlrenner der 80er) */
+    chromeRear?: boolean;
   };
   /** Schriftzug auf dem Unterrohr (erfunden) */
   wordmark: string;
@@ -234,6 +248,47 @@ export const BIKES: BikeSpec[] = [
     frame: 'aero', wheels: 'deep60', brakes: 'disc', bar: 'integrated', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#d4ad3c',
     paint: { base: '#c99a2e', second: '#f3d77a', fade: 'y', decal: '#16171a', metal: 'gold', finish: 'chrome' }, wordmark: 'LEGENDE', tape: '#16171a',
     unlock: { kind: 'km', n: 300 },
+  },
+  // ---- zweite Runde: Traumräder und mehr Vielfalt (alle 25 km eins)
+  {
+    id: 'nachtfalke', name: 'Nachtfalke', era: 'Aero-Maschine · Stealth',
+    blurb: 'Alles schwarz: matter Aero-Rahmen mit tief angesetzten Sitzstreben, glänzend schwarze Schrift, die man nur im Licht sieht, 80-mm-Felgen und ein integriertes Cockpit. Sieht im Stand schon schnell aus.',
+    specs: [['Rahmen', 'Carbon, Aero, mattschwarz'], ['Laufräder', '80 mm Carbon'], ['Gruppe', '2 × 12 elektronisch'], ['Gewicht', '7,3 kg']],
+    frame: 'aero', wheels: 'deep80', brakes: 'disc', bar: 'integrated', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#1c1d20',
+    paint: { base: '#1b1c1f', decal: '#3c3f46', metal: 'black', finish: 'satin' }, rimDecal: '#34363c', bottle: '#1e1f23', wordmark: 'NACHTFALKE', tape: '#101114',
+    unlock: { kind: 'km', n: 320 },
+  },
+  {
+    id: 'celeste', name: "Celeste '86", era: 'Italienischer Stahl · 1980er',
+    blurb: 'Himmelblau-grüner Muffenrahmen mit verchromter Gabel und verchromtem Hinterbau, Rahmenschalthebel, Schlauchreifen mit hellen Flanken, weißes Lenkerband und Ledersattel – das Rad, von dem man als Kind geträumt hat.',
+    specs: [['Rahmen', 'Stahl, gemufft, Chromhinterbau'], ['Laufräder', 'Kastenfelge · 36 Speichen'], ['Gruppe', '2 × 6, Rahmenschalter'], ['Gewicht', '9,4 kg']],
+    frame: 'steel', wheels: 'box36', brakes: 'rim', bar: 'classic', saddle: 'leather', pedals: 'toeclip', tires: 'tan', head: 'cap',
+    paint: { base: '#7ccfbd', panel: '#f3efe4', decal: '#1c2a2a', metal: 'silver', chromeRear: true }, wordmark: 'Celeste', tape: '#f4f2ea',
+    unlock: { kind: 'km', n: 345 },
+  },
+  {
+    id: 'schiller', name: 'Ölfilm', era: 'Allround-Carbon · Schillerlack',
+    blurb: 'Der Lack schillert wie ein Ölfilm auf der Straße: von Violett über Petrol und Grün bis Gold, dazu goldene Kettenblätter, Naben und Felgenschrift. Unter dem Lack ein leichter Allround-Rahmen mit Scheibenbremsen.',
+    specs: [['Rahmen', 'Carbon, Schillerlack'], ['Laufräder', '45 mm Carbon'], ['Gruppe', '2 × 12 elektronisch, Gold'], ['Gewicht', '7,1 kg']],
+    frame: 'modern', wheels: 'carbon45', brakes: 'disc', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#2b1d4a',
+    paint: { base: '#4b1f8f', stops: ['#4b1f8f', '#1c5d9a', '#13917c', '#79b43a', '#d9a62e'], fade: 'z', decal: '#f3e7c2', metal: 'gold', finish: 'candy' }, wordmark: 'ÖLFILM', tape: '#1a1426',
+    unlock: { kind: 'km', n: 370 },
+  },
+  {
+    id: 'kiez', name: 'Kiezkurier', era: 'Fixie · Großstadt',
+    blurb: 'Starrer Gang, keine Bremsen, Bullhorn-Lenker mit orangefarbenem Band, leuchtend orangefarbene Deep-V-Felgen mit schwarzen Speichen und Naben, Pedalhaken mit Riemen. Mattschwarzer Stahlrahmen mit Bahn-Ausfallenden – fürs Ampelrennen.',
+    specs: [['Rahmen', 'Stahl, WIG-geschweißt'], ['Laufräder', 'Deep-V 40 mm · 32 Speichen'], ['Gruppe', 'Starrer Gang 46 × 16'], ['Gewicht', '8,7 kg']],
+    frame: 'fixie', wheels: 'deepv', brakes: 'none', bar: 'bullhorn', saddle: 'race', pedals: 'toeclip', tires: 'black', tire: { w: 0.0125 }, rim: '#ff7a1a', rimDecal: '#16171a', drive: 'fixed', head: 'cap',
+    paint: { base: '#1d1e22', decal: '#ff7a1a', metal: 'black', finish: 'satin' }, wordmark: 'KIEZKURIER', tape: '#ff7a1a',
+    unlock: { kind: 'km', n: 395 },
+  },
+  {
+    id: 'epass', name: 'E-Pass', era: 'E-Rennrad · heute',
+    blurb: 'Sieht aus wie ein Rennrad, hat aber Rückenwind eingebaut: Akku im dicken Unterrohr mit Ladebuchse, Mittelmotor am Tretlager, Display am Lenker und ein Blatt vorn. Anthrazit mit giftgrünen Akzenten. (Im Spiel tritt man trotzdem selbst.)',
+    specs: [['Rahmen', 'Carbon, Akku integriert'], ['Motor', 'Mittelmotor · 250 W'], ['Gruppe', '1 × 12 elektronisch'], ['Gewicht', '12,9 kg']],
+    frame: 'ebike', wheels: 'carbon45', brakes: 'disc', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'black', drive: 'single', head: 'helmet',
+    paint: { base: '#2a2e34', second: '#6b7480', fade: 'y', decal: '#c6ff3d', metal: 'black', finish: 'satin' }, rimDecal: '#c6ff3d', wordmark: 'E-PASS', tape: '#16171a',
+    unlock: { kind: 'km', n: 420 },
   },
 ];
 

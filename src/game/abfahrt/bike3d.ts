@@ -59,6 +59,10 @@ function dims(f: BikeSpec['frame']): FrameDims {
     case 'track': return { ...base, htTop: 0.83, seatLen: 0.52, seatDir: v3(0, 0.97, 0.243).normalize(), tt: [0.026, 0.046, 0.022, 0.036], dt: [0.036, 0.072, 0.034, 0.062], st: [0.03, 0.06, 0.028, 0.052], ht: [0.04, 0.034], cs: [0.024, 0.016], ss: [0.016, 0.014], fork: [0.022, 0.017], kind: 'aero', flare: 1.12 };
     // Lastenrad: Hollandrad hinten, 20-Zoll-Vorderrad vorn (Rahmen eigen gebaut)
     case 'cargo': return { ...base, rF: 0.25, seatLen: 0.5, seatDir: v3(0, 0.94, 0.34).normalize(), st: [0.034, 0.034, 0.034, 0.034], ht: [0.046, 0.046], cs: [0.024, 0.013], ss: [0.017, 0.012], fork: [0.03, 0.017], welds: true, flare: 1 };
+    // Fixie: Stahl, WIG-geschweißt, steiler Sitzwinkel, waagrechtes Oberrohr, Gabel mit Vorbiegung
+    case 'fixie': return { ...base, htTop: 0.835, seatLen: 0.55, seatDir: v3(0, 0.965, 0.262).normalize(), tt: [0.0286, 0.0286, 0.0286, 0.0286], dt: [0.0318, 0.0318, 0.0318, 0.0318], st: [0.0286, 0.0286, 0.0286, 0.0286], ht: [0.036, 0.036], cs: [0.02, 0.012], ss: [0.016, 0.012], fork: [0.028, 0.014], forkCurve: true, welds: true, flare: 1 };
+    // E-Rennrad: dickes Unterrohr (Akku), kräftiges Steuerrohr, sonst wie das Carbonrad
+    case 'ebike': return { ...base, htBot: 0.68, htTop: 0.85, tt: [0.036, 0.032, 0.032, 0.03], dt: [0.072, 0.066, 0.06, 0.056], st: [0.034, 0.04, 0.032, 0.034], ht: [0.056, 0.046], cs: [0.024, 0.013], ss: [0.017, 0.012], fork: [0.036, 0.019], flare: 1.14 };
     case 'tt': return { ...base, rF: 0.305, htBot: 0.6, htTop: 0.72, seatLen: 0.52, seatDir: v3(0, 0.97, 0.243).normalize(), tt: [0.026, 0.04, 0.024, 0.036], dt: [0.032, 0.062, 0.03, 0.056], st: [0.028, 0.052, 0.026, 0.048], ht: [0.036, 0.03], cs: [0.022, 0.013], ss: [0.016, 0.012], fork: [0.022, 0.016], kind: 'aero', flare: 1.1 };
     default: return base;
   }
@@ -101,7 +105,16 @@ function makeCtx(spec: BikeSpec, kit: Kit, q: 0 | 1): Ctx {
   const fade = spec.paint.fade;
   const mud = spec.paint.mud ? mudAt : null;
   const mudC = rgb(MUD);
+  const stops = spec.paint.stops && spec.paint.stops.length > 1 ? spec.paint.stops.map(rgb) : null;
   const paint = (p: V): C3 => {
+    if (stops) {
+      // Schillerlack: über alle Stufen, längs mit etwas Höhe (schräg über das Rad)
+      const t = fade === 'y' ? (p.y - 0.32) / 0.55 : (p.z + 0.5) / 0.92 + (0.62 - p.y) * 0.35;
+      const f = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+      const i = Math.min(stops.length - 2, Math.floor(f));
+      const k = f - i;
+      return mix(stops[i], stops[i + 1], k * k * (3 - 2 * k));
+    }
     if (!second) return base;
     // weicher Verlauf: längs (vorn → hinten) oder senkrecht (unten → oben)
     const t = fade === 'y' ? (p.y - 0.32) / 0.55 : (p.z + 0.42) / 0.8;
@@ -112,7 +125,7 @@ function makeCtx(spec: BikeSpec, kit: Kit, q: 0 | 1): Ctx {
     q, spec, kit, f: set4(finishGloss(spec.paint.finish)), pc: paint,
     silver: rgb('#c3c8ce'), dark: rgb('#1b1c1f'), carbon: rgb('#202125'), rubber: rgb('#121214'), gold: rgb('#c99a3a'),
     n: q ? 16 : 6,
-    rings: mud && q ? 7 : 3,
+    rings: (mud || stops) && q ? 7 : 3,
     mud, mudC,
   };
 }
@@ -130,6 +143,7 @@ function buildFrame(x: Ctx, D: FrameDims, front: V, rear: V): FrameOut {
   const panel = spec.paint.panel ? rgb(spec.paint.panel) : null;
   const steel = spec.frame === 'steel';
   const bam = spec.frame === 'bamboo';
+  const chromeRear = !!spec.paint.chromeRear;
   const n2 = D.kind === 'aero' ? Math.max(n, 12) : n;
   const fl = q ? D.flare : 1;
 
@@ -186,6 +200,41 @@ function buildFrame(x: Ctx, D: FrameDims, front: V, rear: V): FrameOut {
   if (bam) St.add(new THREE.CylinderGeometry(0.023, 0.023, 0.072, n2), M4(BB.x, BB.y, BB.z, 0, 0, Math.PI / 2), x.dark);
   else P.add(new THREE.CylinderGeometry(0.023, 0.023, 0.072, n2), M4(BB.x, BB.y, BB.z, 0, 0, Math.PI / 2), pc(BB));
 
+  if (spec.frame === 'ebike') {
+    // Mittelmotor um das Tretlager (nach hinten unten etwas größer), Gehäusedeckel mit Schrauben
+    const motor = rgb('#2a2d33');
+    St.add(new THREE.CylinderGeometry(0.06, 0.06, 0.1, Math.max(n2, 12)), M4(BB.x, BB.y - 0.01, BB.z + 0.014, 0, 0, Math.PI / 2), motor);
+    St.add(new THREE.BoxGeometry(0.1, 0.05, 0.09), M4(BB.x, BB.y - 0.03, BB.z - 0.03, -0.35), motor);
+    if (q) {
+      for (const sx of [-1, 1]) {
+        x.f.metal.add(new THREE.CylinderGeometry(0.036, 0.036, 0.004, 18), M4(BB.x + sx * 0.051, BB.y - 0.01, BB.z + 0.014, 0, 0, Math.PI / 2), rgb('#3d424a'));
+        for (let k = 0; k < 4; k++) {
+          const a = (k / 4) * Math.PI * 2 + 0.4;
+          x.f.metal.add(new THREE.CylinderGeometry(0.0035, 0.0035, 0.003, 6), M4(BB.x + sx * 0.0535, BB.y - 0.01 + Math.sin(a) * 0.026, BB.z + 0.014 + Math.cos(a) * 0.026, 0, 0, Math.PI / 2), x.silver);
+        }
+      }
+    }
+    // Akkudeckel unten am Unterrohr (leicht abgesetzt) und Ladebuchse links
+    const dd = dtB.clone().sub(dtA).normalize();
+    const down = new THREE.Vector3().crossVectors(X, dd).normalize();
+    if (down.y > 0) down.negate();
+    const la = dtA.clone().lerp(dtB, 0.16).addScaledVector(down, D.dt[1] * 0.38);
+    const lb = dtA.clone().lerp(dtB, 0.84).addScaledVector(down, D.dt[3] * 0.38);
+    tube(St, la, lb, { w0: D.dt[0] * 0.62, d0: D.dt[1] * 0.3, w1: D.dt[2] * 0.62, d1: D.dt[3] * 0.3, n, col: () => rgb('#24272c') });
+    // giftgrüne Kanten am Akkudeckel und ein Ring auf dem Motordeckel
+    const acc = rgb(spec.paint.decal);
+    for (const sx of [-1, 1]) {
+      const off = (w: number) => v3(sx * w * 0.5, 0, 0);
+      pipe(x.f.paint, [la.clone().add(off(D.dt[0] * 0.66)).addScaledVector(down, -0.002), lb.clone().add(off(D.dt[2] * 0.66)).addScaledVector(down, -0.002)], 0.0022, 6, acc, X, false);
+      if (q) x.f.paint.add(new THREE.TorusGeometry(0.04, 0.003, 6, 28), M4(BB.x + sx * 0.0535, BB.y - 0.01, BB.z + 0.014, 0, Math.PI / 2, 0), acc);
+    }
+    if (q) {
+      const port = dtA.clone().lerp(dtB, 0.22).add(v3(-(D.dt[0] / 2) - 0.0008, 0, 0));
+      x.f.metal.add(new THREE.CylinderGeometry(0.009, 0.009, 0.003, 14), M4(port.x, port.y, port.z, 0, 0, Math.PI / 2), rgb('#16171a'));
+      x.f.matte.add(new THREE.CylinderGeometry(0.0045, 0.0045, 0.004, 10), M4(port.x - 0.0006, port.y, port.z, 0, 0, Math.PI / 2), rgb(spec.paint.decal));
+    }
+  }
+
   // Hinterbau: Kettenstreben, Sitzstreben (beim Aero tief angesetzt), Ausfallenden
   const ssTop = D.ssLow ? BB.clone().addScaledVector(D.seatDir, (D.ssLow - BB.y) / D.seatDir.y) : S.clone().addScaledVector(D.seatDir, -0.035);
   for (const sx of [-1, 1]) {
@@ -196,16 +245,19 @@ function buildFrame(x: Ctx, D: FrameDims, front: V, rear: V): FrameOut {
       strut(St, dro.clone().add(v3(0, -0.014, -0.03)), dro.clone().add(v3(0, 0.032, 0.012)), 0.006, 0.034, x.dark);
       continue;
     }
-    tube(P, BB.clone().add(v3(sx * 0.03, -0.004, 0.036)), dro, { w0: D.cs[0] * 0.8, d0: D.cs[0], w1: D.cs[1], n, rings, col: pc });
-    tube(P, ssTop.clone().add(v3(sx * 0.019, 0, 0.012)), dro.clone().add(v3(0, 0.012, -0.004)), { w0: D.ss[0], w1: D.ss[1], n, rings, col: pc });
-    // Ausfallende (Bahnrad: waagrecht nach hinten offen)
-    if (spec.frame === 'track') strut(P, dro.clone().add(v3(0, 0.004, -0.03)), dro.clone().add(v3(0, -0.002, 0.026)), 0.006, 0.026, pc(dro));
-    else strut(P, dro.clone().add(v3(0, -0.014, -0.016)), dro.clone().add(v3(0, 0.022, 0.012)), 0.006, 0.03, pc(dro));
+    // (verchromter Hinterbau: Streben und Ausfallenden blank)
+    const rM = chromeRear ? Mt : P;
+    const rC = chromeRear ? () => x.silver : pc;
+    tube(rM, BB.clone().add(v3(sx * 0.03, -0.004, 0.036)), dro, { w0: D.cs[0] * 0.8, d0: D.cs[0], w1: D.cs[1], n, rings, col: rC });
+    tube(rM, ssTop.clone().add(v3(sx * 0.019, 0, 0.012)), dro.clone().add(v3(0, 0.012, -0.004)), { w0: D.ss[0], w1: D.ss[1], n, rings, col: rC });
+    // Ausfallende (Bahnrad und Fixie: waagrecht nach hinten offen)
+    if (spec.frame === 'track' || spec.frame === 'fixie') strut(rM, dro.clone().add(v3(0, 0.004, -0.03)), dro.clone().add(v3(0, -0.002, 0.026)), 0.006, 0.026, rC(dro));
+    else strut(rM, dro.clone().add(v3(0, -0.014, -0.016)), dro.clone().add(v3(0, 0.022, 0.012)), 0.006, 0.03, rC(dro));
   }
   if (!D.ssLow) {
     // Bremsbrücke
     const br = ssTop.clone().lerp(rear, 0.4);
-    strut(P, br.clone().add(v3(-0.024, 0, 0)), br.clone().add(v3(0.024, 0, 0)), 0.008, 0.008, pc(br), Z);
+    strut(chromeRear ? Mt : P, br.clone().add(v3(-0.024, 0, 0)), br.clone().add(v3(0.024, 0, 0)), 0.008, 0.008, chromeRear ? x.silver : pc(br), Z);
   }
 
   const dtDir = dtB.clone().sub(dtA).normalize();
@@ -308,7 +360,7 @@ function buildFrame(x: Ctx, D: FrameDims, front: V, rear: V): FrameOut {
         pts.push(top.clone().lerp(axisEnd, t).lerp(top.clone().lerp(end, t), Math.pow(t, 2.4)));
       }
       const K1 = pts.length - 1;
-      sweep(P, pts, pathFrames(pts, X), (i) => D.fork[0] * 0.66 - (D.fork[0] * 0.66 - D.fork[1] * 0.62) * (i / K1), (i) => D.fork[0] - (D.fork[0] - D.fork[1]) * (i / K1), (i) => pc(pts[i]), shape('round', n));
+      sweep(chromeRear ? Mt : P, pts, pathFrames(pts, X), (i) => D.fork[0] * 0.66 - (D.fork[0] * 0.66 - D.fork[1] * 0.62) * (i / K1), (i) => D.fork[0] - (D.fork[0] - D.fork[1]) * (i / K1), (i) => (chromeRear ? x.silver : pc(pts[i])), shape('round', n));
       if (steel && q) {
         const tip = pts.slice(-3);
         sweep(Mt, tip, pathFrames(tip, X), () => D.fork[1] * 0.72, () => D.fork[1] * 1.06, () => x.silver, shape('round', n));
@@ -602,9 +654,29 @@ function buildCockpit(x: Ctx, out: FrameOut, fit: BikeFit): V {
     if (q && spec.bar !== 'tt' && spec.bar !== 'track') {
       const gp = clamp.clone().add(v3(0, 0.016, -0.06));
       strut(St, clamp.clone().add(v3(0, 0.004, -0.012)), gp.clone().add(v3(0, -0.006, 0.006)), 0.012, 0.008, x.dark);
-      St.add(new THREE.BoxGeometry(0.048, 0.014, 0.074), M4(gp.x, gp.y, gp.z, 0.12), x.dark);
-      Mt.add(new THREE.BoxGeometry(0.038, 0.002, 0.056), M4(gp.x, gp.y + 0.0071, gp.z + 0.002, 0.12), rgb('#2c3a44'));
+      const big = spec.frame === 'ebike' ? 1.3 : 1;
+      St.add(new THREE.BoxGeometry(0.048 * big, 0.014, 0.074 * big), M4(gp.x, gp.y, gp.z, 0.12), x.dark);
+      Mt.add(new THREE.BoxGeometry(0.038 * big, 0.002, 0.056 * big), M4(gp.x, gp.y + 0.0071, gp.z + 0.002, 0.12), spec.frame === 'ebike' ? rgb('#1d3b2c') : rgb('#2c3a44'));
+      if (spec.frame === 'ebike') Mt.add(new THREE.BoxGeometry(0.03, 0.0024, 0.008), M4(gp.x, gp.y + 0.0074, gp.z - 0.016, 0.12), rgb(spec.paint.decal));
     }
+  }
+
+  if (spec.bar === 'bullhorn') {
+    // Bullhorn: seitlich hinaus, dann nach vorn und leicht hinauf; vorn gewickelt, Endstopfen
+    for (const sx of [-1, 1]) {
+      const L = (dx: number, dy: number, dz: number) => clamp.clone().add(v3(sx * dx, dy, dz));
+      const pts = new THREE.CatmullRomCurve3([L(0, 0, 0), L(0.08, 0, 0), L(0.15, 0, -0.004), L(0.186, 0.004, -0.032), L(0.2, 0.014, -0.082), L(0.205, 0.03, -0.14), L(0.205, 0.04, -0.172)], false, 'centripetal').getSpacedPoints(q ? 30 : 8);
+      const k = Math.max(2, pts.findIndex((p) => Math.abs(p.x - clamp.x) > 0.17));
+      pipe(St, pts.slice(0, k + 1), 0.0132, n, x.dark);
+      pipe(Ma, pts.slice(k), 0.0142, n, tape);
+      const end = pts[pts.length - 1];
+      St.add(new THREE.CylinderGeometry(0.0145, 0.0145, 0.006, n), along(end, end.clone().sub(pts[pts.length - 2]).normalize()), x.dark);
+      if (sx > 0) {
+        fit.hood = L(0.203, 0.034, -0.15);
+        fit.drop = L(0.2, 0.02, -0.11);
+      }
+    }
+    return clamp;
   }
 
   if (spec.bar === 'tt') {
@@ -727,7 +799,7 @@ function buildDrive(x: Ctx, rear: V, seatDir: V): Set4 {
   const double = drive === 'double';
   const cross = spec.frame === 'cross';
   // großes Blatt (Außenradius) und seine Zähne: Bahn 58, Straße 53, Cross 46, Gravel 40, Lastenrad 38
-  const [ringR, teeth] = hub ? [0.083, 38] : guard ? [0.1, 44] : rod ? [0.104, 50] : fixed ? [0.118, 58] : cross ? [0.095, 46] : spec.frame === 'gravel' ? [0.085, 40] : [0.108, 53];
+  const [ringR, teeth] = hub ? [0.083, 38] : guard ? [0.1, 44] : rod ? [0.104, 50] : spec.frame === 'fixie' ? [0.097, 46] : fixed ? [0.118, 58] : cross ? [0.095, 46] : spec.frame === 'gravel' ? [0.085, 40] : spec.frame === 'ebike' ? [0.09, 42] : [0.108, 53];
   const smallR = cross ? 0.075 : 0.08;
   // Kettenblätter (Zähne nur in der hohen Stufe) mit Spider; im Kettenkasten unsichtbar
   if (!hub) toothed(ringM, o, 0.056, ringR, ringR - 0.02, q ? teeth : 0, 0.004, ringC, 28);
@@ -800,7 +872,7 @@ function buildDrive(x: Ctx, rear: V, seatDir: V): Set4 {
     for (let j = 0; j < k; j++) fine.push(a.clone().lerp(b, j / k));
   }
   fine.push(chain[chain.length - 1]);
-  const link = drive === 'fixed' ? [rgb('#c9a33c'), rgb('#e6d08a')] : [rgb('#3c3e43'), rgb('#9097a0')];
+  const link = drive === 'fixed' && spec.frame === 'track' ? [rgb('#c9a33c'), rgb('#e6d08a')] : [rgb('#3c3e43'), rgb('#9097a0')];
   pipe(Mt, fine, 0.0034, q ? 5 : 3, (i) => link[i % 2], X, false);
   if (fixed) return cr;
   // Schaltwerk: am Ausfallende, Parallelogramm, Käfig mit zwei Röllchen
@@ -1027,10 +1099,10 @@ function buildBags(x: Ctx, D: FrameDims, out: FrameOut, saddle: V, clamp: V, fit
 function buildBottles(x: Ctx, out: FrameOut) {
   const { q, spec } = x;
   // Crosser und Bahnrad fahren ohne Flaschen
-  if (spec.frame === 'cross' || spec.frame === 'track' || spec.frame === 'cargo' || spec.frame === 'post' || spec.frame === 'bonanza' || spec.frame === 'lowrider') return;
+  if (spec.frame === 'cross' || spec.frame === 'track' || spec.frame === 'cargo' || spec.frame === 'post' || spec.frame === 'bonanza' || spec.frame === 'lowrider' || spec.frame === 'fixie') return;
   if (spec.bits?.barBottles) return;
   const classic = spec.frame === 'steel';
-  const bottleC = classic ? rgb('#c3c8ce') : rgb('#f1f2f4');
+  const bottleC = spec.bottle ? rgb(spec.bottle) : classic ? rgb('#c3c8ce') : rgb('#f1f2f4');
   const capC = classic ? rgb('#e8e1cf') : rgb('#18191c');
   const band = spec.paint.base === 'team' ? rgb(x.kit.side) : rgb(spec.paint.second ?? spec.paint.decal);
   const mk = (a: V, b: V, side: V, len: number) => {
@@ -1104,13 +1176,16 @@ function buildWheel(x: Ctx, front: boolean, rRim: number, split = true): WheelOu
   const seg = q ? 64 : 18;
   const kind = spec.wheels;
   const tt = kind === 'tt';
-  const alu = kind === 'box36' || kind === 'box32' || kind === 'spoke144';
+  const deepV = kind === 'deepv';
+  const alu = kind === 'box36' || kind === 'box32' || kind === 'spoke144' || deepV;
   const four = kind === 'spoke4';
-  const deep = kind === 'carbon45' ? 0.045 : kind === 'carbon30' ? 0.03 : kind === 'deep60' || tt || four ? 0.06 : 0.02;
+  const deep = kind === 'carbon45' ? 0.045 : kind === 'carbon30' ? 0.03 : kind === 'deep80' ? 0.08 : deepV ? 0.04 : kind === 'deep60' || tt || four ? 0.06 : 0.02;
   const width = alu ? (spec.tire?.w ? 0.024 : 0.021) : 0.027;
   const blackRim = spec.frame === 'alu' || spec.frame === 'cross' || spec.frame === 'gravel';
-  const rimC = alu ? (blackRim ? rgb('#1d1e22') : x.silver) : x.carbon;
-  const rimM = alu ? (blackRim ? W.satin : W.metal) : W.paint;
+  // lackierte Felgen (Deep-V): eigene Farbe, glänzend; Speichen und Nabe dann schwarz
+  const rimPaint = spec.rim ? rgb(spec.rim) : null;
+  const rimC = rimPaint ?? (alu ? (blackRim ? rgb('#1d1e22') : x.silver) : x.carbon);
+  const rimM = rimPaint ? W.paint : alu ? (blackRim ? W.satin : W.metal) : W.paint;
   const rIn = rRim - deep;
   const disc = tt && !front;
   let spokeGeo: THREE.BufferGeometry | null = null;
@@ -1120,7 +1195,7 @@ function buildWheel(x: Ctx, front: boolean, rRim: number, split = true): WheelOu
       ? [[rRim, width / 2, rimC], [rRim - 0.007, width / 2, rimC], [rIn + 0.004, width * 0.4, rimC], [rIn, 0, rimC], [rIn + 0.004, -width * 0.4, rimC], [rRim - 0.007, -width / 2, rimC], [rRim, -width / 2, rimC], [rRim - 0.004, 0, rimC]]
       : [[rRim, width * 0.42, rimC], [rRim - 0.008, width / 2, rimC], [rRim - deep * 0.55, width * 0.5, rimC], [rIn + 0.007, width * 0.34, rimC], [rIn, 0, rimC], [rIn + 0.007, -width * 0.34, rimC], [rRim - deep * 0.55, -width * 0.5, rimC], [rRim - 0.008, -width / 2, rimC], [rRim, -width * 0.42, rimC], [rRim - 0.004, 0, rimC]];
     revolve(rimM, prof, seg, o, true);
-    if (alu && blackRim && q) {
+    if (alu && blackRim && !rimPaint && q) {
       // blank gedrehte Bremsflanken
       revolve(W.metal, [[rRim - 0.001, width / 2 + 0.0004, x.silver], [rRim - 0.0075, width / 2 + 0.0004, x.silver]], seg, o, false);
       revolve(W.metal, [[rRim - 0.0075, -width / 2 - 0.0004, x.silver], [rRim - 0.001, -width / 2 - 0.0004, x.silver]], seg, o, false);
@@ -1130,8 +1205,10 @@ function buildWheel(x: Ctx, front: boolean, rRim: number, split = true): WheelOu
   const rt = tireR(spec);
   const knobs = q ? spec.tire?.knobs ?? 0 : 0;
   const tc = rRim + rt * 0.72;
-  let wall = spec.tires === 'tan' ? rgb('#b98f5c') : rgb('#1c1d20');
+  let wall = spec.tire?.col ? rgb(spec.tire.col) : spec.tires === 'tan' ? rgb('#b98f5c') : rgb('#1c1d20');
   if (x.mud) wall = mix(wall, x.mudC, 0.72);
+  // farbiger Gummi: Lauffläche etwas dunkler in derselben Farbe
+  const tread = spec.tire?.col ? mix(rgb(spec.tire.col), x.rubber, 0.3) : x.rubber;
   const tp: [number, number, C3][] = [];
   const tn = q ? (knobs ? 20 : 14) : 5;
   const ang: number[] = [];
@@ -1143,7 +1220,7 @@ function buildWheel(x: Ctx, front: boolean, rRim: number, split = true): WheelOu
     // Weißwand: heller Ring auf der Flanke, Wulst am Felgenrand dunkel
     const ca = Math.cos(a);
     const white = spec.tire?.white && ca <= 0.42 && ca > -0.6;
-    tp.push([tc + ca * rt, Math.sin(a) * rt * 0.98, reflex ? rgb('#c9ccd0') : white ? rgb('#f2f0e8') : ca > 0.42 ? x.rubber : wall]);
+    tp.push([tc + ca * rt, Math.sin(a) * rt * 0.98, reflex ? rgb('#c9ccd0') : white ? rgb('#f2f0e8') : ca > 0.42 ? tread : wall]);
   }
   let warp: Warp | undefined;
   const tseg = knobs ? 200 : seg;
@@ -1172,13 +1249,13 @@ function buildWheel(x: Ctx, front: boolean, rRim: number, split = true): WheelOu
   revolve(W.matte, tp, tseg, o, true, undefined, warp);
 
   // Nabe
-  const hubC = alu || spec.paint.metal === 'silver' ? x.silver : spec.paint.metal === 'gold' ? x.gold : rgb('#24262a');
+  const hubC = rimPaint ? rgb('#24262a') : alu || spec.paint.metal === 'silver' ? x.silver : spec.paint.metal === 'gold' ? x.gold : rgb('#24262a');
   const flangeR = kind === 'spoke144' ? 0.04 : kind === 'box36' ? 0.03 : 0.023;
   const flL = -0.034;
   const flR = front ? 0.034 : 0.02;
   if (!disc) {
     const hub: [number, number, C3][] = [[0.008, -0.05, hubC], [0.012, -0.048, hubC], [0.012, flL - 0.003, hubC], [flangeR, flL - 0.002, hubC], [flangeR, flL + 0.002, hubC], [0.016, flL + 0.005, hubC], [0.014, 0, hubC], [0.016, flR - 0.005, hubC], [flangeR, flR - 0.002, hubC], [flangeR, flR + 0.002, hubC], [0.012, flR + 0.003, hubC], [0.012, 0.048, hubC], [0.008, 0.05, hubC]];
-    revolve(alu || spec.paint.metal !== 'black' ? W.metal : W.satin, q ? hub : [hub[0], hub[3], hub[6], hub[9], hub[12]], q ? 18 : 6, o, false);
+    revolve((alu && !rimPaint) || spec.paint.metal !== 'black' ? W.metal : W.satin, q ? hub : [hub[0], hub[3], hub[6], hub[9], hub[12]], q ? 18 : 6, o, false);
   }
 
   if (!front && (spec.drive === 'hub' || spec.drive === 'guard')) {
@@ -1211,11 +1288,11 @@ function buildWheel(x: Ctx, front: boolean, rRim: number, split = true): WheelOu
       sweep(W.paint, pts, pts.map(() => ({ s: v3(-1, 0, 0), c: tan })), (i) => sw[i], (i) => sd[i], (i) => (i === 1 && q ? acc : bc), shape('aero', q ? 12 : 6));
     }
   } else {
-    const N = q ? (kind === 'spoke144' ? 144 : kind === 'box36' ? 36 : kind === 'box32' ? 32 : front ? 20 : 24) : 8;
+    const N = q ? (kind === 'spoke144' ? 144 : kind === 'box36' ? 36 : kind === 'box32' || deepV ? 32 : kind === 'deep80' ? (front ? 18 : 21) : front ? 20 : 24) : 8;
     const cross = alu ? 3 : front ? 0 : 2;
     // Speichen als eigenes Teil: im Tempo werden sie unscharf (statt zu flimmern)
     const S = split ? set4(PAINT) : W;
-    spokes(S.metal, N, q ? cross : 0, flL, flR, flangeR, rIn + 0.003, alu ? x.silver : rgb('#1d1e21'), !alu);
+    spokes(S.metal, N, q ? cross : 0, flL, flR, flangeR, rIn + 0.003, alu && !rimPaint ? x.silver : rgb('#1d1e21'), !alu);
     if (split) spokeGeo = merge([S.metal]);
   }
   // Bremsscheibe links (dreht mit)
@@ -1506,7 +1583,7 @@ export function bikeBuild(id: string | undefined, kit: Kit, q: 0 | 1): BikeBuild
       rimF: tt ? null : rimDecal(wf),
       rimR: tt ? null : rimDecal(wr),
       mat: decalMat(spec, team ? teamDecal(kit) : spec.paint.decal),
-      rimMat: decalMat(spec, spec.paint.metal === 'gold' ? '#d9b25a' : '#e9ecef'),
+      rimMat: decalMat(spec, spec.rimDecal ?? (spec.paint.metal === 'gold' ? '#d9b25a' : '#e9ecef')),
     } : null,
     fit,
     spec,
