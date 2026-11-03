@@ -2569,8 +2569,10 @@ export class Renderer3D {
         pc: this.pc,
       });
       this.scene.add(this.ttStart.root);
-      // auch was erst später zu sehen ist (Blitze der Fotografen): Shader gleich, nicht beim ersten Blitz
+      // auch was erst später zu sehen ist (Blitze der Fotografen): Shader gleich, das erste Zeichnen im Probezug –
+      // nicht beim ersten Blitz
       this.warmUp(this.ttStart.root);
+      this.warmLater(this.ttStart.warmObjects());
     }
     this.descStart?.dispose();
     this.descStart = null;
@@ -2587,6 +2589,7 @@ export class Renderer3D {
     });
     this.scene.add(this.descStart.root);
     this.warmUp(this.descStart.root);
+    this.warmLater(this.descStart.warmObjects());
   }
 
   /**
@@ -4215,6 +4218,9 @@ export class Renderer3D {
     ghost.prepareFade();
     ghost.fade(0.5, 1);
     g.add(solid.group, ghost.group);
+    // Vögel, Flieger, Hubschrauber; Blitze der Startaufbauten (siehe warmLater)
+    for (const o of [...this.skyLife.warmObjects(), ...this.warmExtra]) g.add(o);
+    this.warmExtra = [];
     this.warmUp(g);
     // alles, was schon in der Szene hängt, aber noch nie zu sehen war (Startrampe mit Blitzen der Fotografen,
     // Vögel und Flieger am Himmel …): Shader jetzt statt beim ersten Auftauchen
@@ -4236,14 +4242,26 @@ export class Renderer3D {
    * der echten Szene mit ihrem Licht, Nebel und Ziel (Schattenkarte, Wetterbild oder Leinwand). compile() übersetzt
    * nur die Shader; Metal legt je Programm × Ziel × Geometrie-Layout erst beim ersten Zeichnen seine Pipeline an –
    * 10–40 ms, unterwegs ein Ruckler je neuem Stück („pipe“ in der Messfahrt, Version 269: fünf von sieben Rucklern).
-   * Ein paar je Bild auf der Startkarte, im Countdown und nach dem Ziel; während der Fahrt nie
+   * Ein paar je Bild auf der Startkarte (unter der Startanimation viele) und nach dem Ziel; im Countdown (die Kamera
+   * schwenkt) und während der Fahrt nie
    */
   private warmQueue: THREE.Object3D[] = [];
   private warmLive: THREE.Object3D[] = [];
+  /** Stellvertreter, die vor dem ersten warmAll angemeldet wurden (Startaufbauten entstehen vorher) */
+  private warmExtra: THREE.Object3D[] = [];
+  /** Stellvertreter für den Probezug anmelden (einmal unsichtbar zeichnen, dann in der Gruppe behalten) */
+  private warmLater(objs: THREE.Object3D[]) {
+    if (!objs.length) return;
+    if (!this.warmGroup) { this.warmExtra.push(...objs); return; }
+    for (const o of objs) this.warmGroup.add(o);
+    this.warmUp(this.warmGroup);
+    this.warmQueue.push(...objs);
+  }
   private warmStep(phase: string) {
     for (const o of this.warmLive) { this.scene.remove(o); this.warmGroup?.add(o); }
     this.warmLive = [];
-    if (!this.warmQueue.length || phase === 'playing' || !this.warmGroup) return;
+    // (nicht im Countdown: dort schwenkt die Kamera – ein neues Programm kostet beim ersten Zeichnen 10–40 ms)
+    if (!this.warmQueue.length || phase === 'playing' || phase === 'countdown' || !this.warmGroup) return;
     // unter der Startanimation (idleK fast 1, nichts zu sehen) mehr je Bild
     const n = Math.min(this.idleK > 0.9 ? 12 : 4, this.warmQueue.length);
     for (let i = 0; i < n; i++) {

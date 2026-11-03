@@ -1412,6 +1412,12 @@ export class DescentStart3D {
     this.place(i);
   }
 
+  /** Stellvertreter für den Probezug (render3d): die Blitze sind erst beim ersten Foto zu sehen */
+  warmObjects(): THREE.Object3D[] {
+    const f = this.flashes[0];
+    return f ? [new THREE.Sprite(f.s.material)] : [];
+  }
+
   dispose() {
     this.root.removeFromParent();
     for (const x of this.dis) x.dispose();

@@ -258,6 +258,15 @@ export class SkyLife {
     } else if (this.heli) this.heli.visible = false;
   }
 
+  /**
+   * Stellvertreter für den Probezug (render3d warmAll): Vögel und Flieger tauchen erst unterwegs im Bild auf – ihr
+   * erstes Zeichnen (Shader, Pipeline) kam sonst mitten im Rennen. Eigene Netze mit denselben Materialien.
+   */
+  warmObjects(): THREE.Object3D[] {
+    const g = this.geos[0];
+    return g ? [new THREE.Mesh(g, this.mat), new THREE.Mesh(g, this.rotorMat)] : [];
+  }
+
   dispose() {
     for (const g of this.geos) g.dispose();
     this.mat.dispose();
