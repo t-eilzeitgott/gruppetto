@@ -2,8 +2,8 @@ import { Fragment, useMemo } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { scoreStage } from '../lib/scoring';
-import { KIND_SHORT, dayDiff, fmtRange, sortStages, stageState } from '../lib/time';
-import type { Stage, TourData, Profile } from '../lib/types';
+import { KIND_SHORT, dayDiff, fmtKm, fmtRange, sortStages, stageState } from '../lib/time';
+import type { Stage, Tour, TourData, Profile } from '../lib/types';
 import { Empty, ErrorBox, Link, Loading, PageTitle, cx, useTitle } from '../ui/kit';
 import { TourPicker } from '../ui/Shell';
 import { lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
@@ -27,6 +27,7 @@ export function Stages() {
       <PageTitle title="Etappen" subtitle={fmtRange(tour.start_date, tour.end_date)} />
       <div className="stack">
         <TourPicker tour={tour} tours={tours} />
+        {tour.info?.overview && data ? <TourOverviewCard tour={tour} data={data} /> : null}
         {data ? <ExploreLinks data={data} /> : null}
         {error ? <ErrorBox error={error} onRetry={reload} /> : loading || !data ? <Loading /> : <StageList data={data} me={me} now={now} />}
       </div>
@@ -110,7 +111,13 @@ function StageRow({ stage, data, me, now, points, profile }: { stage: Stage; dat
             <span className="muted"> · {KIND_SHORT[stage.kind]}</span>
           </span>
           {route ? <span className="stage-row__route">{route}</span> : null}
-          <MiniProfile stage={stage} points={profile} />
+          {stage.info?.climbs_note && !profile?.length ? (
+            // vor dem Roadbook: Zahlen statt eines groben Profils
+            <span className="stage-row__facts">
+              {[stage.distance_km ? fmtKm(stage.distance_km) : null, stage.elevation_m ? `${stage.elevation_m.toLocaleString('de-DE')}\u00a0Hm` : null].filter(Boolean).join(' · ')}
+              {stage.info.stars ? <Stars n={stage.info.stars} /> : null}
+            </span>
+          ) : <MiniProfile stage={stage} points={profile} />}
           <span className={cx('stage-row__detail', state === 'open' && !myTip && isToday && 'accent')}>{detail}</span>
         </span>
         <span className="stage-row__side">
@@ -126,6 +133,70 @@ function StageRow({ stage, data, me, now, points, profile }: { stage: Stage; dat
         </span>
       </Link>
     </li>
+  );
+}
+
+/** Schwierigkeit laut Veranstalter: fünf Punkte, gefüllt nach Sternen */
+function Stars({ n }: { n: number }) {
+  return (
+    <span className="stars" role="img" aria-label={`Schwierigkeit ${n} von 5`}>
+      {[1, 2, 3, 4, 5].map((i) => <i key={i} className={i <= n ? 'on' : undefined} />)}
+    </span>
+  );
+}
+
+const nf1 = (v: number) => v.toLocaleString('de-DE', { maximumFractionDigits: 1 });
+
+/** Die Rundfahrt auf einen Blick (nach der Streckenpräsentation): Zahlen, Ruhetage, die schwersten Etappen */
+function TourOverviewCard({ tour, data }: { tour: Tour; data: TourData }) {
+  const o = tour.info?.overview;
+  if (!o) return null;
+  const stages = sortStages(data.stages);
+  const rest = stages.flatMap((s, i) => {
+    const prev = stages[i - 1];
+    if (!prev || dayDiff(prev.starts_at, s.starts_at) < 2) return [];
+    const d = new Date(new Date(prev.starts_at).getTime() + 864e5);
+    return [d.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })];
+  });
+  const hard = stages.filter((s) => (s.info?.stars ?? 0) >= 5);
+  const tt = stages.filter((s) => s.kind === 'itt' || s.kind === 'ttt').length;
+  const facts: [string, string][] = [];
+  if (o.summit_finishes) facts.push(['Bergankünfte', String(o.summit_finishes)]);
+  if (o.itt_km) facts.push([tt === 1 ? 'Zeitfahren' : `${tt || ''} Zeitfahren`.trim(), `${nf1(o.itt_km)}\u00a0km`]);
+  if (o.highest) facts.push(['Höchster Punkt', `${o.highest.name} · ${o.highest.alt.toLocaleString('de-DE')}\u00a0m`]);
+  if (o.start && o.finish) facts.push(['Start → Ziel', `${o.start} → ${o.finish}`]);
+  if (rest.length) facts.push([rest.length === 1 ? 'Ruhetag' : 'Ruhetage', rest.join(' & ')]);
+  return (
+    <section className="card tour-ov" aria-labelledby="tour-ov">
+      <h2 id="tour-ov" className="eyebrow">Die Strecke auf einen Blick</h2>
+      <dl className="tour-ov__big">
+        <div><dt>Etappen</dt><dd>{stages.length || '–'}</dd></div>
+        <div><dt>Kilometer</dt><dd>{Math.round(o.km).toLocaleString('de-DE')}</dd></div>
+        <div><dt>Höhenmeter</dt><dd>{o.elevation.toLocaleString('de-DE')}</dd></div>
+      </dl>
+      {facts.length ? <dl className="sheet-facts sheet-facts--wide">{facts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl> : null}
+      {o.note ? <p className="tour-ov__note">{o.note}</p> : null}
+      {hard.length ? (
+        <div className="tour-ov__hard">
+          <h3 className="eyebrow sheet-sub">Die schwersten Etappen</h3>
+          <ul className="tour-ov__list">
+            {hard.map((s) => (
+              <li key={s.id}>
+                <Link to={`/etappe/${s.id}`} className="tour-ov__stage">
+                  <span className="tour-ov__n">{s.number}</span>
+                  <span className="tour-ov__main">
+                    <strong>{stageRoute(s)}</strong>
+                    <span className="muted">{new Date(s.starts_at).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' })}{s.elevation_m ? ` · ${s.elevation_m.toLocaleString('de-DE')}\u00a0Hm` : ''}</span>
+                  </span>
+                  <Stars n={s.info?.stars ?? 5} />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {tour.info?.overview && stages[0]?.info?.source ? <p className="hint">Quelle: {stages[0].info.source}. Schwierigkeit (Punkte) laut Veranstalter.</p> : null}
+    </section>
   );
 }
 

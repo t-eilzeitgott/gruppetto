@@ -106,6 +106,10 @@ export interface StageInfo {
   feed?: string;
   /** Quelle der Streckenbeschreibung (ohne Angabe: Roadbook des Giro) */
   source?: string;
+  /** Schwierigkeit laut Veranstalter (1–5 Sterne) */
+  stars?: number;
+  /** Hinweis, wenn die Bergwertungen noch nicht vollständig sind (vor dem Roadbook) */
+  climbs_note?: string;
 }
 
 export interface TourInfo {
@@ -115,6 +119,19 @@ export interface TourInfo {
   redbull_bonus?: number[];
   redbull_points?: number[];
   stage_points?: Record<string, number[]>;
+  /** die Rundfahrt auf einen Blick (nach der Streckenpräsentation) */
+  overview?: TourOverview;
+}
+
+export interface TourOverview {
+  km: number;
+  elevation: number;
+  summit_finishes?: number;
+  itt_km?: number;
+  highest?: { name: string; alt: number };
+  start?: string;
+  finish?: string;
+  note?: string;
 }
 
 /** Bergwertung: cat '1'–'4', 'HC' oder 'CC' (Cima Coppi) */

@@ -476,6 +476,8 @@ export function StageProfileCard({ stage, tour }: { stage: Stage; tour: Tour }) 
     ...(stage.sprints ?? []).map((s) => ({ km: s.km, kind: 'sprint' as const, s })),
   ].sort((a, b) => a.km - b.km);
   const summitFinish = climbs.some((c) => climbMetrics(c, stage).finish);
+  // vor dem Roadbook (nur Bergankünfte bekannt): kein schematisches Profil, das flacher aussähe als die Etappe
+  const pending = !!stage.info?.climbs_note && !(profile && profile.length > 1);
   const pcs = tour.pcs_slug ? `https://www.procyclingstats.com/race/${tour.pcs_slug}/stage-${stage.number}/info/profiles` : null;
   const sprintPts = tour.info?.sprint_points;
 
@@ -485,8 +487,13 @@ export function StageProfileCard({ stage, tour }: { stage: Stage; tour: Tour }) 
         <h2 id={`profile-${stage.id}`} className="eyebrow">Profil & Wertungen</h2>
         {summitFinish ? <span className="chip chip--accent">Bergankunft</span> : null}
       </div>
-      <StageProfileChart stage={stage} />
-      {points.length ? (
+      {pending ? (
+        <div className="profile-pending">
+          {stage.elevation_m ? <strong>{stage.elevation_m.toLocaleString('de-DE')}&nbsp;Hm</strong> : null}
+          <span>{stage.distance_km ? `auf ${fmtKm(stage.distance_km)} · ` : ''}das Höhenprofil folgt mit dem Roadbook</span>
+        </div>
+      ) : <StageProfileChart stage={stage} />}
+      {points.length || pending ? (
         <ol className="profile-points" aria-label="Wertungen entlang der Strecke">
           {points.map((p, i) => (
             <li key={i}>
@@ -551,7 +558,7 @@ export function StageProfileCard({ stage, tour }: { stage: Stage; tour: Tour }) 
       ) : null}
       <Waypoints stage={stage} />
       <p className="hint">
-        {profile ? 'Höhenprofil aus der Strecke, Fläche nach Steigung eingefärbt.' : 'Höhe je Anstieg aus Länge × Ø-Steigung, Täler vereinfacht.'} km-Angaben zum Gipfel. Tippe auf eine Wertung für den Steckbrief.
+        {pending ? `${stage.info?.climbs_note ?? ''}${climbs.length ? ' Eingetragen ist bisher nur die Bergankunft.' : ''}` : <>{profile ? 'Höhenprofil aus der Strecke, Fläche nach Steigung eingefärbt.' : 'Höhe je Anstieg aus Länge × Ø-Steigung, Täler vereinfacht.'} km-Angaben zum Gipfel. Tippe auf eine Wertung für den Steckbrief.</>}
         {pcs ? <> <a href={pcs} target="_blank" rel="noopener noreferrer">Original-Profil bei ProCyclingStats</a></> : null}
       </p>
     </section>
@@ -587,13 +594,17 @@ export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
     rows.push(['Höchster Punkt (GPX)', `${Math.max(...eles).toLocaleString('de-DE')}\u00a0m`]);
     rows.push(['Tiefster Punkt (GPX)', `${Math.min(...eles).toLocaleString('de-DE')}\u00a0m`]);
   }
-  rows.push(['Bergwertungen', String(climbs.length)]);
+  if (info.stars) rows.push(['Schwierigkeit', `${'★'.repeat(info.stars)}${'☆'.repeat(Math.max(0, 5 - info.stars))}\u00a0${info.stars}/5`]);
+  // vor dem Roadbook sind nur die Bergankünfte bekannt – dann keine (zu kleine) Zahl
+  if (info.climbs_note) {
+    if (last && climbMetrics(last, stage).finish) rows.push(['Bergankunft', last.name]);
+  } else rows.push(['Bergwertungen', String(climbs.length)]);
   if (lenSum) rows.push(['Kletter-km (gewertet)', `${nf(lenSum)}\u00a0km`]);
   if (gainSum) rows.push(['Hm in Bergwertungen', `≈\u00a0${gainSum.toLocaleString('de-DE')}\u00a0m`]);
   if (steep) rows.push(['Steilste Rampe', `${nf(steep.max ?? 0)}\u00a0% · ${steep.name}`]);
   if (high) rows.push(['Höchster Punkt', `${(high.alt ?? 0).toLocaleString('de-DE')}\u00a0m · ${high.name}`]);
   if (hardest) rows.push(['Härtester Anstieg', `${hardest.c.name} (${nf(hardest.m.difficulty ?? 0)})`]);
-  if (last && stage.distance_km) rows.push(['Letzte Bergwertung', `${last.name} · ${climbMetrics(last, stage).finish ? 'im Ziel' : `${nf(stage.distance_km - last.km)} km vor dem Ziel`}`]);
+  if (last && stage.distance_km && !info.climbs_note) rows.push(['Letzte Bergwertung', `${last.name} · ${climbMetrics(last, stage).finish ? 'im Ziel' : `${nf(stage.distance_km - last.km)} km vor dem Ziel`}`]);
   if (komTotal) rows.push(['Bergpunkte für Sieger', `${komTotal} Punkte`]);
   const sp = (stage.sprints ?? []).filter((s) => s.kind !== 'redbull');
   const rbk = (stage.sprints ?? []).find((s) => s.kind === 'redbull');
@@ -636,7 +647,7 @@ export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
 /** Aufklappbares Profil (z. B. beim Tippen) */
 export function ProfileDetails({ stage }: { stage: Stage }) {
   const profile = useStageProfile(stage.id);
-  if (!hasProfile(stage) && !profile) return null;
+  if ((!hasProfile(stage) || stage.info?.climbs_note) && !profile) return null;
   const n = stage.climbs?.length ?? 0;
   return (
     <details className="card profile-mini">

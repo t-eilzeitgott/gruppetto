@@ -83,7 +83,10 @@ w();
 function stageRow(t: SeasonTour, s: SeasonStage): string {
   const info: Record<string, unknown> = {};
   if (s.route) info.route = s.route;
+  if (s.finale) info.finale = s.finale;
   if (s.route && t.routeSource) info.source = t.routeSource;
+  if (s.stars) info.stars = s.stars;
+  if (s.climbsNote) info.climbs_note = s.climbsNote;
   return `  (${q(t.id)}, ${s.n}, ${startsAt(s.date)}, ${q(s.kind)}, ${q(s.from)}, ${q(s.to)}, ${num(s.km)}, ${num(s.elevation)}, ${json(s.climbs ?? [])}, ${json(info)})`;
 }
 

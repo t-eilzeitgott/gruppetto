@@ -7,10 +7,14 @@
 //   Durchfahrtsorte mit Kilometer und Höhe sowie die Anstiege (Länge, Steigung, Gipfelhöhe)
 //   aus den offiziellen Profilen; Maximalsteigungen aus den Detailprofilen der Schlüsselanstiege.
 //   Kategorien der Bergwertungen und Zwischensprints stehen erst im Roadbook (Juni 2027): cat '?'.
-// Giro d'Italia 2027 – offiziell nur 8.–30. Mai mit Start in Triest; Präsentation am 3.11.2026 in Rom.
+// Giro d'Italia 2027 – Strecke offiziell seit der Präsentation am 3.11.2026 in Rom (giroditalia.it):
+//   Datum, Start/Ziel, Distanz und Streckenbeschreibung von der Streckenseite, Höhenmeter je Etappe aus den
+//   Etappenblättern (tuttobiciweb, Summe = offizielle 50.250 m), Schwierigkeit (1–5 Sterne) aus der Präsentation,
+//   Werte der Schlussanstiege (Zoncolan, Piani di Bobbio, Mortirolo) aus der Präsentation. Lage, Länge und
+//   Kategorie der übrigen Bergwertungen stehen erst im Roadbook (Mai 2027).
 // La Vuelta 2027 – offiziell 4.–26. September, Start in Santiago de Compostela, Ziel in Madrid;
 //   Präsentation im Dezember 2026.
-// Giro und Vuelta bekommen ihre Etappen, sobald die Strecken präsentiert sind.
+// Die Vuelta bekommt ihre Etappen, sobald die Strecke präsentiert ist.
 import type { Climb, StageKind, TourInfo } from '../lib/types';
 
 export interface SeasonWaypoint {
@@ -33,6 +37,12 @@ export interface SeasonStage {
   waypoints?: SeasonWaypoint[];
   /** Streckenbeschreibung (deutsch) */
   route?: string;
+  /** Finale bzw. Schlussanstieg (deutsch) */
+  finale?: string;
+  /** Schwierigkeit laut Veranstalter (1–5 Sterne) */
+  stars?: number;
+  /** Hinweis, wenn die Bergwertungen noch nicht vollständig sind */
+  climbsNote?: string;
 }
 
 export interface SeasonTour {
@@ -62,6 +72,71 @@ function profile(points: P[]): { waypoints: SeasonWaypoint[]; climbs: Climb[] } 
 const tdf = (n: number, date: string, from: string, to: string, km: number, kind: StageKind, elevation: number, route: string, points?: P[]): SeasonStage => ({
   n, date, from, to, km, kind, elevation, route, ...(points ? profile(points) : {}),
 });
+
+
+// ------------------------------------------------------------------ Giro d'Italia 2027
+
+const GIRO_NOTE = 'Weitere Bergwertungen mit Lage und Kategorie folgen mit dem Roadbook (Mai 2027).';
+
+const giro = (n: number, date: string, from: string, to: string, km: number, kind: StageKind, elevation: number, stars: number,
+  route: string, o: { finale?: string; climbs?: Climb[] } = {}): SeasonStage => ({
+  n, date, from, to, km, kind, elevation, stars, route, climbsNote: GIRO_NOTE, ...(o.finale ? { finale: o.finale } : {}), ...(o.climbs ? { climbs: o.climbs } : {}),
+});
+/** Bergankunft im Ziel (Lage bekannt: bei km = Etappenlänge) */
+const top = (name: string, km: number, extra: Partial<Climb> = {}): Climb => ({ name, cat: '?', km, ...extra });
+
+const GIRO: SeasonStage[] = [
+  giro(1, '2027-05-08', 'Triest', 'Triest', 172, 'hilly', 2400, 3,
+    'Wellige Auftaktetappe mit Abstecher nach Slowenien (rund 40 km) und kurzen Anstiegen im Finale, die zu Angriffen einladen. 2014 endete der Giro in Triest.'),
+  giro(2, '2027-05-09', 'Ljubljana', 'Koper', 166, 'hilly', 2200, 3,
+    'Komplett in Slowenien, von der Hauptstadt an die Adria nach Koper (Capodistria): ständig auf und ab – eine Chance für Sprinter, die über Hügel kommen.'),
+  giro(3, '2027-05-10', 'Cervignano del Friuli', 'Possagno', 163, 'hilly', 1450, 3,
+    'Zurück in Italien, überwiegend schnell. Montello und Mostaccin können das Rennen beleben; Ziel in Possagno am Fuß des Monte Grappa.'),
+  giro(4, '2027-05-11', 'Argenta', 'Misano Adriatico', 151, 'flat', 750, 1,
+    'Flach durch die Emilia-Romagna an die Adria, ohne nennenswerte Anstiege. Ziel auf der Rennstrecke Marco Simoncelli – erste Chance für die Sprinter.'),
+  giro(5, '2027-05-12', 'Filottrano', 'Sarnano-Sassotetto', 139, 'mountain', 3300, 3,
+    'Erste Bergetappe, Start in Filottrano, dem Heimatort von Michele Scarponi. Über die steilen „Muri“ der Marken in die Monti Sibillini – hier entstehen die ersten Abstände in der Gesamtwertung.',
+    { finale: 'Bergankunft in Sassotetto: mehrere Kilometer gleichmäßig bergauf ins Ziel.', climbs: [top('Sarnano-Sassotetto', 139)] }),
+  giro(6, '2027-05-13', 'Alba Adriatica', 'Lanciano', 148, 'hilly', 1700, 3,
+    'Durch das hügelige Hinterland der Abruzzen über Ripa Teatina und Chieti; ständiger Wechsel aus Anstiegen und Abfahrten. Das Finale hinauf nach Lanciano liegt explosiven Fahrern.'),
+  giro(7, '2027-05-14', 'Sulmona', 'Campo di Giove', 19.6, 'itt', 700, 4,
+    'Einzelzeitfahren mit Bergankunft (Cronoscalata): flacher Beginn, die zweite Hälfte steigt mit rund 5 % nach Campo di Giove. Die Einteilung der Kräfte entscheidet.',
+    { finale: 'Zweite Hälfte bergauf mit rund 5 % bis Campo di Giove.', climbs: [top('Campo di Giove', 19.6)] }),
+  giro(8, '2027-05-15', 'Trasacco', 'Neapel', 219, 'flat', 1300, 2,
+    'Eine der längsten Etappen: aus den Abruzzen über den Apennin nach Kampanien. Neapel ist zum sechsten Mal in Folge Zielort – meist ein Tag für die Sprinter.'),
+  giro(9, '2027-05-16', 'Itri', 'Subiaco-Monte Livata', 180, 'mountain', 3150, 4,
+    'Bergetappe durch Latium mit Bergankunft am Monte Livata im Apennin über Subiaco – schon 2026 beim Giro Next Gen im Programm. Der Schlussanstieg ist ein echter Test für die Klassementfahrer. Danach der erste Ruhetag.',
+    { finale: 'Schlussanstieg von Subiaco zum Monte Livata.', climbs: [top('Monte Livata', 180)] }),
+  giro(10, '2027-05-18', 'Palombara Sabina', 'Norcia', 218, 'hilly', 3600, 3,
+    'Lange Apennin-Etappe mit vielen Wechseln der Steigung. Nach der Hochebene von Castelluccio geht es über Forca di Presta und Forca Ventolosa hinunter nach Norcia.'),
+  giro(11, '2027-05-19', 'Gualdo Tadino', 'Scarperia (Mugello)', 220, 'hilly', 2150, 2,
+    'Längste Etappe des Giro: über den umbrischen und toskanischen Apennin mit vielen Anstiegen und Abfahrten im Mittelteil, Ziel auf der Rennstrecke von Mugello.'),
+  giro(12, '2027-05-20', 'Montecatini Terme', 'Zeri (Passo dei Due Santi)', 173, 'mountain', 3400, 3,
+    'Bartali-Etappe: neue Bergankunft am Passo dei Due Santi im Skigebiet Zum Zeri. Die meisten Höhenmeter kommen in der zweiten Hälfte – ein Tag für reine Kletterer.',
+    { finale: 'Bergankunft am Passo dei Due Santi (Zum Zeri).', climbs: [top('Passo dei Due Santi', 173, { alt: 1392 })] }),
+  giro(13, '2027-05-21', 'Borgo Val di Taro', 'Reggio Emilia', 176, 'flat', 750, 1,
+    'Aus dem Apennin bei Parma hinunter in die Po-Ebene: anfangs leichte Anstiege, dann schnell und gerade – vermutlich ein Massensprint in Reggio Emilia.'),
+  giro(14, '2027-05-22', 'Cantù', 'Piani di Bobbio/Valtorta', 187, 'mountain', 4900, 4,
+    'Bergetappe in den Lombardischen Voralpen mit 4.900 Höhenmetern: Madonna del Ghisallo, Culmine di San Pietro, Miragolo San Salvatore und Alino, zum Schluss hinauf zu den Liften der Piani di Bobbio – eine der großen Prüfungen der zweiten Woche.',
+    { finale: 'Schlussanstieg von Valtorta zu den Piani di Bobbio: 10,1 km mit 9 %, Rampen bis 18 %.', climbs: [top('Piani di Bobbio', 187, { len: 10.1, grad: 9, max: 18 })] }),
+  giro(15, '2027-05-23', 'Monza', 'Mailand', 37.3, 'itt', 150, 3,
+    'Flaches, schnelles Einzelzeitfahren vom Autodromo Nazionale in Monza nach Mailand – für die Spezialisten und möglicherweise entscheidend für die Gesamtwertung. Danach der zweite Ruhetag.'),
+  giro(16, '2027-05-25', 'Sondrio', 'Aprica', 192, 'mountain', 5700, 5,
+    'Königsetappe mit 5.700 Höhenmetern und zum ersten Mal der Folge Mortirolo – Gavia – Mortirolo. Der Passo Gavia (2.618 m) ist die Cima Coppi, der höchste Punkt des Giro, und nach 13 Jahren zurück. Ziel in Aprica, dem Ort großer Giro-Geschichten.',
+    { finale: 'Der Mortirolo von Mazzo di Valtellina: 12,8 km mit 10,1 %, Rampen bis 18 %. Ziel in Aprica.' }),
+  giro(17, '2027-05-26', 'Chiari', 'Vo’', 194, 'hilly', 1100, 2,
+    'Erst flach, dann ein schweres Finale in den Euganeischen Hügeln: mehrere kurze, steile „Muri“ kurz vor dem Ziel in Vo’.'),
+  giro(18, '2027-05-27', 'Rovereto', 'Madonna di Campiglio', 154, 'mountain', 4450, 4,
+    'Bergetappe ganz im Trentino mit immer härteren Anstiegen: zwischen Ponte Arche und Spiazzo eine Schleife von rund 50 km mit zweimal Passo Durone und dem schweren Passo Daone. Der Schlussanstieg nach Madonna di Campiglio lädt zu Angriffen ein.',
+    { finale: 'Schlussanstieg nach Madonna di Campiglio.', climbs: [top('Madonna di Campiglio', 154)] }),
+  giro(19, '2027-05-28', 'Rovereto', 'Sacile', 199, 'hilly', 3000, 2,
+    'Gleich zu Beginn die Anstiege von Vigolo Vattaro und Bieno, dann lange bergab und flach. Im Finale die kurzen, steilen Rampen von Montaner und Castello di Caneva vor dem Ziel in Sacile – ein Tag für Angreifer.'),
+  giro(20, '2027-05-29', 'Pordenone', 'Monte Zoncolan', 180, 'mountain', 3600, 5,
+    'Letzte große Bergetappe über Passo Duron (1.069 m) und Sella Valcalda (958 m) zum Monte Zoncolan – seit Froomes Sieg 2018 nicht mehr von dieser Seite gefahren und wohl die Entscheidung über das Rosa Trikot.',
+    { finale: 'Monte Zoncolan von Ovaro: 10,1 km mit 11,9 %, Rampen bis 22 %, die steilsten Stücke in der Mitte.', climbs: [top('Monte Zoncolan', 180, { len: 10.1, grad: 11.9, max: 22, alt: 1730 })] }),
+  giro(21, '2027-05-30', 'Rom', 'Rom', 131, 'flat', 500, 1,
+    'Flache Schlussetappe mit einem rund 9 km langen Stadtkurs, achtmal durch die Straßen Roms, Ziel am Circus Maximus – traditionell ein Massensprint.'),
+];
 
 const TOUR: SeasonStage[] = [
   tdf(1, '2027-07-02', 'Edinburgh', 'Carlisle', 185, 'flat', 2000,
@@ -182,7 +257,8 @@ export const SEASON_2027: SeasonTour[] = [
   {
     id: 'giro-2027',
     name: "Giro d'Italia 2027",
-    source: 'RCS Sport: 8.–30. Mai, Start in Triest; Strecke folgt am 3.11.2026',
+    source: 'Streckenpräsentation vom 3.11.2026 (giroditalia.it)',
+    routeSource: 'offizielle Streckenpräsentation vom 3.11.2026 (giroditalia.it)',
     // Reglement wie 2026 (Bergpunkte, Zwischensprints, Zeitbonus, Red Bull KM)
     info: {
       kom: { '1': [40, 18, 12, 9, 6, 4, 2, 1], '2': [18, 8, 6, 4, 2, 1], '3': [9, 4, 2, 1], '4': [3, 2, 1], CC: [50, 30, 20, 14, 10, 6, 4, 2, 1] },
@@ -195,8 +271,14 @@ export const SEASON_2027: SeasonTour[] = [
         'C (mittel)': [25, 18, 12, 8, 6, 5, 4, 3, 2, 1],
         'D/E (Berg, Zeitfahren)': [15, 12, 9, 7, 6, 5, 4, 3, 2, 1],
       },
+      overview: {
+        km: 3418.9, elevation: 50250, summit_finishes: 8, itt_km: 56.9,
+        highest: { name: 'Passo Gavia (Cima Coppi)', alt: 2618 },
+        start: 'Triest', finish: 'Rom',
+        note: 'Abstecher nach Slowenien zum Auftakt, zwei Zeitfahren (Bergzeitfahren nach Campo di Giove, flach Monza–Mailand), zum ersten Mal Mortirolo – Gavia – Mortirolo an einem Tag und am vorletzten Tag der Monte Zoncolan.',
+      },
     },
-    stages: [],
+    stages: GIRO,
   },
   {
     id: 'tour-2027',
