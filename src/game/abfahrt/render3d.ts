@@ -392,19 +392,20 @@ const LOOK_KEYS = new Set(LOOKS.map(riderKitKey));
 /**
  * Feste Zuschauergruppen, wie sie an jeder Bergstraße sitzen und stehen – zehn Vorlagen, immer wieder verwendet:
  * Familie mit Kindern, Fanclub mit Fahnen, Wanderer, Picknick, Paar, Radler mit Kindern, Senioren auf der Bank,
- * Party, Fotografen, Clique am Hang. Sitzende auf Klappstühlen. u: längs der Straße (m), q: vom Bankett weg (m)
+ * Party, Fotografen, Clique am Hang. Alle stehen (Sitzende und Klappstühle sahen als Bilder aus wie in der Luft
+ * hängend). u: längs der Straße (m), q: vom Bankett weg (m)
  */
 const GROUPS: { u: number; q: number; act: number; kid?: boolean }[][] = [
-  [{ u: 0, q: 1.2, act: Act.sit }, { u: 0.7, q: 1.3, act: Act.sit }, { u: -0.6, q: 0.8, act: Act.cheer, kid: true }, { u: 1.4, q: 0.8, act: Act.jump, kid: true }, { u: 0.3, q: 2.2, act: Act.wave }],
-  [{ u: 0, q: 0.6, act: Act.flag }, { u: 0.9, q: 0.7, act: Act.cheer }, { u: 1.8, q: 0.5, act: Act.flag }, { u: 0.5, q: 1.7, act: Act.sit }, { u: 1.4, q: 1.8, act: Act.sit }, { u: -0.8, q: 1.0, act: Act.shout }],
-  [{ u: 0, q: 1.5, act: Act.sit }, { u: 1.1, q: 1.8, act: Act.sit }, { u: 2.0, q: 1.1, act: Act.clap }],
-  [{ u: 0, q: 1.4, act: Act.sit }, { u: 0.8, q: 1.0, act: Act.sit }, { u: 0.9, q: 2.1, act: Act.sit }, { u: 1.7, q: 1.5, act: Act.sit }],
+  [{ u: 0, q: 1.2, act: Act.idle }, { u: 0.7, q: 1.3, act: Act.clap }, { u: -0.6, q: 0.8, act: Act.cheer, kid: true }, { u: 1.4, q: 0.8, act: Act.jump, kid: true }, { u: 0.3, q: 2.2, act: Act.wave }],
+  [{ u: 0, q: 0.6, act: Act.flag }, { u: 0.9, q: 0.7, act: Act.cheer }, { u: 1.8, q: 0.5, act: Act.flag }, { u: 0.5, q: 1.7, act: Act.cheer }, { u: 1.4, q: 1.8, act: Act.wave }, { u: -0.8, q: 1.0, act: Act.shout }],
+  [{ u: 0, q: 1.5, act: Act.idle }, { u: 1.1, q: 1.8, act: Act.clap }, { u: 2.0, q: 1.1, act: Act.clap }],
+  [{ u: 0, q: 1.4, act: Act.cheer }, { u: 0.8, q: 1.0, act: Act.wave }, { u: 0.9, q: 2.1, act: Act.idle }, { u: 1.7, q: 1.5, act: Act.clap }],
   [{ u: 0, q: 0.5, act: Act.clap }, { u: 0.6, q: 0.6, act: Act.film }],
-  [{ u: 0, q: 0.7, act: Act.cheer }, { u: 0.7, q: 0.6, act: Act.jump, kid: true }, { u: 1.3, q: 0.8, act: Act.wave, kid: true }, { u: 0.4, q: 1.8, act: Act.sit }],
-  [{ u: 0, q: 1.0, act: Act.sit }, { u: 0.65, q: 1.0, act: Act.sit }, { u: 1.3, q: 1.05, act: Act.sit }],
-  [{ u: 0, q: 0.8, act: Act.dance }, { u: 0.8, q: 1.1, act: Act.cheer }, { u: 1.6, q: 0.7, act: Act.dance }, { u: 0.4, q: 2.0, act: Act.jump }, { u: 1.3, q: 2.1, act: Act.shout }, { u: 2.3, q: 1.6, act: Act.sit }],
-  [{ u: 0, q: 0.5, act: Act.film }, { u: 1.0, q: 0.9, act: Act.film }, { u: 0.5, q: 1.8, act: Act.sit }],
-  [{ u: 0, q: 0.9, act: Act.sit }, { u: 0.7, q: 0.9, act: Act.sit }, { u: 1.4, q: 1.0, act: Act.sit }, { u: 2.1, q: 0.9, act: Act.sit }, { u: 0.3, q: 2.0, act: Act.cheer }, { u: 1.1, q: 2.1, act: Act.wave }, { u: 1.8, q: 2.1, act: Act.flag }],
+  [{ u: 0, q: 0.7, act: Act.cheer }, { u: 0.7, q: 0.6, act: Act.jump, kid: true }, { u: 1.3, q: 0.8, act: Act.wave, kid: true }, { u: 0.4, q: 1.8, act: Act.cheer }],
+  [{ u: 0, q: 1.0, act: Act.wave }, { u: 0.65, q: 1.0, act: Act.idle }, { u: 1.3, q: 1.05, act: Act.clap }],
+  [{ u: 0, q: 0.8, act: Act.dance }, { u: 0.8, q: 1.1, act: Act.cheer }, { u: 1.6, q: 0.7, act: Act.dance }, { u: 0.4, q: 2.0, act: Act.jump }, { u: 1.3, q: 2.1, act: Act.shout }, { u: 2.3, q: 1.6, act: Act.cheer }],
+  [{ u: 0, q: 0.5, act: Act.film }, { u: 1.0, q: 0.9, act: Act.film }, { u: 0.5, q: 1.8, act: Act.wave }],
+  [{ u: 0, q: 0.9, act: Act.idle }, { u: 0.7, q: 0.9, act: Act.clap }, { u: 1.4, q: 1.0, act: Act.cheer }, { u: 2.1, q: 0.9, act: Act.wave }, { u: 0.3, q: 2.0, act: Act.cheer }, { u: 1.1, q: 2.1, act: Act.wave }, { u: 1.8, q: 2.1, act: Act.flag }],
 ];
 /** Anteil der Straßenstücke (je Seite) mit einer Gruppe: etwa alle 50 m eine */
 const GROUP_P = 1 / 25;
@@ -3296,6 +3297,7 @@ export class Renderer3D {
   }
 
   private clearChunks() {
+    this.signs.clear();
     for (const c of this.chunks.values()) this.dropChunk(c);
     for (const c of this.chunkOld.values()) this.dropChunk(c);
     for (const f of [...this.cFades]) this.dropChunk(f.c);
@@ -4811,7 +4813,7 @@ export class Renderer3D {
           if (hg >= GROUP_P) continue;
           const side = sg < 0 ? s.L : s.R;
           if (!GROUP_GROUND.has(side.ground) || side.drop || side.wall > 0) continue;
-          this.crowdGroup(people[Math.min(7, Math.floor(r / 5))], roof, s, sg, sg < 0 ? lim.L[r] : lim.R[r], Math.floor(hash(s.i * 13 + 5) * GROUPS.length));
+          this.crowdGroup(people[Math.min(7, Math.floor(r / 5))], s, sg, sg < 0 ? lim.L[r] : lim.R[r], Math.floor(hash(s.i * 13 + 5) * GROUPS.length));
         }
       }
       // --- Sprites/Requisiten (Zuschauer: viele Menschen je Stück – nach jedem nachsehen)
@@ -4953,6 +4955,12 @@ export class Renderer3D {
       () => add(ads, this.mats.ads, 0, true),
       () => { if (this.fanMat) add(fans, this.fanMat, 0, true); },
     ];
+    // Zuschauer nur auf gebautem Boden (Bankett, Hang, Gehweg): wer darüber schwebt (Brückenanfang, Mauer, Piazza
+    // tiefer als das Querprofil), fällt weg, kleine Abstände rücken auf den Boden; Schilder erst danach (vor dem
+    // Bau der Werbenetze, in die sie gehören)
+    if (this.soon(2)) yield;
+    resume();
+    this.groundPeople(people, [terr, verge, walk, walk2, curb, gutter]);
     for (const f of parts) {
       // großes Teil nicht erst kurz vor Schluss des Budgets beginnen
       if (this.soon(1)) yield;
@@ -6889,20 +6897,7 @@ export class Renderer3D {
         }
         place(p, u, dx);
         out.push(p);
-        if (p.act === Act.sign) this.signBoard(p, r);
-        // Kind auf den Schultern
-        if (ri > 0 && !kid && p.act !== Act.sign && p.act !== Act.devil && r() < 0.05) {
-          p.act = Act.hold;
-          p.cup = false;
-          const c = randomPerson(r, zone, { row: ri, kid: true });
-          c.act = Act.sit;
-          c.height = 0.56 + r() * 0.06;
-          c.yaw = p.yaw;
-          c.x = p.x - Math.sin(p.yaw) * 0.1 * p.height;
-          c.z = p.z - Math.cos(p.yaw) * 0.1 * p.height;
-          c.y = p.y + 1.47 * p.height - 0.9 * c.height;
-          out.push(c);
-        }
+        if (p.act === Act.sign) this.signRoll(p, r);
         // Fahnen und Schilder brauchen Platz
         const wide = p.act === Act.flag ? 0.4 : p.act === Act.sign ? 0.75 : p.act === Act.wave ? 0.12 : 0;
         u += step[0] + wide + r() * step[1] + (!group && r() < 0.06 ? 0.5 + r() * 0.7 : 0);
@@ -6912,9 +6907,9 @@ export class Renderer3D {
 
   /**
    * Feste Zuschauergruppe (Vorlage gi) am Rand von Stück s: auf dem Querprofil, zur Straße und den ankommenden
-   * Fahrern gedreht; Sitzende auf Klappstühlen (in chairs). Nur wo der Hang flach genug ist.
+   * Fahrern gedreht. Nur wo der Hang flach genug ist.
    */
-  private crowdGroup(out: Person[], chairs: GB, s: Seg, sg: number, lim: number, gi: number) {
+  private crowdGroup(out: Person[], s: Seg, sg: number, lim: number, gi: number) {
     const t = this.track!;
     const side = sg < 0 ? s.L : s.R;
     const pr = this.profile(side, s, sg, lim);
@@ -6933,7 +6928,7 @@ export class Renderer3D {
     const biome = t.sections[s.sec].biome;
     const zone: Zone = biome === 'pass' ? 'pass' : biome === 'village' ? 'village' : 'tifosi';
     const w = this.w2;
-    const chairCol = ([lin('#2f6db5'), lin('#2e8b57'), lin('#c0392b'), lin('#e1a32a')] as RGBf[])[Math.floor(r() * 4)];
+    r(); // (früher die Farbe der Klappstühle – die Folge der Zufallszahlen bleibt gleich)
     for (const m of GROUPS[gi]) {
       const u = m.u + (r() - 0.5) * 0.15;
       const dq = q0 + m.q + (r() - 0.5) * 0.15;
@@ -6949,38 +6944,82 @@ export class Renderer3D {
       const bx = -Math.sin(w.th), bz = Math.cos(w.th);
       const k = 0.35 + r() * 0.4;
       p.yaw = Math.atan2(rx + bx * k, rz + bz * k) + (r() - 0.5) * 0.4;
-      if (m.act === Act.sit) {
-        // sitzt auf einem Klappstuhl: Sitz 0,45 m hoch (die Figur sitzt mit der Hüfte gut 0,9 × Größe über dem Fuß)
-        p.y = w.y + 0.45 - 0.9 * p.height;
-        p.cup = false;
-        const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw);
-        const sx = Math.cos(p.yaw), sz = -Math.sin(p.yaw);
-        const P = (a: number, b: number, h: number) => [w.x + sx * a + fx * b, w.y + h, w.z + sz * a + fz * b];
-        const quad = (a0: number, b0: number, a1: number, b1: number, h0: number, h1: number, col: RGBf) => {
-          chairs.quad(P(a0, b0, h0), P(a1, b1, h0), P(a1, b1, h1), P(a0, b0, h1), col);
-          chairs.quad(P(a1, b1, h0), P(a0, b0, h0), P(a0, b0, h1), P(a1, b1, h1), col);
-        };
-        const seatB = -0.1;
-        chairs.quad(P(-0.24, seatB - 0.22, 0.43), P(0.24, seatB - 0.22, 0.43), P(0.24, seatB + 0.22, 0.43), P(-0.24, seatB + 0.22, 0.43), chairCol);
-        quad(-0.24, seatB - 0.24, 0.24, seatB - 0.24, 0.43, 0.9, chairCol);
-        const leg = lin('#9aa0a6');
-        for (const a of [-0.22, 0.22]) {
-          quad(a, seatB - 0.22, a, seatB + 0.22, 0.0, 0.43, leg);
-        }
-      }
       out.push(p);
     }
+  }
+
+  /**
+   * Zuschauer auf den Boden des Abschnitts stellen: je Person die Flächen genau darunter (Dreiecke der Bodennetze in
+   * einem 2-m-Raster, nur Zellen mit Menschen). Steht sie bis 0,3 m darüber oder bis 0,6 m darin, rückt sie auf die
+   * Fläche; schwebt sie höher oder ist darunter nichts, fällt sie weg. Danach die Pappschilder der Übriggebliebenen.
+   */
+  private groundPeople(people: Person[][], gbs: GB[]) {
+    const CELL = 2;
+    const key = (x: number, z: number) => Math.floor(x / CELL) * 100003 + Math.floor(z / CELL);
+    const grid = new Map<number, number[]>();
+    for (const list of people) for (const p of list) grid.set(key(p.x, p.z), []);
+    if (grid.size) {
+      for (const gb of gbs) {
+        const a = gb.p.a;
+        const n = gb.p.length;
+        for (let i = 0; i + 8 < n; i += 9) {
+          const x0 = Math.min(a[i], a[i + 3], a[i + 6]), x1 = Math.max(a[i], a[i + 3], a[i + 6]);
+          const z0 = Math.min(a[i + 2], a[i + 5], a[i + 8]), z1 = Math.max(a[i + 2], a[i + 5], a[i + 8]);
+          for (let gx = Math.floor(x0 / CELL); gx <= Math.floor(x1 / CELL); gx++) {
+            for (let gz = Math.floor(z0 / CELL); gz <= Math.floor(z1 / CELL); gz++) {
+              const c = grid.get(gx * 100003 + gz);
+              if (c) for (let k = 0; k < 9; k++) c.push(a[i + k]);
+            }
+          }
+        }
+      }
+      for (const list of people) {
+        let o = 0;
+        for (const p of list) {
+          const c = grid.get(key(p.x, p.z))!;
+          let best = -Infinity;
+          for (let i = 0; i < c.length; i += 9) {
+            const ax = c[i], ay = c[i + 1], az = c[i + 2], bx = c[i + 3], by = c[i + 4], bz = c[i + 5], cx = c[i + 6], cy = c[i + 7], cz = c[i + 8];
+            const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+            if (Math.abs(d) < 1e-6) continue;
+            const l1 = ((bz - cz) * (p.x - cx) + (cx - bx) * (p.z - cz)) / d;
+            const l2 = ((cz - az) * (p.x - cx) + (ax - cx) * (p.z - cz)) / d;
+            const l3 = 1 - l1 - l2;
+            if (l1 < -1e-4 || l2 < -1e-4 || l3 < -1e-4) continue;
+            const h = l1 * ay + l2 * by + l3 * cy;
+            if (h <= p.y + 0.6 && h > best) best = h;
+          }
+          if (best === -Infinity || p.y - best > 0.3) { this.signs.delete(p); continue; }
+          p.y = best;
+          list[o++] = p;
+        }
+        list.length = o;
+      }
+    }
+    for (const list of people) {
+      for (const p of list) {
+        const sb = this.signs.get(p);
+        if (!sb) continue;
+        this.signBoard(p, sb[0], sb[1]);
+        this.signs.delete(p);
+      }
+    }
+  }
+
+  /** Schilder der Fans: Größe und Spruch jetzt würfeln (gleiche Folge wie immer), gezeichnet erst nach der Bodenprüfung */
+  private signs = new Map<Person, [number, number]>();
+  private signRoll(p: Person, r: () => number) {
+    this.signs.set(p, [0.78 + r() * 0.1, Math.floor(r() * SIGN_COUNT)]);
   }
 
   /**
    * Pappschild über dem Kopf eines Fans, den ankommenden Fahrern zugedreht; Rückseite Pappe.
    * Groß (gut 1,6 m × 0,8 m) – kleinere Schilder ließen sich im Vorbeifahren nicht lesen.
    */
-  private signBoard(p: Person, r: () => number) {
+  private signBoard(p: Person, w: number, cell: number) {
     const gb = this.adsGB;
     if (!gb) return;
     const h = p.height;
-    const w = 0.78 + r() * 0.1;
     const tall = w * 0.5; // Seitenverhältnis der Zelle im Atlas (2 : 1)
     const fx = Math.sin(p.yaw);
     const fz = Math.cos(p.yaw);
@@ -6992,7 +7031,7 @@ export class Renderer3D {
     const y1 = y0 + tall * 2;
     const tilt = 0.08 * h; // oben etwas nach hinten
     const pt = (sx: number, y: number, back: number) => [cx + rx * sx - fx * back, y, cz + rz * sx - fz * back];
-    const [u0, v0, u1, v1] = adCell(Math.floor(r() * SIGN_COUNT), true);
+    const [u0, v0, u1, v1] = adCell(cell, true);
     const card: RGBf = lin('#b08a5a');
     gb.quad(pt(-w, y0, 0), pt(w, y0, 0), pt(w, y1, tilt), pt(-w, y1, tilt), card, [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
   }
