@@ -20,6 +20,8 @@ export interface Town {
   detail: GB;
   /** Grundrisse (x, z, Radius) gegen Überschneidungen */
   occ: number[];
+  /** Mauerwerk mit Fugen (Textur, Eckfarbe tönt; u, v in Metern / Kachelgröße) – fehlt es, landet es einfarbig in plain */
+  stone?: GB;
 }
 
 export type RoofKind = 'gable' | 'front' | 'hip' | 'mansard' | 'flat';

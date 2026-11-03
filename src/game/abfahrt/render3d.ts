@@ -15,6 +15,7 @@ import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
 import { mistTexture, waterTexture } from './falls3d';
 import { waterNormalCanvas, waterify, type WaterUniforms } from './water3d';
+import { campanile } from './campanile3d';
 import { adCell, adsTex, archPostTex, officialBannerTex, roadLineTex, ARCH_LOOK, type ArchStyle, AD_COUNT, TEAM_ADS, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex } from './tex3d';
 import { CURB_CHAMFER, CURB_FACE, CURB_TOP, CURB_V, COVER_PATCH, GUTTER_W, asphaltTex as groundAsphalt, cobbleTex, coverAtlas, curbTex, grainTex, groundCached, gutterTex, vergeTex, walkTex, type GroundTex } from './groundTex';
 import { GROUND_STYLES, coverLang } from './groundStyle';
@@ -4657,7 +4658,7 @@ export class Renderer3D {
     const fans = new GB();
     fans.uv = true;
     const detailGB = new GB();
-    const town: Town = { facade, tiles, plain: roof, signs: signGB, lanterns: [], bulbs: [], detail: detailGB, occ: [] };
+    const town: Town = { facade, tiles, plain: roof, signs: signGB, lanterns: [], bulbs: [], detail: detailGB, occ: [], stone: mas };
     let detail: Detail | null = null;
     const bill = new GB();
     bill.uv = true;
@@ -6228,61 +6229,11 @@ export class Renderer3D {
       T.plain.quad(at(lp, 0, GH - 0.05), at(lp, L, GH - 0.05), at(l0, L, GH - 0.05), at(l0, 0, GH - 0.05), soff);
     }
 
-    // ---- Kirchturm vorn an der Straße mit Uhr und Schallarkaden
+    // ---- Kirchturm vorn an der Straße (campanile3d.ts): ragt etwas vor die Front, Seitenlänge je nach Größe
     if (church) {
       const tw = b.tall ? 5.2 : 4.4;
       const t0 = l0 + out * 0.6;
-      const t1 = t0 - out * tw;
-      // Campanile an der Piazza: deutlich höher, mit zweitem Arkadengeschoss
-      const TH = b.tall ? 34 : 23;
-      const stone = lin('#d6ccb8');
-      const T3 = (lat: number, al: number, h: number) => at(lat, al, h);
-      const [ta, tb] = out > 0 ? [t1, t0] : [t0, t1];
-      // Wände (Außenseite jeweils nach außen)
-      T.plain.quad(T3(ta, -0.6, -2), T3(tb, -0.6, -2), T3(tb, -0.6, TH), T3(ta, -0.6, TH), stone);
-      T.plain.quad(T3(tb, -0.6 + tw, -2), T3(ta, -0.6 + tw, -2), T3(ta, -0.6 + tw, TH), T3(tb, -0.6 + tw, TH), stone);
-      T.plain.quad(T3(t0, -0.6 + tw, -2), T3(t0, -0.6, -2), T3(t0, -0.6, TH), T3(t0, -0.6 + tw, TH), shadeF(stone, 0.95));
-      T.plain.quad(T3(t1, -0.6, -2), T3(t1, -0.6 + tw, -2), T3(t1, -0.6 + tw, TH), T3(t1, -0.6, TH), shadeF(stone, 0.9));
-      // Gesimse
-      for (const h of b.tall ? [7.5, 15.5, 24.5] : [7.5, 15.5]) {
-        const band = lin('#bfb39c');
-        T.plain.quad(T3(t0 + out * 0.08, -0.68, h), T3(t0 + out * 0.08, -0.6 + tw + 0.08, h), T3(t0 + out * 0.08, -0.6 + tw + 0.08, h + 0.35), T3(t0 + out * 0.08, -0.68, h + 0.35), band);
-        T.plain.quad(T3(ta, -0.68, h), T3(tb, -0.68, h), T3(tb, -0.68, h + 0.35), T3(ta, -0.68, h + 0.35), band);
-      }
-      // Schallarkaden (dunkel) und Uhr zur Straße und nach vorn
-      const dark = lin('#2a2420');
-      const mid = -0.6 + tw / 2;
-      const cm = (ta + tb) / 2;
-      for (const [o0, o1] of b.tall ? [[17.2, 20.4], [26.2, 30.4]] : [[17.2, 20.4]]) {
-        for (const [w0, w1] of [[mid - 1.3, mid - 0.25], [mid + 0.25, mid + 1.3]]) {
-          T.plain.quad(T3(t0 + out * 0.02, w1, o0), T3(t0 + out * 0.02, w0, o0), T3(t0 + out * 0.02, w0, o1), T3(t0 + out * 0.02, w1, o1), dark);
-        }
-        for (const [w0, w1] of [[cm - 1.3, cm - 0.25], [cm + 0.25, cm + 1.3]]) T.plain.quad(T3(w0, -0.62, o0), T3(w1, -0.62, o0), T3(w1, -0.62, o1), T3(w0, -0.62, o1), dark);
-      }
-      const clock = (cx: number, ca: number, nx: number, na: number) => {
-        // Zifferblatt als Achteck, Zeiger
-        const R = 0.95;
-        const ctr = [cx, ca, 12.6];
-        const pt = (ang: number, rad: number) => {
-          const u = Math.cos(ang) * rad;
-          const v = Math.sin(ang) * rad;
-          return T3(ctr[0] + na * u, ctr[1] - nx * u, ctr[2] + v);
-        };
-        const white = lin('#f4f0e6');
-        for (let k = 0; k < 8; k++) T.plain.tri(T3(ctr[0], ctr[1], ctr[2]), pt((k * Math.PI) / 4, R), pt(((k + 1) * Math.PI) / 4, R), white);
-        const hand = lin('#1a1a1a');
-        T.plain.quad(pt(-0.08 + Math.PI / 2, 0.06), pt(0.08 + Math.PI / 2, 0.06), pt(Math.PI / 2 + 0.02, 0.8), pt(Math.PI / 2 - 0.02, 0.8), hand);
-        T.plain.quad(pt(-0.1, 0.06), pt(0.1, 0.06), pt(0.03, 0.55), pt(-0.03, 0.55), hand);
-      };
-      clock(t0 + out * 0.03, mid, out, 0);
-      clock(cm, -0.63, 0, -1);
-      // Turmhelm
-      const tip = T3(cm, mid, TH + (b.tall ? 9 : 7.5));
-      const helm = lin(b.tall ? '#8a4a32' : '#4f5a58');
-      const cnr = [T3(ta, -0.6, TH), T3(tb, -0.6, TH), T3(tb, -0.6 + tw, TH), T3(ta, -0.6 + tw, TH)];
-      for (let k = 0; k < 4; k++) T.plain.tri(cnr[k], cnr[(k + 1) % 4], tip, shadeF(helm, 0.85 + k * 0.05));
-      const ball = T3(cm, mid, TH + (b.tall ? 9.4 : 7.9));
-      T.plain.quad([ball[0] - 0.05, ball[1] - 0.4, ball[2]], [ball[0] + 0.05, ball[1] - 0.4, ball[2]], [ball[0] + 0.05, ball[1] + 0.6, ball[2]], [ball[0] - 0.05, ball[1] + 0.6, ball[2]], lin('#c8a24a'));
+      campanile(T, { at, cl: t0 - (out * tw) / 2, ca: -0.6 + tw / 2, w: tw, tall: !!b.tall, rnd: (k) => hs(60 + k), lang: t.lang });
     }
 
     // ---- Rathaus: Fahnen in den Landesfarben

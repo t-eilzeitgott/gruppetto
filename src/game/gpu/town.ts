@@ -17,6 +17,7 @@ import type { TreeSpot } from '../abfahrt/terrain3d';
 import { buildHouse, hash, rowUnits, roofColor, roofKind, wallSet, type At, type Town } from '../abfahrt/house3d';
 import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, TINTABLE, WALL_PAL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from '../abfahrt/facade';
 import { flatNormals, GB, lin, type RGBf } from '../abfahrt/models3d';
+import { campanile } from '../abfahrt/campanile3d';
 import { MOOD_U } from './mood';
 import { lit } from './light';
 import { tsl, type N } from './nodes';
@@ -609,52 +610,11 @@ export class Towns {
       T.plain.quad(at(lp, 0, GH - 0.05), at(lp, L, GH - 0.05), at(l0, L, GH - 0.05), at(l0, 0, GH - 0.05), soff);
     }
 
-    // Kirchturm mit Uhr und Schallarkaden
+    // Kirchturm (abfahrt/campanile3d.ts, wie im WebGL-Spiel; Mauern hier einfarbig)
     if (church) {
       const tw = b.tall ? 5.2 : 4.4;
       const t0 = l0 + out * 0.6;
-      const t1 = t0 - out * tw;
-      const TH = b.tall ? 34 : 23;
-      const stone = lin('#d6ccb8');
-      const [ta, tb] = out > 0 ? [t1, t0] : [t0, t1];
-      T.plain.quad(at(ta, -0.6, -2), at(tb, -0.6, -2), at(tb, -0.6, TH), at(ta, -0.6, TH), stone);
-      T.plain.quad(at(tb, -0.6 + tw, -2), at(ta, -0.6 + tw, -2), at(ta, -0.6 + tw, TH), at(tb, -0.6 + tw, TH), stone);
-      T.plain.quad(at(t0, -0.6 + tw, -2), at(t0, -0.6, -2), at(t0, -0.6, TH), at(t0, -0.6 + tw, TH), shadeF(stone, 0.95));
-      T.plain.quad(at(t1, -0.6, -2), at(t1, -0.6 + tw, -2), at(t1, -0.6 + tw, TH), at(t1, -0.6, TH), shadeF(stone, 0.9));
-      for (const hh of b.tall ? [7.5, 15.5, 24.5] : [7.5, 15.5]) {
-        const band = lin('#bfb39c');
-        T.plain.quad(at(t0 + out * 0.08, -0.68, hh), at(t0 + out * 0.08, -0.6 + tw + 0.08, hh), at(t0 + out * 0.08, -0.6 + tw + 0.08, hh + 0.35), at(t0 + out * 0.08, -0.68, hh + 0.35), band);
-        T.plain.quad(at(ta, -0.68, hh), at(tb, -0.68, hh), at(tb, -0.68, hh + 0.35), at(ta, -0.68, hh + 0.35), band);
-      }
-      const dark = lin('#2a2420');
-      const mid = -0.6 + tw / 2;
-      const cm = (ta + tb) / 2;
-      for (const [o0, o1] of b.tall ? [[17.2, 20.4], [26.2, 30.4]] : [[17.2, 20.4]]) {
-        for (const [w0, w1] of [[mid - 1.3, mid - 0.25], [mid + 0.25, mid + 1.3]]) {
-          T.plain.quad(at(t0 + out * 0.02, w1, o0), at(t0 + out * 0.02, w0, o0), at(t0 + out * 0.02, w0, o1), at(t0 + out * 0.02, w1, o1), dark);
-        }
-        for (const [w0, w1] of [[cm - 1.3, cm - 0.25], [cm + 0.25, cm + 1.3]]) T.plain.quad(at(w0, -0.62, o0), at(w1, -0.62, o0), at(w1, -0.62, o1), at(w0, -0.62, o1), dark);
-      }
-      const clock = (cx: number, ca: number, nx: number, na: number) => {
-        const R = 0.95;
-        const ctr = [cx, ca, 12.6];
-        const pt = (ang: number, rad: number) => {
-          const u = Math.cos(ang) * rad;
-          const v = Math.sin(ang) * rad;
-          return at(ctr[0] + na * u, ctr[1] - nx * u, ctr[2] + v);
-        };
-        const white = lin('#f4f0e6');
-        for (let k = 0; k < 8; k++) T.plain.tri(at(ctr[0], ctr[1], ctr[2]), pt((k * Math.PI) / 4, R), pt(((k + 1) * Math.PI) / 4, R), white);
-        const hand = lin('#1a1a1a');
-        T.plain.quad(pt(-0.08 + Math.PI / 2, 0.06), pt(0.08 + Math.PI / 2, 0.06), pt(Math.PI / 2 + 0.02, 0.8), pt(Math.PI / 2 - 0.02, 0.8), hand);
-        T.plain.quad(pt(-0.1, 0.06), pt(0.1, 0.06), pt(0.03, 0.55), pt(-0.03, 0.55), hand);
-      };
-      clock(t0 + out * 0.03, mid, out, 0);
-      clock(cm, -0.63, 0, -1);
-      const tip = at(cm, mid, TH + (b.tall ? 9 : 7.5));
-      const helm = lin(b.tall ? '#8a4a32' : '#4f5a58');
-      const cnr = [at(ta, -0.6, TH), at(tb, -0.6, TH), at(tb, -0.6 + tw, TH), at(ta, -0.6 + tw, TH)];
-      for (let k = 0; k < 4; k++) T.plain.tri(cnr[k], cnr[(k + 1) % 4], tip, shadeF(helm, 0.85 + k * 0.05));
+      campanile(T, { at, cl: t0 - (out * tw) / 2, ca: -0.6 + tw / 2, w: tw, tall: !!b.tall, rnd: (k) => hs(60 + k), lang: t.lang });
     }
 
     // Rathaus: Fahnen in den Landesfarben

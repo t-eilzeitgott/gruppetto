@@ -44,6 +44,108 @@ function windows(g: GB, w: number, l: number, y: number, n: number, col: RGBf, f
   }
 }
 
+/**
+ * Glockenturm der Kapelle (vorn über dem Eingang, Mitte z = 4,6, 2,4 m breit): Bruchsteinsockel, graue Eckquader im
+ * Wechsel lang und kurz, Rundbogenfenster, Uhr über dem Eingang, Gesims unter der Glockenstube, Schallöffnungen mit
+ * Rundbogen und Glocke auf allen vier Seiten, Traufgesims, achteckiger Spitzhelm mit Kugel und Kreuz.
+ */
+function chapelTower(g: GB, white: RGBf) {
+  const zc = 4.6, hw = 1.2, top = 9.4;
+  const grey = lin('#b7b0a2');
+  const dark = lin('#26211d');
+  const gold = lin('#c9a94a');
+  /** Punkt auf Seite k (0: +z, 1: +x, 2: −z, 3: −x): s waagrecht, y hoch, d vor der Wand */
+  const F = (k: number, s: number, y: number, d = 0): number[] => {
+    const e = hw + d;
+    return k === 0 ? [s, y, zc + e] : k === 1 ? [e, y, zc - s] : k === 2 ? [-s, y, zc - e] : [-e, y, zc + s];
+  };
+  const rect = (k: number, s0: number, s1: number, y0: number, y1: number, d: number, c: RGBf) => g.quad(F(k, s0, y0, d), F(k, s1, y0, d), F(k, s1, y1, d), F(k, s0, y1, d), c);
+  const arch = (k: number, s: number, y0: number, ye: number, r: number, d: number, c: RGBf) => {
+    rect(k, s - r, s + r, y0, ye, d, c);
+    for (let i = 0; i < 5; i++) {
+      const a0 = (Math.PI * i) / 5, a1 = (Math.PI * (i + 1)) / 5;
+      g.tri(F(k, s, ye, d), F(k, s + Math.cos(a0) * r, ye + Math.sin(a0) * r, d), F(k, s + Math.cos(a1) * r, ye + Math.sin(a1) * r, d), c);
+    }
+  };
+  /** Band rund um den Turm (Stirn und Oberseite), d vor der Wand */
+  const band = (y0: number, y1: number, d: number, c: RGBf) => {
+    for (let k = 0; k < 4; k++) {
+      g.quad(F(k, -hw - d, y0, d), F(k, hw + d, y0, d), F(k, hw + d, y1, d), F(k, -hw - d, y1, d), c);
+      g.quad(F(k, -hw - d, y1, d), F(k, hw + d, y1, d), F(k, hw, y1 + d * 0.4, 0), F(k, -hw, y1 + d * 0.4, 0), c);
+      g.quad(F(k, -hw, y0 - d * 0.5, 0), F(k, hw, y0 - d * 0.5, 0), F(k, hw + d, y0, d), F(k, -hw - d, y0, d), [c[0] * 0.8, c[1] * 0.8, c[2] * 0.8]);
+    }
+  };
+  // Schaft und Sockel
+  for (let k = 0; k < 4; k++) rect(k, -hw, hw, -0.3, top, 0, white);
+  band(-0.3, 0.85, 0.08, grey);
+  band(6.75, 6.95, 0.12, grey);
+  band(top - 0.3, top, 0.2, grey);
+  // Eckquader: je Lage abwechselnd lang auf der einen, kurz auf der anderen Seite
+  for (let k = 0; k < 4; k++) {
+    for (let i = 0; i < 11; i++) {
+      const y0 = 1.0 + i * 0.52, y1 = y0 + 0.44;
+      if (y1 > 6.7) break;
+      // an jeder Ecke ist je Lage genau eine Seite lang (Seite k endet rechts dort, wo Seite k + 1 links beginnt)
+      const long = (i + k) % 2 === 0;
+      rect(k, hw - (long ? 0.55 : 0.32), hw + 0.03, y0, y1, 0.03, grey);
+      rect(k, -hw - 0.03, -hw + (long ? 0.55 : 0.32), y0, y1, 0.03, grey);
+    }
+  }
+  // Rundbogenfenster und Uhr
+  for (let k = 1; k < 4; k++) {
+    arch(k, 0, 2.5, 3.5, 0.32, 0.015, grey);
+    arch(k, 0, 2.62, 3.5, 0.2, 0.03, dark);
+  }
+  {
+    const yc = 5.55, rc = 0.52;
+    rect(0, -rc - 0.16, rc + 0.16, yc - rc - 0.16, yc + rc + 0.16, 0.02, grey);
+    for (let i = 0; i < 12; i++) {
+      const a0 = (i / 12) * Math.PI * 2, a1 = ((i + 1) / 12) * Math.PI * 2;
+      const P = (a: number, r: number, d: number) => F(0, Math.cos(a) * r, yc + Math.sin(a) * r, d);
+      g.tri(F(0, 0, yc, 0.04), P(a0, rc, 0.04), P(a1, rc, 0.04), lin('#f4f0e6'));
+      g.quad(P(a0, rc, 0.045), P(a1, rc, 0.045), P(a1, rc + 0.07, 0.045), P(a0, rc + 0.07, 0.045), dark);
+    }
+    const hand = (a: number, len: number, w: number) => {
+      const c = Math.cos(a), sn = Math.sin(a);
+      const Q = (r: number, ww: number) => F(0, c * r - sn * ww, yc + sn * r + c * ww, 0.055);
+      g.quad(Q(-0.06, -w), Q(len, -w * 0.4), Q(len, w * 0.4), Q(-0.06, w), dark);
+    };
+    hand(Math.PI / 2 - (10.2 / 12) * Math.PI * 2, rc * 0.55, 0.045);
+    hand(Math.PI / 2 - (10 / 60) * Math.PI * 2, rc * 0.85, 0.03);
+  }
+  // Glockenstube: Schallöffnungen mit Rundbogen, Glocke im Dunkel, Sohlbank
+  for (let k = 0; k < 4; k++) {
+    arch(k, 0, 7.25, 8.25, 0.52, 0.015, grey);
+    arch(k, 0, 7.35, 8.25, 0.4, 0.03, dark);
+    const bc = lin('#7a6330');
+    const prof: [number, number][] = [[0.07, 8.22], [0.16, 8.16], [0.2, 7.98], [0.24, 7.78], [0.32, 7.64]];
+    for (let i = 0; i + 1 < prof.length; i++) {
+      const [w0, y0] = prof[i], [w1, y1] = prof[i + 1];
+      g.quad(F(k, -w1, y1, 0.04), F(k, w1, y1, 0.04), F(k, w0, y0, 0.04), F(k, -w0, y0, 0.04), bc);
+    }
+    g.quad(F(k, -0.62, 7.12, 0.0), F(k, 0.62, 7.12, 0.0), F(k, 0.62, 7.12, 0.14), F(k, -0.62, 7.12, 0.14), grey);
+    g.quad(F(k, -0.62, 7.0, 0.14), F(k, 0.62, 7.0, 0.14), F(k, 0.62, 7.12, 0.14), F(k, -0.62, 7.12, 0.14), grey);
+  }
+  // Spitzhelm: achteckig, Kanten parallel zu den Wänden, mit Traufe über dem Gesims
+  const helm = lin('#4f585b');
+  const hb = hw + 0.26;
+  const R8 = hb / Math.cos(Math.PI / 8);
+  const y0 = top + 0.06, tip = top + 5.2;
+  const oct = (i: number) => {
+    const a = Math.PI / 8 + (i * Math.PI) / 4;
+    return [Math.cos(a) * R8, Math.sin(a) * R8];
+  };
+  for (let i = 0; i < 8; i++) {
+    const [x0, z0] = oct(i), [x1, z1] = oct(i + 1);
+    g.tri([x0, y0, zc + z0], [x1, y0, zc + z1], [0, tip, zc], [helm[0] * (0.92 + (i % 2) * 0.08), helm[1] * (0.92 + (i % 2) * 0.08), helm[2] * (0.92 + (i % 2) * 0.08)]);
+    g.quad([x0, y0 - 0.12, zc + z0], [x1, y0 - 0.12, zc + z1], [x1, y0, zc + z1], [x0, y0, zc + z0], [helm[0] * 0.7, helm[1] * 0.7, helm[2] * 0.7]);
+  }
+  // Kugel und Kreuz
+  g.add(new THREE.SphereGeometry(0.16, 6, 4), M(0, tip + 0.2, zc), gold);
+  g.add(new THREE.BoxGeometry(0.07, 1.1, 0.07), M(0, tip + 0.75, zc), gold);
+  g.add(new THREE.BoxGeometry(0.55, 0.07, 0.07), M(0, tip + 0.98, zc), gold);
+}
+
 export function landmarkGeometries(): Record<Landmark, THREE.BufferGeometry> {
   const glass = lin('#2a3038');
   // Almhütte: Steinsockel, Holz darüber, flaches Schindeldach mit Steinen, Kamin
@@ -71,11 +173,7 @@ export function landmarkGeometries(): Record<Landmark, THREE.BufferGeometry> {
   gables(chapel, 5, 8, 4.8, 7.4, white);
   roof(chapel, 5, 8, 4.8, 7.4, 0.5, lin('#9a3b2a'));
   chapel.add(new THREE.ConeGeometry(2.5, 1.6, 10, 1, false, 0, Math.PI), M(0, 5.2, -4, 1, 1, 1, Math.PI / 2), lin('#9a3b2a'));
-  chapel.add(new THREE.BoxGeometry(2.4, 9.5, 2.4), M(0, 4.6, 4.6), white);
-  for (const [x, z, ry] of [[0, 5.82, 0], [0, 3.38, 0], [1.22, 4.6, Math.PI / 2], [-1.22, 4.6, Math.PI / 2]] as const) chapel.add(new THREE.BoxGeometry(0.8, 1.1, 0.06), M(x, 8.0, z, 1, 1, 1, ry), lin('#2b2622'));
-  chapel.add(new THREE.ConeGeometry(1.75, 4.2, 4), M(0, 11.45, 4.6, 1, 1, 1, Math.PI / 4), lin('#5d6466'));
-  chapel.add(new THREE.CylinderGeometry(0.04, 0.04, 1.4, 4), M(0, 14.2, 4.6), lin('#c9a94a'));
-  chapel.add(new THREE.BoxGeometry(0.7, 0.06, 0.06), M(0, 14.4, 4.6), lin('#c9a94a'));
+  chapelTower(chapel, white);
   chapel.add(new THREE.BoxGeometry(1.4, 2.6, 0.08), M(0, 1.3, 5.82), lin('#5a3a22'));
   windows(chapel, 5, 8, 3.0, 2, lin('#3e4a5a'));
   // Bauernhof: großes Wohnhaus (weiß unten, Holz oben mit Balkon), angebaute Scheune
