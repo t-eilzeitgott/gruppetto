@@ -14,6 +14,7 @@ import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
 import { mistTexture, waterTexture } from './falls3d';
+import { waterNormalCanvas, waterify, type WaterUniforms } from './water3d';
 import { adCell, adsTex, archPostTex, officialBannerTex, roadLineTex, ARCH_LOOK, type ArchStyle, AD_COUNT, TEAM_ADS, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex } from './tex3d';
 import { CURB_CHAMFER, CURB_FACE, CURB_TOP, CURB_V, COVER_PATCH, GUTTER_W, asphaltTex as groundAsphalt, cobbleTex, coverAtlas, curbTex, grainTex, groundCached, gutterTex, vergeTex, walkTex, type GroundTex } from './groundTex';
 import { GROUND_STYLES, coverLang } from './groundStyle';
@@ -603,6 +604,8 @@ export class Renderer3D {
   private cTrees: number[] | null = null;
   private terrMats: THREE.MeshLambertMaterial[] = [];
   private waterMats: THREE.MeshPhongMaterial[] = [];
+  /** Uniforms des Wassers (Prüfungen: Wellenstärke, Spiegelung zum Einstellen) */
+  waterU: WaterUniforms | null = null;
   /** Gebiet, das eine Stufe vollständig abdeckt (dort wird die nächstgröbere abgesenkt) */
   private lvBox = LEVELS.map(() => new THREE.Vector4(1e9, 1e9, -1e9, -1e9));
   /** nach einem Ringwechsel das bisherige Gebiet, solange seine Kacheln noch stehen (sonst gleich lvBox) */
@@ -1654,7 +1657,22 @@ export class Renderer3D {
       return m;
     };
     this.terrMats = LEVELS.map((_, lv) => lower(L({ vertexColors: true, map: lv === 0 ? detail : null }), lv, lv === 1 ? 110 : 380, 'terr', true));
-    this.waterMats = LEVELS.map((_, lv) => lower(new THREE.MeshPhongMaterial({ color: 0x2f7fb5, shininess: 70, specular: 0x8fb4d0, transparent: true, opacity: 0.9 }), lv, lv === 1 ? 110 : 380, 'lake', false));
+    this.waterMats = LEVELS.map((_, lv) => lower(new THREE.MeshPhongMaterial({ color: 0x2f7fb5, shininess: lv ? 90 : 150, specular: 0xc6dae8, transparent: true, opacity: 0.9 }), lv, lv === 1 ? 110 : 380, 'lake', false));
+    // Wasser (Seen, Flüsse, Küsten): Wellen aus einer Normalentextur, gespiegelter Himmel, Sonnenglitzern (water3d.ts)
+    const wn = new THREE.CanvasTexture(waterNormalCanvas());
+    wn.colorSpace = THREE.NoColorSpace;
+    wn.wrapS = wn.wrapT = THREE.RepeatWrapping;
+    wn.anisotropy = Math.min(this.pc ? 8 : 4, this.gl.capabilities.getMaxAnisotropy());
+    const wU: WaterUniforms = {
+      uTime: this.time, uWaveK: { value: 0.2 }, uRefl: { value: 0.68 }, uWaterN: { value: wn },
+      uSkyTop: this.skyMat.uniforms.top, uSkyHz: this.skyMat.uniforms.horizon, uSunDir: ATMO.fogSunDir, uSunC: { value: new THREE.Color() }, uLand: { value: new THREE.Color() },
+    };
+    this.waterU = wU;
+    // das Glanzlicht macht der Wasser-Shader selbst (Glitzern auf den Wellen statt eines breiten Glanzes)
+    this.mats.water.flatShading = false;
+    for (const m of [this.mats.water, ...this.waterMats]) m.specular.set(0x000000);
+    waterify(this.mats.water, wU, 'river');
+    this.waterMats.forEach((m, lv) => waterify(m, wU, `lake${lv}`));
     // Banden und Schilder: vorn bedruckt, hinten schlichte Farbe (Eckpunktfarbe)
     // Fassaden: Wandfarbe je Haus aus der Palette (Index im ganzzahligen Anteil von u, Maske im Alpha des Atlas)
     const wallPal = { value: WALL_PAL.map((h) => new THREE.Color(h)) };
@@ -3358,6 +3376,13 @@ export class Renderer3D {
     ATMO.fogSunDir.value.copy(sd);
     ATMO.fogSunCol.value.copy(sunC).multiplyScalar((0.18 + 0.55 * L.hazeAmt) * Math.max(0, Math.min(1, 1 - L.stars * 1.5)) * dim);
     this.peakU.uGlow.value.copy(ATMO.fogSunCol.value);
+    // Glitzern auf dem Wasser: Sonnenlicht, nachts (Sterne) fast nichts
+    if (this.waterU) {
+      this.waterU.uSunC.value.copy(sunC).multiplyScalar(this.sun.intensity * Math.max(0.08, Math.min(1, 1 - L.stars * 1.2)));
+      // im Wasser gespiegelte Hänge: näherer Höhenzug im Dunst, im Licht der Tageszeit
+      const land = mixRGB(mixRGB(pal.mid, pal.far, 0.5), haze, 0.25);
+      this.waterU.uLand.value.setRGB(land[0] / 255, land[1] / 255, land[2] / 255, THREE.SRGBColorSpace).multiply(tint).multiplyScalar(0.85 * dayK * dim);
+    }
     const c = this.shadowCenter(g, sd);
     this.sun.position.copy(c).addScaledVector(sd, this.pc ? 450 : 220);
     this.sun.target.position.copy(c);
