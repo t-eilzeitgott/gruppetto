@@ -16,6 +16,8 @@ import type { GameId } from '../data/source';
 interface Run {
   game: GameId;
   el: HTMLElement;
+  /** erfüllt, sobald der Kreis vom Knopf aus den Bildschirm bedeckt */
+  covered: Promise<void>;
   t0: number;
   min: number;
   ready: boolean;
@@ -30,6 +32,11 @@ interface Run {
 }
 
 let cur: Run | null = null;
+/** zuletzt getippt (Startpunkt des Kreises, wenn der Aufrufer keinen Knopf nennt – z. B. „Nochmal“) */
+let lastTap: { x: number; y: number; t: number } | null = null;
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerdown', (e) => { lastTap = { x: e.clientX, y: e.clientY, t: performance.now() }; }, { capture: true, passive: true });
+}
 const exitFns: (() => void)[] = [];
 /** laufende Nummer (je gezeigter Animation eine neue – die Vorbereitung beginnt dann von vorn) */
 let seq = 0;
@@ -205,17 +212,38 @@ export function gameIntroActive(game?: GameId): boolean {
   return !!cur && !cur.out && (!game || cur.game === game);
 }
 
+/** unter dem unteren Rand noch so viel Hintergrund (wächst der sichtbare Bereich, bleibt keine Lücke) */
+const EXTRA = 220;
+/** Kreis vom Knopf aus: Dauer; um so viel später beginnt der Inhalt der Animation */
+const REVEAL_MS = 420;
+const REVEAL_LEAD = 170;
+
+/**
+ * erfüllt, sobald die laufende Startanimation den Bildschirm ganz bedeckt (der Kreis vom Knopf aus ist auf) – erst
+ * dann die Seite wechseln: Das Aufbauen der Spielseite hält den Hauptfaden an, der Kreis liefe sonst ruckelnd auf
+ */
+export function gameIntroCovered(): Promise<void> {
+  return cur && !cur.out ? cur.covered : Promise.resolve();
+}
+
 /**
  * Startanimation zeigen – sofort, im selben Bild wie das Tippen. title/sub: Name und Strecke des Spiels;
- * short: kurz (Nochmal)
+ * short: kurz (Nochmal); from: getippter Knopf – von dort öffnet sich die Animation als Kreis
+ *
+ * Maße fest in Pixeln (Breite, Höhe des Bildschirms beim Tippen), der Inhalt an der Oberkante ausgerichtet: Baut
+ * sich darunter der Ansichtsbereich um (Seitensperre des Spiels; auf dem iPhone als Web-App wird er dabei um die
+ * Statusleiste kürzer oder länger), springt nichts – vorher rutschte die mittig gesetzte Uhr dabei um 30 px.
  */
-export function playGameIntro(game: GameId, o: { title: string; sub?: string; short?: boolean }) {
+export function playGameIntro(game: GameId, o: { title: string; sub?: string; short?: boolean; from?: DOMRect | null }) {
   if (cur && !cur.out && cur.game === game) return;
   cancelGameIntro();
   const quiet = calm();
   const el = h('div', `gintro gintro--${game}${o.short ? ' is-short' : ''}`);
   el.setAttribute('aria-hidden', 'true');
-  const bg = h('div', 'gintro__bg', el);
+  const W = window.innerWidth;
+  const H = Math.max(window.innerHeight, document.documentElement.clientHeight || 0);
+  el.style.cssText = `inset:auto;left:0;top:0;width:${W}px;height:${H + EXTRA}px;--gi-h:${H}px`;
+  const bg = h('div', 'gintro__bg', el, `background:radial-gradient(${Math.round(W * 1.2)}px ${Math.round(H * 0.8)}px at 50% ${Math.round(H * 0.38)}px, var(--gi-bg1) 0%, var(--gi-bg2) 70%)`);
   const stageEl = h('div', 'gintro__stage', el);
   const art = h('div', 'gintro__art', stageEl);
   const text = h('div', 'gintro__text', stageEl);
@@ -232,12 +260,32 @@ export function playGameIntro(game: GameId, o: { title: string; sub?: string; sh
   }
   const textIn = anim(text, [{ transform: 'translateY(14px)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 480, delay: game === 'zeitfahren' ? 260 : 420, easing: EASE_OUT });
   const waitIn = anim(wait, [{ opacity: 0 }, { opacity: 1 }], { duration: 400, delay: 1900 });
+  // vom getippten Knopf aus als Kreis öffnen; der Inhalt beginnt, sobald der Kreis den Großteil bedeckt
+  let reveal: Animation | null = null;
+  const from = o.from ?? (lastTap && performance.now() - lastTap.t < 900 ? new DOMRect(lastTap.x - 22, lastTap.y - 22, 44, 44) : null);
+  if (from && !quiet) {
+    const x = from.left + from.width / 2, y = from.top + from.height / 2;
+    const r1 = Math.ceil(Math.hypot(Math.max(x, W - x), Math.max(y, H - y))) + 8;
+    const r0 = Math.max(12, Math.min(from.height, from.width) / 2);
+    try {
+      reveal = el.animate([{ clipPath: `circle(${r0}px at ${x}px ${y}px)` }, { clipPath: `circle(${r1}px at ${x}px ${y}px)` }], { duration: REVEAL_MS, easing: 'cubic-bezier(0.5, 0, 0.15, 1)' });
+      reveal.finished.then(() => { el.style.clipPath = ''; }, () => undefined);
+      for (const a of [...v.enter, ...v.idle, textIn, waitIn]) {
+        const t = a.effect?.getTiming();
+        if (t) a.effect!.updateTiming({ delay: (Number(t.delay) || 0) + REVEAL_LEAD });
+      }
+    } catch { reveal = null; }
+  }
   if (quiet) for (const a of [...v.enter, ...v.idle, textIn]) a.finish();
   if (o.short) for (const a of [...v.enter, textIn]) a.updatePlaybackRate(1.8);
   let finish = () => {};
   const done = new Promise<void>((r) => { finish = r; });
   const run: Run = {
-    game, el, t0: performance.now(), min: quiet ? 250 : o.short ? 520 : 1250, ready: false, out: false, short: !!o.short,
+    game, el, t0: performance.now(), min: (quiet ? 250 : o.short ? 520 : 1250) + (reveal ? REVEAL_LEAD : 0), ready: false, out: false, short: !!o.short,
+    // (spätestens kurz nach der Dauer des Kreises – falls die Animation im Hintergrund hängt)
+    covered: reveal
+      ? Promise.race([reveal.finished.then(() => undefined, () => undefined), new Promise<void>((r) => { window.setTimeout(r, REVEAL_MS + 300); })])
+      : Promise.resolve(),
     exit: () => {
       if (quiet) return [anim(el, [{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease' })];
       return [
@@ -252,8 +300,9 @@ export function playGameIntro(game: GameId, o: { title: string; sub?: string; sh
   cur = run;
   seq += 1;
   log('play');
-  // Sicherheitsnetz: meldet das Spiel nichts (Fehler, ohne 3D), geht sie trotzdem auf
-  run.timer = window.setTimeout(() => { if (cur === run) leave(run); }, MAX_MS);
+  // Sicherheitsnetz: meldet das Spiel nichts (Fehler, ohne 3D), geht sie trotzdem auf (gezählt ab dem Seitenwechsel,
+  // der nach dem Kreis kommt)
+  run.timer = window.setTimeout(() => { if (cur === run) leave(run); }, MAX_MS + (reveal ? REVEAL_MS : 0));
 }
 
 /** Protokoll für automatische Prüfungen (window.__gameIntroLog, nur wenn vorhanden) */

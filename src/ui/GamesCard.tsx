@@ -10,7 +10,7 @@ import { useMembers } from '../app/hooks';
 import { invalidate, useQuery } from '../app/query';
 import { source } from '../app/config';
 import { warmGame } from '../app/warm';
-import { playGameIntro } from '../app/gameIntro';
+import { gameIntroActive, gameIntroCovered, playGameIntro } from '../app/gameIntro';
 import { handOver, navigate } from '../app/router';
 import { afterPaint } from '../lib/afterPaint';
 import { markUiBusy, uiBusy } from '../game/uiBusy';
@@ -216,14 +216,20 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
   ackRef.current = alerts.map((a) => a.ack);
   const subsRef = useRef(subs);
   subsRef.current = subs;
-  const open = useCallback((i: number) => {
+  const open = useCallback((i: number, from?: DOMRect | null) => {
+    // (zweites Tippen, während sie schon aufgeht: nichts)
+    if (gameIntroActive()) return;
     ackRef.current[i]?.();
-    // Startanimation des Spiels sofort (noch in diesem Bild), der Seitenwechsel erst danach – darunter wird
-    // die Welt vorbereitet, bis Kameraschwenk und Start ohne Nachladen laufen (gameIntro.ts, gamePrep.ts)
+    // Startanimation des Spiels sofort (noch in diesem Bild) – sie öffnet sich als Kreis vom Finger aus. Der
+    // Seitenwechsel erst, wenn der Kreis den Bildschirm bedeckt: Das Aufbauen der Spielseite hält den Hauptfaden an,
+    // der Kreis liefe sonst ruckelnd auf. Darunter wird die Welt vorbereitet, bis Kameraschwenk und Start ohne
+    // Nachladen laufen (gameIntro.ts, gamePrep.ts)
     const g = GAMES[i];
-    playGameIntro(g.id, { title: g.name, sub: subsRef.current[i] });
+    // solange der Kreis aufgeht, baut der Vorrat der 3D-Bühne nicht weiter
+    markUiBusy(700);
+    playGameIntro(g.id, { title: g.name, sub: subsRef.current[i], from });
     handOver();
-    afterPaint(() => navigate(g.path));
+    gameIntroCovered().then(() => afterPaint(() => navigate(g.path)));
   }, []);
 
   return (
@@ -253,7 +259,7 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
           </div>
         ))}
       </div>
-      <button type="button" className="btn btn--primary btn--full arena__go" onClick={() => open(idx)}><span>Spielen</span></button>
+      <button type="button" className="btn btn--primary btn--full arena__go" onClick={(e) => open(idx, tapRect(e))}><span>Spielen</span></button>
       <Tiles tourName={tourName} stages={stages} />
     </section>
   );
@@ -262,9 +268,16 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
 const EMPTY: Profile[] = [];
 
 /** ein Spiel in der Karte – neu gezeichnet nur, wenn sich seine Daten ändern (nicht beim Wischen) */
+/** wo getippt wurde (Startpunkt des Kreises der Startanimation); ohne Finger (Tastatur) die Mitte des Elements */
+function tapRect(e: { clientX: number; clientY: number; detail: number; currentTarget: Element }): DOMRect {
+  const r = e.currentTarget.getBoundingClientRect();
+  if (e.detail > 0 && (e.clientX || e.clientY)) return new DOMRect(e.clientX - 22, e.clientY - 22, 44, 44);
+  return r;
+}
+
 const GamePane = memo(function GamePane({ index, game, board, alert, fresh, sub, members, meId, heads, onOpen }: {
   index: number; game: GameInfo; board: Board; alert: ReturnType<typeof overtaken>; fresh: boolean; sub: string;
-  members: Profile[]; meId: string; heads: RefObject<(HTMLDivElement | null)[]>; onOpen: (i: number) => void;
+  members: Profile[]; meId: string; heads: RefObject<(HTMLDivElement | null)[]>; onOpen: (i: number, from?: DOMRect | null) => void;
 }) {
   const sprint = game.id === 'sprint';
   const berg = game.id === 'berg';
@@ -280,7 +293,7 @@ const GamePane = memo(function GamePane({ index, game, board, alert, fresh, sub,
       : `${byNames.slice(0, -1).join(', ')} und ${byNames[byNames.length - 1]} haben dich überholt`;
   return (
     <>
-      <a href={`#${game.path}`} className="arena__hero" aria-label={`${game.name} spielen${fresh ? ' – neu' : ''}`} onClick={(e) => { e.preventDefault(); onOpen(index); }}>
+      <a href={`#${game.path}`} className="arena__hero" aria-label={`${game.name} spielen${fresh ? ' – neu' : ''}`} onClick={(e) => { e.preventDefault(); onOpen(index, tapRect(e)); }}>
         <GameHead ref={(el: HTMLDivElement | null) => { heads.current[index] = el; }} game={game.id} title={game.name} sub={sub} tag={fresh ? <span className="game-new">Neu</span> : null} />
       </a>
       {!board.loaded ? (

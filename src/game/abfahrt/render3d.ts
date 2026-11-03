@@ -53,6 +53,7 @@ import type { WeatherEnv } from './weather';
 import { gfxAA, gfxOn, gfxRes, onGfxChange, onGfxSettings } from './gfxOpts';
 import { buildHouse, rowUnits, roofColor, roofKind, wallSet, type At, type Town } from './house3d';
 import { TEAMS } from '../teams';
+import { menuInset } from '../menuView';
 
 /** Kennung der feinen Landschafts-Shader (gfxOpts „details“) im Programmschlüssel */
 /** Schlüssel der Bodenshader: Details (ab Stufe 7) und schlichte Böden (Stufe 1–2) übersetzen eigene Fassungen */
@@ -361,6 +362,20 @@ const CAM_BACK = 6.2;
 const CAM_UP = 2.75;
 const SPRINT_BACK = 7.4;
 const SPRINT_UP = 3.7;
+/**
+ * Startkran (Startmenü): Winkel aus der Fahrtrichtung (rad; 0 vor dem Fahrer, π hinter ihm) und wie weit er pendelt,
+ * Abstand zum Fahrer, Höhe über seiner Körpermitte, Blickpunkt voraus (m, negativ: hinter ihm) und dessen Höhe,
+ * Sichtfeld hochkant. Schräg hinter und über dem Fahrer, der Blick über ihn hinweg auf Rampe, Uhr, Zuschauer und
+ * Straße (Finals: über das Feld); mit „Los“ ein kurzer, ruhiger Schwenk hinter ihn – wenig Bewegung im Bild, die
+ * Fahrkamera steht, wenn es losgeht. (Vor dem Fahrer wäre hinter ihm nur der leere Platz, und der Bogen um ihn
+ * herum führte durch Bögen, Fahnen und Zuschauer.)
+ */
+interface MenuCam { ang: number; swing: number; r: number; up: number; ahead: number; lookY: number; fov: number }
+const MENU_TT: MenuCam = { ang: -2.72, swing: 0.08, r: 9.5, up: 3.3, ahead: 0, lookY: 0.3, fov: 44 };
+const MENU_DESC: MenuCam = { ang: -2.6, swing: 0.08, r: 9.5, up: 3.2, ahead: 0, lookY: 0.3, fov: 44 };
+const MENU_FIN: MenuCam = { ang: 2.5, swing: 0.08, r: 9.5, up: 2.8, ahead: 3, lookY: 0.6, fov: 46 };
+/** Kameraflug vom Startkran hinter den Fahrer: so viel höher in der Mitte des Bogens (über Absperrungen und Leute) */
+const ORBIT_LIFT = 1.9;
 /** Fahrerfeld: als Bild bis so weit voraus (m), davor weich ausgeblendet */
 const FIELD_FAR = 650;
 /** so viele der nächsten Gegner werfen einen Sonnenschatten (die übrigen nur ihren Fleck am Boden) */
@@ -1780,8 +1795,8 @@ export class Renderer3D {
    */
   resize() {
     this.pendingResize = false;
-    // Größe im Layout, nicht der Kasten auf dem Bildschirm: hinter offenen Menüs ist die Bühne per CSS um 4 %
-    // vergrößert (scale) – die Leinwand bekam sonst diese Größe und rechnete das ganze Rennen 8 % Bildpunkte mehr
+    // Größe im Layout, nicht der Kasten auf dem Bildschirm: wird die Bühne per CSS skaliert (früher hinter offenen
+    // Menüs um 4 %), bekäme die Leinwand sonst diese Größe und rechnete das ganze Rennen Bildpunkte zu viel
     const cvEl = this.gl.domElement;
     const rect = cvEl.clientWidth > 0 ? { width: cvEl.clientWidth, height: cvEl.clientHeight } : cvEl.getBoundingClientRect();
     const W = Math.max(100, Math.round(rect.width));
@@ -1869,7 +1884,7 @@ export class Renderer3D {
    */
   peekNext() { this.peek = true; }
   private peek = false;
-  private peekSave: { tilt: number; cam: Renderer3D['cam']; chaseLift: number } | null = null;
+  private peekSave: { cam: Renderer3D['cam']; chaseLift: number } | null = null;
   /** Rechenzeit für Landschaft und Abschnitte im letzten Bild (ms) */
   private work = 0;
   /**
@@ -1943,6 +1958,8 @@ export class Renderer3D {
       this.buildStarts(this.track);
       this.clearChunks();
     }
+    // Startrampe gehört dazu: fehlt sie (aus welchem Grund auch immer), vor dem Start neu bauen
+    if (this.track && this.terrain && !this.ttStart && (this.track.kind === 'tt' || this.track.ramp) && (g.phase === 'ready' || g.phase === 'countdown')) this.buildStarts(this.track);
     if (this.needWarm) { this.needWarm = false; this.rewarm(); }
     // Änderungen aus dem Welt-Editor (Tagesstrecke und „überall“): sobald geladen, alles neu bauen
     if (worldStore.sync(g.track)) this.rebuildAll();
@@ -2552,6 +2569,8 @@ export class Renderer3D {
         pc: this.pc,
       });
       this.scene.add(this.ttStart.root);
+      // auch was erst später zu sehen ist (Blitze der Fotografen): Shader gleich, nicht beim ersten Blitz
+      this.warmUp(this.ttStart.root);
     }
     this.descStart?.dispose();
     this.descStart = null;
@@ -2567,6 +2586,7 @@ export class Renderer3D {
       night: () => this.mats.bulb.opacity, pc: this.pc, ramp: track.ramp,
     });
     this.scene.add(this.descStart.root);
+    this.warmUp(this.descStart.root);
   }
 
   /**
@@ -3414,14 +3434,13 @@ export class Renderer3D {
   private updateCamera(g: RaceView, dt: number) {
     // Probeblick (peekNext) vorbei: Kamera wie vorher
     if (this.peekSave) {
-      this.tilt = this.peekSave.tilt;
       Object.assign(this.cam, this.peekSave.cam);
       this.chaseLift = this.peekSave.chaseLift;
       this.peekSave = null;
     }
     const peek = this.peek;
     this.peek = false;
-    if (peek) this.peekSave = { tilt: this.tilt, cam: { ...this.cam }, chaseLift: this.chaseLift };
+    if (peek) this.peekSave = { cam: { ...this.cam }, chaseLift: this.chaseLift };
     const p = g.p;
     const track = g.track;
     const cam = this.cam;
@@ -3502,17 +3521,15 @@ export class Renderer3D {
     const aspect = this.W / this.H;
     const base = aspect < 1 ? 72 - (aspect - 0.45) * 22 : 56;
     A.fov = base + Math.min(9, Math.max(0, (p.v - 14) * 0.38)) + 9 * rk;
-    // Regie: in der Abfahrt TV-Kran vor dem Start; in allen Spielen der Sturz aus der Fernsehperspektive – Wechsel
-    // weich geflogen
+    // Regie: in allen Spielen vor dem Start der TV-Kran schräg hinter dem Fahrer (Startmenü), mit „Los“ schwenkt er
+    // im Bogen in die Fahrkamera; der Sturz aus der Fernsehperspektive – Wechsel weich geflogen
     // (Probeblick: gleich die Fahrkamera, ohne Regie)
-    if (!peek) this.direct(g, A, dt, descent);
+    if (!peek) this.direct(g, A, dt, true);
     this.camera.position.copy(A.pos);
     this.camera.lookAt(A.look);
-    // Startblatt: es deckt die unteren zwei Drittel – die Kamera neigt sich so weit, dass der Fahrer im freien
-    // oberen Drittel steht; mit „Los“ richtet sie sich im Lauf des Countdowns wieder auf
-    const wantTilt = g.phase === 'ready' && !peek ? Math.atan(0.95 * Math.tan((cam.fov * Math.PI) / 360)) : 0;
-    this.tilt += (wantTilt - this.tilt) * (peek || (still && g.phase === 'ready') ? 1 : Math.min(1, dt * 2.4));
-    if (this.tilt > 1e-4) this.camera.rotateX(-this.tilt);
+    // Startmenü: das Bild verschiebt sich (Shift statt Neigen), damit der Fahrer im freien Teil über dem Menü steht;
+    // mit „Los“ gleitet es zurück
+    this.applyShift(g, peek, dt);
     // leicht in die Kurve legen (Motorradkamera)
     if (descent && this.dirKind === 'chase') this.camera.rotateZ(clamp(p.lean, -0.7, 0.7) * 0.07 * (this.dirT < 1 ? this.dirT : 1));
     // Sichtfeld weich (Tempo); bei Regiewechseln folgt es direkt der Überblendung
@@ -3533,10 +3550,49 @@ export class Renderer3D {
   // ------------------------------------------------------------------ Regie (Abfahrt)
 
   private camA = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
-  /** Neigung der Kamera nach unten im Startbild (rad), siehe updateCamera */
-  private tilt = 0;
+  /** Prüfungen: Startkran von außen einstellen (null: je Spiel der feste) */
+  menuCam: MenuCam | null = null;
+  /**
+   * Bildverschiebung (px, wie camera.setViewOffset): x > 0 schiebt die Welt nach links, y > 0 nach oben. Weich
+   * gefedert (kritisch gedämpft) – beginnt und endet ohne Ruck, auch wenn ein Bild einmal länger dauert.
+   */
+  private shift = { x: 0, y: 0, vx: 0, vy: 0, on: false, set: false };
+  private applyShift(g: RaceView, peek: boolean, dt: number) {
+    const s = this.shift;
+    let tx = 0, ty = 0;
+    const mv = g.phase === 'ready' ? menuInset() : null;
+    if (mv) {
+      // Blickpunkt der Kamera (Bildmitte) in die Mitte des freien Teils
+      if (mv.top > 0 && mv.top < this.H) ty = this.H / 2 - mv.top * 0.5;
+      if (mv.left > 0 && mv.left < this.W) tx = this.W / 2 - (mv.left + (this.W - mv.left) * 0.5);
+    }
+    if (!s.set || this.idleK > 0.9) {
+      // erstes Bild, Vorwärmen oder unter der Startanimation (idleK, gamePrep.ts): gleich dort
+      s.x = tx; s.y = ty; s.vx = 0; s.vy = 0; s.set = true;
+    } else {
+      // kritisch gedämpfte Feder (ω = 5,5: gut eine Sekunde, weich an- und auslaufend); Schritt begrenzt
+      const h = Math.min(Math.max(dt, 0), 1 / 30);
+      const w = 5.5;
+      for (const [k, v, t] of [['x', 'vx', tx], ['y', 'vy', ty]] as const) {
+        const a = w * w * (t - s[k]) - 2 * w * s[v];
+        s[v] += a * h;
+        s[k] += s[v] * h;
+        if (Math.abs(t - s[k]) < 0.05 && Math.abs(s[v]) < 0.05) { s[k] = t; s[v] = 0; }
+      }
+    }
+    // Probeblick: die reine Fahrkamera
+    const x = peek ? 0 : s.x, y = peek ? 0 : s.y;
+    if (Math.abs(x) < 0.01 && Math.abs(y) < 0.01) {
+      if (s.on) { this.camera.clearViewOffset(); s.on = false; }
+      return;
+    }
+    this.camera.setViewOffset(this.W, this.H, x, y, this.W, this.H);
+    s.on = true;
+  }
   private lastPhase = '';
   private dirKind: 'intro' | 'chase' | 'crash' = 'intro';
+  /** woher der laufende Kameraflug kommt (vom Kran: im Bogen um den Fahrer herum) */
+  private dirFromKind: 'intro' | 'chase' | 'crash' = 'intro';
   private dirFrom = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60 };
   private dirLast = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 60, ok: false };
   private dirT = 1;
@@ -3572,7 +3628,9 @@ export class Renderer3D {
       this.dirFrom.pos.copy(this.dirLast.pos);
       this.dirFrom.look.copy(this.dirLast.look);
       this.dirFrom.fov = this.dirLast.fov;
-      this.dirDur = this.dirKind === 'intro' ? 2.7 : want === 'crash' ? 0.9 : 0.95;
+      // vom Kran in die Fahrkamera: im Lauf des Countdowns (Zeitfahren 5 × 0,6 s, sonst 3 × 0,75 s)
+      this.dirDur = this.dirKind === 'intro' ? (g.track.kind === 'tt' ? 2.55 : 2.15) : want === 'crash' ? 0.9 : 0.95;
+      this.dirFromKind = this.dirKind;
       this.dirKind = want;
       this.dirT = 0;
       this.flyArc = -1;
@@ -3587,6 +3645,10 @@ export class Renderer3D {
       const span = F.pos.distanceTo(D.pos);
       const base = Math.min(6, span * 0.18);
       const tun = this.nearTunnel(g.track, g.p.z);
+      // vom Startkran in die Fahrkamera: im Bogen um den Fahrer herum (auf der Seite, wo der Kran schon steht) statt
+      // geradewegs durch ihn oder die Leute am Start; Abstand und Höhe gleiten dabei vom Kran- zum Fahrkamera-Wert
+      const orbit = this.dirFromKind === 'intro' && this.dirKind === 'chase';
+      const C = orbit ? this.riderAt(g, this.orbC, 1.0) : null;
       if (this.flyArc < 0 && tun) this.flyArc = 0;
       if (this.flyArc < 0) {
         // Bogen so hoch, dass der Flug über Hang und Bäume geht (Gelände entlang der Bahn geprüft)
@@ -3594,29 +3656,37 @@ export class Renderer3D {
         for (let i = 1; i < 12; i++) {
           const k = i / 12;
           const s = Math.sin(Math.PI * k);
-          const x = F.pos.x + (D.pos.x - F.pos.x) * k, z = F.pos.z + (D.pos.z - F.pos.z) * k;
-          const y = F.pos.y + (D.pos.y - F.pos.y) * k + s * base;
+          const P = C ? this.orbitAt(C, F.pos, D.pos, k, this.orbP) : null;
+          const x = P ? P.x : F.pos.x + (D.pos.x - F.pos.x) * k, z = P ? P.z : F.pos.z + (D.pos.z - F.pos.z) * k;
+          const y = (P ? P.y : F.pos.y + (D.pos.y - F.pos.y) * k) + s * (C ? ORBIT_LIFT : base);
           const h = this.hAt(x, z) + 2.2;
           if (h > y) arc = Math.max(arc, (h - y) / Math.max(0.3, s));
         }
         this.flyArc = Math.min(arc, 30);
       }
-      this.dirT = Math.min(1, this.dirT + (dt > 0 ? dt : 0) / this.dirDur);
+      // (Zeitschritt begrenzt: nach einem langen Bild fliegt die Kamera weiter, statt zu springen)
+      this.dirT = Math.min(1, this.dirT + Math.min(Math.max(dt, 0), 1 / 30) / this.dirDur);
       const u = this.dirT;
       const k = u * u * u * (u * (u * 6 - 15) + 10);
-      A.pos.lerpVectors(F.pos, D.pos, k);
-      // im Bogen fliegen (nicht durch den Hang)
-      A.pos.y += Math.sin(Math.PI * k) * (base + this.flyArc);
+      if (C) {
+        this.orbitAt(C, F.pos, D.pos, k, A.pos);
+        A.pos.y += Math.sin(Math.PI * k) * (ORBIT_LIFT + this.flyArc);
+      } else {
+        A.pos.lerpVectors(F.pos, D.pos, k);
+        // im Bogen fliegen (nicht durch den Hang)
+        A.pos.y += Math.sin(Math.PI * k) * (base + this.flyArc);
+      }
       if (!tun) {
         // freie Sicht auf den Fahrer auch unterwegs (der Bogen hebt sich weich, wenn ein Grat dazwischen kommt)
         const R = this.riderAt(g, this.tvR, 1.0);
         const need = this.needLift(A.pos.x, A.pos.y, A.pos.z, R.x, R.y, R.z, 1.0, 8) * Math.sin(Math.PI * Math.min(1, k * 1.15));
-        this.flyLift += (need - this.flyLift) * Math.min(1, (dt > 0 ? dt : 0) * (need > this.flyLift ? 5 : 2));
+        this.flyLift += (need - this.flyLift) * Math.min(1, Math.min(Math.max(dt, 0), 1 / 30) * (need > this.flyLift ? 5 : 2));
         A.pos.y += this.flyLift;
       }
       A.look.lerpVectors(F.look, D.look, k);
-      // unterwegs den Fahrer im Bild behalten (sonst schaut die Kamera in der Mitte des Flugs auf den Asphalt)
-      if (this.dirKind !== 'intro') A.look.lerp(this.riderAt(g, this.tvR, 1.0), Math.sin(Math.PI * k) * 0.85);
+      // unterwegs den Fahrer im Bild behalten (sonst schaut die Kamera in der Mitte des Flugs auf den Asphalt);
+      // im Bogen vom Kran steht er ohnehin in der Mitte – nur halb so stark (sonst blickt sie steil hinab)
+      if (this.dirKind !== 'intro') A.look.lerp(this.riderAt(g, this.tvR, 1.0), Math.sin(Math.PI * k) * (C ? 0.5 : 0.85));
       A.fov = F.fov + (D.fov - F.fov) * k;
     } else {
       A.pos.copy(D.pos);
@@ -3627,6 +3697,36 @@ export class Renderer3D {
     this.dirLast.look.copy(A.look);
     this.dirLast.fov = A.fov;
     this.dirLast.ok = true;
+  }
+
+  /** steht o (Weltpunkt) zwischen Kamera und dem Ziel (Draufsicht, Streifen gut 1 m breit)? */
+  private screens(o: { x: number; z: number }, target: THREE.Vector3): boolean {
+    const c = this.camera.position;
+    const dx = target.x - c.x, dz = target.z - c.z;
+    const L2 = dx * dx + dz * dz || 1;
+    const k = ((o.x - c.x) * dx + (o.z - c.z) * dz) / L2;
+    if (k <= 0.04 || k >= 0.96) return false;
+    const qx = c.x + dx * k - o.x, qz = c.z + dz * k - o.z;
+    return qx * qx + qz * qz < 1.2 * 1.2;
+  }
+
+  private orbC = new THREE.Vector3();
+  private orbP = new THREE.Vector3();
+  /**
+   * Punkt auf dem Bogen um C (Fahrer) von F nach D bei k (0–1): Winkel um die Senkrechte auf dem kürzeren Weg,
+   * Abstand und Höhe linear – die Kamera umrundet den Fahrer, statt durch ihn hindurchzufliegen
+   */
+  private orbitAt(C: THREE.Vector3, F: THREE.Vector3, D: THREE.Vector3, k: number, out: THREE.Vector3): THREE.Vector3 {
+    const fx = F.x - C.x, fz = F.z - C.z, dx = D.x - C.x, dz = D.z - C.z;
+    const rf = Math.hypot(fx, fz), rd = Math.hypot(dx, dz);
+    const af = Math.atan2(fx, fz);
+    let da = Math.atan2(dx, dz) - af;
+    da = Math.atan2(Math.sin(da), Math.cos(da));
+    const a = af + da * k;
+    // in der Mitte deutlich näher heran (und oben drüber, ORBIT_LIFT): der Kran schwenkt über den Fahrer hinweg,
+    // nicht seitlich hinaus zu Fotografen, Absperrungen und Zuschauern
+    const r = (rf + (rd - rf) * k) * (1 - 0.4 * Math.sin(Math.PI * k));
+    return out.set(C.x + Math.sin(a) * r, F.y + (D.y - F.y) * k, C.z + Math.cos(a) * r);
   }
 
   /** Ort des Fahrers in der Welt (Körpermitte) */
@@ -3673,13 +3773,15 @@ export class Renderer3D {
       const q = (w.x - x) ** 2 + (w.z - z) ** 2;
       if (q < best) { best = q; bz = zz; }
     }
+    // (Ausgangspunkt ist der grobe Treffer: ohne genaueren blieb sonst der Wert der vorigen Anfrage stehen – nach
+    // einem Neustart der vom Ziel, 3 km entfernt; der Startkran stand dann Hunderte Meter über der Rampe)
+    this.hT.z = bz;
     for (let d = -1; d <= 1; d += 0.25) {
       const zz = Math.max(0, bz + d);
       t.world(zz, 0, 0, w);
       const q = (w.x - x) ** 2 + (w.z - z) ** 2;
       if (q < best) { best = q; this.hT.z = zz; }
     }
-    if (best === Infinity) this.hT.z = bz;
     t.world(this.hT.z, 0, 0, w);
     this.hT.x = (x - w.x) * Math.cos(w.th) + (z - w.z) * Math.sin(w.th);
     return this.hT;
@@ -3762,18 +3864,20 @@ export class Renderer3D {
     const portrait = this.W < this.H;
     const time = this.time.value;
     if (kind === 'intro') {
-      // TV-Kran vor dem Start: vor dem Feld, leicht seitlich (über der Straße), schwenkt langsam hin und her;
-      // Blick zurück auf dich
+      // TV-Kran vor dem Start (Startmenü): schräg hinter und über dem Fahrer, pendelt langsam; Blick auf dich und
+      // über dich hinweg (je Spiel MENU_TT, MENU_DESC, MENU_FIN)
       t.world(p.z, 0, 0, this.tvV);
       const th = this.tvV.th;
-      const ang = (p.x > 0 ? -1 : 1) * (0.3 + 0.22 * Math.sin(time * 0.17));
+      const fin = t.kind === 'sprint' || t.kind === 'mountain';
+      const tt = t.kind === 'tt';
+      const M = this.menuCam ?? (fin ? MENU_FIN : tt ? MENU_TT : MENU_DESC);
+      const ang = (p.x > 0 ? -1 : 1) * (M.ang + M.swing * Math.sin(time * 0.17));
       const fx = Math.sin(th + ang), fz = -Math.cos(th + ang);
-      const r = 9.5;
-      const x = R.x + fx * r, z = R.z + fz * r;
-      const y = Math.max(R.y + 2.6 + 0.4 * Math.sin(time * 0.11), this.hAt(x, z) + 1.8);
+      const x = R.x + fx * M.r, z = R.z + fz * M.r;
+      const y = Math.max(R.y + M.up + 0.3 * Math.sin(time * 0.11), this.hAt(x, z) + 1.8);
       out.pos.set(x, y, z);
-      out.look.set(R.x - Math.sin(th) * 3, R.y - 0.2, R.z + Math.cos(th) * 3);
-      out.fov = portrait ? 50 : 38;
+      out.look.set(R.x + Math.sin(th) * M.ahead, R.y + M.lookY, R.z - Math.cos(th) * M.ahead);
+      out.fov = portrait ? M.fov : 38;
       return;
     }
     // Sturz: Fernsehbild vom Straßenrand hinter dem Sturz, Blick die Straße hinunter auf den Haufen – die
@@ -4101,7 +4205,20 @@ export class Renderer3D {
     im.castShadow = true;
     im.setColorAt(0, new THREE.Color());
     g.add(im);
+    // Gegner und Geister: ihre Shader (deckend und durchsichtig, mit Ein-/Ausblenden) entstanden sonst erst, wenn der
+    // erste auftauchte – im Zeitfahren beim Öffnen des Spiels (die Geister der Runde), unter der Startanimation ein
+    // Stocken von mehreren Programmen. Je ein Stellvertreter (deckend, durchsichtig) im Probezug unten.
+    const solid = new RiderModel(LOOKS[0], this.shadowTex, this.pc ? 1 : 0);
+    appearifyTree(solid.group);
+    const ghost = new RiderModel(LOOKS[0], this.shadowTex, this.pc ? 1 : 0);
+    appearifyTree(ghost.group);
+    ghost.prepareFade();
+    ghost.fade(0.5, 1);
+    g.add(solid.group, ghost.group);
     this.warmUp(g);
+    // alles, was schon in der Szene hängt, aber noch nie zu sehen war (Startrampe mit Blitzen der Fotografen,
+    // Vögel und Flieger am Himmel …): Shader jetzt statt beim ersten Auftauchen
+    this.warmUp(this.scene);
     // ihre Texturen gleich mit hochladen (Fassaden-Atlas, Werbebanden, Böden …): sonst kämen sie erst beim ersten
     // Dorf oder der ersten Bande auf die Grafikkarte – bis 8 MB in einem Bild
     const all: THREE.Material[] = [];
@@ -7051,6 +7168,8 @@ export class Renderer3D {
     const cap = lite ? (sprint ? 16 : 8) : (sprint ? 32 : 14) * (this.pc ? 2 : 1);
     const list = field.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, cap);
     const cp = this.camera.position;
+    // Startkran (oder der Flug von ihm in die Fahrkamera): verdeckt, wer zwischen ihm und dir steht
+    const crane = this.dirKind === 'intro' || (this.dirFromKind === 'intro' && this.dirT < 1);
     const rsOn = this.rs.ready;
     this.rs.begin();
     // Sonnenschatten: nur die nächsten Fahrer werfen einen (jeder Werfer wird im Schattendurchgang noch einmal
@@ -7110,7 +7229,9 @@ export class Renderer3D {
       }
       if (sprint || o.ghost !== undefined) {
         const dz = o.z - p.z;
-        const block = dz < 0.8 && dz > -SPRINT_BACK - 1 && Math.abs(o.x - p.x) < 1.05 + Math.max(0, -dz) * 0.06;
+        // (Startkran vor dem Fahrer: wer zwischen ihm und dir steht)
+        const block = (dz < 0.8 && dz > -SPRINT_BACK - 1 && Math.abs(o.x - p.x) < 1.05 + Math.max(0, -dz) * 0.06)
+          || (crane && this.screens(this.w, pm.group.position));
         // Geist (Zeitfahren): seine eigene Deckkraft, davor noch durchsichtiger
         const target = o.ghost !== undefined ? o.ghost : 1;
         m.fade(block ? Math.min(0.28, target) : target, o.ghost !== undefined && o.ghost <= 0.01 ? 1 : this.lastDt);

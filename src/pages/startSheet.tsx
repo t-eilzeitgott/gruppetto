@@ -2,14 +2,19 @@
  * Menüs der Minispiele – Start, Pause und Ende in derselben Hülle: ein Blatt am unteren Rand über der 3D-Welt, im
  * Querformat und auf großen Bildschirmen eine Leiste links (die Welt bleibt zu sehen). Je Menü eine Hauptaktion,
  * sonst wenig Text.
- *  - Start: Kopf des Spiels (Symbol, Name, Strecke), das Nötigste, unten der Startknopf. Kommt man von der
- *    Startseite, fliegt der Kopf der Spielkarte hierher (handoff.ts); beim Losfahren gleitet das Blatt weg.
+ *  - Start: über der scharfen, lebendigen Welt (der Startkran zeigt dich am Start, menuView.ts) ein dunkler Verlauf
+ *    mit dem Kopf des Spiels (Symbol, Name, Strecke), dem Nötigsten und unten dem Startknopf – in beiden
+ *    Farbschemata dunkel wie das Spiel. Beim Losfahren beginnt sofort der Countdown, die Kamera fliegt hinter den
+ *    Fahrer, das Menü gleitet dabei hinaus. Kommt man von der Startseite ohne Startanimation, fliegt der Kopf der
+ *    Spielkarte hierher (handoff.ts).
  *  - Pause: Weiter, Beenden, Grafik.
  *  - Ende: das Ergebnis unter einem Band wie die Ziellinie.
  * Dazu der Countdown: ein Ring, der je Sekunde abläuft, die Zahl in der Mitte.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { HANDOFF_MS, endHandoff, sheetIn, sheetOut } from '../app/handoff';
+import { HANDOFF_EASE, HANDOFF_MS, SIDE_MQ, endHandoff, sheetIn, sheetOut } from '../app/handoff';
+import { setMenuInset } from '../game/menuView';
+import { veilThen } from '../app/veil';
 import { markUiBusy } from '../game/uiBusy';
 import { gameIntroActive, onGameIntroExit } from '../app/gameIntro';
 import type { GameId } from '../data/source';
@@ -42,36 +47,56 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
   const head = useRef<HTMLDivElement | null>(null);
   const [leaving, setLeaving] = useState(false);
   const firstRef = useRef(true);
+  const stopInset = useRef<() => void>(() => undefined);
+  // Kamera: wo das Menü die Welt verdeckt – der Fahrer steht im freien Teil darüber (menuView.ts, render3d applyShift)
+  useLayoutEffect(() => {
+    const s = sheet.current;
+    if (!s) return;
+    let off = false;
+    const measure = () => {
+      if (off) return;
+      // (Lage im Layout, ohne die Verschiebung der Einblendung; der Verlauf über dem Menü zählt halb mit)
+      setMenuInset(side() ? { top: 0, left: s.offsetLeft + s.offsetWidth } : { top: Math.max(0, s.offsetTop - 28), left: 0 });
+    };
+    measure();
+    let ro: ResizeObserver | null = null;
+    try { ro = new ResizeObserver(measure); ro.observe(s); } catch { /* dann nur bei Größenänderung des Fensters */ }
+    window.addEventListener('resize', measure);
+    stopInset.current = () => { off = true; setMenuInset(null); };
+    return () => { off = true; ro?.disconnect(); window.removeEventListener('resize', measure); setMenuInset(null); };
+  }, []);
   useLayoutEffect(() => {
     const s = sheet.current;
     if (!s || !firstRef.current) return;
     firstRef.current = false;
-    // Startanimation läuft (gameIntro.ts): das Blatt gleitet herein, sobald sie aufgeht – darunter wird vorbereitet
+    // Startanimation läuft (gameIntro.ts): das Menü steigt herauf, sobald sie aufgeht – darunter wird vorbereitet
     if (gameIntroActive(game)) {
       s.style.opacity = '0';
       onGameIntroExit(() => {
         s.style.opacity = '';
-        markUiBusy(HANDOFF_MS + 350);
-        sheetIn(s);
+        markUiBusy(HANDOFF_MS + 450);
+        menuIn(s);
       });
       return;
     }
-    // solange das Blatt hereinkommt, baut die 3D-Welt nur in kleinen Portionen weiter
-    markUiBusy(HANDOFF_MS + 350);
+    // solange das Menü hereinkommt, baut die 3D-Welt nur in kleinen Portionen weiter
+    markUiBusy(HANDOFF_MS + 450);
     const h = head.current;
-    if (!(h && endHandoff(h, s))) sheetIn(s);
+    if (!(h && endHandoff(h, s))) menuIn(s);
   }, []);
   const go = () => {
     if (leaving) return;
     setLeaving(true);
-    // Blatt weg, Countdown, HUD herein: Bewegung vor Vorbauen
+    // Countdown, Kameraflug und Menü weg – alles im selben Augenblick (das Menü gleitet als Abbild hinaus, das Spiel
+    // beginnt sofort); Bewegung vor Vorbauen
     markUiBusy(3800);
-    const s = sheet.current;
-    (s ? sheetOut(s, layer.current) : Promise.resolve()).then(onStart);
+    stopInset.current();
+    if (layer.current) menuAway(layer.current);
+    onStart();
   };
   return (
-    <div ref={layer} className={cx('abf-layer abf-layer--sheet', `hue-${game}`, leaving && 'is-leaving')}>
-      <button type="button" className="abf-round abf-close" onClick={onClose} aria-label="Schließen"><Icon name="x" size={20} /></button>
+    <div ref={layer} className={cx('abf-layer abf-layer--sheet abf-layer--start', `hue-${game}`, leaving && 'is-leaving')}>
+      <button type="button" className="abf-round abf-close" onClick={() => veilThen(onClose)} aria-label="Schließen"><Icon name="x" size={20} /></button>
       <div className={cx('abf-sheet', !plain && 'abf-sheet--start')} ref={sheet}>
         {plain ? (
           <div className="abf-sheet__body abf-scroll">{children}</div>
@@ -84,13 +109,64 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
             <div className="abf-sheet__foot">
               <TeamRadio game={game} />
               <button type="button" className="btn btn--primary btn--full abf-go" onClick={go} disabled={leaving}><span>{cta}</span></button>
-              {after}
+              {/* Testfahrt, Messfahrt (Admins): eingeklappt – das Startmenü bleibt ruhig */}
+              {after ? (
+                <details className="abf-more abf-more--start">
+                  <summary>Test und Messung<Icon name="chevron" size={14} /></summary>
+                  <div className="abf-more__body">{after}</div>
+                </details>
+              ) : null}
             </div>
           </>
         )}
       </div>
     </div>
   );
+}
+
+const calm = () => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+const side = () => { try { return window.matchMedia(SIDE_MQ).matches; } catch { return false; } };
+
+/** Startmenü erscheint: der Verlauf blendet auf, Kopf, Inhalt und Startknopf steigen gestaffelt herauf */
+function menuIn(s: HTMLElement) {
+  if (calm()) return;
+  try {
+    s.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 360, easing: 'ease-out', fill: 'backwards' });
+    const from = side() ? 'translateX(-24px)' : 'translateY(30px)';
+    const parts = ['.abf-sheet__head', '.abf-sheet__body', '.abf-sheet__foot'].map((q) => s.querySelector<HTMLElement>(`:scope > ${q}`)).filter((x): x is HTMLElement => !!x);
+    parts.forEach((p, i) => p.animate([{ transform: from, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 560, delay: 40 + i * 70, easing: HANDOFF_EASE, fill: 'backwards' }));
+  } catch { /* ohne Animation */ }
+}
+
+/**
+ * Startmenü geht (Losfahren): als Abbild über dem Spiel hinausgleiten, während darunter schon Countdown und
+ * Kameraflug laufen – das echte Menü ist im selben Augenblick weg (die Seite wechselt in den Countdown)
+ */
+function menuAway(l: HTMLElement) {
+  if (calm()) return;
+  try {
+    const host = l.closest('.abf');
+    const wrap = document.createElement('div');
+    wrap.className = `${host?.className ?? 'abf'} abf--ghost`;
+    wrap.setAttribute('aria-hidden', 'true');
+    const c = l.cloneNode(true) as HTMLElement;
+    c.classList.add('is-leaving');
+    c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
+    wrap.append(c);
+    document.body.append(wrap);
+    const sb = l.querySelector('.abf-sheet__body');
+    const cb = c.querySelector('.abf-sheet__body');
+    if (sb && cb) cb.scrollTop = sb.scrollTop;
+    const sh = c.querySelector('.abf-sheet');
+    const to = side() ? 'translateX(-56px)' : 'translateY(84px)';
+    const a = sh?.animate([{ transform: 'none', opacity: 1 }, { transform: to, opacity: 0 }], { duration: 340, easing: 'cubic-bezier(0.45, 0, 0.6, 1)', fill: 'forwards' });
+    c.querySelector('.abf-close')?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, fill: 'forwards' });
+    let gone = false;
+    const end = () => { if (!gone) { gone = true; wrap.remove(); } };
+    if (a) a.finished.then(end, end);
+    else end();
+    window.setTimeout(end, 900);
+  } catch { /* ohne Abbild */ }
 }
 
 /** Teamfunk vor dem Start: ein Satz vom sportlichen Leiter von Team gruppetto (je Tag und Spiel ein anderer) */
@@ -150,7 +226,7 @@ export function PauseSheet({ game, id, status, onResume, onQuit, extra }: {
         <div className="abf-pause__actions">
           {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
           <button type="button" className="btn btn--primary abf-pause__go" onClick={resume} disabled={leaving} autoFocus><PlayIcon /><span>Weiter</span></button>
-          <button type="button" className="btn btn--secondary abf-pause__quit" onClick={onQuit}><span>Beenden</span></button>
+          <button type="button" className="btn btn--secondary abf-pause__quit" onClick={() => veilThen(onQuit)}><span>Beenden</span></button>
         </div>
         <div className="abf-sheet__body abf-scroll">
           <div className="abf-set">
@@ -175,7 +251,7 @@ export function OverSheet({ game, onClose, children, plain }: { game?: GameId; o
   useLayoutEffect(() => { if (sheet.current) sheetIn(sheet.current); }, []);
   return (
     <div className={cx('abf-layer abf-layer--sheet abf-layer--over', game && `hue-${game}`)}>
-      <button type="button" className="abf-round abf-close" onClick={onClose} aria-label="Schließen"><Icon name="x" size={20} /></button>
+      <button type="button" className="abf-round abf-close" onClick={() => veilThen(onClose)} aria-label="Schließen"><Icon name="x" size={20} /></button>
       <div className={cx('abf-sheet abf-sheet--over', plain && 'is-plain')} ref={sheet} role="dialog" aria-modal="true" aria-label="Ergebnis">
         <div className="abf-sheet__body abf-scroll">{children}</div>
       </div>

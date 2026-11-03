@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import { acquireStage, hasWarmStage, releaseStage, watchStage, type Stage } from '../game/abfahrt/pool';
 import { FpsMeter } from '../game/fpsMeter';
 import { GamePrep } from '../game/gamePrep';
-import { gameIntroActive, gameIntroReady, holdGameIntro, onGameIntroExit, playGameIntro } from '../app/gameIntro';
+import { gameIntroActive, gameIntroCovered, gameIntroReady, holdGameIntro, onGameIntroExit, playGameIntro } from '../app/gameIntro';
 import { FrameClock, paceText } from '../game/frameClock';
 import { gfxLevel, gfxRes, onGfxSettings } from '../game/abfahrt/gfxOpts';
 import { AutoGfx, autoStep } from '../game/abfahrt/autoGfx';
@@ -292,11 +292,13 @@ export function usePreparedRace<E extends { phase: string }>(o: {
  * entstehen neu), erst wenn sie aufgeht, beginnt der Countdown
  */
 export function againWithIntro(game: GameId, title: string, prepare: () => void, start: () => void) {
+  if (gameIntroActive()) return;
   playGameIntro(game, { title, short: true });
-  afterPaint(() => {
+  // erst wenn der Kreis vom Knopf aus den Bildschirm bedeckt, das neue Rennen anlegen (das hält den Hauptfaden an)
+  gameIntroCovered().then(() => afterPaint(() => {
     try { prepare(); } catch { /* dann baut start() neu */ }
     onGameIntroExit(start);
-  });
+  }));
 }
 
 type KeyEngine = { key(name: 'left' | 'right' | 'down' | 'up', down: boolean): void; swapMate?: () => void };

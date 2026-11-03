@@ -1256,15 +1256,14 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 }
 .abf__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 /* Platz für die 3D-Bühne: die Leinwand kommt aus dem Vorrat (vorgewärmt beim App-Start) */
-.abf__stage {
-  position: absolute; inset: 0; touch-action: none; cursor: grab; transform-origin: 50% 38%;
-  transition: filter 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-/* Menü offen (Start, Pause, Ergebnis): die Welt dahinter weich gezeichnet – kommt schnell und weich, beim Schließen
-   wird sie gleichzeitig mit dem gleitenden Blatt wieder scharf. Etwas vergrößert, damit der weiche Rand außerhalb
-   des Bildschirms liegt (sonst ein dunkler Saum). Im Spiel: kein Filter, keine Kosten. */
-.abf:has(.abf-layer--sheet:not(.is-leaving)) .abf__stage { filter: blur(9px) saturate(1.1) brightness(0.93); transform: scale(1.04); }
-@media (prefers-reduced-motion: reduce) { .abf__stage { transition: none; } }
+/* Die Welt bleibt hinter allen Menüs scharf und an ihrem Platz: kein Weichzeichner, kein Zoom (das Zurückspringen
+   beim Schließen war ein sichtbares Verschieben des Bildes, und ein Filter über der ganzen Leinwand kostet die
+   Grafik jedes Bild). Pause und Ergebnis dunkeln sie nur ab (ihre Ebene), das Startmenü legt einen Verlauf darüber. */
+.abf__stage { position: absolute; inset: 0; touch-action: none; cursor: grab; }
+/* das Startmenü, als Abbild beim Losfahren (startSheet.tsx menuAway): über dem Spiel, ohne eigenen Hintergrund */
+.abf.abf--ghost { z-index: 61; background: none; pointer-events: none; }
+/* Schleier beim Verlassen eines Spiels (app/veil.ts): über allem, etwas größer als der Bildschirm */
+.veil { position: fixed; left: 0; right: 0; top: -20vh; bottom: -20vh; z-index: 300; background: #0b0d12; pointer-events: auto; touch-action: none; will-change: opacity; }
 /* Bildrate (im Pausenmenü einschaltbar): klein und blass links unter der Kopfleiste – fest am Bildschirm, denn
    unten ragt die Spielfläche auf manchen iPhones unter den sichtbaren Bereich */
 .fps-meter {
@@ -1691,6 +1690,60 @@ body:has(.abf-layer--sheet:not(.is-leaving), .abf-layer--pause, .abf-layer--over
 .abf-sheet__body::-webkit-scrollbar { display: none; }
 /* was unten weiterläuft, blendet weich aus (statt hart an der Fußleiste abgeschnitten) */
 .abf-sheet--start .abf-sheet__body { padding-bottom: 10px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); }
+/* Pause und Ergebnis: die Welt nur abgedunkelt (kein Weichzeichner mehr, siehe .abf__stage) */
+.abf-layer--pause, .abf-layer--over { background: linear-gradient(180deg, rgba(5, 7, 11, 0.3) 0%, rgba(5, 7, 11, 0.58) 100%); }
+
+/* ---------- Startmenü über der Welt ----------
+   Die Welt bleibt scharf und offen, der Startkran zeigt dich am Start (die Kamera rückt dich in den freien Teil,
+   menuView.ts). Unten ein dunkler Verlauf, darauf das Menü – in beiden Farbschemata dunkel wie das Spiel selbst
+   (Startanimation, Countdown, Anzeigen): kein heller Kasten, der die Welt abschneidet. */
+/* alle Spielmenüs (Start, Pause, Ergebnis) in den Farben des Spiels: dunkel, auch im hellen Farbschema */
+.abf-layer--start, .abf-layer--pause, .abf-layer--over {
+  color-scheme: dark;
+  --bg: #0d0f15; --surface: rgba(255, 255, 255, 0.075); --surface2: rgba(255, 255, 255, 0.11); --surface3: rgba(255, 255, 255, 0.16);
+  --line: rgba(255, 255, 255, 0.11); --text: #ffffff; --muted: rgba(228, 233, 242, 0.66); --pos: #3ddc84; --neg: #ff7a6b;
+  --header-bg: rgba(13, 15, 21, 0.9); --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+.abf .abf-layer--start.hue-zeitfahren, .abf .abf-layer--pause.hue-zeitfahren, .abf .abf-layer--over.hue-zeitfahren { --hue: #5aa9ff; }
+.abf .abf-layer--start.hue-sprint, .abf .abf-layer--pause.hue-sprint, .abf .abf-layer--over.hue-sprint { --hue: #ffb02e; }
+.abf .abf-layer--start.hue-berg, .abf .abf-layer--pause.hue-berg, .abf .abf-layer--over.hue-berg { --hue: #3ddc84; }
+.abf-layer--pause .abf-sheet, .abf-layer--over .abf-sheet { box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.07); }
+.abf-layer--start { --bg: #0a0c11; --start-scrim: 9, 11, 16; background: none; padding-top: calc(var(--safe-t) + 60px); }
+/* (Farben, die das helle Schema für weißen Grund abdunkelt: in den dunklen Menüs die hellen) */
+.abf .abf-layer--sheet .rb { --gold: #f2c94c; --silver: #c3ccd6; --bronze: #d6905c; }
+.abf .abf-layer--sheet .rb--zeitfahren { --hue: #5aa9ff; }
+.abf .abf-layer--sheet .rb--sprint { --hue: #ffb02e; }
+.abf .abf-layer--sheet .rb--berg { --hue: #3ddc84; }
+.abf .abf-layer--sheet .rp-tile.is-good dd { color: #f2c94c; }
+.abf-layer--start .abf-sheet {
+  max-height: 56vh; padding-top: 8px; border-radius: 0; box-shadow: none; overflow: visible;
+  background:
+    radial-gradient(90% 120px at 0% 0%, color-mix(in srgb, var(--hue) 14%, transparent) 0%, transparent 100%),
+    linear-gradient(180deg, rgba(var(--start-scrim), 0.74) 0%, rgba(var(--start-scrim), 0.92) 96px, rgba(var(--start-scrim), 0.97) 100%);
+}
+/* der Verlauf beginnt schon über dem Menü: die Welt geht weich in das Menü über, keine Kante */
+.abf-layer--start .abf-sheet::before {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 170px; pointer-events: none;
+  background: linear-gradient(180deg, rgba(var(--start-scrim), 0) 0%, rgba(var(--start-scrim), 0.3) 50%, rgba(var(--start-scrim), 0.74) 100%);
+}
+.abf-layer--start .abf-sheet::after { background: rgba(var(--start-scrim), 0.97); }
+.abf-layer--start .ghead__title { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; text-shadow: 0 2px 18px rgba(0, 0, 0, 0.45); }
+.abf-layer--start .ghead__sub { color: rgba(236, 240, 247, 0.74); }
+.abf-layer--start .abf-go { min-height: 54px; font-size: 18px; font-weight: 700; box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 34%, transparent); }
+.abf-layer--start .team-radio { color: rgba(228, 233, 242, 0.7); }
+.abf-layer--start .abf-more--start summary { justify-content: center; gap: 4px; min-height: 34px; font-size: 13px; color: rgba(228, 233, 242, 0.5); }
+.abf-layer--start .abf-more--start .abf-more__body { padding-top: 0; }
+@media (orientation: landscape) and (max-height: 560px), (min-width: 900px) {
+  /* quer: eine Leiste links, der Verlauf nach rechts in die Welt */
+  .abf-layer--start { padding: calc(var(--safe-t) + 10px) 0 calc(var(--safe-b) + 10px) calc(var(--safe-l) + 10px); }
+  .abf-layer--start .abf-sheet {
+    max-height: 100%; border-radius: 24px; overflow: hidden;
+    background:
+      radial-gradient(120% 140px at 0% 0%, color-mix(in srgb, var(--hue) 14%, transparent) 0%, transparent 100%),
+      rgba(var(--start-scrim), 0.86);
+  }
+  .abf-layer--start .abf-sheet::before { display: none; }
+}
 /* Pause */
 .abf-sheet--pause { padding-top: 20px; }
 .abf-pause__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -3308,13 +3361,14 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 .gintro--sprint { --gi-hue: #ffb02e; --gi-bg1: #3d2706; --gi-bg2: #0f0902; }
 .gintro--berg { --gi-hue: #3ddc84; --gi-bg1: #0e3a24; --gi-bg2: #030e08; }
 .gintro__bg { position: absolute; inset: 0; background: radial-gradient(120% 80% at 50% 38%, var(--gi-bg1) 0%, var(--gi-bg2) 70%); will-change: opacity; }
-.gintro__stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 0 24px; will-change: transform; }
+/* (Inhalt in der Höhe des Bildschirms beim Tippen, an der Oberkante – siehe playGameIntro; der Hintergrund reicht weiter) */
+.gintro__stage { position: absolute; inset: 0; bottom: auto; height: var(--gi-h, 100%); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 0 24px; will-change: transform; }
 .gintro__art { position: relative; display: grid; place-items: center; }
 .gintro__text { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; will-change: transform, opacity; }
 .gintro__title { font-size: 34px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35); }
 .gintro__sub { font-size: 15px; font-weight: 600; color: rgba(255, 255, 255, 0.66); }
 .gintro__wait {
-  position: absolute; left: 0; right: 0; bottom: calc(var(--safe-b, 0px) + 44px); text-align: center;
+  position: absolute; left: 0; right: 0; top: calc(var(--gi-h, 100vh) - var(--safe-b, 0px) - 62px); text-align: center;
   font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: rgba(255, 255, 255, 0.55); opacity: 0;
 }
 .gintro__wait i { font-style: normal; animation: gi-dot 1.2s ease-in-out infinite; }
