@@ -14,9 +14,13 @@ import type { GameBest, GameId } from '../data/source';
 export type FrameKind = 'modern' | 'steel' | 'alu' | 'climb' | 'aero' | 'ti' | 'tt' | 'cross' | 'gravel' | 'track' | 'cargo'
   | 'post' | 'bamboo' | 'bonanza' | 'lowrider' | 'ordinary'
   /** Fixie (Stahl, WIG-geschweißt, Bahn-Ausfallenden), E-Rennrad (dickes Unterrohr mit Akku, Mittelmotor) */
-  | 'fixie' | 'ebike';
+  | 'fixie' | 'ebike'
+  /** Triathlon (Aero, tiefe Front, Box auf dem Oberrohr, Flaschen hinter dem Sattel), Carbon-Gravel */
+  | 'tri' | 'gravelc';
 /** deep80: 80-mm-Carbonfelgen; deepv: 40-mm-Alu-Hochprofil (Deep-V), Farbe aus rim */
-export type WheelKind = 'carbon45' | 'box36' | 'box32' | 'carbon30' | 'deep60' | 'deep80' | 'deepv' | 'tt' | 'spoke4' | 'spoke144' | 'ordinary';
+export type WheelKind = 'carbon45' | 'box36' | 'box32' | 'carbon30' | 'deep60' | 'deep80' | 'deepv' | 'tt' | 'spoke4' | 'spoke144' | 'ordinary'
+  /** tri: 80 mm vorn, Scheibe hinten; disc2: Scheibe vorn und hinten; cspoke: Carbonfelge mit breiten Carbonspeichen */
+  | 'tri' | 'disc2' | 'cspoke';
 
 /** ab hier zählen die Läufe für die Garage (Eröffnung) */
 export const GARAGE_START = '2026-10-27T00:00:00+01:00';
@@ -39,7 +43,7 @@ export interface BikeSpec {
   pedals: 'clipless' | 'toeclip' | 'block';
   tires: 'black' | 'tan';
   /** Reifen: halbe Breite (m), Stollen, Reflexstreifen an der Flanke, Weißwand, farbiger Gummi */
-  tire?: { w?: number; knobs?: number; reflex?: boolean; white?: boolean; col?: string };
+  tire?: { w?: number; knobs?: number; reflex?: boolean; white?: boolean; col?: string; studs?: boolean };
   /** Felgen in Farbe (Deep-V, lackiert); Speichen dann schwarz */
   rim?: string;
   /** Schriftzug auf den Felgen (sonst hell, bei Goldteilen golden) */
@@ -51,12 +55,12 @@ export interface BikeSpec {
   /** Antrieb: zwei Kettenblätter (Standard), eins mit Schaltung, starrer Gang, Nabenschaltung im Kettenkasten,
    *  Nabenschaltung mit Kettenschutz (guard), Stangenschaltung der 50er (rod) */
   drive?: 'double' | 'single' | 'fixed' | 'hub' | 'guard' | 'rod';
-  /** Taschen fürs Bikepacking */
-  bags?: boolean;
+  /** Taschen fürs Bikepacking (light: nur Oberrohrtasche und kleine Satteltasche) */
+  bags?: boolean | 'light';
   /** Schutzbleche: Alu (true), in Rahmenfarbe, Chrom, Holz */
   fenders?: boolean | 'paint' | 'chrome' | 'wood';
   /** Kleinkram: Flaschen am Lenker, Ersatz-Schlauchreifen unter dem Sattel, Flügelmuttern an den Naben */
-  bits?: { barBottles?: boolean; spare?: boolean; wingnuts?: boolean };
+  bits?: { barBottles?: boolean; spare?: boolean; wingnuts?: boolean; noBottles?: boolean };
   /** Anhänger */
   trailer?: 'caravan';
   /** Kopfbedeckung des Fahrers auf diesem Rad, eigene Helmfarbe: Helm, Zeitfahrhelm, Stoffmütze, Mütze mit
@@ -74,6 +78,8 @@ export interface BikeSpec {
     stops?: string[];
     /** Hinterbau und Gabel verchromt (italienische Stahlrenner der 80er) */
     chromeRear?: boolean;
+    /** Schnee auf Rahmen und Reifen (Flocken statt Schlamm) */
+    snow?: boolean;
   };
   /** Schriftzug auf dem Unterrohr (erfunden) */
   wordmark: string;
@@ -249,14 +255,14 @@ export const BIKES: BikeSpec[] = [
     paint: { base: '#c99a2e', second: '#f3d77a', fade: 'y', decal: '#16171a', metal: 'gold', finish: 'chrome' }, wordmark: 'LEGENDE', tape: '#16171a',
     unlock: { kind: 'km', n: 300 },
   },
-  // ---- zweite Runde: Traumräder und mehr Vielfalt (alle 25 km eins)
+  // ---- zweite Runde: Traumräder und mehr Vielfalt (alle 50 km eins, ab 340 km)
   {
     id: 'nachtfalke', name: 'Nachtfalke', era: 'Aero-Maschine · Stealth',
     blurb: 'Alles schwarz: matter Aero-Rahmen mit tief angesetzten Sitzstreben, glänzend schwarze Schrift, die man nur im Licht sieht, 80-mm-Felgen und ein integriertes Cockpit. Sieht im Stand schon schnell aus.',
     specs: [['Rahmen', 'Carbon, Aero, mattschwarz'], ['Laufräder', '80 mm Carbon'], ['Gruppe', '2 × 12 elektronisch'], ['Gewicht', '7,3 kg']],
     frame: 'aero', wheels: 'deep80', brakes: 'disc', bar: 'integrated', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#1c1d20',
     paint: { base: '#1b1c1f', decal: '#3c3f46', metal: 'black', finish: 'satin' }, rimDecal: '#34363c', bottle: '#1e1f23', wordmark: 'NACHTFALKE', tape: '#101114',
-    unlock: { kind: 'km', n: 320 },
+    unlock: { kind: 'km', n: 340 },
   },
   {
     id: 'celeste', name: "Celeste '86", era: 'Italienischer Stahl · 1980er',
@@ -264,7 +270,7 @@ export const BIKES: BikeSpec[] = [
     specs: [['Rahmen', 'Stahl, gemufft, Chromhinterbau'], ['Laufräder', 'Kastenfelge · 36 Speichen'], ['Gruppe', '2 × 6, Rahmenschalter'], ['Gewicht', '9,4 kg']],
     frame: 'steel', wheels: 'box36', brakes: 'rim', bar: 'classic', saddle: 'leather', pedals: 'toeclip', tires: 'tan', head: 'cap',
     paint: { base: '#7ccfbd', panel: '#f3efe4', decal: '#1c2a2a', metal: 'silver', chromeRear: true }, wordmark: 'Celeste', tape: '#f4f2ea',
-    unlock: { kind: 'km', n: 345 },
+    unlock: { kind: 'km', n: 390 },
   },
   {
     id: 'schiller', name: 'Ölfilm', era: 'Allround-Carbon · Schillerlack',
@@ -272,7 +278,7 @@ export const BIKES: BikeSpec[] = [
     specs: [['Rahmen', 'Carbon, Schillerlack'], ['Laufräder', '45 mm Carbon'], ['Gruppe', '2 × 12 elektronisch, Gold'], ['Gewicht', '7,1 kg']],
     frame: 'modern', wheels: 'carbon45', brakes: 'disc', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'black', head: 'helmet', helmet: '#2b1d4a',
     paint: { base: '#4b1f8f', stops: ['#4b1f8f', '#1c5d9a', '#13917c', '#79b43a', '#d9a62e'], fade: 'z', decal: '#f3e7c2', metal: 'gold', finish: 'candy' }, wordmark: 'ÖLFILM', tape: '#1a1426',
-    unlock: { kind: 'km', n: 370 },
+    unlock: { kind: 'km', n: 440 },
   },
   {
     id: 'kiez', name: 'Kiezkurier', era: 'Fixie · Großstadt',
@@ -280,7 +286,7 @@ export const BIKES: BikeSpec[] = [
     specs: [['Rahmen', 'Stahl, WIG-geschweißt'], ['Laufräder', 'Deep-V 40 mm · 32 Speichen'], ['Gruppe', 'Starrer Gang 46 × 16'], ['Gewicht', '8,7 kg']],
     frame: 'fixie', wheels: 'deepv', brakes: 'none', bar: 'bullhorn', saddle: 'race', pedals: 'toeclip', tires: 'black', tire: { w: 0.0125 }, rim: '#ff7a1a', rimDecal: '#16171a', drive: 'fixed', head: 'cap',
     paint: { base: '#1d1e22', decal: '#ff7a1a', metal: 'black', finish: 'satin' }, wordmark: 'KIEZKURIER', tape: '#ff7a1a',
-    unlock: { kind: 'km', n: 395 },
+    unlock: { kind: 'km', n: 490 },
   },
   {
     id: 'epass', name: 'E-Pass', era: 'E-Rennrad · heute',
@@ -288,7 +294,47 @@ export const BIKES: BikeSpec[] = [
     specs: [['Rahmen', 'Carbon, Akku integriert'], ['Motor', 'Mittelmotor · 250 W'], ['Gruppe', '1 × 12 elektronisch'], ['Gewicht', '12,9 kg']],
     frame: 'ebike', wheels: 'carbon45', brakes: 'disc', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'black', drive: 'single', head: 'helmet',
     paint: { base: '#2a2e34', second: '#6b7480', fade: 'y', decal: '#c6ff3d', metal: 'black', finish: 'satin' }, rimDecal: '#c6ff3d', wordmark: 'E-PASS', tape: '#16171a',
-    unlock: { kind: 'km', n: 420 },
+    unlock: { kind: 'km', n: 540 },
+  },
+  {
+    id: 'hitze', name: 'Hitzeflimmern', era: 'Triathlon · Langdistanz',
+    blurb: 'Gebaut für 180 km gegen den Wind: tiefe Front, Auflieger mit Trinkflasche und Strohhalm dazwischen, Box für Riegel auf dem Oberrohr, zwei Flaschen hinter dem Sattel, vorn 80 mm, hinten die Scheibe. Weiß mit Verlauf in Neonkoralle.',
+    specs: [['Rahmen', 'Carbon, Triathlon-Geometrie'], ['Laufräder', '80 mm vorn · Scheibe hinten'], ['Gruppe', '2 × 12 elektronisch'], ['Verpflegung', '3 Flaschen, 6 Riegel']],
+    frame: 'tri', wheels: 'tri', brakes: 'disc', bar: 'tt', saddle: 'tt', pedals: 'clipless', tires: 'black', head: 'aero', helmet: '#f4f4f2',
+    paint: { base: '#f4f4f2', second: '#ff4f5e', fade: 'z', decal: '#16171a', metal: 'black' }, wordmark: 'HITZEFLIMMERN', tape: '#16171a',
+    unlock: { kind: 'km', n: 590 },
+  },
+  {
+    id: 'schotter', name: 'Schotterkönig', era: 'Gravel-Rennmaschine · heute',
+    blurb: 'Carbon-Gravel für Rennen auf Schotter: tief angesetzte Sitzstreben, 40-mm-Reifen mit feinem Profil und hellen Flanken, ausgestellter Lenker, ein Blatt vorn, Oberrohrtasche und kleine Satteltasche. Sandfarben mit olivgrünem Verlauf und ordentlich Staub.',
+    specs: [['Rahmen', 'Carbon, Gravel-Race'], ['Laufräder', '30 mm Carbon · 40 mm Reifen'], ['Gruppe', '1 × 13 mechanisch'], ['Gewicht', '8,3 kg']],
+    frame: 'gravelc', wheels: 'carbon30', brakes: 'disc', bar: 'flare', saddle: 'race', pedals: 'clipless', tires: 'tan', tire: { w: 0.0185, knobs: 0.0013 }, drive: 'single', bags: 'light', head: 'helmet', helmet: '#c9b48a',
+    paint: { base: '#cdb68a', second: '#5d6a43', fade: 'y', decal: '#2b2a22', metal: 'black', finish: 'satin' }, wordmark: 'SCHOTTERKÖNIG', tape: '#3f4a2e',
+    unlock: { kind: 'km', n: 640 },
+  },
+  {
+    id: 'eiszeit', name: 'Eiszeit', era: 'Winterrad · Spikes',
+    blurb: 'Für Januar am Pass: Spikereifen mit Stahlstiften, Schutzbleche, breite Reifen und Schnee auf Rahmen, Streben und Flanken. Alu-Rahmen im Verlauf von Nachtblau zu Eisblau, schwarze Teile – und der weiße Helm passt zur Landschaft.',
+    specs: [['Rahmen', 'Aluminium, Schutzblechösen'], ['Laufräder', '32 Speichen · Spikes 35 mm'], ['Gruppe', '2 × 11, Scheibenbremsen'], ['Spikes', '2 × 120 Stück']],
+    frame: 'cross', wheels: 'box32', brakes: 'disc', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'black', tire: { w: 0.0175, knobs: 0.0024, studs: true }, fenders: true, head: 'helmet', helmet: '#f4f6f8',
+    paint: { base: '#163f86', second: '#2f86e0', fade: 'y', decal: '#f4f7fb', metal: 'black', snow: true }, wordmark: 'EISZEIT', tape: '#16171a',
+    unlock: { kind: 'km', n: 690 },
+  },
+  {
+    id: 'floh', name: 'Kletterfloh', era: 'Leichtbau · Bergzeitfahren',
+    blurb: 'Fünf Kilo und ein bisschen: unlackiertes Carbon, Laufräder mit breiten Carbonspeichen, ein winziger Sattel und keine Flaschenhalter – jedes Gramm muss den Berg hinauf. Rote Akzente an Schrift, Lenkerband und Felgen.',
+    specs: [['Rahmen', 'Carbon, unlackiert'], ['Laufräder', 'Carbonspeichen · 35 mm'], ['Gruppe', '2 × 12, leichteste Teile'], ['Gewicht', '5,4 kg']],
+    frame: 'climb', wheels: 'cspoke', brakes: 'rim', bar: 'modern', saddle: 'race', pedals: 'clipless', tires: 'tan', head: 'helmet', helmet: '#e2231a',
+    paint: { base: '#26272b', decal: '#e2231a', metal: 'black', finish: 'satin', stripes: ['#e2231a'] }, rimDecal: '#e2231a', bits: { noBottles: true }, wordmark: 'KLETTERFLOH', tape: '#e2231a',
+    unlock: { kind: 'km', n: 740 },
+  },
+  {
+    id: 'stunde', name: 'Stundenrekord', era: 'Bahn · Weltrekord',
+    blurb: 'Eine Stunde, so weit es geht: Bahnrahmen mit Profilrohren, vorn und hinten Scheibenräder, Auflieger, starrer Gang mit riesigem Blatt und die goldene Kette. Weiß mit rotem Verlauf – dazu der Zeitfahrhelm.',
+    specs: [['Rahmen', 'Carbon, Bahngeometrie'], ['Laufräder', 'Scheibe vorn und hinten'], ['Gruppe', 'Starrer Gang 58 × 14'], ['Rekord', '55,1 km in der Stunde']],
+    frame: 'track', wheels: 'disc2', brakes: 'none', bar: 'tt', saddle: 'tt', pedals: 'clipless', tires: 'black', drive: 'fixed', head: 'aero', helmet: '#f4f4f2',
+    paint: { base: '#f2f2ef', second: '#c8102e', fade: 'z', panel: '#c8102e', decal: '#16171a', metal: 'black' }, wordmark: 'STUNDE', tape: '#16171a',
+    unlock: { kind: 'km', n: 790 },
   },
 ];
 
