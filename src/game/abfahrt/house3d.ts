@@ -16,6 +16,8 @@ import type { Region } from './region';
 
 export interface Town {
   facade: GB; tiles: GB; plain: GB; signs: GB; lanterns: number[]; bulbs: number[];
+  /** Kaminköpfe (x, y, z) – im Herbst und Winter steigt dort Rauch auf (season.ts) */
+  smoke?: number[];
   /** kleine Teile nur für die Nähe (Balkone, Fensterbänke, Blumen, Sockel): eigenes Netz, das in der Ferne ausgeht */
   detail: GB;
   /** Grundrisse (x, z, Radius) gegen Überschneidungen */
@@ -709,6 +711,7 @@ function roof(T: Town, at: At, h: HouseSpec, H: number, wallC: RGBf, trimC: RGBf
     const cc = cw + 0.07;
     P.quad(C(-cc, -cc, top), C(cc, -cc, top), C(cc, cc, top), C(-cc, cc, top), cap);
     for (const [a0, b0, a1, b1] of sides) P.quad(C(a0 * 1.22, b0 * 1.22, top - 0.1), C(a1 * 1.22, b1 * 1.22, top - 0.1), C(a1 * 1.22, b1 * 1.22, top), C(a0 * 1.22, b0 * 1.22, top), cap);
+    T.smoke?.push(...C(0, 0, top + 0.1));
   }
 }
 

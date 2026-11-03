@@ -10,6 +10,8 @@ import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, TT_
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB } from './palette';
 import { SpriteBank, roadArrow, roadText, warmRoadText } from './sprites';
 import { SKY_FRAG, SKY_VERT, dailyMood, skyUniforms, type SkyMood } from './sky';
+import { seasonLook, type SeasonLook } from './season';
+import { ROOF_SNOW, SeasonAir, roofSnowHook, smokeMaterial, smokePoints } from './season3d';
 import { EditorMarkers, type Marker } from './editor3d';
 import type { TerrainBump } from './worldEdits';
 import * as worldStore from './worldStore';
@@ -42,7 +44,7 @@ import { uiBusy } from '../uiBusy';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
-import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, packPerson, randomPerson, type Person, type Zone } from './crowd3d';
+import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, packPerson, randomPerson, setCrowdChill, type Person, type Zone } from './crowd3d';
 import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
 import { TREC, TREE_KINDS, bakeTreeAtlas, billboardDepthMaterial, billboardMaterial, disposeBillboards, treeBillboards, treeTint, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
 import { mulberry32 } from './rng';
@@ -332,11 +334,17 @@ vec3 roadWear(vec3 col, float um, float vm, float e, float rd, vec2 slow) {
  * Viehgangeln (schmale Trittpfade entlang der Höhenlinien an steilen Weiden; nur wo das Muster nicht flimmert)
  */
 const MEADOW_GLSL = `
+uniform vec4 uSeasonG;
+uniform vec4 uSeasonH;
 vec3 meadowZones(vec2 xz) { return vec3(texture2D(uRelief, xz / 260.0 + vec2(0.13, 0.71)).rg, texture2D(uRelief, xz / 170.0 + vec2(0.57, 0.29)).r); }
 vec3 meadowTint(vec3 mz) {
   float lush = smoothstep(0.3, 0.62, mz.x);
   float lean = smoothstep(0.32, 0.66, mz.y) * (1.0 - lush);
-  return mix(vec3(1.0), vec3(0.8, 0.97, 0.72), lush * 0.8) * mix(vec3(1.0), vec3(1.17, 1.09, 0.78), lean * 0.85) * (mz.z * 0.32 + 0.9);
+  vec3 t = mix(vec3(1.0), vec3(0.8, 0.97, 0.72), lush * 0.8) * mix(vec3(1.0), vec3(1.17, 1.09, 0.78), lean * 0.85) * (mz.z * 0.32 + 0.9);
+  // Jahreszeit (season.ts): strohig im Herbst und Winter (magere Weiden zuerst), frisch und saftig im Frühling
+  t *= mix(vec3(1.0), vec3(1.55, 0.98, 0.5), uSeasonG.x * (0.6 + 0.4 * mz.y));
+  t *= mix(vec3(1.0), vec3(0.93, 1.09, 0.84), uSeasonG.z * (0.5 + 0.5 * lush));
+  return t;
 }
 vec4 grassTex(sampler2D g, sampler2D nz, vec2 uv) {
   vec2 w = uv + (textureLod(nz, uv * 0.137 + vec2(0.31, 0.77), 4.5).rg - 0.5) * 0.8;
@@ -588,6 +596,19 @@ export class Renderer3D {
   private valleyMat: THREE.MeshLambertMaterial;
   /** Himmel: Stimmung des Tages (Wolken, Front, Hochnebel), vom Wetter überstimmbar */
   private mood: SkyMood = dailyMood(0);
+  /**
+   * Jahreszeit der Strecke (season.ts): Bäume (Laubfärbung, kahl, Schnee, Blüte), Boden (strohig, Schnee, frisch,
+   * Blumen), dazu Laub am Boden, Herbstwald und kahler Wald – als Uniforms, ohne neue Shader je Jahreszeit
+   */
+  season: SeasonLook = seasonLook('2027-07-01', 'dolomiten');
+  readonly seasonT = { value: new THREE.Vector4(0, 0, 0, 0) };
+  readonly seasonG = { value: new THREE.Vector4(0, 0, 0, 1) };
+  readonly seasonH = { value: new THREE.Vector4(0, 0, 0, 0) };
+  private air!: SeasonAir;
+  /** Rauch aus Kaminen (Herbst, Winter) */
+  private smokeMat!: THREE.ShaderMaterial;
+  private airLight = new THREE.Color();
+  private airSun = new THREE.Color();
   private moodOverride: Partial<SkyMood> | null = null;
   /** Adler, Gleitschirme, Ballon, Fernsehhubschrauber */
   private skyLife = new SkyLife();
@@ -904,12 +925,16 @@ export class Renderer3D {
     this.parts = new THREE.Points(pg, new THREE.PointsMaterial({ size: 0.35, map: pt, vertexColors: true, transparent: true, depthWrite: false, sizeAttenuation: true }));
     this.parts.frustumCulled = false;
     this.scene.add(this.parts);
+    // Jahreszeit in der Luft: Herbstlaub, Schnee, Blütenblätter (season3d.ts)
+    this.air = new SeasonAir(900);
+    this.scene.add(this.air.points);
+    this.smokeMat = smokeMaterial(this.time);
 
     this.initMaterials();
     this.crowdAtlas = bakeCrowdAtlas(this.gl);
     this.treeAtlas = bakeTreeAtlas(this.gl, this.pc ? 1.5 : 1);
     // mit Kantenglättung (Normalfall) blenden die Bäume über sie weich aus
-    this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, this.treeFadeU, this.msaa, this.morphU[0]);
+    this.bbMat = billboardMaterial(this.treeAtlas, this.peakU, this.time, this.treeFadeU, this.msaa, this.morphU[0], this.seasonT);
     // PC-Grafik: Bäume werfen Schatten (ihr Bild dreht sich im Schattendurchgang zur Sonne)
     this.bbDepth = this.pc ? billboardDepthMaterial(this.treeAtlas, this.time, this.treeFadeU, this.morphU[0]) : null;
     this.sprMat = spriteMaterial(this.crowdU, this.crowdAtlas);
@@ -1202,6 +1227,12 @@ export class Renderer3D {
       glow: new THREE.PointsMaterial({ size: 3.2, map: glowMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0 }),
       lampGlow: new THREE.MeshBasicMaterial({ map: glowMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.6 }),
     };
+    // Winter: Schnee auf den Dächern (season3d.ts)
+    for (const m of [this.mats.roof, this.mats.tiles]) {
+      const prev = m.onBeforeCompile;
+      m.onBeforeCompile = (sh, r) => { prev.call(m, sh, r); roofSnowHook(sh); };
+      m.customProgramCacheKey = () => `roof-snow-${m.map ? 't' : 'p'}`;
+    }
     // Straßenbeläge und Bankett: großflächige Flecken (Flickstellen, Abrieb, Staub) brechen das Kachelmuster auf,
     // in der Ferne geht die Textur in ihre Mittelfarbe über – kein Flimmern, keine Linien beim Fahren
     // feines Korn für die Nähe (ab Stufe 3): Splitt und Sand, in Weltkoordinaten (keine Kachel erkennbar)
@@ -1297,7 +1328,7 @@ export class Renderer3D {
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
     // Weltkoordinaten statt UV – waagrechte Lagen laufen so über alle Flächen hinweg
     const rockMap = this.tex(rockTex());
-    const grassU = { uGrass: { value: grass.tex }, uGrassMean: { value: grass.mean } };
+    const grassU = { uGrass: { value: grass.tex }, uGrassMean: { value: grass.mean }, uSeasonG: this.seasonG, uSeasonH: this.seasonH };
     const rockU = { uRock: { value: rockMap }, uRelief: { value: this.reliefTex(noiseTex(), 1) }, uTime: this.time, uCanD: this.canU, ...grassU };
     const rockify = (sh: THREE.WebGLProgramParametersWithUniforms) => {
       Object.assign(sh.uniforms, rockU, { uLampP: LAMP_U.uLampP, uLampCol: LAMP_U.uLampCol });
@@ -1332,7 +1363,7 @@ export class Renderer3D {
             float gw = smoothstep(0.012, 0.05, gg);
             vec4 g1 = texture2D(uGrass, vRockP.xz / 4.2);
             sampledDiffuseColor.rgb *= mix(vec3(1.0), g1.rgb / uGrassMean, gw);
-            sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, g1.rgb * 0.5 / max(vColor.rgb, vec3(0.02)), g1.a * 0.75 * gw);` : `
+            sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, g1.rgb * 0.5 / max(vColor.rgb, vec3(0.02)), min(1.0, g1.a * 0.75 * uSeasonG.w) * gw);` : `
             float gn = texture2D(uRelief, vRockP.xz / 2.7).g * 0.7 + texture2D(uRelief, vRockP.xz / 0.85 + 0.3).g * 0.3;
             float gw = smoothstep(0.012, 0.05, gg + (gn - 0.5) * 0.07 * smoothstep(0.003, 0.02, gg));
             vec3 nzg = texture2D(uRelief, vRockP.xz / 33.0).rgb;
@@ -1347,7 +1378,17 @@ export class Renderer3D {
             gm = mix(gm, gm * vec3(0.64, 0.58, 0.48), cattleTracks(vRockP, normalize((vec4(vNormal, 0.0) * viewMatrix).xyz).y, nzg.r, mz) * 0.8);` : ''}
             sampledDiffuseColor.rgb *= mix(vec3(1.0), gm, gw);
             // Blüten: Farbe statt Tönung (geteilt durch die Eckpunktfarbe, die danach noch multipliziert wird)
-            sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, g1.rgb * 0.5 / max(vColor.rgb, vec3(0.02)), g1.a * 0.75 * gw);`}
+            sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, g1.rgb * 0.5 / max(vColor.rgb, vec3(0.02)), min(1.0, g1.a * 0.75 * uSeasonG.w) * gw);`}
+            // Jahreszeit (season.ts): Herbstlaub auf der Wiese (Flecken aus einzelnen Blättern), Winter: Schnee (in
+            // Mulden zuerst, fleckig auslaufend) – als Farbe, geteilt durch die Eckpunktfarbe (die danach noch dazukommt)
+            if (uSeasonH.x + uSeasonG.y > 0.0) {
+              vec2 sz = texture2D(uRelief, vRockP.xz / 3.3).rg;
+              float lf = uSeasonH.x * smoothstep(0.62, 0.72, texture2D(uRelief, vRockP.xz * 0.9 + 0.21).r) * smoothstep(0.2, 0.55, sz.y);
+              vec3 lc = mix(vec3(0.5, 0.17, 0.04), vec3(0.72, 0.46, 0.08), texture2D(uRelief, vRockP.xz * 3.1 + 0.5).g) * 0.55;
+              sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, lc / max(vColor.rgb, vec3(0.02)), lf * gw * 0.9);
+              float snw = smoothstep(0.42, 0.58, uSeasonG.y * 0.9 + (sz.x - 0.5) * 0.5);
+              sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, vec3(0.84, 0.88, 0.93) * (0.93 + 0.1 * sz.y) / max(vColor.rgb, vec3(0.02)), snw * gw);
+            }
           }
           #endif
           ${gfxOn('details') ? `{
@@ -1491,7 +1532,7 @@ export class Renderer3D {
               #endif
               tCol *= gt;
               // Blüten behalten ihre Farbe (etwas gedämpft im Licht der Wiese)
-              tCol = mix(tCol, g1.rgb * 0.5, fl * 0.75);
+              tCol = mix(tCol, g1.rgb * 0.5, min(1.0, fl * 0.75 * uSeasonG.w));
               #if TLV == 0 && defined(TDETAIL)
                 // nah: unregelmäßige Helligkeit über einen halben Meter und feines Korn; Viehgangeln an steilen Weiden
                 tCol *= grainF(vTW.xz, 0.55, 0.11) * grainF(vTW.xz + 17.3, 0.13, 0.12);
@@ -1584,6 +1625,14 @@ export class Renderer3D {
             // dunkler (sonst liest man einen Hangwald als Loch im Berg)
             vec3 fc = mix(uForA, uForB, nz2.r * 0.6 + nzF * 0.4) * (0.42 + crown * 0.9) * (1.0 + 0.4 * crownL);
             fc = mix(fc, uForA * vec3(0.72, 0.7, 0.58), smoothstep(0.78, 0.45, fnT.y) * 0.22);
+            // Jahreszeit (season.ts): Laubwald-Flecken im Herbst bunt, im Winter kahl graubraun, Schnee in den Kronen
+            {
+              float dec = smoothstep(0.38, 0.72, nzF * 0.7 + nz2.g * 0.3);
+              vec3 aut = fc * mix(vec3(2.5, 1.45, 0.42), vec3(2.3, 0.85, 0.3), nz2.b);
+              fc = mix(fc, aut, uSeasonH.y * dec * (1.0 - uSeasonH.z * 0.6));
+              fc = mix(fc, vec3(0.055, 0.047, 0.04) * (0.6 + crown * 0.7), uSeasonH.z * dec * 0.6);
+              fc = mix(fc, uSnow * (0.62 + 0.25 * crown), uSeasonG.y * 0.55 * smoothstep(0.2, 0.7, crown + nz2.r * 0.3));
+            }
             float canopy = smoothstep(uCanD.x, uCanD.z, camD);
             // nah: Waldboden aus Nadeln und Moos (bräunlich-oliv statt sattem Grün)
             fc = mix(vec3(0.042, 0.048, 0.026), fc, 0.45 + 0.55 * canopy);
@@ -1608,7 +1657,8 @@ export class Renderer3D {
             tCol = mix(tCol, fc, fo);
             tCol = mix(tCol, rc, rk);
             // Schnee: bleibt in den Rinnen länger liegen
-            float sn = smoothstep(0.42, 0.6, vMat.z + (vNz.y - 0.5) * 0.55 + (nz2.g - 0.5) * 0.25 + rk * (0.5 - gul) * 0.5) * smoothstep(0.38, 0.7, fnT.y + (nz2.r - 0.5) * 0.3 + (0.5 - gul) * 0.25);
+            // (Winter: Schnee bis ins Tal je nach Gegend, uSeasonG.y – season.ts)
+            float sn = smoothstep(0.42, 0.6, vMat.z + uSeasonG.y * 0.75 + (vNz.y - 0.5) * 0.55 + (nz2.g - 0.5) * 0.25 + rk * (0.5 - gul) * 0.5) * smoothstep(0.38, 0.7, fnT.y + (nz2.r - 0.5) * 0.3 + (0.5 - gul) * 0.25);
             tCol = mix(tCol, uSnow * (0.9 + 0.12 * nz2.g), sn);
             #if TLV < 2 && defined(TDETAIL)
               // Buckel in Wiese und Wald (3 m auf 33 m)
@@ -2061,6 +2111,16 @@ export class Renderer3D {
     this.updateCar(g, dt);
     P?.mark(SEC.fahrer);
     this.updateSky(g, biome, dt);
+    {
+      // Laub, Schnee, Blüten in der Luft: im Licht der Szene, auf einfacher Grafik weniger, im Tunnel nichts
+      const lc = this.airLight.copy(this.hemi.color).multiplyScalar(this.hemi.intensity * 0.32).add(this.airSun.copy(this.sun.color).multiplyScalar(this.sun.intensity * 0.14));
+      lc.r = Math.min(1, lc.r); lc.g = Math.min(1, lc.g); lc.b = Math.min(1, lc.b);
+      this.air.update(this.season, this.camera, this.time.value, lc, this.gl.domElement.height, (this.lite ? 0.45 : 1) * (1 - this.tunnelDim));
+      const su = this.smokeMat.uniforms;
+      (su.uLight.value as THREE.Color).copy(lc);
+      su.uScale.value = this.gl.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
+      su.uOn.value = this.season.lamps > 0 ? Math.min(1, 0.4 + this.season.lamps) : 0;
+    }
     // Wasser strömt: eine Texturlänge je Sekunde (wie schnell das aussieht, legt die Dichte der Koordinaten fest)
     if (this.fallMat?.map) this.fallMat.map.offset.y = (this.fallMat.map.offset.y - dt) % 1;
     P?.mark(SEC.himmel);
@@ -2492,9 +2552,42 @@ export class Renderer3D {
     if (!this.lite) this.skyLife.update(t, g.p.z, this.time.value, dt, biome, this.night, leader, this.camera.position);
   }
 
+  /** Jahreszeit setzen (reset; zum Ansehen auch von außen) */
+  setSeason(s: SeasonLook) {
+    this.season = s;
+    this.seasonT.value.set(s.autumn, s.bare, s.treeSnow, s.blossom);
+    this.seasonG.value.set(s.dry, s.snow, s.fresh, s.flowers);
+    this.seasonH.value.set(s.litter, s.autumn, s.bare, 0);
+    // Zuschauer: im Herbst teils, im Winter fast alle in Jacke und Mütze
+    setCrowdChill(s.id === 'winter' ? 0.9 : s.id === 'autumn' ? 0.25 + 0.35 * s.bare : 0);
+    ROOF_SNOW.value = s.id === 'winter' ? Math.min(0.92, 0.3 + s.snow * 0.65) : 0;
+  }
+
+  /**
+   * Berge am Horizont in der Jahreszeit: im Winter liegt der Schnee tiefer (im Süden nur auf den Gipfeln), Wälder
+   * und Matten im Herbst bräunlich-bunt, im Winter verschneit (Uniforms der fertigen Berge, einmal je Wechsel)
+   */
+  private seasonPeak(m: THREE.Mesh) {
+    const s = this.season;
+    const key = `${s.id}|${s.snow}|${s.autumn}|${s.bare}`;
+    if (m.userData.seasonKey === key) return;
+    const u = (m.material as THREE.ShaderMaterial).uniforms;
+    if (!u?.uSnow || !u.uForest || !u.uMeadow) return;
+    type Base = { snow: number; forest: THREE.Color; meadow: THREE.Color };
+    const base = (m.userData.seasonBase ??= { snow: u.uSnow.value as number, forest: (u.uForest.value as THREE.Color).clone(), meadow: (u.uMeadow.value as THREE.Color).clone() }) as Base;
+    const lin = (r: number, g: number, b: number) => new THREE.Color().setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace);
+    u.uSnow.value = s.id === 'winter' ? Math.min(base.snow, 0.18 + (1 - s.snow) * 0.55) : base.snow * (1 - 0.08 * s.autumn);
+    const f = (u.uForest.value as THREE.Color).copy(base.forest);
+    f.lerp(lin(120, 82, 40), s.autumn * 0.3 * (1 - s.bare * 0.5)).lerp(lin(70, 64, 58), s.bare * 0.25).lerp(lin(200, 208, 218), s.snow * 0.35);
+    const mm = (u.uMeadow.value as THREE.Color).copy(base.meadow);
+    mm.lerp(lin(150, 132, 84), s.dry * 0.45).lerp(lin(225, 230, 238), s.snow * 0.6).lerp(lin(96, 140, 60), s.fresh * 0.15);
+    m.userData.seasonKey = key;
+  }
+
   private reset(track: Track) {
     this.track = track;
     track.relief = true;
+    this.setSeason(seasonLook(track.dayKey, track.region));
     this.applyGround(track);
     // Abfahrt: ein fester Abendhimmel (dramatischer Himmel, sky.ts) statt der Stimmung des Tages
     this.mood = track.kind === 'descent' ? { ...DESCENT_SKY } : dailyMood(track.seed);
@@ -3336,10 +3429,11 @@ export class Renderer3D {
     const t = this.track!;
     const v = hash(t.seed);
     // Abfahrt: Abend wie in der WebGPU-Abfahrt – tiefe Sonne, warmes Licht, die Lichter brennen schon (updateLight)
-    if (t.kind === 'descent') return DESCENT_TOD;
+    // (Herbst und Winter: es dämmert früher – etwas später am Tag, die Fenster brennen schon; season.ts)
+    if (t.kind === 'descent') return Math.min(0.68, DESCENT_TOD + this.season.todShift * 0.6);
     const fin = t.kind === 'sprint' ? SPRINT_FINISH : t.kind === 'tt' ? TT_FINISH : MOUNTAIN_FINISH;
-    const a = 0.16 + v * 0.12;
-    const b = 0.62 + hash(t.seed + 7) * 0.05;
+    const a = 0.16 + v * 0.12 + this.season.todShift;
+    const b = Math.min(0.69, 0.62 + hash(t.seed + 7) * 0.05 + this.season.todShift * 0.5);
     return a + (b - a) * smooth01(g.p.z / fin);
   }
 
@@ -3351,12 +3445,16 @@ export class Renderer3D {
     const inTunnel = seg.tunnel ? 1 : 0;
     this.tunnelDim += (inTunnel - this.tunnelDim) * Math.min(1, dt * 3);
     const dim = 1 - this.tunnelDim * 0.55;
-    const haze = mixRGB(pal.haze, L.hazeMix, L.hazeAmt);
+    const S = this.season;
+    let haze = mixRGB(pal.haze, L.hazeMix, L.hazeAmt);
+    // Jahreszeit: Herbstdunst golden-warm, Winterluft kühl und weißlich (season.ts)
+    if (S.warm > 0) haze = mixRGB(haze, [236, 206, 168], S.warm * 0.22);
+    else if (S.warm < 0) haze = mixRGB(haze, [214, 224, 238], -S.warm * 0.3);
     const fogC = new THREE.Color().setRGB(haze[0] / 255, haze[1] / 255, haze[2] / 255, THREE.SRGBColorSpace);
     this.fog.color.copy(fogC);
     // klare Bergluft: Nahes knackig, Fernes sanft im Dunst
     // Luftperspektive: Fernes verblasst deutlich – gibt den Bergen Tiefe statt einer Wand
-    this.fog.density = (0.00085 + L.hazeAmt * 0.0002) * this.range.fog;
+    this.fog.density = (0.00085 + L.hazeAmt * 0.0002) * this.range.fog * (1 + S.haze * 0.55);
     const tint = new THREE.Color().setRGB(L.tint[0] / 255, L.tint[1] / 255, L.tint[2] / 255, THREE.SRGBColorSpace);
     // abends etwas weniger Licht – aber die Strecke bleibt gut lesbar
     const dayK = 1 - L.lights * 0.45;
@@ -3366,8 +3464,11 @@ export class Renderer3D {
     // Himmels- und Bodenlicht: Schattenseiten (Felswände, Hänge weg von der Sonne) bleiben lesbar, aber deutlich
     // dunkler als die Sonnenseite – Licht mit Richtung statt gleichmäßiger Helligkeit
     this.hemi.intensity = (1.7 + 0.55 * dayK) * dim;
-    const sunC = new THREE.Color().setRGB(L.sun[0] / 255, L.sun[1] / 255, L.sun[2] / 255, THREE.SRGBColorSpace);
+    const sunRGB = S.warm > 0 ? mixRGB(L.sun, [255, 196, 128], S.warm * 0.2) : S.warm < 0 ? mixRGB(L.sun, [228, 236, 255], -S.warm * 0.25) : L.sun;
+    const sunC = new THREE.Color().setRGB(sunRGB[0] / 255, sunRGB[1] / 255, sunRGB[2] / 255, THREE.SRGBColorSpace);
     this.sun.color.copy(sunC);
+    // Winter: kühleres Himmelslicht, Schnee wirft viel Licht zurück
+    if (S.warm < 0) { this.hemi.color.lerp(new THREE.Color(0.8, 0.88, 1.0), -S.warm * 0.25); this.hemi.groundColor.lerp(new THREE.Color(0.78, 0.82, 0.9), S.snow * 0.35); }
     this.sun.intensity = Math.max(0.6, Math.min(3.0, (L.sunY + 0.14) * 7.0)) * dayK * dim;
     // Sonnenstand: am Nachmittag schräg von hinten und von der Seite (die Berge vor einem liegen im Licht, Hänge
     // bekommen Licht- und Schattenseite), zum Abend hin wandert die Sonne nach Westen, steht tiefer und taucht
@@ -3411,7 +3512,8 @@ export class Renderer3D {
     // (einfache Grafik: ruhiger Himmel ohne Wolkentürme und Strahlen)
     u.uDrama.value = this.track?.kind === 'descent' && !this.lite ? 1 : 0;
     // Fenster, Laternen, Lichterketten: in der Abfahrt (Abend) überall an, sonst mit der Tageszeit
-    const lampsOn = this.track?.kind === 'descent' && this.debugTod === null ? 1 : L.lights;
+    // (Herbst und Winter: Fenster und Laternen brennen früher – gemütlich; season.ts)
+    const lampsOn = this.track?.kind === 'descent' && this.debugTod === null ? 1 : Math.max(L.lights, S.lamps);
     this.mats.facade.emissiveIntensity = lampsOn * 1.25;
     this.houses.lights.value = lampsOn;
     this.mats.sign.emissiveIntensity = lampsOn * 0.75;
@@ -4026,6 +4128,7 @@ export class Renderer3D {
     if (this.pc) this.peakSun(dt);
     for (const [m, a] of [[this.mtn, this.mtnFade], [this.mtnOld, 1 - this.mtnFade]] as [THREE.Mesh | null, number][]) {
       if (!m) continue;
+      this.seasonPeak(m);
       m.position.set(cp.x, cp.y - 240, cp.z);
       setPeakOpacity(m, a);
       m.visible = a > 0.01;
@@ -4223,6 +4326,9 @@ export class Renderer3D {
       new THREE.MeshLambertMaterial({ color: 0x9aa0a8 }),
     ];
     const mats: THREE.Material[] = [...Object.values(this.mats), ...this.terrMats, ...this.waterMats, this.markMat, this.crowdMat, this.sprMat, this.bbMat, this.fallMaterial(), this.mistMaterial(), ...labels];
+    // Jahreszeit in der Luft (season3d.ts): ein Shader für Laub, Schnee und Blüten
+    g.add(new THREE.Points(pgeo, this.air.material));
+    g.add(new THREE.Points(pgeo, this.smokeMat));
     for (const m of mats) {
       if (!(m as THREE.ShaderMaterial).isShaderMaterial) appearify(m);
       if ((m as THREE.PointsMaterial).isPointsMaterial) { g.add(new THREE.Points(pgeo, m)); continue; }
@@ -4660,7 +4766,7 @@ export class Renderer3D {
     const fans = new GB();
     fans.uv = true;
     const detailGB = new GB();
-    const town: Town = { facade, tiles, plain: roof, signs: signGB, lanterns: [], bulbs: [], detail: detailGB, occ: [], stone: mas };
+    const town: Town = { facade, tiles, plain: roof, signs: signGB, lanterns: [], bulbs: [], detail: detailGB, occ: [], stone: mas, smoke: [] };
     let detail: Detail | null = null;
     const bill = new GB();
     bill.uv = true;
@@ -5057,6 +5163,12 @@ export class Renderer3D {
       const pm = new THREE.Points(gg, mat);
       pm.renderOrder = 5;
       group.add(pm);
+    }
+    // Herbst und Winter: Rauch aus den Kaminen (season3d.ts) – gemütlich
+    if (town.smoke?.length && this.season.lamps > 0) {
+      const sm = smokePoints(town.smoke, this.smokeMat);
+      disp.push(sm.geometry);
+      group.add(sm);
     }
     // alles im Abschnitt steht still: Matrizen einmal rechnen statt in jedem Bild
     group.traverse((o) => { o.matrixAutoUpdate = false; o.updateMatrix(); });
@@ -6182,6 +6294,7 @@ export class Renderer3D {
       const cc = cw + 0.07;
       T.plain.quad(P0(-cc, -cc, top), P0(cc, -cc, top), P0(cc, cc, top), P0(-cc, cc, top), cap);
       for (const [x0, y0, x1, y1] of sides) T.plain.quad(P0(x0 * 1.22, y0 * 1.22, top - 0.1), P0(x1 * 1.22, y1 * 1.22, top - 0.1), P0(x1 * 1.22, y1 * 1.22, top), P0(x0 * 1.22, y0 * 1.22, top), cap);
+      T.smoke?.push(...P0(0, 0, top + 0.1));
     }
 
     // ---- Laubengang vor dem Erdgeschoss: Pfeiler, Rundbögen, Terrasse darüber (Palazzi an der Piazza)
@@ -6360,7 +6473,15 @@ export class Renderer3D {
       if (!list) { list = { m: [], c: [] }; inst.set(kind, list); }
       list.m.push(m);
       if (TREES.has(kind)) { const [tr, tg, tb] = treeTint(v, hash(s.i * 7 + sp.v), hash(s.i * 11 + sp.v * 3)); list.c.push(new THREE.Color(tr, tg, tb)); }
-      else list.c.push(new THREE.Color(v, v * (0.95 + hash(s.i) * 0.1), v));
+      else if (kind === 'bush' || kind === 'vinerow') {
+        // Büsche und Reben in der Jahreszeit (season.ts): Herbst rotbraun bis gelb (Reben golden), Winter graubraun
+        const S = this.season;
+        const a = S.autumn * (1 - S.bare * 0.4);
+        const vr = kind === 'vinerow' ? [1.5, 1.08, 0.38] : [1.45, 0.82, 0.42];
+        const k = (i: number) => 1 + (vr[i] - 1) * a;
+        const w = (x: number, y: number) => x + (y - x) * S.bare * 0.75;
+        list.c.push(new THREE.Color(v * w(k(0), 0.95), v * (0.95 + hash(s.i) * 0.1) * w(k(1), 0.72) * (1 + S.fresh * 0.08), v * w(k(2), 0.6)));
+      } else list.c.push(new THREE.Color(v, v * (0.95 + hash(s.i) * 0.1), v));
       if (kind === 'lamp') {
         const ax = Math.sin(rot) * -0.62;
         const az = Math.cos(rot) * -0.62;
@@ -6389,6 +6510,8 @@ export class Renderer3D {
     const kind = sp.k === 'chevron' && sp.v === 9 ? 'dosso' : sp.k;
     const def = BILLBOARD[kind];
     if (!def) return;
+    // Jahreszeit (season.ts): Blumen und Sonnenblumen nur, solange sie blühen (fester Anteil je Ort)
+    if ((kind === 'flowers' || kind === 'sunflowers') && hash(sp.v * 31 + Math.round(px * 7)) > Math.min(1, this.season.flowers)) return;
     const e = this.atlas.get(`${kind}:${sp.v % def.variants}`);
     if (!e) return;
     const w = e.w * sp.s;

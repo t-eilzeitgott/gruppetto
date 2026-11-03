@@ -721,8 +721,12 @@ const oneOf = <T,>(r: Rnd, l: T[]): T => l[Math.floor(r() * l.length)];
 export type Persona = 'fan' | 'tifoso' | 'rider' | 'hiker' | 'nonno' | 'devil';
 
 /** Ein zufälliger, glaubwürdiger Zuschauer (ohne Ort) */
+/** Jahreszeit (season.ts): Anteil warm Angezogener (Jacke, Mütze) auch unten im Tal – Herbst ein Teil, Winter fast alle */
+let chill = 0;
+export function setCrowdChill(k: number) { chill = Math.max(0, Math.min(1, k)); }
+
 export function randomPerson(r: Rnd, zone: Zone, opts: { row: number; kid?: boolean; runner?: boolean }): Person {
-  const cold = zone === 'pass';
+  const cold = zone === 'pass' || (chill > 0 && r() < chill);
   const kid = !!opts.kid;
   const persona: Persona = kid ? 'fan'
     : opts.runner ? pickW<Persona>(r, [['fan', 70], ['tifoso', 14], ['devil', 8], ['rider', 8]])

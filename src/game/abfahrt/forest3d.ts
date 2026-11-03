@@ -15,6 +15,7 @@ import { AP_FRAG, AP_HEAD, AP_VERT, apHook } from './appear';
 import { ATMO } from './grade';
 import { GB, M, bakedTexture, lin, mixC, mulC, softNormals } from './models3d';
 import { mulberry32 } from './rng';
+import { TREE_CLASS } from './season';
 
 export type TreeKind = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'palm' | 'poplar' | 'apple';
 export const TREE_KINDS = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'palm', 'poplar', 'apple']);
@@ -475,7 +476,8 @@ export function treeBillboards(src: TreeSource, atlas: TreeAtlas): THREE.Instanc
     // Spiegeln: jeder zweite Baum (nach Drehung) – mehr Vielfalt aus denselben Bildern
     data[d + 8] = c.w; data[d + 9] = c.h; data[d + 10] = c.base; data[d + 11] = Math.sin(r[o + 4] * 3.7) < 0 ? -1 : 1;
     data[d + 12] = r[o + 5]; data[d + 13] = r[o + 6]; data[d + 14] = r[o + 7]; data[d + 15] = r[o + 9];
-    data[d + 16] = c.hw[0]; data[d + 17] = c.hw[1]; data[d + 18] = c.hw[2]; data[d + 19] = 0;
+    // Baumklasse für die Jahreszeit (season.ts): immergrün, Laubbaum, Lärche, Obstbaum
+    data[d + 16] = c.hw[0]; data[d + 17] = c.hw[1]; data[d + 18] = c.hw[2]; data[d + 19] = TREE_CLASS[VARIANTS[r[o + 8]]?.kind ?? 'pine'] ?? 0;
   }
   const q = shape();
   const g = new THREE.InstancedBufferGeometry();
@@ -512,7 +514,7 @@ attribute vec4 aT0; // Ort, Größe
 attribute vec4 aT1; // Zelle im Vorrat (u0, v0, du, dv)
 attribute vec4 aT2; // Zelle in Metern (Breite, Höhe, unter dem Fuß), Spiegeln
 attribute vec4 aT3; // Farbe
-attribute vec4 aT4; // Umriss: halbe Breiten
+attribute vec4 aT4; // Umriss: halbe Breiten, Baumklasse (Jahreszeit)
 uniform float uTime;
 uniform vec4 uMorph;
 uniform vec2 uFade;
@@ -522,10 +524,14 @@ varying vec3 vR;
 varying vec3 vU;
 varying vec3 vF;
 varying float vFade;
+varying float vCls;
+varying float vRnd;
 ${AP_HEAD}
 void main() {
   ${AP_VERT}
   vec3 P = aT0.xyz;
+  vCls = aT4.w;
+  vRnd = fract(sin(dot(P.xz, vec2(12.9898, 78.233))) * 43758.5453);
   // Übergang der Landschaft zur gröberen Stufe: der Baum bleibt auf dem Boden
   P.y += aT3.w * smoothstep(uMorph.z, uMorph.w, max(abs(P.x - uMorph.x), abs(P.z - uMorph.y)));
   vec2 toC = cameraPosition.xz - P.xz;
@@ -568,14 +574,14 @@ void main() {
  * msaa: Durchsichtigkeit über die Kantenglättung (4 Stufen je Bildpunkt, dazwischen gerastert – wirkt wie echtes
  * Überblenden); ohne Kantenglättung ein Raster je Bildpunkt.
  */
-export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: { value: THREE.Vector2 }, msaa = true, morph?: { value: THREE.Vector4 }): THREE.ShaderMaterial {
+export function billboardMaterial(atlas: TreeAtlas, light: TreeLightU, time: { value: number }, fade: { value: THREE.Vector2 }, msaa = true, morph?: { value: THREE.Vector4 }, season?: { value: THREE.Vector4 }): THREE.ShaderMaterial {
   const m = new THREE.ShaderMaterial({
     fog: true,
     defines: msaa ? { BB_A2C: '' } : {},
     uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       uA: { value: null }, uN: { value: null }, uTime: { value: 0 }, uMorph: { value: new THREE.Vector4(0, 0, 1e9, 2e9) },
       uSunDir: { value: new THREE.Vector3() }, uSunC: { value: new THREE.Color() }, uSkyC: { value: new THREE.Color() }, uGroundC: { value: new THREE.Color() },
-      uFillDir: { value: new THREE.Vector3() }, uFillC: { value: new THREE.Color() },
+      uFillDir: { value: new THREE.Vector3() }, uFillC: { value: new THREE.Color() }, uSeason: { value: new THREE.Vector4() },
     }]),
     vertexShader: BB_VERT,
     fragmentShader: /* glsl */ `
@@ -589,12 +595,15 @@ uniform vec3 uSkyC;
 uniform vec3 uGroundC;
 uniform vec3 uFillDir;
 uniform vec3 uFillC;
+uniform vec4 uSeason;
 varying vec2 vUv;
 varying vec3 vTint;
 varying vec3 vR;
 varying vec3 vU;
 varying vec3 vF;
 varying float vFade;
+varying float vCls;
+varying float vRnd;
 ${AP_HEAD}
 void main() {
   ${AP_FRAG}
@@ -617,6 +626,33 @@ void main() {
   alb *= alb;
   vec3 nn = texture2D(uN, vUv).rgb * ic * 2.0 - 1.0;
   vec3 n = normalize(vR * nn.x + vU * nn.y + vF * nn.z);
+  // Jahreszeit (season.ts; uSeason = Laubfärbung, kahl, Schnee, Blüte): nur Laub (grün bis gelbgrün – Stamm und
+  // Äste sind braun), fester Zufall je Bildpunkt des Vorrats (flimmert nicht) und je Baum
+  if (dot(uSeason, vec4(1.0)) > 0.0) {
+    float leaf = smoothstep(0.85, 1.0, alb.g / max(alb.r, 1e-4)) * smoothstep(1.1, 1.4, alb.g / max(alb.b, 1e-4));
+    float lum = dot(alb, vec3(0.2126, 0.7152, 0.0722));
+    float px = fract(sin(dot(floor(vUv * 1024.0), vec2(12.9898, 78.233))) * 43758.5453);
+    if (vCls > 0.5) {
+      // Herbst: je Baum ein Ton von Goldgelb bis Rostrot (Lärchen golden), einzelne Bäume noch grün
+      float on = smoothstep(0.0, 0.3, uSeason.x * 1.25 - vRnd * 0.4) * min(1.0, uSeason.x * 1.5);
+      vec3 hue = mix(vec3(1.0, 0.66, 0.1), vec3(0.88, 0.22, 0.05), fract(vRnd * 7.31));
+      hue = mix(hue, vec3(0.62, 0.36, 0.12), step(0.82, fract(vRnd * 3.17)) * 0.8);
+      if (vCls > 1.5 && vCls < 2.5) hue = vec3(0.96, 0.66, 0.16);
+      alb = mix(alb, hue * lum * 3.0, leaf * on);
+      // kahl: Laub fällt (fest je Bildpunkt), übrig bleiben graubraune Zweige
+      if (leaf > 0.5 && px < uSeason.y * (0.62 + 0.3 * vRnd)) {
+        if (px < uSeason.y * 0.45) discard;
+        alb = vec3(0.085, 0.07, 0.058) * (0.75 + px);
+      }
+      // Blüten: viel an Obstbäumen, sonst nur an manchen Bäumen; Frühling: frischeres Grün
+      float bl = uSeason.w * (vCls > 2.5 ? 0.5 : 0.1 * step(0.65, vRnd));
+      if (leaf > 0.3 && px > 1.0 - bl) alb = mix(vec3(0.95, 0.66, 0.78), vec3(0.97, 0.96, 0.93), fract(px * 13.0));
+      alb = mix(alb, alb * vec3(1.04, 1.2, 0.8), leaf * uSeason.w * 0.6);
+    }
+    // Schnee auf allem, was nach oben schaut (Nadelbäume dichter)
+    float sn = uSeason.z * smoothstep(0.1, 0.5, n.y + (px - 0.5) * 0.35);
+    alb = mix(alb, vec3(0.82, 0.86, 0.92), sn * (vCls < 0.5 ? 0.85 : 0.65));
+  }
   vec3 li = mix(uGroundC, uSkyC, 0.5 + 0.5 * n.y) + uSunC * max(dot(n, uSunDir), 0.0) + uFillC * max(dot(n, uFillDir), 0.0);
   gl_FragColor = vec4(alb * vTint * li, clamp(aS, 0.0, 1.0) * fq);
   #include <tonemapping_fragment>
@@ -632,6 +668,7 @@ void main() {
   m.uniforms.uN.value = atlas.normal;
   m.uniforms.uTime = time;
   if (morph) m.uniforms.uMorph = morph;
+  if (season) m.uniforms.uSeason = season;
   m.uniforms.uFade = fade;
   for (const k of ['uSunDir', 'uSunC', 'uSkyC', 'uGroundC', 'uFillDir', 'uFillC'] as const) m.uniforms[k] = light[k];
   Object.assign(m.uniforms, ATMO);

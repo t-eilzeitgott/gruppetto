@@ -15,6 +15,7 @@ import { autoView, fmtRes, setAutoSuspended } from '../game/abfahrt/autoGfx';
 import { nextWeatherName, setShadowEvery, setShadowSizeOverride } from '../game/abfahrt/weather';
 import { copyText, shareFile } from './admin/gpuKit';
 import { lsGet, lsSet } from './gameKit';
+import { SEASON_KEY } from '../game/abfahrt/season';
 
 const PLACE_LABEL: Record<string, string> = { frei: 'freie Strecke', ortsdurchfahrt: 'Ortsdurchfahrten', dorf: 'Dörfer' };
 
@@ -158,11 +159,23 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
       </select>
     </label>
   );
+  // Jahreszeit ansehen (season.ts): gilt bis zur Rückstellung, die Seite lädt neu (die Welt entsteht neu)
+  const seasonSel = (
+    <label className="abf-range__hint">Jahreszeit ansehen:{' '}
+      <select value={lsGet(SEASON_KEY) ?? ''} onChange={(e) => { lsSet(SEASON_KEY, e.target.value); window.location.reload(); }}>
+        <option value="">nach Kalender</option>
+        <option value="herbst">Herbst</option>
+        <option value="winter">Winter</option>
+        <option value="fruehling">Frühling</option>
+        <option value="sommer">Sommer</option>
+      </select>
+    </label>
+  );
   const m: Measure = { can, perf, measuring, start, stop };
   return {
     m,
     /** Auswahl des Wechseltests (Startkarte) */
-    abSelect: can ? abSelect : null,
+    abSelect: can ? <>{abSelect}{seasonSel}</> : null,
     /** Abschnitt im Pausenmenü */
     menu: (eng: () => RaceView | null) => (can ? (
       <div className="abf-gfx">

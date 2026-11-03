@@ -8,6 +8,7 @@
  * Die Geometrie entsteht vorab in Häppchen (auf der Startkarte), die Texturen (Putz, Bretter, Blockbohlen,
  * Schindeln) werden einmal gemalt.
  */
+import { roofSnowHook } from './season3d';
 import * as THREE from 'three';
 import { buildHouse, HMATS, type HMat } from './alphouse';
 import { buildBarn, buildChurch } from './alpbuildings';
@@ -194,7 +195,8 @@ function materials(lights: { value: number }): Record<HMat, THREE.MeshLambertMat
             diffuseColor *= sampledDiffuseColor;
           #endif`);
     }),
-    roof: L({ map: texOf(shinglesTex()) }, 'roof'),
+    // (Winter: Schnee auf den Schindeln – season3d.ts)
+    roof: L({ map: texOf(shinglesTex()) }, 'roof', roofSnowHook),
     stone: L({ map: texOf(masonryTex()) }, 'stone'),
     // Kleinteile: Läden in der Farbe des Hauses (aE.z); abends leuchten die Fenster warm (je Haus verschieden)
     detail: L({ emissive: new THREE.Color(1, 1, 1) }, 'detail', (sh) => {
