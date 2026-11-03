@@ -2569,10 +2569,8 @@ export class Renderer3D {
         pc: this.pc,
       });
       this.scene.add(this.ttStart.root);
-      // auch was erst später zu sehen ist (Blitze der Fotografen): Shader gleich, das erste Zeichnen im Probezug –
-      // nicht beim ersten Blitz
+      // auch was erst später zu sehen ist (Blitze der Fotografen): Shader gleich (das erste Zeichnen: Probezug)
       this.warmUp(this.ttStart.root);
-      this.warmLater(this.ttStart.warmObjects());
     }
     this.descStart?.dispose();
     this.descStart = null;
@@ -2589,7 +2587,6 @@ export class Renderer3D {
     });
     this.scene.add(this.descStart.root);
     this.warmUp(this.descStart.root);
-    this.warmLater(this.descStart.warmObjects());
   }
 
   /**
@@ -3580,13 +3577,20 @@ export class Renderer3D {
       // erstes Bild, Vorwärmen oder unter der Startanimation (idleK, gamePrep.ts): gleich dort
       s.x = tx; s.y = ty; s.vx = 0; s.vy = 0; s.set = true;
     } else {
-      // kritisch gedämpfte Feder (ω = 5,5: gut eine Sekunde, weich an- und auslaufend); Schritt begrenzt
-      const h = Math.min(Math.max(dt, 0), 1 / 30);
+      // kritisch gedämpfte Feder (ω = 5,5: gut eine Sekunde, weich an- und auslaufend) in kleinen Schritten; ein
+      // langes Bild zählt höchstens 50 ms (danach gleitet sie weiter, statt zu springen)
+      let rest = Math.min(Math.max(dt, 0), 0.05);
       const w = 5.5;
+      while (rest > 1e-6) {
+        const h = Math.min(rest, 1 / 60);
+        rest -= h;
+        for (const [k, v, t] of [['x', 'vx', tx], ['y', 'vy', ty]] as const) {
+          const a = w * w * (t - s[k]) - 2 * w * s[v];
+          s[v] += a * h;
+          s[k] += s[v] * h;
+        }
+      }
       for (const [k, v, t] of [['x', 'vx', tx], ['y', 'vy', ty]] as const) {
-        const a = w * w * (t - s[k]) - 2 * w * s[v];
-        s[v] += a * h;
-        s[k] += s[v] * h;
         if (Math.abs(t - s[k]) < 0.05 && Math.abs(s[v]) < 0.05) { s[k] = t; s[v] = 0; }
       }
     }
@@ -4225,9 +4229,10 @@ export class Renderer3D {
     ghost.prepareFade();
     ghost.fade(0.5, 1);
     g.add(solid.group, ghost.group);
-    // Vögel, Flieger, Hubschrauber; Blitze der Startaufbauten (siehe warmLater)
-    for (const o of [...this.skyLife.warmObjects(), ...this.warmExtra]) g.add(o);
-    this.warmExtra = [];
+    // Vögel, Flieger, Hubschrauber; Blitze der Fotografen an den Startaufbauten (dieselben Einstellungen wie dort –
+    // ein Programm, eine Pipeline; ein eigenes Material, das mit keinem Startaufbau weggeworfen wird)
+    for (const o of this.skyLife.warmObjects()) g.add(o);
+    g.add(new THREE.Sprite(new THREE.SpriteMaterial({ map: this.mats.lampGlow.map, color: 0xffffff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false })));
     this.warmUp(g);
     // alles, was schon in der Szene hängt, aber noch nie zu sehen war (Startrampe mit Blitzen der Fotografen,
     // Vögel und Flieger am Himmel …): Shader jetzt statt beim ersten Auftauchen
@@ -4254,16 +4259,6 @@ export class Renderer3D {
    */
   private warmQueue: THREE.Object3D[] = [];
   private warmLive: THREE.Object3D[] = [];
-  /** Stellvertreter, die vor dem ersten warmAll angemeldet wurden (Startaufbauten entstehen vorher) */
-  private warmExtra: THREE.Object3D[] = [];
-  /** Stellvertreter für den Probezug anmelden (einmal unsichtbar zeichnen, dann in der Gruppe behalten) */
-  private warmLater(objs: THREE.Object3D[]) {
-    if (!objs.length) return;
-    if (!this.warmGroup) { this.warmExtra.push(...objs); return; }
-    for (const o of objs) this.warmGroup.add(o);
-    this.warmUp(this.warmGroup);
-    this.warmQueue.push(...objs);
-  }
   private warmStep(phase: string) {
     for (const o of this.warmLive) { this.scene.remove(o); this.warmGroup?.add(o); }
     this.warmLive = [];

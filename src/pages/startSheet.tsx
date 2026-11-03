@@ -148,7 +148,10 @@ function menuAway(l: HTMLElement) {
     const host = l.closest('.abf');
     const wrap = document.createElement('div');
     wrap.className = `${host?.className ?? 'abf'} abf--ghost`;
+    // (dieselbe Höhe wie das Spiel – als Web-App setzt es sie selbst, sonst stünde das Abbild um die Statusleiste höher)
+    if (host instanceof HTMLElement) wrap.style.cssText = host.style.cssText;
     wrap.setAttribute('aria-hidden', 'true');
+    wrap.inert = true;
     const c = l.cloneNode(true) as HTMLElement;
     c.classList.add('is-leaving');
     c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));

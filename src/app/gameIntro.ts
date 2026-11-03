@@ -243,13 +243,15 @@ export function playGameIntro(game: GameId, o: { title: string; sub?: string; sh
   const W = window.innerWidth;
   const H = Math.max(window.innerHeight, document.documentElement.clientHeight || 0);
   el.style.cssText = `inset:auto;left:0;top:0;width:${W}px;height:${H + EXTRA}px;--gi-h:${H}px`;
-  const bg = h('div', 'gintro__bg', el, `background:radial-gradient(${Math.round(W * 1.2)}px ${Math.round(H * 0.8)}px at 50% ${Math.round(H * 0.38)}px, var(--gi-bg1) 0%, var(--gi-bg2) 70%)`);
-  const stageEl = h('div', 'gintro__stage', el);
+  // (der Kreis schneidet nur den Inhalt zu – die Hülle fängt vom ersten Bild an alle Fingertipps ab, auch außerhalb)
+  const clip = h('div', 'gintro__clip', el);
+  const bg = h('div', 'gintro__bg', clip, `background:radial-gradient(${Math.round(W * 1.2)}px ${Math.round(H * 0.8)}px at 50% ${Math.round(H * 0.38)}px, var(--gi-bg1) 0%, var(--gi-bg2) 70%)`);
+  const stageEl = h('div', 'gintro__stage', clip);
   const art = h('div', 'gintro__art', stageEl);
   const text = h('div', 'gintro__text', stageEl);
   h('strong', 'gintro__title', text).textContent = o.title;
   if (o.sub) h('span', 'gintro__sub', text).textContent = o.sub;
-  const wait = h('div', 'gintro__wait', el);
+  const wait = h('div', 'gintro__wait', clip);
   wait.innerHTML = 'Strecke wird aufgebaut<i>.</i><i>.</i><i>.</i>';
   document.body.append(el);
   let v: Variant;
@@ -268,15 +270,19 @@ export function playGameIntro(game: GameId, o: { title: string; sub?: string; sh
     const r1 = Math.ceil(Math.hypot(Math.max(x, W - x), Math.max(y, H - y))) + 8;
     const r0 = Math.max(12, Math.min(from.height, from.width) / 2);
     try {
-      reveal = el.animate([{ clipPath: `circle(${r0}px at ${x}px ${y}px)` }, { clipPath: `circle(${r1}px at ${x}px ${y}px)` }], { duration: REVEAL_MS, easing: 'cubic-bezier(0.5, 0, 0.15, 1)' });
-      reveal.finished.then(() => { el.style.clipPath = ''; }, () => undefined);
+      reveal = clip.animate([{ clipPath: `circle(${r0}px at ${x}px ${y}px)` }, { clipPath: `circle(${r1}px at ${x}px ${y}px)` }], { duration: REVEAL_MS, easing: 'cubic-bezier(0.5, 0, 0.15, 1)' });
       for (const a of [...v.enter, ...v.idle, textIn, waitIn]) {
         const t = a.effect?.getTiming();
         if (t) a.effect!.updateTiming({ delay: (Number(t.delay) || 0) + REVEAL_LEAD });
       }
     } catch { reveal = null; }
   }
-  if (quiet) for (const a of [...v.enter, ...v.idle, textIn]) a.finish();
+  // (ruhige Bewegung: Ankunft gleich am Ende, die Schleifen gar nicht – finish() wirft bei endlosen Animationen,
+  // die Hülle bliebe dann für immer liegen)
+  if (quiet) {
+    for (const a of [...v.enter, textIn]) { try { a.finish(); } catch { /* weiter */ } }
+    for (const a of v.idle) a.cancel();
+  }
   if (o.short) for (const a of [...v.enter, textIn]) a.updatePlaybackRate(1.8);
   let finish = () => {};
   const done = new Promise<void>((r) => { finish = r; });
@@ -339,7 +345,7 @@ function leave(r: Run) {
   r.out = true;
   window.clearTimeout(r.timer);
   r.wait?.cancel();
-  for (const a of r.idle) a.pause();
+  for (const a of r.idle) { try { a.pause(); } catch { /* (abgebrochene endlose Schleife: wirft) */ } }
   const fns = exitFns.splice(0);
   let list: Animation[] = [];
   try { list = r.exit(); } catch { list = []; }

@@ -1,7 +1,7 @@
 /**
  * Vorbereitung unter der Startanimation (app/gameIntro.ts), Bild für Bild aus der 3D-Schleife eines Spiels:
  *  1. solange sie die Welt verdeckt, baut der Renderer mit allem, was geht (idleK = 1), und es wird jedes Bild
- *     gezeichnet (nicht nur 10-mal pro Sekunde wie hinter dem Startblatt)
+ *     gezeichnet (nicht nur 10-mal pro Sekunde wie hinter der Ergebniskarte)
  *  2. steht die Welt rund um den Start (Renderer3D.settled) zwei Bilder hintereinander und wartet die Seite auf
  *     nichts mehr (Geister …), kommt ein Probeblick aus der Fahrkamera – wie nach dem Kameraschwenk
  *  3. danach noch zwei normale Bilder, dann darf die Animation aufgehen
@@ -47,7 +47,9 @@ export class GamePrep {
       this.after = 0;
       this.told = false;
     }
-    if (this.told || gameIntroHeld()) return false;
+    // (nur ein Rennen, das am Start wartet: bei „Nochmal“ läuft die Animation schon, während noch das alte Rennen im
+    // Ziel steht – dessen fertige Welt darf sie nicht aufgehen lassen)
+    if (this.told || gameIntroHeld() || eng.phase !== 'ready') return false;
     if (!this.peeked) {
       this.n = this.renderer.settled(eng) ? this.n + 1 : 0;
       if (this.n >= 2) { this.renderer.peekNext(); this.peeked = true; }

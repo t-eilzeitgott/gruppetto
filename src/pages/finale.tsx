@@ -159,8 +159,9 @@ export function useRaceLoop<E extends LoopEngine>(opts: {
         if (uiRef.current !== 'paused') eng.update(dt);
         if (rec) P!.mark(SEC.spiel);
         renderer.prof = rec ? P : null;
-        // Start- und Ergebniskarte: Szene dahinter nur 10-mal pro Sekunde zeichnen (spart Akku und Wärme)
-        const idle = uiRef.current === 'ready' || uiRef.current === 'over';
+        // Ergebniskarte: Szene dahinter nur 10-mal pro Sekunde zeichnen (spart Akku und Wärme). Hinter dem Startmenü
+        // nicht mehr: dort ist die Welt scharf zu sehen, der Startkran schwenkt, die Leute bewegen sich
+        const idle = uiRef.current === 'over';
         idleT = idle ? idleT + dt : 0;
         if (idle && idleT < 0.1 && frames > 2 && !prep.covering()) {
           cb.current.onFrame(eng, dt);

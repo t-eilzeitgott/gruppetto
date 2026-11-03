@@ -1262,6 +1262,7 @@ html.game-lock body { position: fixed; inset: 0; width: 100%; touch-action: none
 .abf__stage { position: absolute; inset: 0; touch-action: none; cursor: grab; }
 /* das Startmenü, als Abbild beim Losfahren (startSheet.tsx menuAway): über dem Spiel, ohne eigenen Hintergrund */
 .abf.abf--ghost { z-index: 61; background: none; pointer-events: none; }
+.abf.abf--ghost * { pointer-events: none !important; }
 /* Schleier beim Verlassen eines Spiels (app/veil.ts): über allem, etwas größer als der Bildschirm */
 .veil { position: fixed; left: 0; right: 0; top: -20vh; bottom: -20vh; z-index: 300; background: #0b0d12; pointer-events: auto; touch-action: none; will-change: opacity; }
 /* Bildrate (im Pausenmenü einschaltbar): klein und blass links unter der Kopfleiste – fest am Bildschirm, denn
@@ -3360,6 +3361,7 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 .gintro--zeitfahren { --gi-hue: #5aa9ff; --gi-bg1: #12305e; --gi-bg2: #050d1d; }
 .gintro--sprint { --gi-hue: #ffb02e; --gi-bg1: #3d2706; --gi-bg2: #0f0902; }
 .gintro--berg { --gi-hue: #3ddc84; --gi-bg1: #0e3a24; --gi-bg2: #030e08; }
+.gintro__clip { position: absolute; inset: 0; }
 .gintro__bg { position: absolute; inset: 0; background: radial-gradient(120% 80% at 50% 38%, var(--gi-bg1) 0%, var(--gi-bg2) 70%); will-change: opacity; }
 /* (Inhalt in der Höhe des Bildschirms beim Tippen, an der Oberkante – siehe playGameIntro; der Hintergrund reicht weiter) */
 .gintro__stage { position: absolute; inset: 0; bottom: auto; height: var(--gi-h, 100%); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 0 24px; will-change: transform; }
