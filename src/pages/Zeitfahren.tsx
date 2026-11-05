@@ -11,7 +11,9 @@ import { TimeTrial, sectorGap, simulateGhost, type TtEvent, type TtHud, type TtR
 import { stageRef, type StageRef } from '../game/abfahrt/stageRef';
 import { gameSubFor } from '../game/gameSub';
 import { TT_FINISH, TT_SPLITS, TT_TOP, Track } from '../game/abfahrt/track';
-import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
+import { berlinDayKey, berlinDayStart, hashStr } from '../game/abfahrt/rng';
+import { useLiveGame } from '../app/live';
+import { LiveChip } from '../ui/Live';
 import { firstName, fmtGap, fmtTime, ghostDayLabel, pickGhosts, ttMs, ttScore, type GhostRider, type TtGhostRow } from '../game/tt';
 import { bikeById } from '../game/bikes';
 import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
@@ -319,6 +321,12 @@ export function ZeitfahrenPage() {
 
   useRaceKeys(engineRef, uiRef, start, togglePause);
 
+  // Live: eigenen Stand melden, die anderen auf derselben Strecke als Live-Geister, Lobby-Rennen pünktlich starten
+  useLiveGame({
+    game: 'zeitfahren', course: `${day}:${hashStr(JSON.stringify(ref ?? null))}`, bike: bikes.current, engineRef, start: start, members: members.data,
+    canStart: () => uiRef.current === 'ready' || uiRef.current === 'over', score: result ? ttScore(result.timeMs) : null,
+  });
+
 
   const fmtBest = (b: number) => fmtTime(ttMs(b));
   const boardRows = board === 'day' ? today.data ?? [] : season.data ?? [];
@@ -365,6 +373,7 @@ export function ZeitfahrenPage() {
             <span className="tt-clock__gap" ref={bind('clockGap')} />
           </div>
           <TtStrip strip={strip} ghosts={ghosts} bind={bind} />
+          <LiveChip engineRef={engineRef} />
           {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <TvAd hidden={!!coach || ui !== 'playing'} seed={8} />
         </div>

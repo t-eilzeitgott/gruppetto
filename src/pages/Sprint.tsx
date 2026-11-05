@@ -13,7 +13,9 @@ import { stageRef } from '../game/abfahrt/stageRef';
 import { gameSubFor } from '../game/gameSub';
 import { SPRINT_FINISH } from '../game/abfahrt/track';
 import { nextWeatherName } from '../game/abfahrt/weather';
-import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
+import { berlinDayKey, berlinDayStart, hashStr } from '../game/abfahrt/rng';
+import { useLiveGame } from '../app/live';
+import { LiveChip } from '../ui/Live';
 import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
 import { useBikes, type Bikes } from '../ui/useBikes';
@@ -219,6 +221,12 @@ export function SprintPage() {
 
   useRaceKeys(engineRef, uiRef, start, togglePause);
 
+  // Live: eigenen Stand melden, die anderen auf derselben Strecke als Live-Geister, Lobby-Rennen pünktlich starten
+  useLiveGame({
+    game: 'sprint', course: `${day}:${hashStr(JSON.stringify(ref ?? null))}`, bike: bikes.current, engineRef, start: start, members: members.data,
+    canStart: () => uiRef.current === 'ready' || uiRef.current === 'over', score: result?.score ?? null,
+  });
+
   const choose = (o: RiderOption) => {
     setPickId(keyOf(o));
     lsSet(LS_RIDER, keyOf(o));
@@ -266,6 +274,7 @@ export function SprintPage() {
             <RaceBar bind={bind} marks={[{ at: flammePct / 100, kind: 'flamme' }]} />
             <PowerRing bind={bind} />
           </div>
+          <LiveChip engineRef={engineRef} />
           {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <TvAd hidden={!!coach || ui !== 'playing'} seed={2} />
         </div>

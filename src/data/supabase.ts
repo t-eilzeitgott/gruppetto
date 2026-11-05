@@ -7,6 +7,7 @@ import type {
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
   type StageInput, type TourInput, type GameId, type GameBest, type GameRun, type RunStats, cleanStats,
+  type LivePing, type LiveSnapshot,
 } from './source';
 
 interface StoredSession {
@@ -162,11 +163,12 @@ export class SupabaseSource implements DataSource {
 
   // ---------- REST ----------
 
-  private async rest<T>(path: string, init: { method?: string; body?: unknown; prefer?: string } = {}): Promise<T> {
+  private async rest<T>(path: string, init: { method?: string; body?: unknown; prefer?: string; keepalive?: boolean } = {}): Promise<T> {
     const token = await this.token();
     const doFetch = (tok: string | null) =>
       fetch(`${this.url}/rest/v1/${path}`, {
         method: init.method ?? 'GET',
+        ...(init.keepalive ? { keepalive: true } : {}),
         headers: {
           apikey: this.key,
           'Content-Type': 'application/json',
@@ -330,6 +332,36 @@ export class SupabaseSource implements DataSource {
   async gameGhosts(game: GameGhostRow['game']): Promise<GameGhostRow[]> {
     const rows = await this.rest<GameGhostRow[]>(`game_ghosts_latest?game=eq.${game}&select=user_id,game,day,score,meters,bike,trace,created_at&order=day.desc,score.desc&limit=80`);
     return rows.map((r) => ({ ...r, score: Number(r.score), meters: Number(r.meters), trace: Array.isArray(r.trace) ? r.trace : [] }));
+  }
+
+  async livePing(p: LivePing): Promise<LiveSnapshot | null> {
+    return this.rpc<LiveSnapshot | null>('game_live_ping', {
+      p_game: p.game, p_course: p.course, p_state: p.state, p_run: p.run, p_n: p.n, p_tail: p.tail, p_bike: p.bike, p_score: p.score,
+    });
+  }
+
+  async liveList(): Promise<LiveSnapshot | null> {
+    return this.rpc<LiveSnapshot | null>('game_live_list');
+  }
+
+  async liveLeave(keepalive = false): Promise<void> {
+    await this.rest('rpc/game_live_leave', { method: 'POST', body: {}, keepalive });
+  }
+
+  async lobbyCreate(): Promise<string> {
+    return this.rpc<string>('lobby_create');
+  }
+
+  async lobbyJoin(code: string): Promise<string> {
+    return this.rpc<string>('lobby_join', { p_code: code });
+  }
+
+  async lobbyLeave(): Promise<void> {
+    await this.rpc('lobby_leave');
+  }
+
+  async lobbyStart(game: GameId): Promise<LiveSnapshot | null> {
+    return this.rpc<LiveSnapshot | null>('lobby_start', { p_game: game });
   }
 
   async saveGameGhost(g: Omit<GameGhostRow, 'user_id' | 'created_at'>): Promise<void> {

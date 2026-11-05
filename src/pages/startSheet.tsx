@@ -11,6 +11,7 @@
  *  - Ende: das Ergebnis unter einem Band wie die Ziellinie.
  * Dazu der Countdown: ein Ring, der je Sekunde abläuft, die Zahl in der Mitte.
  */
+import { LiveLine, LobbyResults } from '../ui/Live';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { HANDOFF_EASE, HANDOFF_MS, SIDE_MQ, endHandoff, sheetIn, sheetOut } from '../app/handoff';
 import { setMenuInset } from '../game/menuView';
@@ -107,6 +108,7 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
             </div>
             {children ? <div className="abf-sheet__body abf-scroll">{children}</div> : null}
             <div className="abf-sheet__foot">
+              <LiveLine game={game} />
               <TeamRadio game={game} />
               <button type="button" className="btn btn--primary btn--full abf-go" onClick={go} disabled={leaving}><span>{cta}</span></button>
               {/* Testfahrt, Messfahrt (Admins): eingeklappt – das Startmenü bleibt ruhig */}
@@ -256,7 +258,7 @@ export function OverSheet({ game, onClose, children, plain }: { game?: GameId; o
     <div className={cx('abf-layer abf-layer--sheet abf-layer--over', game && `hue-${game}`)}>
       <button type="button" className="abf-round abf-close" onClick={() => veilThen(onClose)} aria-label="Schließen"><Icon name="x" size={20} /></button>
       <div className={cx('abf-sheet abf-sheet--over', plain && 'is-plain')} ref={sheet} role="dialog" aria-modal="true" aria-label="Ergebnis">
-        <div className="abf-sheet__body abf-scroll">{children}</div>
+        <div className="abf-sheet__body abf-scroll">{game && !plain ? <LobbyResults game={game} /> : null}{children}</div>
       </div>
     </div>
   );

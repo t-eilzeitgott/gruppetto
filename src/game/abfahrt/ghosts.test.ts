@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { GhostPack, GhostRecorder, pickGameGhosts } from './ghosts';
 import { Track } from './track';
 import { TRACE_DT, ghostDayLabel, ghostName, pickGhosts, type GhostRider } from '../tt';
+import { feedTime, liveTail, mergeTail, newFeed } from '../live';
 
 const mk = (id: string, timeMs: number, extra: Partial<GhostRider> = {}): GhostRider =>
   ({ id, name: id, color: '#123456', bike: 'allround', timeMs, splits: [], trace: [0, 0, 0, 30, 0, 0, 60, 0, 0], ...extra });
@@ -53,4 +54,29 @@ test('Geister: Spur aufzeichnen und genau nachfahren', () => {
   // nach dem Ende der Spur blendet der Geist aus
   for (let i = 0; i < 200; i++) pack.step(20 + i / 60, true, 1 / 60);
   assert.equal(pack.opps[0].ghost, 0);
+});
+
+test('Live-Geist: kommt dazu, fährt dort, wo der andere jetzt ist, und verschwindet, wenn er geht', () => {
+  const track = new Track('2026-10-29', [], 'sprint');
+  const pack = new GhostPack(track, []);
+  const feed = newFeed({ userId: 'u-lena', name: 'Lena Berg', color: '#b23a6b', bike: 'aero', run: 'r1' });
+  // Lena ist 10 s unterwegs (10 m/s), die Meldung kam eben an
+  const trace = Array.from({ length: 41 }, (_, i) => [Math.round(i * TRACE_DT * 100), 50, 1]).flat();
+  mergeTail(feed, 41, liveTail(trace));
+  feedTime(feed, 0, performance.now());
+  pack.syncLive([feed]);
+  assert.equal(pack.count, 1);
+  assert.equal(pack.opps[0].rider.live, feed);
+  for (let i = 0; i < 30; i++) pack.step(1, true, 1 / 60);
+  const o = pack.opps[0];
+  assert.ok(Math.abs(o.z - 100) < 6, `Lena bei ${o.z} m`);
+  assert.ok(o.ghost > 0, 'sichtbar');
+  // Namensschild mit „live“, wenn sie vor einem fährt
+  const tag = pack.tag(1, o.z - 10);
+  assert.ok(tag && tag.text === 'Lena' && tag.sub === 'live');
+  // nicht mehr gemeldet: rollt aus, blendet aus, verschwindet aus der Liste
+  pack.syncLive([]);
+  assert.equal(feed.gone, true);
+  for (let i = 0; i < 600 && pack.count; i++) pack.step(1, true, 1 / 60);
+  assert.equal(pack.count, 0);
 });

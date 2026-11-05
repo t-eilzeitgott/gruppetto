@@ -29,6 +29,7 @@ import { AkkuPage, BergPage, GamePage, GaragePage, JourneyPage, SprintPage, Worl
 import { AppSkeleton, RouteSkeleton } from '../ui/skeleton';
 import { DemoBanner } from '../ui/Shell';
 import { PageBoundary } from '../ui/PageBoundary';
+import { LobbyDirector } from '../ui/Live';
 
 import { Profile } from '../pages/Profile';
 import { Datenschutz, Impressum } from '../pages/Legal';
@@ -167,6 +168,8 @@ function MemberApp({ me }: { me: ProfileT }) {
     <AppContext.Provider value={ctx}>
       <Shell hideTabBar={fullScreen} isAdmin={me.is_admin}><PageBoundary key={route.path}>{page}</PageBoundary></Shell>
       {loading ? null : <WarmUp me={me} tour={tour} />}
+      {/* Lobby: ein gestartetes Rennen holt einen ins Spiel */}
+      <LobbyDirector />
     </AppContext.Provider>
   );
 }

@@ -14,6 +14,7 @@ import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { StageRef } from './stageRef';
 import { STEER_KEYS, STEER_PACK_GAIN, STEER_PACK_MAX, STEER_SPAN, pedalStep, strainOf } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
+import type { LiveFeed, LiveOut } from '../live';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
 import { canRise, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
@@ -751,6 +752,18 @@ export class SprintRace {
    * Geister: eigene Spur ab dem Countdown bis zur Ziellinie mitschreiben (gleicher Takt wie beim Abspielen),
    * Geister nachfahren lassen; ohne Hinterrad-Schild bekommt der nächste Geist voraus das Namensschild
    */
+  /** Live: eigener Stand für die anderen (live.ts) – die Spur läuft ab dem Countdown bis zur Ziellinie */
+  liveOut(): LiveOut {
+    const tr = this.rec.trace;
+    if (!tr.length) return { state: 'menu', trace: tr };
+    return { state: (this.phase === 'countdown' || this.phase === 'playing') && this.finT < 0 ? 'race' : 'over', trace: tr };
+  }
+
+  /** Live: wer gerade dieselbe Strecke fährt, fährt als Geist mit */
+  setLive(feeds: LiveFeed[]) {
+    this.pack.syncLive(feeds);
+  }
+
   private stepGhosts(dt: number, warp: number) {
     const live = this.phase !== 'ready';
     if (live) this.ghostT += dt;

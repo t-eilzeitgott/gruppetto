@@ -21,6 +21,8 @@ import { SKINS, type Kit } from './rider';
 import { STEEP, STEER_KD, STEER_KEYS, STEER_KP, STEER_MAX, STEER_SMOOTH, STEER_SPAN, pedalStep, smooth, strainOf } from './motion';
 import type { StageRef } from './stageRef';
 import { TRACE_DT, firstName, ghostAt, ghostName, ghostTimeAt, type GhostRider } from '../tt';
+import { liveAdvance, liveAt, liveDone, type LiveFeed, type LiveOut } from '../live';
+import { ghostKit, liveRider } from './ghosts';
 import type { Wreck } from './wreck';
 import { canRise, makeWreck, slideOn } from './crash';
 
@@ -97,8 +99,8 @@ export interface TtHud {
   board: Standing[];
   /** in der Abfahrt */
   down: boolean;
-  /** Geister für die Streckenleiste: Streckenmeter und Farbe */
-  ghosts: { id: string; z: number; color: string }[];
+  /** Geister für die Streckenleiste: Streckenmeter und Farbe (live: fährt gerade) */
+  ghosts: { id: string; z: number; color: string; live?: boolean }[];
   /** Abstand zur Tagesbestzeit an dieser Stelle (s, + = dahinter), null ohne Geister */
   gapBest: number | null;
   bestName: string | null;
@@ -283,7 +285,33 @@ export class TimeTrial {
 
   get riders(): number { return this.ranked.length + 1; }
   /** Geister von heute – nur sie zählen für Platz, Zwischenzeiten und Tagesbestzeit (ältere fuhren eine andere Strecke) */
-  private get ranked(): GhostOpp[] { return this.opps.filter((o) => !o.rider.old); }
+  private get ranked(): GhostOpp[] { return this.opps.filter((o) => !o.rider.old && !o.rider.live); }
+
+  /** Live: eigener Stand für die anderen (live.ts) */
+  liveOut(): LiveOut {
+    if (!this.trace.length) return { state: 'menu', trace: this.trace };
+    return { state: this.phase === 'playing' && this.finT < 0 ? 'race' : 'over', trace: this.trace };
+  }
+
+  /** Live: wer gerade dieselbe Strecke fährt, fährt als Geist mit (Startnummer L, zählt nicht für Platz und Zeiten) */
+  setLive(feeds: LiveFeed[]) {
+    for (const f of feeds) {
+      const o = this.opps.find((x) => x.rider.live?.userId === f.userId);
+      if (!o) {
+        const rider = liveRider(f);
+        this.opps.push({
+          id: this.liveId++, z: 0, x: 0, vx: 0, v: 0, tx: 0, f: 1, kit: ghostKit(rider, 'L'),
+          pedal: hashStr(rider.id) % 6, lean: 0, tuck: 0.6, brake: 0, passed: false, group: -1, bump: 0, attacker: false, stand: 0,
+          ghost: 0, rider, m: 0, rank: 0, passedBy: false, passedMe: false,
+        });
+      } else if (o.rider.live !== f) {
+        o.rider = liveRider(f);
+        o.ghost = 0;
+      }
+    }
+    for (const o of this.opps) if (o.rider.live && !feeds.includes(o.rider.live)) o.rider.live.gone = true;
+  }
+  private liveId = 1500;
 
   setViewport(w: number) { this.viewW = Math.max(240, w); }
 
@@ -385,7 +413,7 @@ export class TimeTrial {
       riders: this.riders,
       board,
       down: this.down > 0.5,
-      ghosts: this.opps.map((o) => ({ id: o.rider.id, z: o.z, color: o.rider.bot ? '#9aa0a8' : o.rider.color })),
+      ghosts: this.opps.filter((o) => !o.rider.live || o.ghost > 0).map((o) => ({ id: o.rider.id, z: o.z, color: o.rider.bot ? '#9aa0a8' : o.rider.color, live: !!o.rider.live })),
       gapBest: best ? this.gapTo(best) : null,
       bestName: best ? (best.rider.me ? 'Bestzeit' : firstName(best.rider.name)) : null,
       warn: this.tooFast && this.mode === 'go',
@@ -699,11 +727,22 @@ export class TimeTrial {
     const playing = this.phase === 'playing';
     const p = this.p;
     let tagged: GhostOpp | null = null;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     for (const o of this.opps) {
-      ghostAt(o.rider.trace, playing ? this.time : 0, this.ghostPos);
+      const lf = o.rider.live;
       const z0 = o.z;
-      o.z = this.ghostPos.z;
-      const nx = this.ghostPos.x;
+      let nx: number;
+      if (lf) {
+        // Live: wo der andere jetzt ist (eigene Uhr), kleine Berichtigungen weich
+        liveAt(lf, Math.max(0, liveAdvance(lf, dt, now)), this.ghostPos);
+        const k = Math.abs(this.ghostPos.z - o.z) > 12 || o.ghost === 0 ? 1 : Math.min(1, dt * 6);
+        o.z += (this.ghostPos.z - o.z) * k;
+        nx = o.x + (this.ghostPos.x - o.x) * k;
+      } else {
+        ghostAt(o.rider.trace, playing ? this.time : 0, this.ghostPos);
+        o.z = this.ghostPos.z;
+        nx = this.ghostPos.x;
+      }
       o.vx = dt > 0 ? (nx - o.x) / dt : 0;
       o.x = nx;
       o.v = dt > 0 ? Math.max(0, (o.z - z0) / dt) : 0;
@@ -725,14 +764,21 @@ export class TimeTrial {
       pedalStep(o, downhill && o.m !== 1 && o.v > 12 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / this.warp, dt);
       // sichtbar ab „Los“: in den ersten Metern einblenden
       // ältere Geister (andere Tage) etwas blasser
-      const want = playing ? GHOST_ALPHA * (o.rider.old ? 0.65 : 1) : 0;
+      const want = !playing || (lf && (liveDone(lf) || lf.shown <= 0)) ? 0 : GHOST_ALPHA * (o.rider.old ? 0.65 : lf ? 1.25 : 1);
       o.ghost += (want - o.ghost) * Math.min(1, dr * 2.5);
       if (o.ghost < 0.01) o.ghost = want > 0 ? 0.01 : 0;
       // Namensschild: der nächste Geist voraus (bis 45 m)
       const dz = o.z - p.z;
-      if (playing && this.finT < 0 && dz > 1.5 && dz < 45 && (!tagged || dz < tagged.z - p.z)) tagged = o;
+      if (playing && this.finT < 0 && dz > 1.5 && dz < 45 && (!lf || o.ghost > 0.1) && (!tagged || dz < tagged.z - p.z)) tagged = o;
     }
-    if (tagged) {
+    // fertig ausgeblendete Live-Geister, die nicht mehr gemeldet werden, aus der Liste
+    for (let i = this.opps.length - 1; i >= 0; i--) {
+      const f = this.opps[i].rider.live;
+      if (f && f.gone && this.opps[i].ghost === 0 && liveDone(f)) this.opps.splice(i, 1);
+    }
+    if (tagged?.rider.live) {
+      this.tags = [{ id: tagged.id, text: ghostName(tagged.rider, true), sub: 'live', color: tagged.rider.color }];
+    } else if (tagged) {
       const gap = this.gapTo(tagged);
       const name = ghostName(tagged.rider, true);
       this.tags = [{ id: tagged.id, text: name, sub: `${gap >= 0 ? '+' : '−'}${Math.abs(gap).toFixed(1).replace('.', ',')}″`, color: tagged.rider.bot ? '#9aa0a8' : tagged.rider.color }];

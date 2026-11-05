@@ -5,11 +5,12 @@ import type {
 } from '../lib/types';
 import { DEFAULT_SCALE, tipLimit } from '../lib/scoring';
 import { bonusDeadline } from '../lib/time';
-import { ttScore, type GameGhostRow, type TtGhostRow } from '../game/tt';
+import { TRACE_DT, ttScore, type GameGhostRow, type TtGhostRow } from '../game/tt';
 import { berlinDayKey, hashStr } from '../game/abfahrt/rng';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
   type StageInput, type TourInput, type GameId, type GameBest, type GameRun, type RunStats, cleanStats,
+  type LivePeer, type LivePing, type LiveSnapshot,
 } from './source';
 import {
   DEMO_BONUS_RESULTS, DEMO_BONUS_TIPS, DEMO_ME, DEMO_NOW, DEMO_PROFILES, DEMO_RESULTS, DEMO_RIDERS, DEMO_STAGES,
@@ -27,6 +28,11 @@ function demoStats(game: GameId, key: string): RunStats {
   if (game === 'sprint') return { avg_kmh: Math.round((45 + r(1) * 5) * 10) / 10, top_kmh: Math.round(62 + r(2) * 10), reserve: Math.round(r(3) * r(3) * 40) / 100, place: 1 + Math.floor(r(4) * 12), riders: 30, bike, type: types[Math.floor(r(5) * types.length)] };
   return { avg_kmh: Math.round((21 + r(1) * 6) * 10) / 10, top_kmh: Math.round(64 + r(2) * 18), reserve: Math.round(r(3) * r(3) * 45) / 100, place: 1 + Math.floor(r(4) * 10), riders: 24, bike, type: types[Math.floor(r(5) * types.length)], slides: Math.floor(r(6) * 3) };
 }
+
+/** Demo: simulierter Live-Lauf je Spiel – Tempo (m/s) und Länge bis zum Ziel (m) */
+const DEMO_SIM: Record<GameId, { v: number; len: number }> = {
+  abfahrt: { v: 15, len: 5000 }, sprint: { v: 12.6, len: 2400 }, berg: { v: 6.4, len: 2000 }, zeitfahren: { v: 11.8, len: 3000 },
+};
 
 /** Demo: Antwortzeit (zum Prüfen der Ladezustände: ?langsam=ms) */
 const SLOW = (() => { try { const m = /[?&]langsam=(\d+)/.exec(window.location.search); return m ? Number(m[1]) : 0; } catch { return 0; } })();
@@ -293,6 +299,117 @@ export class DemoSource implements DataSource {
     const prev = this.gameGhostStore.get(key);
     if (prev && prev.score >= g.score) return;
     this.gameGhostStore.set(key, { ...g, user_id: DEMO_ME, created_at: new Date().toISOString() });
+  }
+
+  // ---------- Live und Lobby (Demo): Lena fährt mit, Felix schaut zu ----------
+
+  /** simulierte Läufe je Spiel: Start (Wanduhr, ms) */
+  private liveSims = new Map<GameId, { start: number; run: string }>();
+  private demoLobby: { code: string; seq: number; game: GameId | null; at: number | null; by: string | null; members: string[]; since: number } | null = null;
+
+  /** Lenas Lauf: Spur bis jetzt (gleichmäßig mit etwas Wellengang, am Start anrollen) und ob sie im Ziel ist */
+  private simRun(game: GameId, start: number, now: number): { trace: number[]; over: boolean } {
+    const sim = DEMO_SIM[game];
+    const n = Math.max(1, Math.floor((now - start) / 1000 / TRACE_DT) + 1);
+    const trace: number[] = [];
+    let z = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i * TRACE_DT;
+      const v = sim.v * (t < 4 ? 0.35 + 0.65 * (t / 4) : 1 + 0.07 * Math.sin(t / 6));
+      if (i) z += v * TRACE_DT;
+      if (z >= sim.len) return { trace, over: true };
+      trace.push(Math.round(z * 10), Math.round(70 * Math.sin(t / 9)), Math.sin(t / 5) > 0.35 ? 1 : 0);
+    }
+    return { trace, over: false };
+  }
+
+  private liveSnap(game: GameId | null, course: string | null, me: { state: string; n: number; tail: number[]; run: string } | null): LiveSnapshot {
+    const now = Date.now();
+    const peers: LivePeer[] = [];
+    const l = this.demoLobby;
+    if (l) {
+      // in der Lobby: Lena und Felix kommen nach ein paar Sekunden dazu
+      const t = now - l.since;
+      for (const [id, after] of [['u-lena', 2500], ['u-felix', 6000]] as const) if (t > after && !l.members.includes(id)) l.members.push(id);
+    }
+    if (game && course !== null && me && me.state !== 'menu' && me.n > 0) {
+      // fährt man selbst, fährt Lena neben einem her – ein paar Meter voraus, mal mehr, mal weniger (ihre Spur ist
+      // die eigene, versetzt: so steht sie auch bei ruckelnder Grafik neben einem)
+      const k = Math.floor(me.tail.length / 3);
+      const tail: number[] = [];
+      for (let j = 0; j < k; j++) {
+        const i = me.n - k + j;
+        tail.push(me.tail[j * 3] + Math.round((4 + 3 * Math.sin((i * TRACE_DT) / 5)) * 10), me.tail[j * 3 + 1] + 120, me.tail[j * 3 + 2]);
+      }
+      peers.push({ user_id: 'u-lena', game, course, state: me.state === 'over' ? 'over' : 'race', run: `mirror-${me.run}`, n: me.n, tail, bike: 'aero', score: me.state === 'over' ? 1180 : null, age_ms: 120 });
+    } else if (game && course !== null) {
+      // im Startblatt: Lena ist schon unterwegs
+      let sim = this.liveSims.get(game);
+      if (!sim || (this.simRun(game, sim.start, now).over && now - sim.start > 240_000)) {
+        sim = { start: now - 18_000, run: `demo-${now}:menu` };
+        this.liveSims.set(game, sim);
+      }
+      const r = this.simRun(game, sim.start, now);
+      const k = Math.floor(r.trace.length / 3);
+      peers.push({
+        user_id: 'u-lena', game, course, state: r.over ? 'over' : 'race', run: sim.run, n: k, tail: r.trace.slice(Math.max(0, k - 40) * 3),
+        bike: 'aero', score: r.over ? 1180 : null, age_ms: 140,
+      });
+    } else {
+      peers.push({ user_id: 'u-lena', game: 'zeitfahren', course: 'demo', state: 'race', run: 'demo', n: 400, tail: [11800, 40, 1], bike: 'aero', score: null, age_ms: 300 });
+    }
+    peers.push({ user_id: 'u-felix', game: game === 'sprint' ? 'berg' : 'sprint', course: 'demo', state: 'menu', run: '', n: 0, tail: [], bike: 'allround', score: null, age_ms: 900 });
+    return {
+      now,
+      peers,
+      lobby: l ? { code: l.code, seq: l.seq, game: l.game, at: l.at, by: l.by, members: l.members.map((id, i) => ({ user_id: id, seen_ms: id === DEMO_ME ? 0 : 400 + i * 300 })) } : null,
+    };
+  }
+
+  async livePing(p: LivePing): Promise<LiveSnapshot | null> {
+    await wait(70);
+    return this.liveSnap(p.game, p.course, { state: p.state, n: p.n, tail: p.tail, run: p.run });
+  }
+
+  async liveList(): Promise<LiveSnapshot | null> {
+    await wait(70);
+    return this.liveSnap(null, null, null);
+  }
+
+  async liveLeave(): Promise<void> {
+    await wait(20);
+  }
+
+  async lobbyCreate(): Promise<string> {
+    await wait(200);
+    const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const code = Array.from({ length: 4 }, () => abc[Math.floor(Math.random() * abc.length)]).join('');
+    this.demoLobby = { code, seq: 0, game: null, at: null, by: null, members: [DEMO_ME], since: Date.now() };
+    return code;
+  }
+
+  async lobbyJoin(code: string): Promise<string> {
+    await wait(200);
+    const c = code.replace(/\s/g, '').toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(c)) throw new ApiError('lobby_not_found');
+    this.demoLobby = { code: c, seq: 0, game: null, at: null, by: null, members: ['u-lena', 'u-felix', DEMO_ME], since: Date.now() - 10_000 };
+    return c;
+  }
+
+  async lobbyLeave(): Promise<void> {
+    await wait(120);
+    this.demoLobby = null;
+  }
+
+  async lobbyStart(game: GameId): Promise<LiveSnapshot | null> {
+    await wait(120);
+    const l = this.demoLobby;
+    if (!l) throw new ApiError('no_lobby');
+    l.seq += 1;
+    l.game = game;
+    l.at = Date.now() + 12_000;
+    l.by = DEMO_ME;
+    return this.liveSnap(null, null, null);
   }
 
   async saveTtGhost(g: Omit<TtGhostRow, 'user_id' | 'created_at'>): Promise<void> {

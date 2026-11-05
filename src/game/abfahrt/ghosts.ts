@@ -12,10 +12,13 @@ import { hashStr } from './rng';
 import { SKINS, type Kit } from './rider';
 import { pedalStep } from './motion';
 import { TRACE_DT, ghostAt, ghostDayLabel, ghostName, ghostTimeAt, type GameGhostRow, type GhostRider } from '../tt';
+import { liveAdvance, liveAt, liveDone, liveEnd, type LiveFeed } from '../live';
 
 /** Deckkraft: Geister von heute, ältere (andere Tage, andere Strecke) blasser */
 const ALPHA = 0.42;
 const ALPHA_OLD = 0.27;
+/** Live-Geister (fahren gerade) etwas deutlicher */
+const ALPHA_LIVE = 0.55;
 const G = 9.81;
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
@@ -79,17 +82,28 @@ export interface GhostOpp extends Opp {
   end: number;
 }
 
+/** Geist für einen, der gerade fährt (live.ts) */
+export function liveRider(f: LiveFeed): GhostRider {
+  return { id: `live:${f.userId}`, name: f.name, color: f.color, bike: f.bike || 'allround', timeMs: 0, splits: [], trace: f.trace, live: f };
+}
+
+/** Trikot eines Geists: Mitspieler fahren als Teamkollegen im gruppetto-Trikot in ihrer Avatarfarbe */
+export function ghostKit(g: GhostRider, number: string): Kit {
+  const skin = SKINS[hashStr(g.id) % SKINS.length];
+  return { jersey: g.color, side: '#1f2a44', helmet: '#1f2a44', shorts: '#1f2a44', skin, shoes: '#ffffff', number, bike: g.bike, team: 'gruppetto' };
+}
+
 export class GhostPack {
   opps: GhostOpp[] = [];
   private pos = { z: 0, x: 0, m: 0 };
+  private liveId: number;
 
   constructor(private track: Track, ghosts: GhostRider[], idBase = 3000) {
+    this.liveId = idBase + 500;
     const sorted = [...ghosts].filter((g) => g.trace.length >= 6).sort((a, b) => Number(!!a.old) - Number(!!b.old));
     sorted.forEach((g, i) => {
       ghostAt(g.trace, 0, this.pos);
-      const skin = SKINS[hashStr(g.id) % SKINS.length];
-      // Mitspieler fahren als Teamkollegen: gruppetto-Trikot in ihrer Avatarfarbe
-      const kit: Kit = { jersey: g.color, side: '#1f2a44', helmet: '#1f2a44', shorts: '#1f2a44', skin, shoes: '#ffffff', number: String(i + 1), bike: g.bike, team: 'gruppetto' };
+      const kit = ghostKit(g, String(i + 1));
       this.opps.push({
         id: idBase + i, z: this.pos.z, x: this.pos.x, vx: 0, v: 0, tx: this.pos.x, f: 1, kit,
         pedal: hashStr(g.id) % 6, lean: 0, tuck: 0.5, brake: 0, passed: false, group: -1, bump: 0, attacker: false, stand: 0,
@@ -101,15 +115,63 @@ export class GhostPack {
   get count() { return this.opps.length; }
 
   /**
+   * Live-Geister abgleichen (live.ts): wer neu fährt, kommt dazu (unsichtbar, bis seine Uhr läuft); ein neuer Lauf
+   * desselben Mitglieds ersetzt die Spur; wer nicht mehr gemeldet wird, rollt aus und verschwindet
+   */
+  syncLive(feeds: LiveFeed[]) {
+    for (const f of feeds) {
+      const o = this.opps.find((x) => x.rider.live?.userId === f.userId);
+      if (!o) {
+        const rider = liveRider(f);
+        this.opps.push({
+          id: this.liveId++, z: 0, x: 0, vx: 0, v: 0, tx: 0, f: 1, kit: ghostKit(rider, 'L'),
+          pedal: hashStr(rider.id) % 6, lean: 0, tuck: 0.5, brake: 0, passed: false, group: -1, bump: 0, attacker: false, stand: 0,
+          ghost: 0, rider, end: 0,
+        });
+      } else if (o.rider.live !== f) {
+        o.rider = liveRider(f);
+        o.ghost = 0;
+      }
+    }
+    for (const o of this.opps) {
+      const f = o.rider.live;
+      if (f && !feeds.includes(f)) f.gone = true;
+    }
+  }
+
+  /** Live-Geister, die fertig ausgeblendet sind, aus der Liste nehmen (die Darstellung gibt ihr Modell zurück) */
+  private dropLive() {
+    for (let i = this.opps.length - 1; i >= 0; i--) {
+      const f = this.opps[i].rider.live;
+      if (f && f.gone && this.opps[i].ghost === 0 && liveDone(f)) this.opps.splice(i, 1);
+    }
+  }
+
+  /**
    * Geister an die Stelle zur Rennzeit t setzen. visible: ab „Los“ einblenden; nach dem Ende ihrer Spur
    * (Sturz, Ziel) rollen sie kurz aus und verschwinden.
    */
   step(t: number, visible: boolean, dt: number, warp = 1) {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     for (const o of this.opps) {
-      ghostAt(o.rider.trace, visible ? t : 0, this.pos);
+      const f = o.rider.live;
       const z0 = o.z;
-      o.z = this.pos.z;
-      const nx = this.pos.x;
+      let nx: number;
+      if (f) {
+        // Live: eigene Uhr (wo der andere jetzt ist); kleine Sprünge, wenn eine Meldung die Fortschreibung
+        // berichtigt, weich ausgleichen
+        const lt = liveAdvance(f, dt, now);
+        liveAt(f, Math.max(0, lt), this.pos);
+        const jump = Math.abs(this.pos.z - o.z) > 12 || o.ghost === 0;
+        const k = jump ? 1 : Math.min(1, dt * 6);
+        o.z += (this.pos.z - o.z) * k;
+        nx = o.x + (this.pos.x - o.x) * k;
+        o.end = liveEnd(f);
+      } else {
+        ghostAt(o.rider.trace, visible ? t : 0, this.pos);
+        o.z = this.pos.z;
+        nx = this.pos.x;
+      }
       o.vx = dt > 0 ? (nx - o.x) / dt : 0;
       o.x = nx;
       o.v = dt > 0 ? Math.max(0, (o.z - z0) / dt) : 0;
@@ -122,11 +184,12 @@ export class GhostPack {
       o.tuck += (tuckT - o.tuck) * Math.min(1, dt * 5);
       o.lean += (clamp(-o.vx * 0.12 + Math.atan2(seg.curve * o.v * o.v, G) * 0.8, -0.55, 0.55) - o.lean) * Math.min(1, dt * 6);
       pedalStep(o, downhill && !push && o.v > 12 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / warp, dt);
-      const gone = visible && t > o.end + 2.5;
-      const want = visible && !gone ? (o.rider.old ? ALPHA_OLD : ALPHA) : 0;
+      const gone = f ? liveDone(f) || f.shown <= 0 : visible && t > o.end + 2.5;
+      const want = visible && !gone ? (f ? ALPHA_LIVE : o.rider.old ? ALPHA_OLD : ALPHA) : 0;
       o.ghost += (want - o.ghost) * Math.min(1, dt * 2.5);
       if (o.ghost < 0.01) o.ghost = want > 0 ? 0.01 : 0;
     }
+    this.dropLive();
   }
 
   /** Namensschild für den nächsten sichtbaren Geist voraus (bis 40 m), mit Zeitabstand an der eigenen Stelle */
@@ -138,6 +201,7 @@ export class GhostPack {
       if (dz > 1.5 && dz < 40 && (!best || dz < best.z - pz)) best = o;
     }
     if (!best) return null;
+    if (best.rider.live) return { id: best.id, text: ghostName(best.rider, true), sub: 'live', color: best.rider.color };
     const gap = t - ghostTimeAt(best.rider.trace, pz);
     return { id: best.id, text: ghostName(best.rider, true), sub: `${gap >= 0 ? '+' : '−'}${Math.abs(gap).toFixed(1).replace('.', ',')}″`, color: best.rider.color };
   }

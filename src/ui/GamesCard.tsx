@@ -30,6 +30,9 @@ import { fmtKm, ROUTE, ROUTE_KM } from '../game/journey';
 import { BIKES, GARAGE_START } from '../game/bikes';
 import { passStamps } from '../game/passbook';
 import { BoardSkeleton, SkelText } from './skeleton';
+import { useLive, useLiveWatch } from '../app/live';
+import { LobbyButton } from './Live';
+import type { LivePeer } from '../data/source';
 
 const LS_SEL = 'gruppetto.games.sel';
 /** Höhe der Spiele beim letzten Mal („Fensterbreite:Höhe“) – hält Platzhalter und Ladezustand gleich hoch (index.html) */
@@ -131,6 +134,21 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
   // Untertitel aller Spiele einmal (baut die Tagesstrecken) – nicht bei jedem Wechsel
   const day = boards[0].day;
   const subs = useMemo(() => GAMES.map((g) => gameSub(g.id, day, tourName, stages)), [day, tourName, stages]);
+
+  // Live: wer gerade in welchem Spiel ist (Punkt am Reiter, Schild im Spielkopf)
+  useLiveWatch();
+  const live = useLive();
+  const liveBy = useMemo(() => {
+    const by: Record<string, LivePeer[]> = {};
+    for (const p of live?.peers ?? []) (by[p.game] ??= []).push(p);
+    return by;
+  }, [live]);
+  const liveSig = GAMES.map((g) => (liveBy[g.id] ?? []).map((p) => `${p.user_id}:${p.state}`).join(',')).join('|');
+  const liveOf = useMemo(() => GAMES.map((g) => (liveBy[g.id] ?? []).map((p) => {
+    const m = members.find((x) => x.id === p.user_id);
+    return { id: p.user_id, name: m?.display_name?.split(/\s+/)[0] ?? 'Jemand', color: m?.avatar_color ?? '#888', racing: p.state === 'race' };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  })), [liveSig, members]);
 
   // auch die Geister der Spiele schon laden: das Startblatt steht dann sofort vollständig
   useQuery<unknown>('ghosts:abfahrt', () => source.gameGhosts('abfahrt'));
@@ -242,10 +260,11 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
             type="button"
             role="tab"
             aria-selected={i === idx}
-            className={cx('arena__tab', i === idx && 'is-on', (alerts[i].alert || isNewGame(g, runs)) && i !== idx && 'is-dot')}
+            className={cx('arena__tab', i === idx && 'is-on', (alerts[i].alert || isNewGame(g, runs)) && i !== idx && 'is-dot', liveOf[i].length > 0 && 'is-live')}
             onClick={() => go(i)}
           >
             {SHORT[g.id]}
+            {liveOf[i].length ? <i className="arena__live" aria-label={`${liveOf[i].length} live`} /> : null}
           </button>
         ))}
       </div>
@@ -254,12 +273,15 @@ export function GamesCard({ stageKind = null, tourName = null, stages = null }: 
           <div key={g.id} className="arena__pane" aria-hidden={i !== idx}>
             <GamePane
               index={i} game={g} board={boards[i]} alert={alerts[i].alert} fresh={isNewGame(g, runs)} sub={subs[i]}
-              members={members} meId={me.id} heads={heads} onOpen={open}
+              members={members} meId={me.id} heads={heads} onOpen={open} live={liveOf[i]}
             />
           </div>
         ))}
       </div>
-      <button type="button" className="btn btn--primary btn--full arena__go" onClick={(e) => open(idx, tapRect(e))}><span>Spielen</span></button>
+      <div className="arena__go-row">
+        <button type="button" className="btn btn--primary arena__go" onClick={(e) => open(idx, tapRect(e))}><span>Spielen</span></button>
+        <LobbyButton />
+      </div>
       <Tiles tourName={tourName} stages={stages} />
     </section>
   );
@@ -275,9 +297,13 @@ function tapRect(e: { clientX: number; clientY: number; detail: number; currentT
   return r;
 }
 
-const GamePane = memo(function GamePane({ index, game, board, alert, fresh, sub, members, meId, heads, onOpen }: {
+interface LiveMark { id: string; name: string; color: string; racing: boolean }
+
+const GamePane = memo(function GamePane({ index, game, board, alert, fresh, sub, members, meId, heads, onOpen, live }: {
   index: number; game: GameInfo; board: Board; alert: ReturnType<typeof overtaken>; fresh: boolean; sub: string;
   members: Profile[]; meId: string; heads: RefObject<(HTMLDivElement | null)[]>; onOpen: (i: number, from?: DOMRect | null) => void;
+  /** wer gerade in diesem Spiel ist */
+  live: LiveMark[];
 }) {
   const sprint = game.id === 'sprint';
   const berg = game.id === 'berg';
@@ -294,7 +320,10 @@ const GamePane = memo(function GamePane({ index, game, board, alert, fresh, sub,
   return (
     <>
       <a href={`#${game.path}`} className="arena__hero" aria-label={`${game.name} spielen${fresh ? ' – neu' : ''}`} onClick={(e) => { e.preventDefault(); onOpen(index, tapRect(e)); }}>
-        <GameHead ref={(el: HTMLDivElement | null) => { heads.current[index] = el; }} game={game.id} title={game.name} sub={sub} tag={fresh ? <span className="game-new">Neu</span> : null} />
+        <GameHead
+          ref={(el: HTMLDivElement | null) => { heads.current[index] = el; }} game={game.id} title={game.name} sub={sub}
+          tag={live.length ? <LiveTag live={live} /> : fresh ? <span className="game-new">Neu</span> : null}
+        />
       </a>
       {!board.loaded ? (
         board.error ? <p className="arena__empty">Bestenliste gerade nicht erreichbar</p> : <BoardSkeleton />
@@ -326,7 +355,20 @@ const GamePane = memo(function GamePane({ index, game, board, alert, fresh, sub,
     </>
   );
 }, (a, b) => a.board === b.board && a.sub === b.sub && a.fresh === b.fresh && a.members === b.members && a.meId === b.meId
-  && JSON.stringify(a.alert) === JSON.stringify(b.alert));
+  && JSON.stringify(a.alert) === JSON.stringify(b.alert) && a.live === b.live);
+
+/** Schild im Spielkopf: wer gerade spielt (fährt: roter Punkt, sonst im Startblatt) */
+function LiveTag({ live }: { live: LiveMark[] }) {
+  const racing = live.filter((l) => l.racing);
+  const shown = (racing.length ? racing : live).slice(0, 2).map((l) => l.name);
+  const more = live.length - shown.length;
+  return (
+    <span className={cx('game-live', !racing.length && 'is-menu')} title={live.map((l) => l.name).join(', ')}>
+      <i aria-hidden="true" />
+      {racing.length ? 'Live' : 'Im Spiel'} · {shown.join(', ')}{more > 0 ? ` +${more}` : ''}
+    </span>
+  );
+}
 
 /** Radgarage, Europareise und Passbuch als Kacheln mit Stand */
 function Tiles({ tourName, stages }: { tourName: string | null; stages: Stage[] | null }) {

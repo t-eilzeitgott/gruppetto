@@ -295,10 +295,98 @@ update public.tt_ghosts set time_ms = 1 where day = current_date;
 select pg_temp.expect_eq((select time_ms from public.tt_ghosts where day = current_date), 221000, 'Geister: fremde Fahrt nicht änderbar');
 commit;
 
+-- ---------- Live in den Minispielen ----------
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+-- Anna fährt Abfahrt (Rennen), sieht noch niemanden
+select pg_temp.expect_eq(jsonb_array_length(public.game_live_ping('abfahrt', 'd1', 'race', 'r1', 4, array[0,0,0, 30,10,1, 60,20,1, 90,0,0], 'aero') -> 'peers'), 0, 'Live: allein');
+select pg_temp.expect_error($q$ select * from public.game_live $q$, 'permission denied');
+select pg_temp.expect_error($q$ select * from public.game_lobbies $q$, 'permission denied');
+select pg_temp.expect_error($q$ select public.game_live_state('abfahrt', 'd1') $q$, 'permission denied');
+select pg_temp.expect_error($q$ select public.game_live_ping('tetris', 'd1', 'race', 'r1', 0, '{}', '') $q$, 'check');
+commit;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+-- Ben auf derselben Strecke: bekommt Annas Spur; auf einer anderen Strecke oder im Startblatt nur die letzte Probe
+select pg_temp.expect_eq(jsonb_array_length(public.game_live_ping('abfahrt', 'd1', 'race', 'x', 0, '{}', '') -> 'peers' -> 0 -> 'tail'), 12, 'Live: Spur auf derselben Strecke');
+select pg_temp.expect_eq(jsonb_array_length(public.game_live_ping('abfahrt', 'd2', 'race', 'x', 0, '{}', '') -> 'peers' -> 0 -> 'tail'), 3, 'Live: andere Strecke nur letzte Probe');
+select pg_temp.expect_eq((public.game_live_ping('sprint', 'd1', 'menu', '', 0, '{}', '') -> 'peers' -> 0 ->> 'n')::int, 4, 'Live: anderes Spiel, Zahl der Proben');
+select pg_temp.expect_eq((public.game_live_list() -> 'peers' -> 0 -> 'tail' ->> 0)::int, 90, 'Live: Liste mit letzter Probe');
+select pg_temp.expect_eq(((public.game_live_list() ->> 'now')::bigint > 0)::int, 1, 'Live: Serverzeit');
+select pg_temp.expect_eq((public.game_live_list() -> 'lobby' is null or public.game_live_list() -> 'lobby' = 'null'::jsonb)::int, 1, 'Live: ohne Lobby');
+commit;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', true);
+-- Nicht-Mitglied: weder melden noch sehen, keine Lobby
+select pg_temp.expect_eq((public.game_live_ping('abfahrt', 'd1', 'race', 'r', 0, '{}', '') is null)::int, 1, 'Live: Nicht-Mitglied sieht niemanden');
+select pg_temp.expect_eq((public.game_live_list() is null)::int, 1, 'Live: Nicht-Mitglied ohne Liste');
+select pg_temp.expect_error($q$ select public.lobby_create() $q$, 'not_member');
+commit;
+select pg_temp.expect_eq((select count(*) from public.game_live), 2, 'Live: Nicht-Mitglied nicht eingetragen');
+
+-- Lobby: Anna eröffnet, Ben tritt mit dem Code bei (klein geschrieben, mit Leerzeichen), Ben startet ein Rennen
+create temp table lobby_code (code text);
+grant all on lobby_code to authenticated;
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+insert into lobby_code select public.lobby_create();
+select pg_temp.expect_eq((select count(*) from lobby_code where code ~ '^[A-Z0-9]{4}$'), 1, 'Lobby: Code mit vier Zeichen');
+select pg_temp.expect_eq(jsonb_array_length(public.game_live_list() -> 'lobby' -> 'members'), 1, 'Lobby: Anna drin');
+commit;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+select pg_temp.expect_error($q$ select public.lobby_join('ZZZZ') $q$, 'lobby_not_found');
+select pg_temp.expect_error($q$ select public.lobby_start('sprint') $q$, 'no_lobby');
+select public.lobby_join(' ' || lower((select code from lobby_code)) || ' ');
+select pg_temp.expect_eq(jsonb_array_length(public.game_live_list() -> 'lobby' -> 'members'), 2, 'Lobby: Ben drin');
+select pg_temp.expect_eq((public.lobby_start('sprint') -> 'lobby' ->> 'seq')::int, 1, 'Lobby: Rennen gestartet');
+select pg_temp.expect_error($q$ select public.lobby_start('tetris') $q$, 'invalid_game');
+commit;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+select pg_temp.expect_eq(((public.game_live_list() -> 'lobby' ->> 'game') = 'sprint')::int, 1, 'Lobby: Anna sieht das Rennen');
+select pg_temp.expect_eq(((public.game_live_list() -> 'lobby' ->> 'at')::bigint - (public.game_live_list() ->> 'now')::bigint between 10000 and 12500)::int, 1, 'Lobby: Start mit Vorlauf');
+select public.lobby_leave();
+select pg_temp.expect_eq((public.game_live_list() -> 'lobby' = 'null'::jsonb or public.game_live_list() -> 'lobby' is null)::int, 1, 'Lobby: Anna draußen');
+commit;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+select pg_temp.expect_eq(jsonb_array_length(public.game_live_list() -> 'lobby' -> 'members'), 1, 'Lobby: Ben allein');
+select public.lobby_leave();
+commit;
+select pg_temp.expect_eq((select count(*) from public.game_lobbies), 0, 'Lobby: leer gelöscht');
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+select public.game_live_leave();
+commit;
+select pg_temp.expect_eq((select count(*) from public.game_live), 1, 'Live: verlassen');
+update public.game_live set updated_at = now() - interval '20 seconds';
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
+select pg_temp.expect_eq(jsonb_array_length(public.game_live_list() -> 'peers'), 0, 'Live: nach 15 s nicht mehr live');
+commit;
+
 -- ---------- Anonym ----------
 begin;
 set local role anon;
 select pg_temp.expect_eq((select count(*) from public.tours), 0, 'Anonym sieht nichts');
+select pg_temp.expect_error($q$ select public.game_live_list() $q$, 'permission denied');
+select pg_temp.expect_error($q$ select public.lobby_join('ABCD') $q$, 'permission denied');
 select pg_temp.expect_error($q$ select public.join_group('TEST27', 'Hacker') $q$, 'permission denied');
 select pg_temp.expect_eq((select count(*) from (select public.ping()) x), 1, 'Ping für anon');
 commit;

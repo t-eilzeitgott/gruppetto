@@ -105,6 +105,58 @@ export interface BonusResultInput {
   team: string | null;
 }
 
+/** Live in den Minispielen (game_live, src/app/live.ts): ein anderes Mitglied, das gerade im Spiel ist */
+export interface LivePeer {
+  user_id: string;
+  game: GameId;
+  /** Strecke (Tag und Vorlage) – Live-Geister nur auf derselben */
+  course: string;
+  /** im Startblatt, im Rennen, fertig */
+  state: 'menu' | 'race' | 'over';
+  /** Kennung des Laufs */
+  run: string;
+  /** Zahl der Proben des Laufs bis zur letzten in tail */
+  n: number;
+  /** letzte Proben der Fahrspur (auf derselben Strecke bis 40, sonst nur die letzte) */
+  tail: number[] | null;
+  bike: string;
+  /** Ergebnis, wenn fertig (wie in game_scores) */
+  score: number | null;
+  /** so alt ist die Meldung (ms) */
+  age_ms: number;
+}
+
+/** eigene Lobby: Code, Mitglieder (wie lange nicht gesehen) und das zuletzt gestartete Rennen */
+export interface LiveLobby {
+  code: string;
+  /** Nummer des Rennens (zählt hoch) */
+  seq: number;
+  game: GameId | null;
+  /** „Los“ (ms, Serverzeit) */
+  at: number | null;
+  /** wer gestartet hat */
+  by: string | null;
+  members: { user_id: string; seen_ms: number }[];
+}
+
+export interface LiveSnapshot {
+  /** Serverzeit (ms) */
+  now: number;
+  peers: LivePeer[];
+  lobby: LiveLobby | null;
+}
+
+export interface LivePing {
+  game: GameId;
+  course: string;
+  state: 'menu' | 'race' | 'over';
+  run: string;
+  n: number;
+  tail: number[];
+  bike: string;
+  score: number | null;
+}
+
 /** Gemeinsame Schnittstelle für Supabase und den Demo-Modus. */
 export interface DataSource {
   readonly mode: 'live' | 'demo';
@@ -144,6 +196,19 @@ export interface DataSource {
   saveGameGhost(g: Omit<GameGhostRow, 'user_id' | 'created_at'>): Promise<void>;
   /** eigene beste Fahrt des Tages hinterlegen (nur, wenn sie schneller ist als die gespeicherte) */
   saveTtGhost(g: Omit<TtGhostRow, 'user_id' | 'created_at'>): Promise<void>;
+  /** Live: eigenen Stand melden, Stand der anderen und der Lobby zurück (null: kein Mitglied) */
+  livePing(p: LivePing): Promise<LiveSnapshot | null>;
+  /** Live: nur schauen (Startseite, Lobby) */
+  liveList(): Promise<LiveSnapshot | null>;
+  /** Live: Spiel verlassen (keepalive: auch beim Schließen der Seite) */
+  liveLeave(keepalive?: boolean): Promise<void>;
+  /** Lobby eröffnen (neuer Code) */
+  lobbyCreate(): Promise<string>;
+  /** Lobby mit Code beitreten */
+  lobbyJoin(code: string): Promise<string>;
+  lobbyLeave(): Promise<void>;
+  /** Rennen für die ganze Lobby starten */
+  lobbyStart(game: GameId): Promise<LiveSnapshot | null>;
   /** Lieblingsfahrer (IDs der Fahrer-Stammdaten) */
   listFavorites(): Promise<number[]>;
   /** Meldungen aus der Szene der letzten Tage, neueste zuerst (leer, wenn nicht erreichbar) */
@@ -212,6 +277,8 @@ const MESSAGES: Record<string, string> = {
   not_authenticated: 'Bitte melde dich erneut an.',
   locked: 'Tippschluss ist vorbei – der Tipp kann nicht mehr geändert werden.',
   schema_outdated: 'Die Datenbank kennt die Automatik noch nicht – bitte supabase/schema.sql im SQL Editor neu ausführen.',
+  lobby_not_found: 'Diese Lobby gibt es nicht (mehr) – prüf den Code.',
+  no_lobby: 'Du bist in keiner Lobby.',
 };
 
 /** Wandelt Fehler in einen verständlichen deutschen Satz um. */
@@ -221,6 +288,7 @@ export function errorText(err: unknown): string {
       if (err.message.includes(key) || err.code === key) return text;
     }
     if (err.message.includes('row-level security')) return MESSAGES.locked;
+    if (/Could not find the function public\.(lobby_|game_live_)/.test(err.message)) return 'Lobbys sind in der Datenbank noch nicht eingerichtet.';
     if (err.status === 429 || /rate limit|over_email_send_rate_limit|security purposes/i.test(err.message)) {
       return 'Zu viele Versuche – bitte warte eine Minute und probier es dann erneut.';
     }

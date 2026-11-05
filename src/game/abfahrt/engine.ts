@@ -9,6 +9,7 @@ import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { Mission, MissionStat } from './missions';
 import { cadenceFor, effortFor, pedalStep, smooth, type Effort, STEER_KD, STEER_KEYS, STEER_KP, STEER_MAX, STEER_SMOOTH, STEER_SPAN } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
+import type { LiveFeed, LiveOut } from '../live';
 import { wreckSettled, wreckTravel, type Wreck } from './wreck';
 import { BOOST, CAR_HALF, CAR_LEN, carBlock, spawnCar, stepCar, type TeamCar } from './teamcar';
 import type { GhostRider } from '../tt';
@@ -1474,6 +1475,18 @@ export class Abfahrt {
         this.crash('In den Massensturz gefahren');
       }
     }
+  }
+
+  /** Live: eigener Stand für die anderen (live.ts) */
+  liveOut(): LiveOut {
+    const tr = this.rec.trace;
+    if (!tr.length) return { state: 'menu', trace: tr };
+    return { state: this.phase === 'playing' ? 'race' : 'over', trace: tr };
+  }
+
+  /** Live: wer gerade dieselbe Strecke fährt, fährt als Geist mit (nicht in der Testfahrt) */
+  setLive(feeds: LiveFeed[]) {
+    if (!this.opts.cruise) this.pack.syncLive(feeds);
   }
 
   /** eigene Spur mitschreiben, Geister nachfahren lassen, Namensschild für den nächsten voraus */

@@ -23,6 +23,7 @@ import type { RiderType, SprintRider } from './sprint';
 import type { StageRef } from './stageRef';
 import { STEEP, STEER_KD, STEER_KEYS, STEER_KP, STEER_MAX, STEER_PACK_GAIN, STEER_PACK_MAX, STEER_SMOOTH, STEER_SPAN, effortFor, pedalStep, smooth, strainOf } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
+import type { LiveFeed, LiveOut } from '../live';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
 import { canRise, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
@@ -1094,6 +1095,18 @@ export class BergRace {
    * Geister: eigene Spur ab dem Countdown bis zur Ziellinie mitschreiben (gleicher Takt wie beim Abspielen),
    * Geister nachfahren lassen; ohne Hinterrad-Schild bekommt der nächste Geist voraus das Namensschild
    */
+  /** Live: eigener Stand für die anderen (live.ts) – die Spur läuft ab dem Countdown bis zur Ziellinie */
+  liveOut(): LiveOut {
+    const tr = this.rec.trace;
+    if (!tr.length) return { state: 'menu', trace: tr };
+    return { state: (this.phase === 'countdown' || this.phase === 'playing') && this.finT < 0 ? 'race' : 'over', trace: tr };
+  }
+
+  /** Live: wer gerade dieselbe Strecke fährt, fährt als Geist mit */
+  setLive(feeds: LiveFeed[]) {
+    this.pack.syncLive(feeds);
+  }
+
   private stepGhosts(dt: number, warp: number) {
     const live = this.phase !== 'ready';
     if (live) this.ghostT += dt;

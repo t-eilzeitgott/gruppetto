@@ -13,7 +13,9 @@ import { stageRef } from '../game/abfahrt/stageRef';
 import { gameSubFor } from '../game/gameSub';
 import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
 import { nextWeatherName } from '../game/abfahrt/weather';
-import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
+import { berlinDayKey, berlinDayStart, hashStr } from '../game/abfahrt/rng';
+import { useLiveGame } from '../app/live';
+import { LiveChip } from '../ui/Live';
 import { HudBanner, PowerRing, RaceBar, SwapIcon, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
 import { useBikes, type Bikes } from '../ui/useBikes';
@@ -251,6 +253,12 @@ export function BergPage() {
 
   useRaceKeys(engineRef, uiRef, start, togglePause);
 
+  // Live: eigenen Stand melden, die anderen auf derselben Strecke als Live-Geister, Lobby-Rennen pünktlich starten
+  useLiveGame({
+    game: 'berg', course: `${day}:${hashStr(JSON.stringify(ref ?? null))}`, bike: bikes.current, engineRef, start: start, members: members.data,
+    canStart: () => uiRef.current === 'ready' || uiRef.current === 'over', score: result?.score ?? null,
+  });
+
   const choose = (o: RiderOption) => {
     setPickId(keyOf(o));
     lsSet(LS_RIDER, keyOf(o));
@@ -297,6 +305,7 @@ export function BergPage() {
             <RaceBar bind={bind} marks={[{ at: MOUNTAIN_TOP / MOUNTAIN_FINISH, kind: 'gpm' }, { at: (MOUNTAIN_FINISH - 1000) / MOUNTAIN_FINISH, kind: 'flamme' }]} />
             <PowerRing bind={bind} badge />
           </div>
+          <LiveChip engineRef={engineRef} />
           {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <button type="button" className="hud-mate is-off" ref={bind('mate')} onClick={() => engineRef.current?.swapMate()} aria-label="Führung mit dem Helfer tauschen">
             <span className="hud-mate__ico"><SwapIcon /></span>

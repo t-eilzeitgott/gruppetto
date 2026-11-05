@@ -26,6 +26,8 @@ import { gfxAA, gfxAuto, gfxDescribe, gfxLevel, gfxOn, gfxRes, onGfxSettings } f
 import { AutoGfx, autoStep, fmtRes } from '../game/abfahrt/autoGfx';
 import { copyText, shareFile } from './admin/gpuKit';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
+import { useLiveGame } from '../app/live';
+import { LiveChip } from '../ui/Live';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, cx, useTitle } from '../ui/kit';
 import { useBikes, type Bikes } from '../ui/useBikes';
@@ -590,6 +592,12 @@ export function GamePage() {
     else if (uiRef.current === 'paused') setUi('playing');
   };
 
+  // Live: eigenen Stand melden, die anderen auf derselben Strecke als Live-Geister, Lobby-Rennen pünktlich starten
+  useLiveGame({
+    game: 'abfahrt', course: `${day}`, bike: bikes.current, engineRef, start: () => start(), members: members.data,
+    canStart: () => uiRef.current === 'ready' || uiRef.current === 'over', score: result?.score ?? null,
+  });
+
   // ——— Messmodus ———
   /** Gerät, Bildschirm, Auflösung, Sichtweite, Grafik – für Bericht und Kostenanalyse */
   const deviceInfo = () => {
@@ -689,6 +697,7 @@ export function GamePage() {
             <PowerRing bind={bind} />
           </div>
           <RaceBar bind={bind} wide marks={friends.map((f) => ({ at: f.meters / profileMax, kind: 'friend' as const, color: f.color }))} />
+          <LiveChip engineRef={engineRef} />
           {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
           <TvAd hidden={!!coach || ui !== 'playing'} />
         </div>

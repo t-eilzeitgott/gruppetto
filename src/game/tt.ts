@@ -4,6 +4,7 @@
  * liegt (kleinere Zeit = höhere Punktzahl, damit die bestehenden Listen weiter „größer ist besser“ sortieren),
  * und die Geister: die beste Fahrt des Tages je Mitglied als Fahrspur, mit dem Rad, auf dem sie gefahren wurde.
  */
+import type { LiveFeed } from './live';
 
 /** Zeiten als Punktzahl in game_scores: 1.000.000 minus Millisekunden (eine Stunde Luft) */
 export const TT_SCORE_BASE = 1_000_000;
@@ -50,6 +51,8 @@ export interface GhostRider {
    * Zwischenzeiten und Tagesbestzeit – die Strecke war an dem Tag eine andere
    */
   old?: string;
+  /** Live-Geist: fährt gerade, die Spur wächst (live.ts) – zählt nicht für Platz und Zeiten */
+  live?: LiveFeed;
 }
 
 /** Geist, wie er in der Datenbank liegt (beste Fahrt des Tages je Mitglied) */
@@ -132,6 +135,7 @@ export function ghostDayLabel(day: string, today: string): string {
 /** Name eines Geistes für Schilder, Meldungen und Listen */
 export function ghostName(g: GhostRider, long = false): string {
   if (g.bot) return 'Tempomacher';
+  if (g.live) return firstName(g.name);
   if (g.me) return g.old ? `Dein Lauf ${g.old}` : long ? 'Dein Bestlauf' : 'Bestzeit';
   return g.old ? `${firstName(g.name)} (${g.old})` : firstName(g.name);
 }

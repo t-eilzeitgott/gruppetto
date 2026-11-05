@@ -685,6 +685,210 @@ $$;
 revoke execute on function public.game_leaderboard(text, timestamptz) from public, anon;
 grant  execute on function public.game_leaderboard(text, timestamptz) to authenticated;
 
+-- Live in den Minispielen: wer gerade im Spiel ist (Startblatt oder Rennen) und – für alle auf derselben Strecke –
+-- die letzten Sekunden seiner Fahrspur, aus denen der Live-Geist entsteht (Format wie game_ghosts.trace: je Probe
+-- Streckenmeter ×10, Lage in cm, Haltung; n = Zahl der Proben des Laufs bis hier). Eine Zeile je Mitglied, die das
+-- Spiel im Rennen jede Sekunde neu schreibt (im Startblatt seltener); nach 15 s ohne Meldung gilt man nicht mehr als
+-- live, nach 10 Minuten wird die Zeile gelöscht. Kein direkter Zugriff – nur über die Funktionen darunter.
+create table if not exists public.game_live (
+  user_id    uuid primary key references public.profiles (id) on delete cascade,
+  game       text not null check (game in ('zeitfahren', 'abfahrt', 'sprint', 'berg')),
+  course     text not null default '' check (length(course) <= 80),
+  state      text not null check (state in ('menu', 'race', 'over')),
+  run        text not null default '' check (length(run) <= 40),
+  n          int  not null default 0 check (n >= 0),
+  tail       int[] not null default '{}' check (cardinality(tail) <= 240),
+  bike       text not null default '' check (length(bike) <= 40),
+  updated_at timestamptz not null default now()
+);
+-- Ergebnis des Laufs (Punkte bzw. Zeit wie in game_scores), sobald er fertig ist – für die Wertung in der Lobby
+alter table public.game_live add column if not exists score int;
+alter table public.game_live enable row level security;
+revoke all on public.game_live from anon, authenticated;
+
+-- Lobbys: zusammen fahren mit einem Code aus vier Zeichen. Jeder in der Lobby kann ein Rennen starten (race_*): alle
+-- werden ins Spiel geholt, „Los“ ist für alle zur selben Zeit (race_at, etwas Vorlauf zum Laden). Man ist in
+-- höchstens einer Lobby; seen_at zeigt, wer gerade da ist. Leere Lobbys verschwinden.
+create table if not exists public.game_lobbies (
+  code       text primary key check (code ~ '^[A-Z0-9]{4}$'),
+  created_by uuid references public.profiles (id) on delete set null,
+  created_at timestamptz not null default now(),
+  race_seq   int not null default 0,
+  race_game  text check (race_game in ('zeitfahren', 'abfahrt', 'sprint', 'berg')),
+  race_at    timestamptz,
+  race_by    uuid references public.profiles (id) on delete set null
+);
+create table if not exists public.game_lobby_members (
+  user_id   uuid primary key references public.profiles (id) on delete cascade,
+  code      text not null references public.game_lobbies (code) on delete cascade,
+  joined_at timestamptz not null default now(),
+  seen_at   timestamptz not null default now()
+);
+alter table public.game_lobbies       enable row level security;
+alter table public.game_lobby_members enable row level security;
+revoke all on public.game_lobbies, public.game_lobby_members from anon, authenticated;
+
+-- Stand für das Spiel: Serverzeit (ms), wer live ist (Spur nur von denen auf derselben Strecke, sonst die letzte
+-- Probe) und die eigene Lobby mit Mitgliedern und dem letzten gestarteten Rennen
+create or replace function public.game_live_state(p_game text, p_course text)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'now', floor(extract(epoch from clock_timestamp()) * 1000),
+    'peers', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'user_id', l.user_id, 'game', l.game, 'course', l.course, 'state', l.state, 'run', l.run, 'n', l.n,
+               'tail', case when l.game = p_game and l.course = p_course and l.state <> 'menu' then to_jsonb(l.tail)
+                            else to_jsonb(l.tail[greatest(cardinality(l.tail) - 2, 1):cardinality(l.tail)]) end,
+               'bike', l.bike, 'score', l.score,
+               'age_ms', (extract(epoch from (now() - l.updated_at)) * 1000)::int)
+             order by l.updated_at desc)
+        from public.game_live l
+       where l.user_id <> auth.uid() and l.updated_at > now() - interval '15 seconds'), '[]'::jsonb),
+    'lobby', (
+      select jsonb_build_object(
+               'code', g.code, 'seq', g.race_seq, 'game', g.race_game,
+               'at', case when g.race_at is not null then floor(extract(epoch from g.race_at) * 1000) end,
+               'by', g.race_by,
+               'members', (select jsonb_agg(jsonb_build_object('user_id', m.user_id,
+                                     'seen_ms', (extract(epoch from (now() - m.seen_at)) * 1000)::int) order by m.joined_at)
+                             from public.game_lobby_members m where m.code = g.code))
+        from public.game_lobby_members me join public.game_lobbies g on g.code = me.code
+       where me.user_id = auth.uid()))
+  where public.is_member();
+$$;
+
+-- eigenen Stand melden und den Stand der anderen zurückbekommen
+drop function if exists public.game_live_ping(text, text, text, text, int, int[], text);
+create or replace function public.game_live_ping(p_game text, p_course text, p_state text, p_run text, p_n int, p_tail int[], p_bike text, p_score int default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_course text := left(coalesce(p_course, ''), 80);
+begin
+  if not public.is_member() then return null; end if;
+  insert into public.game_live (user_id, game, course, state, run, n, tail, bike, score, updated_at)
+  values (auth.uid(), p_game, v_course, p_state, left(coalesce(p_run, ''), 40), greatest(coalesce(p_n, 0), 0),
+          coalesce(p_tail[1:240], '{}'), left(coalesce(p_bike, ''), 40), p_score, now())
+  on conflict (user_id) do update
+     set game = excluded.game, course = excluded.course, state = excluded.state, run = excluded.run,
+         n = excluded.n, tail = excluded.tail, bike = excluded.bike, score = excluded.score, updated_at = excluded.updated_at;
+  update public.game_lobby_members set seen_at = now() where user_id = auth.uid();
+  delete from public.game_live where updated_at < now() - interval '10 minutes';
+  return public.game_live_state(p_game, v_course);
+end;
+$$;
+
+-- nur schauen (Startseite, Lobby): wer live ist und die eigene Lobby
+drop function if exists public.game_live_list();
+create or replace function public.game_live_list()
+returns jsonb language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_member() then return null; end if;
+  update public.game_lobby_members set seen_at = now() where user_id = auth.uid();
+  return public.game_live_state(null, null);
+end;
+$$;
+
+-- Spiel verlassen: nicht mehr live
+create or replace function public.game_live_leave()
+returns void language sql security definer set search_path = public as $$
+  delete from public.game_live where user_id = auth.uid();
+$$;
+
+-- Lobby eröffnen: neuer Code (ohne leicht verwechselbare Zeichen), man ist gleich drin
+create or replace function public.lobby_create()
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_code text;
+  v_try  int := 0;
+begin
+  if not public.is_member() then raise exception 'not_member' using errcode = '42501'; end if;
+  -- aufräumen: verlassene Lobbys und lange nicht gesehene Mitglieder
+  delete from public.game_lobby_members where seen_at < now() - interval '6 hours';
+  delete from public.game_lobbies g where g.created_at < now() - interval '10 minutes'
+     and not exists (select 1 from public.game_lobby_members m where m.code = g.code);
+  loop
+    v_code := (select string_agg(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 1 + floor(random() * 32)::int, 1), '') from generate_series(1, 4));
+    begin
+      insert into public.game_lobbies (code, created_by) values (v_code, auth.uid());
+      exit;
+    exception when unique_violation then
+      v_try := v_try + 1;
+      if v_try > 30 then raise exception 'no_code'; end if;
+    end;
+  end loop;
+  perform public.lobby_join(v_code);
+  return v_code;
+end;
+$$;
+
+-- Lobby beitreten (Groß-/Kleinschreibung und Leerzeichen egal); eine andere Lobby verlässt man dabei
+create or replace function public.lobby_join(p_code text)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_code text := upper(regexp_replace(coalesce(p_code, ''), '\s', '', 'g'));
+  v_old  text;
+begin
+  if not public.is_member() then raise exception 'not_member' using errcode = '42501'; end if;
+  if not exists (select 1 from public.game_lobbies where code = v_code) then
+    raise exception 'lobby_not_found' using errcode = 'P0002';
+  end if;
+  select code into v_old from public.game_lobby_members where user_id = auth.uid();
+  insert into public.game_lobby_members (user_id, code) values (auth.uid(), v_code)
+  on conflict (user_id) do update set code = excluded.code, joined_at = case when public.game_lobby_members.code = excluded.code then public.game_lobby_members.joined_at else now() end, seen_at = now();
+  if v_old is not null and v_old <> v_code then
+    delete from public.game_lobbies g where g.code = v_old and not exists (select 1 from public.game_lobby_members m where m.code = v_old);
+  end if;
+  return v_code;
+end;
+$$;
+
+-- Lobby verlassen (die letzte macht das Licht aus)
+create or replace function public.lobby_leave()
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_code text;
+begin
+  delete from public.game_lobby_members where user_id = auth.uid() returning code into v_code;
+  if v_code is not null then
+    delete from public.game_lobbies g where g.code = v_code and not exists (select 1 from public.game_lobby_members m where m.code = v_code);
+  end if;
+end;
+$$;
+
+-- Rennen für die ganze Lobby starten: „Los“ in 12 s (alle laden ihr Spiel, der Countdown läuft auf diese Zeit)
+create or replace function public.lobby_start(p_game text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_code text;
+begin
+  if not public.is_member() then raise exception 'not_member' using errcode = '42501'; end if;
+  if p_game not in ('zeitfahren', 'abfahrt', 'sprint', 'berg') then raise exception 'invalid_game' using errcode = '22023'; end if;
+  select code into v_code from public.game_lobby_members where user_id = auth.uid();
+  if v_code is null then raise exception 'no_lobby' using errcode = 'P0002'; end if;
+  update public.game_lobbies
+     set race_seq = race_seq + 1, race_game = p_game, race_at = now() + interval '12 seconds', race_by = auth.uid()
+   where code = v_code;
+  update public.game_lobby_members set seen_at = now() where user_id = auth.uid();
+  return public.game_live_state(null, null);
+end;
+$$;
+
+revoke execute on function public.game_live_state(text, text) from public, anon, authenticated;
+revoke execute on function public.game_live_ping(text, text, text, text, int, int[], text, int) from public, anon;
+revoke execute on function public.game_live_list()  from public, anon;
+revoke execute on function public.game_live_leave() from public, anon;
+revoke execute on function public.lobby_create()    from public, anon;
+revoke execute on function public.lobby_join(text)  from public, anon;
+revoke execute on function public.lobby_leave()     from public, anon;
+revoke execute on function public.lobby_start(text) from public, anon;
+grant  execute on function public.game_live_ping(text, text, text, text, int, int[], text, int) to authenticated;
+grant  execute on function public.game_live_list()  to authenticated;
+grant  execute on function public.game_live_leave() to authenticated;
+grant  execute on function public.lobby_create()    to authenticated;
+grant  execute on function public.lobby_join(text)  to authenticated;
+grant  execute on function public.lobby_leave()     to authenticated;
+grant  execute on function public.lobby_start(text) to authenticated;
+
 drop policy if exists profiles_stage_select on public.stage_profiles;
 create policy profiles_stage_select on public.stage_profiles
   for select to authenticated using (public.is_member() or public.is_admin());
