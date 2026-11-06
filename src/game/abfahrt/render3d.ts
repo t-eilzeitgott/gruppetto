@@ -19,6 +19,7 @@ import { mistTexture, waterTexture } from './falls3d';
 import { waterNormalCanvas, waterify, type WaterUniforms } from './water3d';
 import { campanile } from './campanile3d';
 import { ARC, arcDeTriomphe, eiffelTower, parisProps, sacreCoeur } from './paris3d';
+import { albiCathedral, angersCastle, chambord, chateauPau, franceProps, gatteville, geant, mendeCathedral, montStMichel, peyrouAqueduct, saintSernin } from './france3d';
 import type { Mark } from './venue';
 import { adCell, adsTex, archPostTex, officialBannerTex, roadLineTex, ARCH_LOOK, type ArchStyle, AD_COUNT, TEAM_ADS, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex } from './tex3d';
 import { CURB_CHAMFER, CURB_FACE, CURB_TOP, CURB_V, COVER_PATCH, GUTTER_W, asphaltTex as groundAsphalt, cobbleTex, coverAtlas, curbTex, grainTex, groundCached, gutterTex, vergeTex, walkTex, type GroundTex } from './groundTex';
@@ -62,7 +63,11 @@ import { TEAMS } from '../teams';
 import { menuInset } from '../menuView';
 
 /** geplantes Wahrzeichen: Segment, Lage quer/längs dazu und der Rahmen des Segments (Welt) */
-interface VenueMark { i: number; kind: Mark; lat: number; along: number; f: { x: number; y: number; z: number; th: number }; sg?: number }
+interface VenueMark {
+  i: number; kind: Mark; lat: number; along: number; f: { x: number; y: number; z: number; th: number }; sg?: number;
+  /** Front zur Straße (Bau um 90° gedreht) und Maßstab */
+  face?: boolean; s?: number;
+}
 
 /** Kennung der feinen Landschafts-Shader (gfxOpts „details“) im Programmschlüssel */
 /** Schlüssel der Bodenshader: Details (ab Stufe 7) und schlichte Böden (Stufe 1–2) übersetzen eigene Fassungen */
@@ -437,7 +442,27 @@ const FAN_SAG = 0.2;     // so weit hängt das Band in der Mitte durch
 const FAN_FIRST = 14;    // erster Bogen 28 m nach dem Anfang einer Zuschauerzone …
 const FAN_EVERY = 44;    // … und bei langen Zonen alle 88 m ein weiterer
 
-const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'bush', 'rock', 'boulder', 'snowpole', 'hay', 'vinerow', 'fence', 'lamp', 'logs', 'palm', 'poplar', 'apple', 'plane', 'stonePine', 'lampParis', 'morris', 'kiosk', 'wallace', 'obelisk']);
+/** große Bauten am Talrand (france3d.ts): Bau und Radius je Rasterpunkt ohne Bäume */
+const FAR_MARKS: Partial<Record<Mark, [(T: Town, at: At) => void, number]>> = {
+  gatteville: [gatteville, 14], montStMichel: [montStMichel, 40], chambord: [chambord, 22], angers: [angersCastle, 24],
+  albi: [albiCathedral, 18], sernin: [saintSernin, 18], mende: [mendeCathedral, 14], chateauPau: [chateauPau, 14],
+  peyrou: [(T, at) => peyrouAqueduct(T, at, 260), 8],
+};
+/** Grundriss am Bau (quer l0…l1, längs a0…a1), Front zur Straße (face), Maßstab, Lieblingsabstand längs */
+interface FarSite { l0: number; l1: number; a0: number; a1: number; face?: boolean; s?: number; ideal?: number }
+const FAR_SITES: Partial<Record<Mark, FarSite>> = {
+  gatteville: { l0: -30, l1: 22, a0: -6, a1: 14 },
+  montStMichel: { l0: -150, l1: 150, a0: -150, a1: 150, s: 0.42, ideal: 700 },
+  chambord: { l0: -87, l1: 87, a0: -40, a1: 32, face: true, s: 0.7 },
+  angers: { l0: -76, l1: 94, a0: -58, a1: 70, s: 0.6 },
+  albi: { l0: -21, l1: 18, a0: -25, a1: 116 },
+  sernin: { l0: -36, l1: 36, a0: -2, a1: 118 },
+  mende: { l0: -16, l1: 16, a0: -12, a1: 86, face: true },
+  chateauPau: { l0: -47, l1: 39, a0: -9, a1: 35, face: true },
+  peyrou: { l0: -12, l1: 12, a0: -26, a1: 262, ideal: 250 },
+};
+
+const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'bush', 'rock', 'boulder', 'snowpole', 'hay', 'vinerow', 'fence', 'lamp', 'logs', 'palm', 'poplar', 'apple', 'plane', 'stonePine', 'lampParis', 'morris', 'kiosk', 'wallace', 'obelisk', 'calvaire', 'menhir', 'fronton', 'elephants', 'marteau']);
 const BILLBOARD: Record<string, { variants: number; frames: number }> = {
   cow: { variants: 2, frames: 1 }, cowBW: { variants: 2, frames: 1 }, chevron: { variants: 1, frames: 1 },
   dosso: { variants: 1, frames: 1 }, chalet: { variants: 2, frames: 1 }, barn: { variants: 2, frames: 1 }, rifugio: { variants: 1, frames: 1 },
@@ -1328,7 +1353,7 @@ export class Renderer3D {
     roadify(this.mats.covers, 'cv', 0.12);
     // Relief im Licht (ab Stufe 7): Höhenkarten der Böden als Bump-Map (Stellvertreter, bis die Gegend feststeht)
     if (gfxOn('details')) for (const k of GROUND_BUMP) { const m = this.mats[k]; m.bumpMap = this.placeholder(true); m.bumpScale = BUMP_SCALE[k]; }
-    this.props = { ...propGeometries(), ...parisProps() };
+    this.props = { ...propGeometries(), ...parisProps(), ...franceProps() };
     this.markGeo = landmarkGeometries();
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
     // Weltkoordinaten statt UV – waagrechte Lagen laufen so über alle Flächen hinweg
@@ -2725,35 +2750,112 @@ export class Renderer3D {
         add({ i: best, kind: 'arc', lat: 0, along: 0, f: frame(best) });
         this.markClear.push({ i0: best - 7, i1: best + 7, x0: ARC.mw - 0.6, x1: ARC.W + 4, sg: 0 });
       }
-      if (has('eiffel')) {
-        // schräg voraus über der Zielstadt: schon auf der Anfahrt über die Felder zu sehen, im Ort über den Dächern –
-        // dort, wo das Gelände am tiefsten liegt (die Berge bleiben)
-        const town = t.sections.find((x) => x.biome === 'village' && x.start <= fi && x.end > fi);
-        const i = Math.max(10, town ? town.start : fi - 300);
-        const f = frame(i);
-        const T = this.terrain!;
-        const pos = (lat: number, along: number) => [f.x + Math.cos(f.th) * lat + Math.sin(f.th) * along, f.z + Math.sin(f.th) * lat - Math.cos(f.th) * along];
-        let best = { lat: 200, along: 500, h: f.y, score: Infinity };
-        const hAt = (x: number, z: number) => T.heightIn(T.region(x - 2, z - 2, x + 2, z + 2), x, z);
-        for (const lat of [-330, -260, -200, -150, 150, 200, 260, 330]) for (const along of [200, 350, 500, 650, 800, 950]) {
+      // Wahrzeichen in der Ferne über dem Zielort: schon auf der Anfahrt über die Felder zu sehen, im Ort über den
+      // Dächern – dort, wo das Gelände am tiefsten liegt (die Berge bleiben)
+      const town = t.sections.find((x) => x.biome === 'village' && x.start <= fi && x.end > fi);
+      const i = Math.max(10, town ? town.start : fi - 300);
+      const f = frame(i);
+      const T = this.terrain!;
+      const pos = (lat: number, along: number) => [f.x + Math.cos(f.th) * lat + Math.sin(f.th) * along, f.z + Math.sin(f.th) * lat - Math.cos(f.th) * along];
+      const hAt = (x: number, z: number) => T.heightIn(T.region(x - 2, z - 2, x + 2, z + 2), x, z);
+      const taken: number[][] = [];
+      /** Platz suchen (frei von Straßen, tief, nicht zu weit seitlich), Gelände darunter ebnen, Wahrzeichen merken */
+      const distant = (kind: Mark, o: { lats: number[]; alongs: number[]; ring: number; road: number; flat: number; ideal?: number; span?: number }) => {
+        let best = { lat: o.lats[0], along: o.alongs[0], h: f.y, score: Infinity };
+        for (const lat of o.lats) for (const along of o.alongs) {
           const [px, pz] = pos(lat, along);
+          if (taken.some(([x, z]) => Math.hypot(x - px, z - pz) < o.ring + 150)) continue;
           const reg = T.region(px - 2, pz - 2, px + 2, pz + 2);
           // nie auf oder an einer Straße (die Strecke kann in diese Richtung abbiegen)
           const rd = T.roadDist(reg, px, pz);
-          if (rd !== null && rd < 110) continue;
+          if (rd !== null && rd < o.road) continue;
           // freies, tiefes Land ringsum (nicht in einer Schlucht zwischen Bergen)
           let hMax = hAt(px, pz);
-          for (let k = 0; k < 8; k++) hMax = Math.max(hMax, hAt(px + Math.cos(k * 0.785) * 75, pz + Math.sin(k * 0.785) * 75));
-          const score = (hMax - f.y) + Math.abs(lat) * 0.05 + Math.abs(along - 600) * 0.006;
+          for (let k = 0; k < 8; k++) hMax = Math.max(hMax, hAt(px + Math.cos(k * 0.785) * o.ring, pz + Math.sin(k * 0.785) * o.ring));
+          const score = (hMax - f.y) + Math.abs(lat) * 0.05 + Math.abs(along - (o.ideal ?? 600)) * 0.006;
           if (score < best.score) best = { lat, along, h: hAt(px, pz), score };
         }
         const [px, pz] = pos(best.lat, best.along);
+        taken.push([px, pz]);
         const base = Math.min(best.h, f.y + 40);
         const pts: number[] = [];
-        for (const [dx, dz] of [[-55, -55], [55, -55], [55, 55], [-55, 55], [0, 0]]) pts.push(px + dx, base - 0.5, pz + dz, 1);
-        T.addFlat(pts, 60, 1, [], true);
-        add({ i, kind: 'eiffel', lat: best.lat, along: best.along, f: { ...f, y: base } });
+        const R = o.flat;
+        // längliche Bauten (Aquädukt): Ebene längs der Achse
+        const span = o.span ?? 0;
+        for (let q = 0; q <= Math.max(1, Math.ceil(span / R)); q++) {
+          const al = span ? (q * span) / Math.max(1, Math.ceil(span / R)) : 0;
+          const [cx, cz] = pos(best.lat, best.along + al);
+          for (const [dx, dz] of [[-R, -R], [R, -R], [R, R], [-R, R], [0, 0]]) pts.push(cx + dx * 0.9, base - 0.5, cz + dz * 0.9, 1);
+        }
+        T.addFlat(pts, R, 1, [], true);
+        add({ i, kind, lat: best.lat, along: best.along, f: { ...f, y: base } });
+      };
+      if (has('eiffel')) distant('eiffel', { lats: [-330, -260, -200, -150, 150, 200, 260, 330], alongs: [200, 350, 500, 650, 800, 950], ring: 75, road: 110, flat: 60 });
+      /**
+       * Große Bauten am Talrand (die Täler sind schmal, die Berge bleiben): Grundriss (quer l, längs a, am Bau) ganz
+       * außerhalb der Ortszeilen, möglichst ebenes Gelände, nicht zu hoch über der Straße; das Gelände unter dem
+       * Grundriss wird auf die Höhe der Mitte geebnet (am Hang eine Terrasse wie bei einer Burg).
+       */
+      const site = (kind: Mark, o: FarSite) => {
+        const sc = o.s ?? 1;
+        const off = (sg: number, l: number, a: number) => (o.face ? [sg * a * sc, -sg * l * sc] : [l * sc, a * sc]);
+        const grid: [number, number][] = [];
+        for (let u = 0; u <= 2; u++) for (let v = 0; v <= 2; v++) grid.push([o.l0 + ((o.l1 - o.l0) * u) / 2, o.a0 + ((o.a1 - o.a0) * v) / 2]);
+        let best: { lat: number; along: number; sg: number; h: number; score: number } | null = null;
+        for (const sg of [-1, 1]) for (const D of [45, 60, 80, 100, 125, 150, 180]) for (let along = 120; along <= 1000; along += 110) {
+          // Mitte so, dass die straßennächste Ecke D vom Rand hat
+          let near = Infinity;
+          for (const [l, a] of grid) near = Math.min(near, sg * off(sg, l, a)[0]);
+          const lat = sg * (D - near);
+          let ok = true, hMin = Infinity, hMax = -Infinity;
+          for (const [l, a] of grid) {
+            const [dl, da] = off(sg, l, a);
+            const [px, pz] = pos(lat + dl, along + da);
+            if (taken.some(([x, z]) => Math.hypot(x - px, z - pz) < 60)) { ok = false; break; }
+            const reg = T.region(px - 2, pz - 2, px + 2, pz + 2);
+            const rd = T.roadDist(reg, px, pz);
+            if (rd !== null && rd < 34) { ok = false; break; }
+            const h = T.heightIn(reg, px, pz);
+            hMin = Math.min(hMin, h);
+            hMax = Math.max(hMax, h);
+          }
+          if (!ok) continue;
+          const [cx, cz] = pos(lat + off(sg, (o.l0 + o.l1) / 2, (o.a0 + o.a1) / 2)[0], along + off(sg, (o.l0 + o.l1) / 2, (o.a0 + o.a1) / 2)[1]);
+          const hc = hAt(cx, cz);
+          const up = hc - f.y;
+          const score = (hMax - hMin) * 1.2 + Math.max(0, up - 22) * 2 + D * 0.05 + Math.abs(along - (o.ideal ?? 450)) * 0.012;
+          if (!best || score < best.score) best = { lat, along, sg, h: (hMin + hMax) / 2, score };
+        }
+        if (!best) return;
+        const base = Math.min(best.h, f.y + 45);
+        const pts: number[] = [];
+        // Raster über den Grundriss (etwa alle 16 m), jeder Punkt eben auf Höhe der Mitte
+        const nl = Math.max(1, Math.ceil(((o.l1 - o.l0) * sc) / 16)), na = Math.max(1, Math.ceil(((o.a1 - o.a0) * sc) / 16));
+        for (let u = 0; u <= nl; u++) for (let v = 0; v <= na; v++) {
+          const [dl, da] = off(best.sg, o.l0 + ((o.l1 - o.l0) * u) / nl, o.a0 + ((o.a1 - o.a0) * v) / na);
+          const [px, pz] = pos(best.lat + dl, best.along + da);
+          pts.push(px, base - 0.4, pz, 1);
+          taken.push([px, pz]);
+        }
+        T.addFlat(pts, 14, 1, [], true);
+        add({ i, kind, lat: best.lat, along: best.along, f: { ...f, y: base }, sg: best.sg, face: o.face, s: sc });
+      };
+      for (const k of Object.keys(FAR_SITES) as Mark[]) if (has(k)) site(k, FAR_SITES[k]!);
+    }
+    if (t.kind === 'mountain' && has('geant')) {
+      // Géant du Tourmalet auf der Kuppe, gegenüber der Berghütte, Gesicht zur Straße
+      const top = Math.round(MOUNTAIN_TOP / SEG);
+      t.seg(top + 60);
+      let i = top + 6;
+      let sg = -1;
+      for (let k = top; k < top + 60; k++) {
+        const sp = t.seg(k).sprites?.find((x) => x.k === 'rifugio');
+        if (sp) { i = k - 4; sg = sp.x < 0 ? 1 : -1; break; }
       }
+      const f = frame(i);
+      const d0 = EDGE + 5;
+      add({ i, kind: 'geant', lat: sg * d0, along: 0, f, sg });
+      this.markClear.push({ i0: i - 4, i1: i + 4, x0: d0 - 3, x1: d0 + 4, sg });
     }
     if (t.kind === 'mountain' && has('sacreCoeur')) {
       // auf der Kuppe (Butte Montmartre) an Stelle der Berghütte, mit der Front zur Straße
@@ -2798,6 +2900,19 @@ export class Renderer3D {
     const at0: At = (lat, al, h) => [f.x + rx * (m.lat + lat) + fx * (m.along + al), f.y + h, f.z + rz * (m.lat + lat) + fz * (m.along + al)];
     if (m.kind === 'arc') arcDeTriomphe(T, at0);
     else if (m.kind === 'eiffel') eiffelTower(T.plain, at0);
+    else if (m.kind === 'geant') geant(T, at0);
+    else if (FAR_MARKS[m.kind]) {
+      const [build, r] = FAR_MARKS[m.kind]!;
+      const sg = m.sg ?? 1, sc = m.s ?? 1;
+      const at: At = m.face ? (l, a, h) => at0(sg * a * sc, -sg * l * sc, h * sc) : (l, a, h) => at0(l * sc, a * sc, h * sc);
+      build(T, at);
+      // Bäume im Grundriss weg
+      const o = FAR_SITES[m.kind]!;
+      for (let l = o.l0; l <= o.l1 + 0.1; l += Math.max(10, (o.l1 - o.l0) / 4)) for (let a = o.a0; a <= o.a1 + 0.1; a += Math.max(10, (o.a1 - o.a0) / 4)) {
+        const p = at(l, a, 0);
+        this.clearTrees(p[0], p[2], r * sc);
+      }
+    }
     else if (m.kind === 'sacreCoeur') {
       // Front zur Straße: die Tiefe des Baus läuft quer von der Straße weg
       const sg = m.sg ?? 1;
@@ -6584,6 +6699,12 @@ export class Renderer3D {
       else if (sp.k === 'fountain') sp = { ...sp, k: sp.s >= 1.2 ? 'obelisk' : 'wallace', s: 1 };
       else if (sp.k === 'rifugio' || sp.k === 'campervan') return;
     }
+    // Brunnen auf dem Platz: Elefantenbrunnen (Chambéry), Dampfhammer (Le Creusot)
+    const vm = this.track!.venue?.marks;
+    if (sp.k === 'fountain' && vm) {
+      if (vm.includes('elephants')) sp = { ...sp, k: 'elephants', s: 1 };
+      else if (vm.includes('marteau')) sp = { ...sp, k: 'marteau', s: 1 };
+    }
     const sg = sp.x < 0 ? -1 : 1;
     // ax: Abstand wie bei Normalbreite (Profil, Korridor); am Rand rückt alles mit der Breite nach außen
     const ax = Math.abs(sp.x);
@@ -6621,8 +6742,9 @@ export class Renderer3D {
       if (kind === 'lamp') rot = sp.x < 0 ? Math.atan2(-a.rx, -a.rz) + Math.PI : Math.atan2(a.rx, a.rz) + Math.PI;
       if (kind === 'lamp') rot = sp.x < 0 ? Math.atan2(-Math.cos(a.th), -Math.sin(a.th)) : Math.atan2(Math.cos(a.th), Math.sin(a.th));
       const sc = sp.s * (kind === 'rock' && sp.h > 0.05 ? 1 : 1);
-      const fixed = kind === 'lampParis' || kind === 'morris' || kind === 'kiosk' || kind === 'wallace' || kind === 'obelisk';
-      if (kind === 'kiosk') rot = -a.th + (sp.x < 0 ? Math.PI / 2 : -Math.PI / 2);
+      const fixed = kind === 'lampParis' || kind === 'morris' || kind === 'kiosk' || kind === 'wallace' || kind === 'obelisk'
+        || kind === 'calvaire' || kind === 'fronton' || kind === 'elephants' || kind === 'marteau';
+      if (kind === 'kiosk' || kind === 'calvaire' || kind === 'fronton' || kind === 'marteau') rot = -a.th + (sp.x < 0 ? Math.PI / 2 : -Math.PI / 2);
       const m = new THREE.Matrix4().compose(new THREE.Vector3(px, py - 0.05, pz), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rot, 0)), new THREE.Vector3(sc, sc * (fixed ? 1 : 0.9 + hash(s.i + sp.v) * 0.25), sc));
       const v = 0.85 + hash(s.i * 3 + sp.v) * 0.3;
       // im Dorf stehen keine Bäume am Straßenrand (dort sind Gärten und Häuser)

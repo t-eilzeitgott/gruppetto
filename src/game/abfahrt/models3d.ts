@@ -367,7 +367,9 @@ export const mulC = (a: RGBf, f: number): RGBf => [a[0] * f, a[1] * f, a[2] * f]
 export type Prop3D = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'bush' | 'rock' | 'boulder'
   | 'snowpole' | 'hay' | 'vinerow' | 'fence' | 'lamp' | 'logs' | 'palm' | 'poplar' | 'apple' | 'plane' | 'stonePine'
   // Paris (paris3d.ts)
-  | 'lampParis' | 'morris' | 'kiosk' | 'wallace' | 'obelisk';
+  | 'lampParis' | 'morris' | 'kiosk' | 'wallace' | 'obelisk'
+  // Frankreich (france3d.ts)
+  | 'calvaire' | 'menhir' | 'fronton' | 'elephants' | 'marteau';
 
 /** Requisiten (Bäume kommen aus forest3d: Bildvorrat und nahe 3D-Modelle) */
 export function propGeometries(): Partial<Record<Prop3D, THREE.BufferGeometry>> {

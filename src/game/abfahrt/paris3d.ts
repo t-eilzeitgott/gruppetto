@@ -18,7 +18,7 @@ const PI = Math.PI;
 // ------------------------------------------------------------------ Grundformen in Ortskoordinaten (quer, längs, Höhe)
 
 /** Quader (quer l0…l1, längs a0…a1, Höhe h0…h1) */
-function box(gb: GB, at: At, l0: number, l1: number, a0: number, a1: number, h0: number, h1: number, col: RGBf, top = true, bottom = false) {
+export function box(gb: GB, at: At, l0: number, l1: number, a0: number, a1: number, h0: number, h1: number, col: RGBf, top = true, bottom = false) {
   gb.quad(at(l0, a0, h0), at(l1, a0, h0), at(l1, a0, h1), at(l0, a0, h1), col);
   gb.quad(at(l1, a1, h0), at(l0, a1, h0), at(l0, a1, h1), at(l1, a1, h1), sh(col, 0.92));
   gb.quad(at(l0, a1, h0), at(l0, a0, h0), at(l0, a0, h1), at(l0, a1, h1), sh(col, 0.86));
@@ -28,7 +28,7 @@ function box(gb: GB, at: At, l0: number, l1: number, a0: number, a1: number, h0:
 }
 
 /** Kegelstumpf/Zylinder um (cl, ca) – Mantel, wahlweise Deckel */
-function cyl(gb: GB, at: At, cl: number, ca: number, r0: number, r1: number, h0: number, h1: number, n: number, col: RGBf | ((k: number) => RGBf), cap = true) {
+export function cyl(gb: GB, at: At, cl: number, ca: number, r0: number, r1: number, h0: number, h1: number, n: number, col: RGBf | ((k: number) => RGBf), cap = true) {
   for (let k = 0; k < n; k++) {
     const t0 = (k / n) * 2 * PI, t1 = ((k + 1) / n) * 2 * PI;
     const c = typeof col === 'function' ? col(k) : col;
@@ -39,7 +39,7 @@ function cyl(gb: GB, at: At, cl: number, ca: number, r0: number, r1: number, h0:
 }
 
 /** Kuppel (Halbkugel, in der Höhe gestreckt) über dem Kreis (cl, ca, r) auf Höhe h0 */
-function dome(gb: GB, at: At, cl: number, ca: number, r: number, h0: number, hs: number, n: number, m: number, col: RGBf, ribs?: RGBf) {
+export function dome(gb: GB, at: At, cl: number, ca: number, r: number, h0: number, hs: number, n: number, m: number, col: RGBf, ribs?: RGBf) {
   for (let j = 0; j < m; j++) {
     const p0 = (j / m) * (PI / 2), p1 = ((j + 1) / m) * (PI / 2);
     const r0 = Math.cos(p0) * r, r1 = Math.cos(p1) * r;

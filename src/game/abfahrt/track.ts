@@ -92,7 +92,9 @@ export type SpriteKind =
   | 'fence' | 'vinerow' | 'sunflowers' | 'crowd' | 'chevron' | 'lamp' | 'parasol' | 'boat' | 'logs'
   | 'tornante' | 'townSign' | 'passSign' | 'fountain' | 'flagpole' | 'campervan' | 'grassTuft' | 'stoneWall' | 'poplar' | 'apple' | 'plane' | 'stonePine'
   // Straßenmöbel der Schauplätze (paris3d.ts)
-  | 'lampParis' | 'morris' | 'kiosk' | 'wallace' | 'obelisk';
+  | 'lampParis' | 'morris' | 'kiosk' | 'wallace' | 'obelisk'
+  // Frankreich (france3d.ts)
+  | 'calvaire' | 'menhir' | 'fronton' | 'elephants' | 'marteau';
 
 export interface Sprite {
   k: SpriteKind;
@@ -2160,7 +2162,7 @@ export class Track {
     const sc = this.scape!;
     const r = mulberry32((this.seed ^ Math.imul(start + 29, 0x27d4eb2d)) >>> 0);
     const alleyKind: SpriteKind = sc.alley === 'plane' ? 'plane' : sc.alley === 'pine' ? 'stonePine' : 'treeRound';
-    if (biome !== 'village') { this.countryAlley(start, n, biome, alleyKind, r); return; }
+    if (biome !== 'village') { this.countryAlley(start, n, biome, alleyKind, r); this.countryMarks(start, n, biome, sec); return; }
     if (!this.boulevard) return;
     const pz = this.sections[sec].piazza;
     const free = (i: number, sg: number) => {
@@ -2208,6 +2210,59 @@ export class Track {
         if (!ok(s, side) || r() < 0.06) continue;   // ab und zu fehlt ein Baum
         const x = dx + (r() - 0.5) * 0.5;
         this.add(i, { k: kind, x: sg * (EDGE + x), h: Track.groundH(side, x), s: 0.9 + r() * 0.25, v: Math.floor(r() * 4), f: r() < 0.5 });
+      }
+    }
+  }
+
+  /**
+   * Wahrzeichen der Gegend über Land: bretonische Kalvarienberge am Straßenrand und Menhire auf den Wiesen, die
+   * baskische Pelota-Wand vor dem Ort. Eigener Zufall – die Strecke bleibt gleich.
+   */
+  private countryMarks(start: number, n: number, biome: BiomeId, sec: number) {
+    const v = this.venue;
+    if (!v || this.kind === 'descent' || biome === 'pass' || biome === 'alpine') return;
+    const r = mulberry32((this.seed ^ Math.imul(start + 71, 0x165667b1)) >>> 0);
+    const flat = (s: Seg, side: Side, maxTilt: number) => !s.tunnel && !(s.bridge > 0) && !s.crowd && !side.drop && side.wall === 0
+      && Math.abs(side.tilt) < maxTilt && (side.ground === 'meadow' || side.ground === 'field') && !(side === s.L ? s.bL : s.bR);
+    const free = (i0: number, i1: number, sg: number, maxTilt: number) => {
+      for (let i = i0; i <= i1; i++) { const s = this.seg(i); if (!flat(s, sg < 0 ? s.L : s.R, maxTilt) || Math.abs(s.curve) > 0.02) return false; }
+      return true;
+    };
+    if (v.marks.includes('calvaire') && r() < 0.7) {
+      const i = start + 20 + Math.floor(r() * Math.max(1, n - 40));
+      const sg = r() < 0.5 ? -1 : 1;
+      if (i < start + n - 4 && free(i - 3, i + 3, sg, 0.25)) {
+        const s = this.seg(i);
+        this.add(i, { k: 'calvaire', x: sg * (EDGE + 4.2), h: Track.groundH(sg < 0 ? s.L : s.R, 4.2), s: 1, v: 0, f: false });
+      }
+    }
+    if (v.marks.includes('menhir')) {
+      // eine Reihe Menhire auf der Wiese (wie in Carnac), etwas weg von der Straße
+      for (let q = 0; q < 2; q++) {
+        if (r() > 0.6) continue;
+        const i = start + 10 + Math.floor(r() * Math.max(1, n - 30));
+        const sg = r() < 0.5 ? -1 : 1;
+        if (i + 12 >= start + n || !free(i, i + 12, sg, 0.3)) continue;
+        const cnt = 2 + Math.floor(r() * 5);
+        for (let k = 0; k < cnt; k++) {
+          const ii = i + Math.floor((k * 12) / cnt);
+          const s = this.seg(ii);
+          const dx = 9 + r() * 10;
+          this.add(ii, { k: 'menhir', x: sg * (EDGE + dx), h: Track.groundH(sg < 0 ? s.L : s.R, dx), s: 0.7 + r() * 0.7, v: Math.floor(r() * 4), f: r() < 0.5 });
+        }
+      }
+    }
+    if (v.marks.includes('fronton')) {
+      // vor dem nächsten Ort (Ende dieses Abschnitts), wo neben der Straße 30 m eben sind
+      const next = this.sections[sec + 1];
+      if (next?.biome === 'village') {
+        for (let i = start + n - 30; i > start + n - 120 && i > start + 10; i -= 4) {
+          const sg = (i >> 2) % 2 ? 1 : -1;
+          if (!free(i - 8, i + 8, sg, 0.12)) continue;
+          const s = this.seg(i);
+          this.add(i, { k: 'fronton', x: sg * (EDGE + 3.5), h: Track.groundH(sg < 0 ? s.L : s.R, 3.5), s: 1, v: 0, f: false });
+          break;
+        }
       }
     }
   }
