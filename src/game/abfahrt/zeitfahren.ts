@@ -780,7 +780,7 @@ export class TimeTrial {
       const want = !playing || (lf && (liveDone(lf) || lf.shown <= 0)) ? 0 : GHOST_ALPHA * (o.rider.old ? 0.65 : lf || o.rider.rival ? 1.25 : 1);
       o.ghost += (want - o.ghost) * Math.min(1, dr * 2.5);
       if (o.ghost < 0.01) o.ghost = want > 0 ? 0.01 : 0;
-      // aus der eigenen Lobby: hervorheben (Namensschild in seiner Farbe, Ring – render3d.ts)
+      // aus der eigenen Lobby: hervorheben (Namensschild mit rotem Punkt – render3d.ts)
       if (lf?.mate && want > 0) {
         if (!o.mark) o.mark = { name: firstName(o.rider.name), color: o.rider.color };
       } else if (o.mark) o.mark = undefined;

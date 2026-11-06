@@ -72,7 +72,7 @@ export interface LiveFeed {
   solid?: boolean;
   /** liegt gerade (Sturz) */
   down?: boolean;
-  /** ist in der eigenen Lobby: auf der Strecke deutlich hervorgehoben (großes Namensschild, Ring, voll sichtbar) */
+  /** ist in der eigenen Lobby: auf der Strecke hervorgehoben (Namensschild mit pulsierendem roten Punkt, fast voll sichtbar) */
   mate?: boolean;
 }
 

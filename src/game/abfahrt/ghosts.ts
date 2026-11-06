@@ -257,7 +257,7 @@ export class GhostPack {
       pedalStep(o, downhill && !push && o.v > 12 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / warp, dt);
       const gone = f ? !rt && (liveDone(f) || f.shown <= 0 || liveSamples(f) < 1) : visible && t > o.end + 2.5;
       const want = visible && !gone ? (o.solid ? ALPHA_SOLID : f?.mate ? ALPHA_MATE : f ? ALPHA_LIVE : o.rider.rival ? ALPHA_LIVE : o.rider.old ? ALPHA_OLD : ALPHA) : 0;
-      // aus der eigenen Lobby: hervorheben (Namensschild in seiner Farbe, Ring – render3d.ts)
+      // aus der eigenen Lobby: hervorheben (Namensschild mit rotem Punkt – render3d.ts)
       if (f && (f.mate || o.solid) && want > 0) {
         if (!o.mark || o.mark.color !== o.rider.color) o.mark = { name: firstName(o.rider.name), color: o.rider.color };
       } else if (o.mark) o.mark = undefined;

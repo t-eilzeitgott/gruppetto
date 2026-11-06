@@ -71,7 +71,7 @@ export interface Opp {
   wreck?: Wreck;
   /** sieht den Sturz voraus und reagiert ab dieser Spielzeit (s) – vorher fährt er ahnungslos weiter */
   sees?: number;
-  /** Mitspieler aus der eigenen Lobby: in der Darstellung hervorgehoben (großes Namensschild in seiner Farbe, Ring) */
+  /** Mitspieler aus der eigenen Lobby: in der Darstellung hervorgehoben (Namensschild mit pulsierendem roten Punkt) */
   mark?: { name: string; color: string };
 }
 

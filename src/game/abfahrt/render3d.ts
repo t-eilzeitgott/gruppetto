@@ -7568,7 +7568,7 @@ export class Renderer3D {
   }
 
   /** Namensschilder im Bild: Position, Deckkraft (weich ein- und ausgeblendet) */
-  private tagView = new Map<number, { x: number; y: number; text: string; mate: boolean; a: number; on: boolean; sub?: string; color?: string; big?: boolean; fy?: number }>();
+  private tagView = new Map<number, { x: number; y: number; text: string; mate: boolean; a: number; on: boolean; sub?: string; color?: string; big?: boolean }>();
   private tagV = new THREE.Vector3();
   /** Mitspieler aus der Lobby, die gerade nicht im Bild sind (hinter einem): Hinweis am Bildrand */
   private markOff: { name: string; color: string; dz: number; left: boolean }[] = [];
@@ -7691,12 +7691,11 @@ export class Renderer3D {
       // weit weg (Kamera): kleine Teile weglassen – erst, wenn sie sich im Shader schon aufgelöst haben
       const fh = RiderModel.FAR_HIDE;
       m.setFar(this.camera.position.distanceToSquared(m.group.position) > (m.isFar ? (fh - 1) ** 2 : fh * fh));
-      // Mitspieler aus der eigenen Lobby: immer ein großes Schild in seiner Farbe und ein Ring um das Rad
+      // Mitspieler aus der eigenen Lobby: immer ein kleines Schild mit pulsierendem roten Punkt
       const mark = o.mark && (o.ghost === undefined || o.ghost > 0.1) ? o.mark : null;
       const tag = mark ? null : g.tags?.find((t) => t.id === o.id);
       if (tag || mark) {
         // über dem Kopf des Fahrers (this.w hält nach placeOpp seine Weltposition)
-        const fy = mark ? (-this.tagV.set(this.w.x, this.w.y + 0.05, this.w.z).project(this.camera).y * 0.5 + 0.5) * this.H : 0;
         const v = this.tagV.set(this.w.x, this.w.y + 2.05, this.w.z).project(this.camera);
         if (v.z < 1) {
           const tv = this.tagView.get(o.id) ?? { x: 0, y: 0, text: '', mate: false, a: 0, on: false };
@@ -7709,7 +7708,6 @@ export class Renderer3D {
             tv.sub = Math.abs(dz) >= 4 ? `${dz > 0 ? '+' : '−'}${Math.round(Math.abs(dz))} m` : undefined;
             tv.color = mark.color;
             tv.big = true;
-            tv.fy = fy;
           } else if (tag) {
             tv.text = tag.text;
             tv.mate = !!tag.mate;
@@ -8383,121 +8381,85 @@ export class Renderer3D {
     c.globalAlpha = 1;
   }
 
-  /**
-   * Mitspieler aus der Lobby: Ring um das Rad und ein großes Schild in seiner Farbe (Name, Abstand) mit weißem Rand –
-   * auf den ersten Blick von Feld und Geistern zu unterscheiden
-   */
-  private drawMark(c: CanvasRenderingContext2D, t: { x: number; y: number; text: string; a: number; sub?: string; color?: string; fy?: number }) {
-    const font = 'ui-rounded, "SF Pro Rounded", -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
-    const col = t.color ?? this.accent;
-    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
-    c.save();
-    // Ring am Boden um das Rad (Größe aus der Höhe des Fahrers im Bild)
-    const hpx = Math.max(0, (t.fy ?? t.y) - t.y);
-    if (hpx > 10) {
-      const rx = Math.min(90, hpx * 0.42);
-      c.globalAlpha = t.a * (0.55 + 0.35 * pulse);
-      c.strokeStyle = col;
-      c.lineWidth = Math.max(2.5, Math.min(5, hpx * 0.035));
-      c.shadowColor = col;
-      c.shadowBlur = 12;
-      c.beginPath();
-      c.ellipse(t.x, t.fy!, rx * (1 + 0.06 * pulse), rx * 0.3 * (1 + 0.06 * pulse), 0, 0, Math.PI * 2);
-      c.stroke();
-      c.shadowBlur = 0;
-    }
-    // Schild
-    c.globalAlpha = t.a;
-    c.font = `800 15px ${font}`;
-    const tw = c.measureText(t.text).width;
-    c.font = `700 12px ${font}`;
-    const sw = t.sub ? c.measureText(t.sub).width + 8 : 0;
-    const w = tw + sw + 26;
-    const h = 30;
-    const x = Math.max(8, Math.min(this.W - 8 - w, t.x - w / 2));
-    const y = Math.max(8, t.y - h - 12 - (1 - t.a) * 8);
+  /** dunkle Pille mit pulsierendem roten Punkt (live) – Schild der Mitspieler aus der Lobby */
+  private livePill(c: CanvasRenderingContext2D, x: number, y: number, label: string, sub: string | undefined, alpha: number, anchorX?: number) {
+    const font = '-apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+    c.font = `700 12.5px ${font}`;
+    const tw = c.measureText(label).width;
+    c.font = `600 11px ${font}`;
+    const sw = sub ? c.measureText(sub).width + 6 : 0;
+    const w = tw + sw + 33;
+    const h = 24;
     const r = h / 2;
-    const pill = () => {
-      c.beginPath();
-      c.moveTo(x + r, y);
-      c.lineTo(x + w - r, y);
-      c.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
-      c.lineTo(x + r, y + h);
-      c.arc(x + r, y + r, r, Math.PI / 2, (Math.PI * 3) / 2);
-      c.closePath();
-    };
-    c.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    c.shadowBlur = 10;
-    c.shadowOffsetY = 2;
-    c.fillStyle = col;
-    pill();
-    c.fill();
-    c.shadowBlur = 0;
-    c.shadowOffsetY = 0;
-    // dunkler Schleier für die Lesbarkeit auf hellen Farben, weißer Rand
-    c.fillStyle = 'rgba(0, 0, 0, 0.18)';
-    pill();
-    c.fill();
-    c.strokeStyle = '#fff';
-    c.lineWidth = 2;
-    pill();
-    c.stroke();
-    // Zeiger zum Fahrer
-    const px = Math.max(x + 14, Math.min(x + w - 14, t.x));
-    c.fillStyle = '#fff';
+    const px0 = anchorX === undefined ? x : Math.max(8, Math.min(this.W - 8 - w, anchorX - w / 2));
+    c.globalAlpha = alpha * 0.96;
+    c.fillStyle = 'rgba(12, 14, 20, 0.8)';
     c.beginPath();
-    c.moveTo(px - 7, y + h + 0.5);
-    c.lineTo(px + 7, y + h + 0.5);
-    c.lineTo(px, y + h + 9);
+    c.moveTo(px0 + r, y);
+    c.lineTo(px0 + w - r, y);
+    c.arc(px0 + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+    c.lineTo(px0 + r, y + h);
+    c.arc(px0 + r, y + r, r, Math.PI / 2, (Math.PI * 3) / 2);
     c.closePath();
+    c.fill();
+    if (anchorX !== undefined) {
+      // kleiner Zeiger nach unten zum Fahrer
+      const px = Math.max(px0 + 10, Math.min(px0 + w - 10, anchorX));
+      c.beginPath();
+      c.moveTo(px - 5, y + h - 0.5);
+      c.lineTo(px + 5, y + h - 0.5);
+      c.lineTo(px, y + h + 5);
+      c.closePath();
+      c.fill();
+    }
+    // roter Punkt: fester Kern, darum ein Ring, der sich weitet und verblasst
+    const t = (performance.now() % 1500) / 1500;
+    const cx = px0 + 13;
+    const cy = y + h / 2;
+    c.fillStyle = '#ff3b47';
+    c.globalAlpha = alpha * (1 - t) * 0.6;
+    c.beginPath();
+    c.arc(cx, cy, 3.5 + t * 5, 0, Math.PI * 2);
+    c.fill();
+    c.globalAlpha = alpha;
+    c.beginPath();
+    c.arc(cx, cy, 3.5, 0, Math.PI * 2);
     c.fill();
     c.fillStyle = '#fff';
     c.textAlign = 'left';
     c.textBaseline = 'middle';
-    c.font = `800 15px ${font}`;
-    c.fillText(t.text, x + 13, y + h / 2 + 0.5);
-    if (t.sub) {
-      c.font = `700 12px ${font}`;
-      c.fillStyle = 'rgba(255,255,255,0.88)';
-      c.fillText(t.sub, x + 13 + tw + 8, y + h / 2 + 0.5);
+    c.font = `700 12.5px ${font}`;
+    c.fillText(label, px0 + 23, cy + 0.5);
+    if (sub) {
+      c.font = `600 11px ${font}`;
+      c.fillStyle = 'rgba(255,255,255,0.7)';
+      c.fillText(sub, px0 + 23 + tw + 6, cy + 0.5);
     }
+    return w;
+  }
+
+  /** Mitspieler aus der Lobby: immer ein kleines Schild über dem Kopf – Name, Abstand, pulsierender roter Punkt */
+  private drawMark(c: CanvasRenderingContext2D, t: { x: number; y: number; text: string; a: number; sub?: string }) {
+    c.save();
+    this.livePill(c, 0, Math.max(8, t.y - 24 - 8 - (1 - t.a) * 6), t.text, t.sub, t.a, t.x);
     c.restore();
   }
 
-  /** Mitspieler hinter einem: Schild am linken oder rechten Bildrand (wo er fährt) mit Abstand */
+  /** Mitspieler hinter einem: dasselbe Schild am linken oder rechten Bildrand (wo er fährt) mit Abstand */
   private drawMarkOff(c: CanvasRenderingContext2D) {
     if (!this.markOff.length) return;
-    const font = 'ui-rounded, "SF Pro Rounded", -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
     const slots = { l: 0, r: 0 };
     c.save();
-    c.textBaseline = 'middle';
     for (const m of [...this.markOff].sort((a, b) => b.dz - a.dz).slice(0, 4)) {
-      const label = `▼ ${m.name} · ${Math.max(1, Math.round(-m.dz))} m`;
-      c.font = `800 13px ${font}`;
-      const w = c.measureText(label).width + 22;
-      const h = 28;
+      const sub = `${Math.max(1, Math.round(-m.dz))} m hinter dir`;
       const k = m.left ? slots.l++ : slots.r++;
-      const x = m.left ? 10 : this.W - 10 - w;
-      const y = this.H * 0.6 + k * (h + 6);
-      const r = h / 2;
-      c.globalAlpha = -m.dz < 8 ? 1 : 0.85;
-      c.fillStyle = m.color;
-      c.beginPath();
-      c.moveTo(x + r, y);
-      c.lineTo(x + w - r, y);
-      c.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
-      c.lineTo(x + r, y + h);
-      c.arc(x + r, y + r, r, Math.PI / 2, (Math.PI * 3) / 2);
-      c.closePath();
-      c.fill();
-      c.fillStyle = 'rgba(0, 0, 0, 0.18)';
-      c.fill();
-      c.strokeStyle = '#fff';
-      c.lineWidth = 2;
-      c.stroke();
-      c.fillStyle = '#fff';
-      c.textAlign = 'left';
-      c.fillText(label, x + 11, y + h / 2 + 0.5);
+      const y = this.H * 0.6 + k * 30;
+      if (m.left) this.livePill(c, 10, y, m.name, sub, 1);
+      else {
+        // rechts: erst messen (unsichtbar), dann bündig an den Rand
+        const w = this.livePill(c, -9999, y, m.name, sub, 0);
+        this.livePill(c, this.W - 10 - w, y, m.name, sub, 1);
+      }
     }
     c.restore();
   }
