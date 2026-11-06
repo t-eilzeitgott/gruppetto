@@ -6,7 +6,7 @@
  *  - LobbyResults beim Ergebnis: wie die anderen der Lobby gerade fahren
  *  - LobbyDirector (einmal in der App): holt einen zum Lobby-Rennen ins Spiel
  */
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../app/context';
 import { useMembers } from '../app/hooks';
@@ -224,7 +224,28 @@ export function LobbySheet({ onClose, code: preset }: { onClose: () => void; cod
   const [err, setErr] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
   const input = useRef<HTMLInputElement | null>(null);
+  const layer = useRef<HTMLDivElement | null>(null);
   const close = () => { setLeaving(true); window.setTimeout(onClose, 220); };
+  // Tastatur (iPhone): sie legt sich über den unteren Bildrand, ohne dass die Seite kleiner wird – das Blatt säße
+  // dahinter. Die Ebene folgt deshalb dem wirklich sichtbaren Bereich (visualViewport): das Blatt steht über der Tastatur.
+  useLayoutEffect(() => {
+    const vv = window.visualViewport;
+    const el = layer.current;
+    if (!vv || !el) return undefined;
+    const fit = () => {
+      const covered = window.innerHeight - vv.height > 80;
+      el.style.top = covered ? `${Math.max(0, vv.offsetTop)}px` : '';
+      el.style.height = covered ? `${vv.height}px` : '';
+      el.style.bottom = covered ? 'auto' : '';
+      el.classList.toggle('is-typing', covered);
+      // das Feld soll zu sehen sein, auch wenn das Blatt höher ist als der Platz über der Tastatur
+      if (covered && document.activeElement === input.current) input.current?.scrollIntoView({ block: 'nearest' });
+    };
+    fit();
+    vv.addEventListener('resize', fit);
+    vv.addEventListener('scroll', fit);
+    return () => { vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); };
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     window.addEventListener('keydown', onKey);
@@ -249,7 +270,7 @@ export function LobbySheet({ onClose, code: preset }: { onClose: () => void; cod
   const clean = code.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 4);
 
   return createPortal(
-    <div className={cx('lobby-layer', leaving && 'is-leaving')} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+    <div ref={layer} className={cx('lobby-layer', leaving && 'is-leaving')} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className="lobby-sheet" role="dialog" aria-modal="true" aria-labelledby="lobby-title">
         <div className="lobby-sheet__head">
           <span className="lobby-sheet__icon" aria-hidden="true"><Icon name="users" size={22} /></span>

@@ -3583,6 +3583,8 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
   animation: lobby-up 0.38s cubic-bezier(0.2, 0.9, 0.3, 1) both;
 }
 @media (min-width: 640px) { .lobby-layer { align-items: center; } .lobby-sheet { border-radius: 24px; padding-bottom: 18px; } }
+/* Tastatur offen (Live.tsx): die Ebene endet an der Tastatur – unten kein Rand für die Home-Leiste nötig */
+.lobby-layer.is-typing .lobby-sheet { padding-bottom: 14px; max-height: calc(100% - 8px); }
 .lobby-sheet__head { display: flex; align-items: flex-start; gap: 12px; }
 .lobby-sheet__head h2 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
 .lobby-sheet__head p { margin: 2px 0 0; font-size: 13.5px; color: var(--muted); line-height: 1.35; }
