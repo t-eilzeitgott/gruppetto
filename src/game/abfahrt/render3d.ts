@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { EDGE, MOUNTAIN_FINISH, MOUNTAIN_TOP, ROAD_HALF, SEG, SPRINT_FINISH, TT_FINISH, Track, type Building, type Seg, type Side, type Sprite, type BiomeId, type Banner } from './track';
 import { BIOME_PALETTES, lightAt, mixRGB, type RGB } from './palette';
-import { SpriteBank, roadArrow, roadText, warmRoadText } from './sprites';
+import { FLAG_VARIANT, SpriteBank, roadArrow, roadText, warmRoadText } from './sprites';
 import { SKY_FRAG, SKY_VERT, dailyMood, skyUniforms, type SkyMood } from './sky';
 import { seasonLook, type SeasonLook } from './season';
 import { ROOF_SNOW, SeasonAir, roofSnowHook, smokeMaterial, smokePoints } from './season3d';
@@ -18,6 +18,8 @@ import * as worldStore from './worldStore';
 import { mistTexture, waterTexture } from './falls3d';
 import { waterNormalCanvas, waterify, type WaterUniforms } from './water3d';
 import { campanile } from './campanile3d';
+import { ARC, arcDeTriomphe, eiffelTower, parisProps, sacreCoeur } from './paris3d';
+import type { Mark } from './venue';
 import { adCell, adsTex, archPostTex, officialBannerTex, roadLineTex, ARCH_LOOK, type ArchStyle, AD_COUNT, TEAM_ADS, SIGN_COUNT, FAN_ASPECT, FAN_CELLS, fanAtlas, fanCell, asphaltTex, bannerTex, canopyTex, glowTex, grassTex, detailTex, gravelTex, masonryTex, noiseTex, plaqueTex, rockTex, roundTex, shotcreteTex, tunnelSignTex } from './tex3d';
 import { CURB_CHAMFER, CURB_FACE, CURB_TOP, CURB_V, COVER_PATCH, GUTTER_W, asphaltTex as groundAsphalt, cobbleTex, coverAtlas, curbTex, grainTex, groundCached, gutterTex, vergeTex, walkTex, type GroundTex } from './groundTex';
 import { GROUND_STYLES, coverLang } from './groundStyle';
@@ -44,7 +46,7 @@ import { uiBusy } from '../uiBusy';
 import { RiderAnim } from './riderAnim';
 import type { RaceView, Opp, Friend } from './engine';
 import { LEVELS, LIM_MAX, TOWN_ZONE, Terrain, grassy, type Region, type TileData } from './terrain3d';
-import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, packPerson, randomPerson, setCrowdChill, type Person, type Zone } from './crowd3d';
+import { Act, KINDS, STRIDE, crowdGeometry, crowdMaterial, disposeCrowdGeometry, packPerson, randomPerson, setCrowdChill, setCrowdHome, type Person, type Zone } from './crowd3d';
 import { bakeCrowdAtlas, disposeSpriteGeometry, spriteGeometry, spriteMaterial, type CrowdAtlas } from './crowdSprites';
 import { TREC, TREE_KINDS, bakeTreeAtlas, billboardDepthMaterial, billboardMaterial, disposeBillboards, treeBillboards, treeTint, treeVariant, type TreeAtlas, type TreeSource } from './forest3d';
 import { mulberry32 } from './rng';
@@ -58,6 +60,9 @@ import { gfxAA, gfxOn, gfxRes, onGfxChange, onGfxSettings } from './gfxOpts';
 import { buildHouse, rowUnits, roofColor, roofKind, wallSet, type At, type Town } from './house3d';
 import { TEAMS } from '../teams';
 import { menuInset } from '../menuView';
+
+/** geplantes Wahrzeichen: Segment, Lage quer/längs dazu und der Rahmen des Segments (Welt) */
+interface VenueMark { i: number; kind: Mark; lat: number; along: number; f: { x: number; y: number; z: number; th: number }; sg?: number }
 
 /** Kennung der feinen Landschafts-Shader (gfxOpts „details“) im Programmschlüssel */
 /** Schlüssel der Bodenshader: Details (ab Stufe 7) und schlichte Böden (Stufe 1–2) übersetzen eigene Fassungen */
@@ -432,12 +437,12 @@ const FAN_SAG = 0.2;     // so weit hängt das Band in der Mitte durch
 const FAN_FIRST = 14;    // erster Bogen 28 m nach dem Anfang einer Zuschauerzone …
 const FAN_EVERY = 44;    // … und bei langen Zonen alle 88 m ein weiterer
 
-const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'bush', 'rock', 'boulder', 'snowpole', 'hay', 'vinerow', 'fence', 'lamp', 'logs', 'palm', 'poplar', 'apple']);
+const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'bush', 'rock', 'boulder', 'snowpole', 'hay', 'vinerow', 'fence', 'lamp', 'logs', 'palm', 'poplar', 'apple', 'lampParis', 'morris', 'kiosk', 'wallace', 'obelisk']);
 const BILLBOARD: Record<string, { variants: number; frames: number }> = {
   cow: { variants: 2, frames: 1 }, cowBW: { variants: 2, frames: 1 }, chevron: { variants: 1, frames: 1 },
   dosso: { variants: 1, frames: 1 }, chalet: { variants: 2, frames: 1 }, barn: { variants: 2, frames: 1 }, rifugio: { variants: 1, frames: 1 },
   farmhouse: { variants: 1, frames: 1 }, flowers: { variants: 4, frames: 1 }, grassTuft: { variants: 2, frames: 1 }, sunflowers: { variants: 2, frames: 1 },
-  parasol: { variants: 4, frames: 1 }, boat: { variants: 4, frames: 1 }, fountain: { variants: 1, frames: 1 }, flagpole: { variants: 4, frames: 2 },
+  parasol: { variants: 4, frames: 1 }, boat: { variants: 4, frames: 1 }, fountain: { variants: 1, frames: 1 }, flagpole: { variants: 13, frames: 2 },
   campervan: { variants: 4, frames: 1 },
 };
 const CLOTH = ['#ff5fa2', '#2f80ed', '#ffd23f', '#f4f4f4', '#27ae60'];
@@ -1323,7 +1328,7 @@ export class Renderer3D {
     roadify(this.mats.covers, 'cv', 0.12);
     // Relief im Licht (ab Stufe 7): Höhenkarten der Böden als Bump-Map (Stellvertreter, bis die Gegend feststeht)
     if (gfxOn('details')) for (const k of GROUND_BUMP) { const m = this.mats[k]; m.bumpMap = this.placeholder(true); m.bumpScale = BUMP_SCALE[k]; }
-    this.props = propGeometries();
+    this.props = { ...propGeometries(), ...parisProps() };
     this.markGeo = landmarkGeometries();
     // Felsschichten an allen steilen Flächen (Landschaft, Wände am Straßenrand, Tunnelportale):
     // Weltkoordinaten statt UV – waagrechte Lagen laufen so über alle Flächen hinweg
@@ -2649,6 +2654,7 @@ export class Renderer3D {
       });
       this.villages.ahead(6500);
     }
+    this.planMarks(track);
     this.camReg = null;
     this.newSigns(track.names);
     this.clearChunks();
@@ -2663,6 +2669,127 @@ export class Renderer3D {
     this.resetDirector(false);
     this.runners = [];
     this.runNext = 0;
+  }
+
+  // ---------------------------------------------------------------- Wahrzeichen des Schauplatzes (venue.ts)
+
+  /** geplante Wahrzeichen je Segment (gebaut im Abschnitt, der dieses Segment enthält) */
+  private marks = new Map<number, VenueMark[]>();
+  /** Bereiche ohne Requisiten und Zuschauer (Pfeiler und Mauern der Wahrzeichen): Segmente i0…i1, |x| in x0…x1 */
+  private markClear: { i0: number; i1: number; x0: number; x1: number; sg: number }[] = [];
+
+  /**
+   * Wahrzeichen festlegen, sobald die Strecke steht (vor der Landschaft: Ebenen unter den Bauten). Paris: Arc de
+   * Triomphe über der Straße hinter dem Ziel, Eiffelturm in der Ferne, Sacré-Cœur auf der Kuppe des Bergfinales.
+   */
+  private planMarks(t: Track) {
+    this.marks = new Map();
+    this.markClear = [];
+    // Fahnen der Gastgeber im Publikum
+    setCrowdHome(t.scape?.flags ?? null);
+    const v = t.venue;
+    if (!v) return;
+    const has = (m: Mark) => v.marks.includes(m);
+    const w = { x: 0, y: 0, z: 0, th: 0 };
+    const add = (m: VenueMark) => { const l = this.marks.get(m.i) ?? []; l.push(m); this.marks.set(m.i, l); };
+    /** Lage eines Punkts quer/längs zum Segment i (wie in den Abschnitten: Querachse cos/sin th, vorwärts sin/−cos) */
+    const frame = (i: number) => { t.world(i * SEG, 0, 0, w, true); return { x: w.x, y: w.y, z: w.z, th: w.th }; };
+    const finish = t.kind === 'sprint' ? SPRINT_FINISH : t.kind === 'tt' ? TT_FINISH : t.kind === 'mountain' ? MOUNTAIN_FINISH : -1;
+    if (finish > 0) {
+      const fi = Math.round(finish / SEG);
+      t.seg(fi + 170);
+      if (has('arc')) {
+        // gerades Stück 220–300 m hinter der Linie (hinter dem letzten Haus des Zielorts)
+        let best = fi + 125;
+        let bc = Infinity;
+        for (let i = fi + 108; i <= fi + 150; i++) {
+          let c = 0;
+          for (let q = -8; q <= 8; q++) { const s = t.seg(i + q); c += Math.abs(s.curve) * 40 + (s.bL || s.bR ? 1 : 0); }
+          if (c < bc) { bc = c; best = i; }
+        }
+        add({ i: best, kind: 'arc', lat: 0, along: 0, f: frame(best) });
+        this.markClear.push({ i0: best - 7, i1: best + 7, x0: ARC.mw - 0.6, x1: ARC.W + 4, sg: 0 });
+      }
+      if (has('eiffel')) {
+        // schräg voraus über der Zielstadt: schon auf der Anfahrt über die Felder zu sehen, im Ort über den Dächern –
+        // dort, wo das Gelände am tiefsten liegt (die Berge bleiben)
+        const town = t.sections.find((x) => x.biome === 'village' && x.start <= fi && x.end > fi);
+        const i = Math.max(10, town ? town.start : fi - 300);
+        const f = frame(i);
+        const T = this.terrain!;
+        const pos = (lat: number, along: number) => [f.x + Math.cos(f.th) * lat + Math.sin(f.th) * along, f.z + Math.sin(f.th) * lat - Math.cos(f.th) * along];
+        let best = { lat: 200, along: 500, h: f.y, score: Infinity };
+        const hAt = (x: number, z: number) => T.heightIn(T.region(x - 2, z - 2, x + 2, z + 2), x, z);
+        for (const lat of [-330, -260, -200, -150, 150, 200, 260, 330]) for (const along of [200, 350, 500, 650, 800, 950]) {
+          const [px, pz] = pos(lat, along);
+          const reg = T.region(px - 2, pz - 2, px + 2, pz + 2);
+          // nie auf oder an einer Straße (die Strecke kann in diese Richtung abbiegen)
+          const rd = T.roadDist(reg, px, pz);
+          if (rd !== null && rd < 110) continue;
+          // freies, tiefes Land ringsum (nicht in einer Schlucht zwischen Bergen)
+          let hMax = hAt(px, pz);
+          for (let k = 0; k < 8; k++) hMax = Math.max(hMax, hAt(px + Math.cos(k * 0.785) * 75, pz + Math.sin(k * 0.785) * 75));
+          const score = (hMax - f.y) + Math.abs(lat) * 0.05 + Math.abs(along - 600) * 0.006;
+          if (score < best.score) best = { lat, along, h: hAt(px, pz), score };
+        }
+        const [px, pz] = pos(best.lat, best.along);
+        const base = Math.min(best.h, f.y + 40);
+        const pts: number[] = [];
+        for (const [dx, dz] of [[-55, -55], [55, -55], [55, 55], [-55, 55], [0, 0]]) pts.push(px + dx, base - 0.5, pz + dz, 1);
+        T.addFlat(pts, 60, 1, [], true);
+        add({ i, kind: 'eiffel', lat: best.lat, along: best.along, f: { ...f, y: base } });
+      }
+    }
+    if (t.kind === 'mountain' && has('sacreCoeur')) {
+      // auf der Kuppe (Butte Montmartre) an Stelle der Berghütte, mit der Front zur Straße
+      const top = Math.round(MOUNTAIN_TOP / SEG);
+      t.seg(top + 60);
+      let i = top + 26;
+      let sg = 1;
+      for (let k = top; k < top + 60; k++) {
+        const sp = t.seg(k).sprites?.find((x) => x.k === 'rifugio');
+        if (sp) { i = k; sg = sp.x < 0 ? -1 : 1; break; }
+      }
+      const f = frame(i);
+      const d0 = EDGE + 16;
+      add({ i, kind: 'sacreCoeur', lat: sg * d0, along: 0, f, sg });
+      this.markClear.push({ i0: i - 16, i1: i + 16, x0: d0 - 4, x1: d0 + 95, sg });
+      const pts: number[] = [];
+      for (let a = -10; a <= 90; a += 10) for (const l of [-26, 0, 26]) {
+        const lat = sg * (d0 + a);
+        const along = sg * l;
+        pts.push(f.x + Math.cos(f.th) * lat + Math.sin(f.th) * along, f.y - 0.1, f.z + Math.sin(f.th) * lat - Math.cos(f.th) * along, 1);
+      }
+      this.terrain!.addFlat(pts, 26, 1, [], true);
+    }
+  }
+
+  /** liegt eine Requisite (Segment, Querlage) im Grundriss eines Wahrzeichens? */
+  private inMark(i: number, x: number): boolean {
+    for (const c of this.markClear) {
+      if (i < c.i0 || i > c.i1) continue;
+      if (c.sg !== 0 && Math.sign(x) !== c.sg) continue;
+      const ax = Math.abs(x);
+      if (ax >= c.x0 && ax <= c.x1) return true;
+    }
+    return false;
+  }
+
+  /** ein geplantes Wahrzeichen in die Netze des Abschnitts bauen */
+  private buildMark(T: Town, m: VenueMark) {
+    const { f } = m;
+    const rx = Math.cos(f.th), rz = Math.sin(f.th);
+    const fx = Math.sin(f.th), fz = -Math.cos(f.th);
+    const at0: At = (lat, al, h) => [f.x + rx * (m.lat + lat) + fx * (m.along + al), f.y + h, f.z + rz * (m.lat + lat) + fz * (m.along + al)];
+    if (m.kind === 'arc') arcDeTriomphe(T, at0);
+    else if (m.kind === 'eiffel') eiffelTower(T.plain, at0);
+    else if (m.kind === 'sacreCoeur') {
+      // Front zur Straße: die Tiefe des Baus läuft quer von der Straße weg
+      const sg = m.sg ?? 1;
+      const at: At = (l, a, h) => at0(sg * a, -sg * l, h);
+      sacreCoeur(T, at);
+      for (let a = 0; a <= 80; a += 16) { const p = at(0, a, 0); this.clearTrees(p[0], p[2], 34); }
+    }
   }
 
   /** Startrampe (Zeitfahren, Rampenstart) und Start der Abfahrt – in der Farbe der Rundfahrt */
@@ -4925,6 +5052,7 @@ export class Renderer3D {
       // --- Sprites/Requisiten (Zuschauer: viele Menschen je Stück – nach jedem nachsehen)
       if (s.sprites) {
         for (const sp of s.sprites) {
+          if (this.markClear.length && this.inMark(s.i, sp.x)) continue;
           const l = sp.x < 0 ? lim.L[r] : lim.R[r];
           if (sp.k === 'crowd') this.crowdPeople(people[Math.min(7, Math.floor(r / 5))], s, sp.x < 0 ? -1 : 1, l, sp.v, Math.abs(sp.x) - EDGE);
           else this.prop(group, disp, inst, bill, anim, glows, a, sp, s, l);
@@ -4938,6 +5066,9 @@ export class Renderer3D {
         if (k === 'gate') this.gate(town, group, disp, a, s.banner.text);
         else this.arch(group, disp, a, s.banner, k === 'gpm' || k === 'finish' || k === 'start' ? this.accent : k === 'sprint' ? '#1f6feb' : k === 'flamme' ? '#d63031' : k === 'split' ? '#ffd23f' : '#ffffff');
       }
+      // Wahrzeichen des Schauplatzes (Arc de Triomphe, Eiffelturm, Sacré-Cœur)
+      const vm = this.marks.get(s.i);
+      if (vm) for (const m of vm) { if (this.soon(2)) { yield; resume(); } this.buildMark(town, m); }
       // Fan-Bogen mit Spruchband (nicht dort, wo die Bestmarke eines Freundes steht)
       const fan = this.fanAt(s.i);
       if (fan !== null && !g.friends.some((f) => Math.abs(Math.floor(f.meters / SEG) - s.i) <= 7)) this.fanArch(fans, roof, a, fan);
@@ -5308,7 +5439,9 @@ export class Renderer3D {
       const pz = sec?.piazza;
       // Bordstein (Ansicht, Fase, Oberseite – siehe paveSide), dahinter der Gehweg, zur Straße hin leicht geneigt
       const hc = CURB_FACE + CURB_CHAMFER;
-      if (pz && (s.i >= pz[0] - 1 && s.i <= pz[1] + 1 || sec.role === 'top' && s.i <= pz[1] + 3)) {
+      // Boulevard (Paris): breite, ebene Gehwege bis zu den zurückgesetzten Häusern
+      const blvd = this.track!.boulevard && sec?.biome === 'village';
+      if (blvd || pz && (s.i >= pz[0] - 1 && s.i <= pz[1] + 1 || sec.role === 'top' && s.i <= pz[1] + 3)) {
         return {
           o: [0, 0.005, CURB_TOP, 1.2, 3.5, 8, 18, 26, 34],
           h: [0, hc, hc, hc + 0.015, hc + 0.04, hc + 0.05, hc + 0.05, hc + 0.05, 0.5],
@@ -6422,7 +6555,15 @@ export class Renderer3D {
   }
 
   private prop(group: THREE.Group, disp: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[], inst: Map<Prop3D, { m: THREE.Matrix4[]; c: THREE.Color[] }>,
-    bill: GB, anim: number[], glows: number[], a: Row, sp: Sprite, s: Seg, lim: number) {
+    bill: GB, anim: number[], glows: number[], a: Row, sp0: Sprite, s: Seg, lim: number) {
+    // Schauplatz: Laternen und Brunnen der Gegend (Paris: Kandelaber, Obelisk auf dem Platz, Wallace-Brunnen),
+    // keine Berghütte und keine Wohnmobile auf dem Montmartre
+    let sp = sp0;
+    if (this.track!.scape?.lamp === 'paris') {
+      if (sp.k === 'lamp') sp = { ...sp, k: 'lampParis' };
+      else if (sp.k === 'fountain') sp = { ...sp, k: sp.s >= 1.2 ? 'obelisk' : 'wallace', s: 1 };
+      else if (sp.k === 'rifugio' || sp.k === 'campervan') return;
+    }
     const sg = sp.x < 0 ? -1 : 1;
     // ax: Abstand wie bei Normalbreite (Profil, Korridor); am Rand rückt alles mit der Breite nach außen
     const ax = Math.abs(sp.x);
@@ -6460,7 +6601,9 @@ export class Renderer3D {
       if (kind === 'lamp') rot = sp.x < 0 ? Math.atan2(-a.rx, -a.rz) + Math.PI : Math.atan2(a.rx, a.rz) + Math.PI;
       if (kind === 'lamp') rot = sp.x < 0 ? Math.atan2(-Math.cos(a.th), -Math.sin(a.th)) : Math.atan2(Math.cos(a.th), Math.sin(a.th));
       const sc = sp.s * (kind === 'rock' && sp.h > 0.05 ? 1 : 1);
-      const m = new THREE.Matrix4().compose(new THREE.Vector3(px, py - 0.05, pz), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rot, 0)), new THREE.Vector3(sc, sc * (0.9 + hash(s.i + sp.v) * 0.25), sc));
+      const fixed = kind === 'lampParis' || kind === 'morris' || kind === 'kiosk' || kind === 'wallace' || kind === 'obelisk';
+      if (kind === 'kiosk') rot = -a.th + (sp.x < 0 ? Math.PI / 2 : -Math.PI / 2);
+      const m = new THREE.Matrix4().compose(new THREE.Vector3(px, py - 0.05, pz), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rot, 0)), new THREE.Vector3(sc, sc * (fixed ? 1 : 0.9 + hash(s.i + sp.v) * 0.25), sc));
       const v = 0.85 + hash(s.i * 3 + sp.v) * 0.3;
       // im Dorf stehen keine Bäume am Straßenrand (dort sind Gärten und Häuser)
       if (TREES.has(kind) && this.villages?.inside(s.i * SEG)) return;
@@ -6487,6 +6630,7 @@ export class Renderer3D {
         const az = Math.cos(rot) * -0.62;
         glows.push(px + ax, py + 4.35, pz + az);
       }
+      if (kind === 'lampParis') glows.push(px, py + 4.45, pz);
       return;
     }
     if (sp.k === 'tornante' || sp.k === 'townSign' || sp.k === 'passSign') {
@@ -6510,6 +6654,13 @@ export class Renderer3D {
     const kind = sp.k === 'chevron' && sp.v === 9 ? 'dosso' : sp.k;
     const def = BILLBOARD[kind];
     if (!def) return;
+    // Fahnen der Gegend des Schauplatzes (Trikolore, Gwenn-ha-Du, Ikurriña, Saltire …) statt der italienischen
+    const fl = this.track!.scape?.flags;
+    if (kind === 'flagpole' && fl?.length && (sp.v % 4 === 1 || sp.v % 4 === 3)) {
+      const code = fl[Math.floor(hash(s.i * 5 + sp.v) * fl.length)];
+      const fv = FLAG_VARIANT[code];
+      if (fv !== undefined) sp = { ...sp, v: fv };
+    }
     // Jahreszeit (season.ts): Blumen und Sonnenblumen nur, solange sie blühen (fester Anteil je Ort)
     if ((kind === 'flowers' || kind === 'sunflowers') && hash(sp.v * 31 + Math.round(px * 7)) > Math.min(1, this.season.flowers)) return;
     const e = this.atlas.get(`${kind}:${sp.v % def.variants}`);

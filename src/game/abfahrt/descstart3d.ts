@@ -21,6 +21,7 @@ import { buildHouse, roofColor, roofKind, rowUnits, wallSet, type At, type Town 
 import { STYLE, type Lang } from './facade';
 import { mulberry32 } from './rng';
 import { bike } from './ttstart3d';
+import { sacreCoeur } from './paris3d';
 import type { RaceView } from './engine';
 
 export interface DescentStartDeps {
@@ -186,6 +187,7 @@ export class DescentStart3D {
   /** Kirche auf der linken Seite der Piazza (von, bis) */
   private church: [number, number] = [0, 0];
   private readonly lang: string;
+  private paris = false;
 
   constructor(d: DescentStartDeps) {
     this.d = d;
@@ -214,7 +216,9 @@ export class DescentStart3D {
     const smooth = new MB();
     const bands = new GB();
     this.floor(bands);
-    this.tower(props);
+    // Paris (Schauplatz der 21. Tour-Etappe): statt des Torre civica eine Häuserzeile, dahinter Sacré-Cœur
+    this.paris = !!t.venue?.marks.includes('sacreCoeur');
+    if (!this.paris) this.tower(props);
     this.backdrop();
     this.fountain(props, smooth);
     this.cafe(props, smooth);
@@ -534,15 +538,25 @@ export class DescentStart3D {
         }, lang);
       });
     };
-    // neben dem Turm: Palazzi (Fassaden fluchten mit dem Turm), außen niedrigere Häuser
-    row(-23, -4.6, 5, 11, STYLE.ocker, 3, 1101, true, false, true, false);
-    row(4.6, 23, 5, 11, STYLE.gelb, 3, 2203, true, false, false, true);
-    row(-44, -23, 6.2, 9.5, STYLE.creme, 2, 3307, true);
-    row(23, 44, 6.2, 9.5, STYLE.lachs, 2, 4409, true);
-    // zweite Reihe (über die Dächer der ersten zu sehen)
-    row(-34, -12, 19.5, 9, STYLE.terrakotta, 3, 5501, false, true);
-    row(-10, 10, 23.5, 10, STYLE.creme, 4, 6607, false, true);
-    row(12, 34, 19.5, 9, STYLE.ocker, 3, 7703, false, true);
+    if (this.paris) {
+      // Haussmann-Zeilen rund um den Platz, die Basilika auf der Kuppe dahinter (über die Dächer zu sehen)
+      const H = STYLE.haussmann;
+      row(-23, 23, 5, 11, H, 5, 1101, true);
+      row(-44, -23, 6.2, 9.5, H, 4, 3307, true);
+      row(23, 44, 6.2, 9.5, H, 4, 4409, true);
+      row(-34, 34, 21, 10, H, 6, 5501, false, true);
+      sacreCoeur(T, (l, a, h) => P(l, base + 6 + h, -62 - a));
+    } else {
+      // neben dem Turm: Palazzi (Fassaden fluchten mit dem Turm), außen niedrigere Häuser
+      row(-23, -4.6, 5, 11, STYLE.ocker, 3, 1101, true, false, true, false);
+      row(4.6, 23, 5, 11, STYLE.gelb, 3, 2203, true, false, false, true);
+      row(-44, -23, 6.2, 9.5, STYLE.creme, 2, 3307, true);
+      row(23, 44, 6.2, 9.5, STYLE.lachs, 2, 4409, true);
+      // zweite Reihe (über die Dächer der ersten zu sehen)
+      row(-34, -12, 19.5, 9, STYLE.terrakotta, 3, 5501, false, true);
+      row(-10, 10, 23.5, 10, STYLE.creme, 4, 6607, false, true);
+      row(12, 34, 19.5, 9, STYLE.ocker, 3, 7703, false, true);
+    }
     const add = (gb: GB, mat: THREE.Material) => {
       if (gb.empty) return;
       const g = gb.build();

@@ -90,7 +90,9 @@ export type SpriteKind =
   | 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'palm' | 'olive' | 'bush' | 'flowers'
   | 'rock' | 'boulder' | 'snowpole' | 'chalet' | 'barn' | 'rifugio' | 'farmhouse' | 'cow' | 'cowBW' | 'hay'
   | 'fence' | 'vinerow' | 'sunflowers' | 'crowd' | 'chevron' | 'lamp' | 'parasol' | 'boat' | 'logs'
-  | 'tornante' | 'townSign' | 'passSign' | 'fountain' | 'flagpole' | 'campervan' | 'grassTuft' | 'stoneWall' | 'poplar' | 'apple';
+  | 'tornante' | 'townSign' | 'passSign' | 'fountain' | 'flagpole' | 'campervan' | 'grassTuft' | 'stoneWall' | 'poplar' | 'apple'
+  // Straßenmöbel der Schauplätze (paris3d.ts)
+  | 'lampParis' | 'morris' | 'kiosk' | 'wallace' | 'obelisk';
 
 export interface Sprite {
   k: SpriteKind;
@@ -372,6 +374,8 @@ export class Track {
   readonly scape: Scape | null;
   /** Tag für die Jahreszeit (Vorschau eines Schauplatzes: das Etappendatum) */
   readonly lookDay: string;
+  /** Boulevard in den Zielorten von Sprint und Zeitfahren (breite Gehwege, Baumreihen, Straßenmöbel) */
+  get boulevard(): boolean { return !!this.scape?.boulevard && (this.kind === 'sprint' || this.kind === 'tt'); }
 
   constructor(dayKey: string, names: string[] = [], kind: TrackKind = 'descent', town: string | StageRef | null = '') {
     this.dayKey = dayKey;
@@ -883,7 +887,9 @@ export class Track {
     // Fernblick), ein Tunnel und gleich danach die Spitzkehre mit dem ersten Blick aufs Panorama
     const opening = this.kind === 'descent' && d === 0;
     if (opening) {
-      this.plan.push({ biome: 'village', name: pass, alt: Math.round(alt / 5) * 5, descent: d, role: 'top' });
+      // Paris: die Abfahrt beginnt auf dem Montmartre (vor Sacré-Cœur)
+      const startName = this.venue?.marks.includes('montmartre') ? 'Montmartre' : pass;
+      this.plan.push({ biome: 'village', name: startName, alt: Math.round(alt / 5) * 5, descent: d, role: 'top' });
       this.plan.push({ biome: 'forest', name: L(FORESTS, pick(r, FORESTS)), alt: Math.round(alt / 5) * 5, descent: d, role: 'road' });
     }
     const valley = pick(r, VALLEYS);
@@ -1840,6 +1846,8 @@ export class Track {
     if (b.arcade) floors = Math.max(2, floors);
     if (mode === 'hamlet') floors = Math.min(floors, 2);
     b.floors = floors;
+    // Boulevard (Paris): breite Gehwege mit Baumreihen – die Häuser rücken zurück (Lage längs bleibt)
+    if (this.boulevard && mode === 'town') b.setback += b.arcade ? 1.5 : 5;
     // Steckschilder in der Landessprache: Apothekenkreuz, Tabac/Tabacchi, Pub-Schild
     const lang = this.lang;
     if (b.sign >= 0 && b.sign !== 7) b.badge = b.sign === 3 ? (lang !== 'en' ? 0 : -1) : b.sign === 2 ? (lang === 'fr' ? 1 : lang === 'it' ? 2 : -1) : b.sign === 1 && lang === 'en' && h(3) < 0.6 ? 3 : -1;
@@ -2141,6 +2149,37 @@ export class Track {
       if (biome === 'alpine' && k > 40 && chance(r, 0.003)) this.decal(i, { k: 'grid', x: 0, w: ROAD_HALF, len: 2 });
     }
     this.roadsideFans(start, n, biome, marks, curve);
+    if (this.scape) this.venueDeco(start, n, biome, sec);
+  }
+
+  /**
+   * Straßenbild des Schauplatzes in den Orten: Baumreihen auf den Boulevards, Litfaßsäulen, Kioske und Brunnen –
+   * mit eigenem Zufall (die Strecke und ihre übrige Deko bleiben, wie sie sind).
+   */
+  private venueDeco(start: number, n: number, biome: BiomeId, sec: number) {
+    const sc = this.scape!;
+    if (biome !== 'village' || !this.boulevard) return;
+    const r = mulberry32((this.seed ^ Math.imul(start + 29, 0x27d4eb2d)) >>> 0);
+    const pz = this.sections[sec].piazza;
+    const free = (i: number, sg: number) => {
+      const s = this.seg(i);
+      const side = sg < 0 ? s.L : s.R;
+      return side.ground === 'pavement' && !(s.bridge > 0) && !s.tunnel && !(pz && i >= pz[0] - 2 && i <= pz[1] + 2);
+    };
+    const put = (i: number, sg: number, k: SpriteKind, dx: number, s = 1) => this.add(i, { k, x: sg * (EDGE + dx), h: 0, s, v: Math.floor(r() * 4), f: r() < 0.5 });
+    // Baumreihen (Platanen) alle 10 m auf beiden Seiten
+    if (sc.alley) for (let i = start + 2; i < start + n - 2; i += 5) for (const sg of [-1, 1]) if (free(i, sg)) put(i, sg, 'treeRound', 3.3, 0.95 + r() * 0.2);
+    // Straßenmöbel zwischen den Bäumen
+    const kinds = sc.furniture ?? [];
+    if (!kinds.length) return;
+    let next = start + 8 + Math.floor(r() * 12);
+    while (next < start + n - 6) {
+      const sg = r() < 0.5 ? -1 : 1;
+      const k = kinds[Math.floor(r() * kinds.length)];
+      const i = next - ((next - start - 2) % 5) + 2;   // zwischen zwei Bäumen
+      if (i < start + n - 3 && free(i, sg)) put(i, sg, k, k === 'kiosk' ? 2.4 : 2.0);
+      next += 22 + Math.floor(r() * 26);
+    }
   }
 
   /**

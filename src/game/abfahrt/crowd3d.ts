@@ -72,10 +72,18 @@ const FLAGS_H: string[][] = [
   ['#f4f5f0', '#00966e', '#d62612'], // Bulgarien
   ['#f4f5f0', '#1f4fa3', '#d8262e'], // Slowenien (ohne Wappen)
   ['#ffd100', '#034ea2', '#ce1126'], // Ecuador
+  // Gegenden der Schauplätze (venue.ts) – vereinfacht in drei Streifen
+  ['#f4f5f0', '#cf142b', '#f4f5f0'], // England (Georgskreuz)
+  ['#0065bd', '#f4f5f0', '#0065bd'], // Schottland (Saltire)
+  ['#f4f5f0', '#f4f5f0', '#00b140'], // Wales (ohne Drachen)
+  ['#1b1b1b', '#f4f5f0', '#1b1b1b'], // Bretagne (Gwenn-ha-Du)
+  ['#d52b1e', '#009b48', '#d52b1e'], // Baskenland (Ikurriña)
+  ['#c8102e', '#f7c600', '#c8102e'], // Okzitanien
 ];
 const NV = FLAGS_V.length;
 const FLAG_COLS: RGBf[] = [...FLAGS_V, ...FLAGS_H].flatMap((f) => hexes(f));
-const NFLAGS = NV + FLAGS_H.length;
+/** zufällige Fahnen: die Länder (die Fahnen der Gegenden gibt es nur als Gastgeber am Schauplatz) */
+const NFLAGS = NV + 10;
 
 // ------------------------------------------------------------------ Geometrie
 
@@ -725,6 +733,14 @@ export type Persona = 'fan' | 'tifoso' | 'rider' | 'hiker' | 'nonno' | 'devil';
 let chill = 0;
 export function setCrowdChill(k: number) { chill = Math.max(0, Math.min(1, k)); }
 
+/** Fahnen der Gastgeber (ein Drittel der Fahnen): Italien, am Schauplatz des Tages dessen Fahnen (venue.ts) */
+const HOME_FLAG: Record<string, number> = { it: 0, fr: 2, si: NV + 8, eng: NV + 10, sco: NV + 11, cym: NV + 12, bzh: NV + 13, eus: NV + 14, occitanie: NV + 15 };
+let home: [number, number] = [0, 1];
+export function setCrowdHome(codes: readonly string[] | null) {
+  const list = (codes ?? []).map((c) => HOME_FLAG[c]).filter((x): x is number => x !== undefined);
+  home = list.length ? [list[0], list[1] ?? list[0]] : [0, 1];
+}
+
 export function randomPerson(r: Rnd, zone: Zone, opts: { row: number; kid?: boolean; runner?: boolean }): Person {
   const cold = zone === 'pass' || (chill > 0 && r() < chill);
   const kid = !!opts.kid;
@@ -826,7 +842,7 @@ export function randomPerson(r: Rnd, zone: Zone, opts: { row: number; kid?: bool
   // ein Getränk in der Hand: Spritz oder Bier (nicht oben am kalten Pass, nicht beim Filmen oder Fahneschwenken)
   const cup = !kid && !opts.runner && persona !== 'rider' && persona !== 'devil' && r() < (cold ? 0.05 : zone === 'village' ? 0.2 : 0.14)
     && act !== Act.flag && act !== Act.film && act !== Act.sign;
-  const flag = r() < 0.32 ? Math.floor(r() * 2) : Math.floor(r() * NFLAGS);
+  const flag = r() < 0.32 ? home[Math.floor(r() * 2)] : Math.floor(r() * NFLAGS);
   return {
     x: 0, y: 0, z: 0, yaw: 0,
     height: kid ? 0.56 + r() * 0.16 : 0.93 + r() * 0.17 - (older ? 0.03 : 0),

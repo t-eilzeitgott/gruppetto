@@ -45,6 +45,10 @@ export interface Scape {
   alley?: 'plane' | 'chestnut' | 'pine' | 'lime' | 'palm';
   /** Anteil Pflaster in den Ortsdurchfahrten (0 … 1) */
   cobble?: number;
+  /** Boulevard: im Sprint- und Zeitfahrziel breite Gehwege mit Baumreihen, Häuser weiter zurück */
+  boulevard?: boolean;
+  /** Straßenmöbel der Gegend (Litfaßsäulen, Kioske, Brunnen) */
+  furniture?: ('morris' | 'kiosk' | 'wallace')[];
   /** Fahnen am Straßenrand (Ländercodes und Regionen: fr, bzh, eus, cym, sco, …) */
   flags: string[];
   /** Namen für Abschnitte, Weiler und Pässe (die Abfahrt und Zwischenorte) */
@@ -161,7 +165,7 @@ const sc = (s: Scape) => s;
 export const SCAPES = {
   paris: sc({
     id: 'paris', label: 'Paris', country: 'fr', lang: 'fr', region: 'nord',
-    styles: [['haussmann', 1]], alpine: 0, floors: [4, 6], roof: 'zinc', church: 'clocher', lamp: 'paris', alley: 'plane', cobble: 0.85,
+    styles: [['haussmann', 1]], alpine: 0, floors: [4, 6], roof: 'zinc', church: 'clocher', lamp: 'paris', alley: 'plane', cobble: 0.85, boulevard: true, furniture: ['morris', 'kiosk', 'wallace'],
     flags: ['fr', 'fr', 'paris'],
     names: {
       villages: ['Montmartre', 'Saint-Germain', 'Le Marais', 'Passy', 'Les Batignolles', 'Belleville', 'Montparnasse', 'Saint-Cloud', 'Sèvres', 'Versailles', 'Saint-Cyr-l’École', 'Chevreuse'],

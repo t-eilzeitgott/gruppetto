@@ -535,17 +535,44 @@ const fountain: DrawFn = (c) => {
   c.beginPath(); c.moveTo(0, -1.55); c.quadraticCurveTo(0.4, -1.9, 0.65, -0.65); c.moveTo(0, -1.55); c.quadraticCurveTo(-0.4, -1.9, -0.65, -0.65); c.stroke();
 };
 
+/**
+ * Fahnen am Mast: 0 Rosa, 1 Italien, 2 Gelb, 3 Blau – dazu die Fahnen der Schauplätze (FLAG_VARIANT): Frankreich,
+ * England, Schottland, Wales, Bretagne, Baskenland, Slowenien, Vereinigtes Königreich, Okzitanien
+ */
+export const FLAG_VARIANT: Record<string, number> = { it: 1, fr: 4, eng: 5, sco: 6, cym: 7, bzh: 8, eus: 9, si: 10, uk: 11, occitanie: 12 };
+type FlagFn = (u: number, t: number) => string;
+const POLE_FLAGS: FlagFn[] = [
+  () => '#ff5fa2',
+  (u) => (u < 1 / 3 ? '#1f8a4c' : u < 2 / 3 ? '#f4f4f4' : '#d23a3a'),
+  () => '#ffd23f',
+  () => '#2f80ed',
+  (u) => (u < 1 / 3 ? '#1f3c9c' : u < 2 / 3 ? '#f4f4f4' : '#d6202a'),
+  (u, t) => (Math.abs(u - 0.5) < 0.09 || Math.abs(t - 0.5) < 0.12 ? '#cf142b' : '#f6f6f2'),
+  (u, t) => (Math.abs((u - 0.5) * 0.64 - (t - 0.5)) < 0.08 || Math.abs((u - 0.5) * 0.64 + (t - 0.5)) < 0.08 ? '#f6f6f2' : '#0065bd'),
+  (u, t) => ((u - 0.5) ** 2 / 0.06 + (t - 0.5) ** 2 / 0.09 < 1 ? '#d30731' : t < 0.5 ? '#f6f6f2' : '#00b140'),
+  (u, t) => (u < 0.42 && t < 0.55 ? ((Math.floor(u * 14) + Math.floor(t * 10)) % 3 === 0 ? '#111111' : '#f6f6f2') : Math.floor(t * 9) % 2 === 0 ? '#111111' : '#f6f6f2'),
+  (u, t) => (Math.abs(u - 0.5) < 0.05 || Math.abs(t - 0.5) < 0.07 ? '#f6f6f2' : Math.abs((u - 0.5) * 0.64 - (t - 0.5)) < 0.07 || Math.abs((u - 0.5) * 0.64 + (t - 0.5)) < 0.07 ? '#009b48' : '#d52b1e'),
+  (u, t) => (u > 0.18 && u < 0.38 && t > 0.1 && t < 0.62 ? (t > 0.45 ? '#f6f6f2' : '#005da4') : t < 1 / 3 ? '#f6f6f2' : t < 2 / 3 ? '#005da4' : '#ed1c24'),
+  (u, t) => (Math.abs(u - 0.5) < 0.07 || Math.abs(t - 0.5) < 0.1 ? '#c8102e' : Math.abs(u - 0.5) < 0.12 || Math.abs(t - 0.5) < 0.17 ? '#f6f6f2'
+    : Math.abs((u - 0.5) * 0.64 - (t - 0.5)) < 0.05 || Math.abs((u - 0.5) * 0.64 + (t - 0.5)) < 0.05 ? '#c8102e'
+      : Math.abs((u - 0.5) * 0.64 - (t - 0.5)) < 0.1 || Math.abs((u - 0.5) * 0.64 + (t - 0.5)) < 0.1 ? '#f6f6f2' : '#012169'),
+  (u, t) => ((Math.abs(u - 0.5) < 0.05 && Math.abs(t - 0.5) < 0.32) || (Math.abs(t - 0.5) < 0.07 && Math.abs(u - 0.5) < 0.22) ? '#f7c600' : '#c8102e'),
+];
 const flagpole: DrawFn = (c, _r, v, frame) => {
   rrect(c, -0.04, -7, 0.08, 7, 0.02, '#c9ccd1');
-  const cols = [['#ff5fa2'], ['#1f8a4c', '#f4f4f4', '#d23a3a'], ['#ffd23f'], ['#2f80ed']][v % 4];
+  const fn = POLE_FLAGS[v % POLE_FLAGS.length];
   const wv = frame ? 0.18 : -0.12;
-  const n = 6;
+  const n = 12;
+  const m = 8;
   for (let i = 0; i < n; i++) {
     const x0 = 0.04 + (1.4 * i) / n;
     const x1 = 0.04 + (1.4 * (i + 1)) / n;
-    const y0 = -6.9 + Math.sin(i * 0.9 + (frame ? 1 : 0)) * wv;
-    const y1 = -6.9 + Math.sin((i + 1) * 0.9 + (frame ? 1 : 0)) * wv;
-    poly(c, [x0, y0, x1, y1, x1, y1 + 0.9, x0, y0 + 0.9], cols[Math.floor((i / n) * cols.length)]);
+    const y0 = -6.9 + Math.sin(i * 0.45 + (frame ? 1 : 0)) * wv;
+    const y1 = -6.9 + Math.sin((i + 1) * 0.45 + (frame ? 1 : 0)) * wv;
+    for (let j = 0; j < m; j++) {
+      const t0 = j / m, t1 = (j + 1) / m;
+      poly(c, [x0, y0 + 0.9 * t0, x1, y1 + 0.9 * t0, x1, y1 + 0.9 * t1 + 0.01, x0, y0 + 0.9 * t1 + 0.01], fn((i + 0.5) / n, (j + 0.5) / m));
+    }
   }
 };
 
@@ -633,7 +660,7 @@ const DEFS: Record<string, Def> = {
   boat: { w: 3.8, h: 4.5, ppm: 30, variants: 4, draw: boat },
   logs: { w: 2.6, h: 1.4, ppm: 60, variants: 1, draw: logs },
   fountain: { w: 2.2, h: 2.0, ppm: 60, variants: 1, draw: fountain },
-  flagpole: { w: 3.2, h: 7.1, ppm: 30, variants: 4, frames: 2, draw: flagpole },
+  flagpole: { w: 3.2, h: 7.1, ppm: 30, variants: 13, frames: 2, draw: flagpole },
   campervan: { w: 5, h: 3.1, ppm: 40, variants: 4, draw: campervan },
 };
 
