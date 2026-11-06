@@ -223,7 +223,7 @@ export class SupabaseSource implements DataSource {
 
   async loadGroup(): Promise<Group | null> {
     const g = await schemaCheck(() => this.rpc<Group | null>('my_group'));
-    return g ? { ...g, ...cleanRules(g), can_manage: g.can_manage === true, invite_code: g.invite_code ?? null } : null;
+    return g ? { ...g, ...cleanRules(g), can_manage: g.can_manage === true, realtime: g.realtime === true, invite_code: g.invite_code ?? null } : null;
   }
 
   loadTours(): Promise<Tour[]> {

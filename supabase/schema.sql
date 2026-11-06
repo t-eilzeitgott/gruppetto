@@ -50,6 +50,10 @@ create table if not exists public.groups (
   underdog_bonus boolean not null default true,
   created_at     timestamptz not null default now()
 );
+-- Echtzeit-Rennen (WebSocket-Kanal der Lobby, nebeneinander starten, rempeln): je Gruppe freigeschaltet – das
+-- Nachrichten-Kontingent gilt für das ganze Projekt. Setzt ein Admin in der Datenbank:
+--   update public.groups set realtime = true where name = '…';
+alter table public.groups add column if not exists realtime boolean not null default false;
 alter table public.profiles add column if not exists group_id uuid references public.groups (id) on delete set null;
 create index if not exists profiles_group_idx on public.profiles (group_id);
 
@@ -444,6 +448,7 @@ begin
       3)
     returning id into v_group;
     update public.profiles set group_id = v_group where is_member and group_id is null;
+    update public.groups set realtime = true where id = v_group;
     delete from public.app_settings where key = 'invite_code';
   end if;
 end $$;
@@ -656,7 +661,7 @@ returns jsonb language sql stable security definer set search_path = public as $
   select jsonb_build_object(
            'id', g.id, 'name', g.name, 'owner_id', g.owner_id, 'created_at', g.created_at,
            'stage_points', to_jsonb(g.stage_points), 'bonus_points', to_jsonb(g.bonus_points),
-           'tip_limit', g.tip_limit, 'underdog_bonus', g.underdog_bonus,
+           'tip_limit', g.tip_limit, 'underdog_bonus', g.underdog_bonus, 'realtime', g.realtime,
            'can_manage', public.can_manage_group(),
            'invite_code', case when public.can_manage_group() then g.invite_code end)
     from public.groups g

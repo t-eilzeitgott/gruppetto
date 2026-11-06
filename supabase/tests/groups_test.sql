@@ -42,6 +42,7 @@ select pg_temp.expect_eq((select count(*) from group_code where code ~ '^[A-HJ-N
 select pg_temp.expect_eq((public.my_group() ->> 'invite_code' = (select code from group_code))::int, 1, 'Gründerin sieht ihren Code');
 select pg_temp.expect_eq((public.my_group() -> 'stage_points' = '[20,15,10,7,6,5,4,3,2,1]'::jsonb and public.my_group() -> 'bonus_points' = '[15,10,5]'::jsonb
                           and (public.my_group() ->> 'tip_limit')::int = 3 and (public.my_group() ->> 'underdog_bonus')::boolean)::int, 1, 'Neue Gruppe: Standardregeln');
+select pg_temp.expect_eq((not (public.my_group() ->> 'realtime')::boolean)::int, 1, 'Neue Gruppe: Echtzeit-Rennen nicht freigeschaltet');
 select pg_temp.expect_error($q$ select public.join_group('TEST27', 'Dora') $q$, 'already_in_group');
 commit;
 

@@ -36,6 +36,13 @@ export interface LiveEngine {
   rtHit?(from: string, h: { power: number; role: 'v' | 'a'; dir: -1 | 1 }): void;
 }
 
+/** Gruppe, wenn sie für Echtzeit-Rennen freigeschaltet ist (sonst '') – einmal je Sitzung gefragt */
+let rtGroupP: Promise<string> | null = null;
+function rtGroup(): Promise<string> {
+  rtGroupP ??= source.loadGroup().then((g) => (g?.realtime ? g.id : ''), () => { rtGroupP = null; return ''; });
+  return rtGroupP;
+}
+
 /** so oft (ms) geht die eigene Lage an die Lobby: dicht beieinander und weit auseinander */
 const RT_NEAR_MS = 100;
 const RT_FAR_MS = 400;
@@ -325,10 +332,10 @@ export function useLiveGame(o: LiveGameOpts): LobbyRace | null {
         opts.current.engineRef.current?.rtHit?.(h.u, { power: h.p, role: h.r === 'a' ? 'a' : 'v', dir: h.d === -1 ? -1 : 1 });
       }
     };
-    /** am Kanal der eigenen Lobby hängen (nur dort) */
+    /** am Kanal der eigenen Lobby hängen (nur dort – und nur, wenn die Gruppe für Echtzeit-Rennen freigeschaltet ist) */
+    let group = '';
     const syncChannel = () => {
       const code = liveHub.lobby?.code ?? '';
-      const group = opts.current.members?.find((x) => x.id === meId)?.group_id ?? '';
       const cfg = source.rtConfig();
       const name = on && code && group && cfg ? `gruppetto:lobby:${group}:${code}` : '';
       if (name === chanName) return;
@@ -340,7 +347,9 @@ export function useLiveGame(o: LiveGameOpts): LobbyRace | null {
       liveHub.emit();
     };
     const unsub = liveHub.subscribe(syncChannel);
-    syncChannel();
+    if (source.rtConfig()) {
+      void rtGroup().then((g) => { group = g; if (on) syncChannel(); });
+    }
 
     const sendPos = (st: RtState & { down: boolean }, s: number) => chan?.send('pos', {
       u: meId, c: courseKey, r: run, k: myRace, s, z: Math.round(st.z * 100), x: Math.round(st.x * 100), v: Math.round(st.v * 100),

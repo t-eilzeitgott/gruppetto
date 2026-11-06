@@ -46,6 +46,8 @@ export interface Group extends GroupRules {
   /** Leitung: wer die Gruppe gegründet hat (oder an wen sie übergeben wurde) */
   owner_id: string | null;
   created_at: string;
+  /** Echtzeit-Rennen in der Lobby (nebeneinander starten, rempeln) sind für diese Gruppe freigeschaltet */
+  realtime?: boolean;
   /** darf ich Name, Regeln, Code und Mitglieder verwalten? */
   can_manage: boolean;
   /** nur für die Leitung sichtbar */
