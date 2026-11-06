@@ -3512,7 +3512,7 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 .live-line__lobby .btn { min-height: 34px; }
 .live-line__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .live-line__list li { display: flex; align-items: center; gap: 8px; }
-.live-line__list li > span { flex: 1 1 auto; min-width: 0; }
+.live-line__list li > .live-line__who { flex: 1 1 auto; min-width: 0; }
 .live-line__hint { color: var(--muted); font-size: 12px; padding-left: 30px; }
 /* anstehendes Lobby-Rennen: große Zahl, die herunterzählt */
 .live-line--race { flex-direction: row; align-items: center; gap: 12px; background: color-mix(in srgb, var(--live-red) 14%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--live-red) 35%, transparent); flex-wrap: wrap; }
@@ -3621,3 +3621,45 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 }
 .lobby-ask > span { flex: 1 1 auto; min-width: 0; }
 .lobby-ask__x { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.1); color: #fff; }
+
+/* ---------- Fotofinish (pages/photoFinish.tsx): Bild der Zielkamera, Zeit läuft nach rechts ---------- */
+.photo { --photo-me: #ffd23f; margin: 0; display: flex; flex-direction: column; gap: 8px; animation: alert-in 0.5s 0.1s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.photo__head { display: flex; flex-direction: column; gap: 1px; }
+.photo__eyebrow { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--hue, var(--accent)); }
+.photo__head strong { font-size: 18px; letter-spacing: -0.01em; }
+.photo__strip { display: block; width: 100%; height: auto; border-radius: 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); }
+.photo__wheel { fill: none; stroke: #d9d2c3; stroke-width: 1.4; opacity: 0.85; }
+.photo__frame { fill: none; stroke: #d9d2c3; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.8; }
+.photo__ground { stroke: #fff; stroke-opacity: 0.06; }
+.photo__me-line { stroke: var(--photo-me); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.75; }
+.photo__name { fill: #efe9dc; font: 600 9.5px/1 var(--font); opacity: 0.9; }
+.photo__row { animation: photo-in 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.photo__row.is-me .photo__name { fill: var(--photo-me); font-weight: 800; }
+@keyframes photo-in { from { opacity: 0; transform: translateX(-14px); } }
+.photo__axis line { stroke: #efe9dc; stroke-opacity: 0.35; }
+.photo__axis text { fill: #efe9dc; fill-opacity: 0.6; font: 600 8.5px/1 var(--font); font-variant-numeric: tabular-nums; }
+.photo__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.photo__list li { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: 14px; border-top: 1px solid var(--line); }
+.photo__list li:first-child { border-top: 0; }
+.photo__list li.is-me .photo__who { font-weight: 800; }
+.photo__n { width: 18px; color: var(--muted); font-weight: 700; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.photo__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.photo__who { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.photo__tag { font-style: normal; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--surface2); color: var(--muted); }
+.photo__tag.is-live { background: color-mix(in srgb, var(--live-red) 18%, transparent); color: var(--live-red); }
+.photo__gap { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .photo, .photo__row { animation: none; } }
+
+/* ---------- Dein Rivale (pages/rival.tsx) im Startblatt ---------- */
+.rival {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin: 0 0 4px; border-radius: 14px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--hue, var(--accent)) 14%, var(--surface)), var(--surface));
+  box-shadow: inset 3px 0 0 var(--hue, var(--accent)); animation: alert-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.rival__main { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
+.rival__eyebrow { font-size: 10.5px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--hue, var(--accent)); }
+.rival__main b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rival__main small { font-weight: 500; color: var(--muted); font-size: 12.5px; }
+.rival__gap { display: flex; flex-direction: column; align-items: flex-end; flex: none; line-height: 1.15; }
+.rival__gap strong { font-size: 16px; font-variant-numeric: tabular-nums; }
+.rival__gap small { font-size: 11.5px; color: var(--muted); }

@@ -11,8 +11,9 @@ import type { Opp, RiderTag } from './engine';
 import { hashStr } from './rng';
 import { SKINS, type Kit } from './rider';
 import { pedalStep } from './motion';
-import { TRACE_DT, ghostAt, ghostDayLabel, ghostName, ghostTimeAt, type GameGhostRow, type GhostRider } from '../tt';
+import { TRACE_DT, firstName, ghostAt, ghostDayLabel, ghostName, ghostTimeAt, type GameGhostRow, type GhostRider } from '../tt';
 import { liveAdvance, liveAt, liveDone, liveEnd, type LiveFeed } from '../live';
+import { crossOffset, type PhotoRider } from '../photo';
 
 /** Deckkraft: Geister von heute, ältere (andere Tage, andere Strecke) blasser */
 const ALPHA = 0.42;
@@ -26,21 +27,24 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 export const GAME_GHOSTS = 6;
 
 /** Reihenfolge: der eigene Geist, dann die von heute (meiste Punkte zuerst), dann die älteren */
-export function pickGameGhosts(rows: GameGhostRow[], meId: string, day: string, colorOf: (id: string) => { name: string; color: string }, max = GAME_GHOSTS): GhostRider[] {
+export function pickGameGhosts(rows: GameGhostRow[], meId: string, day: string, colorOf: (id: string) => { name: string; color: string }, max = GAME_GHOSTS, rivalId: string | null = null): GhostRider[] {
   const latest = new Map<string, GameGhostRow>();
   for (const r of rows) {
     if (r.day > day || r.trace.length < 6) continue;
     const prev = latest.get(r.user_id);
     if (!prev || r.day > prev.day || (r.day === prev.day && r.score > prev.score)) latest.set(r.user_id, r);
   }
+  // eigener Lauf zuerst, dann der Rivale (fährt immer mit), dann heutige vor älteren, bessere vor schwächeren
   const list = [...latest.values()].sort((a, b) =>
-    Number(b.user_id === meId) - Number(a.user_id === meId) || Number(a.day < day) - Number(b.day < day) || b.score - a.score);
+    Number(b.user_id === meId) - Number(a.user_id === meId) || Number(b.user_id === rivalId) - Number(a.user_id === rivalId)
+    || Number(a.day < day) - Number(b.day < day) || b.score - a.score);
   return list.slice(0, max).map((r) => {
     const me = r.user_id === meId;
     const who = colorOf(r.user_id);
     return {
       id: me ? 'me' : r.user_id, name: me ? 'Du' : who.name, color: who.color, bike: r.bike || 'allround',
       timeMs: 0, splits: [], trace: r.trace, me, old: r.day < day ? ghostDayLabel(r.day, day) : undefined,
+      ...(rivalId && r.user_id === rivalId ? { rival: true } : {}),
     };
   });
 }
@@ -139,6 +143,40 @@ export class GhostPack {
     }
   }
 
+  /**
+   * Fotofinish (photo.ts): Geister und Live-Mitspieler, die gerade zu sehen sind – Zielzeit relativ zur eigenen,
+   * aus ihrer Lage im Moment des eigenen Zieldurchgangs
+   */
+  photo(finishZ: number, myZ: number, myV: number): PhotoRider[] {
+    return this.opps.filter((o) => o.ghost > 0.05).map((o) => ({
+      id: o.rider.id, name: ghostName(o.rider, true), color: o.rider.color, t: crossOffset(finishZ, o.z, o.v, myZ, myV),
+      ...(o.rider.live ? { live: true } : { ghost: true }),
+    }));
+  }
+
+  /** wer gerade Windschatten gibt (Live-Geist, liveDraft) */
+  draftBy: string | null = null;
+
+  /**
+   * Windschatten hinter Live-Geistern: wer gerade wirklich fährt (live.ts), nimmt einem den Wind wie ein Fahrer im
+   * Feld – gespeicherte Geister nicht (die sind nur ein Echo). far: so weit reicht er nach hinten (m), width: so
+   * breit (m); Formel wie im Feld der jeweiligen Engine
+   */
+  liveDraft(z: number, x: number, far: number, width: number): number {
+    let d = 0;
+    this.draftBy = null;
+    for (const o of this.opps) {
+      if (!o.rider.live || o.ghost < 0.1) continue;
+      const dz = o.z - z;
+      if (dz < 0.9 || dz > far) continue;
+      const dx = Math.abs(o.x - x);
+      if (dx > width) continue;
+      const k = Math.pow(1 - (dz - 0.9) / (far - 0.9), 0.7) * (1 - dx / width);
+      if (k > d) { d = k; this.draftBy = firstName(o.rider.name); }
+    }
+    return d;
+  }
+
   /** Live-Geister, die fertig ausgeblendet sind, aus der Liste nehmen (die Darstellung gibt ihr Modell zurück) */
   private dropLive() {
     for (let i = this.opps.length - 1; i >= 0; i--) {
@@ -185,7 +223,7 @@ export class GhostPack {
       o.lean += (clamp(-o.vx * 0.12 + Math.atan2(seg.curve * o.v * o.v, G) * 0.8, -0.55, 0.55) - o.lean) * Math.min(1, dt * 6);
       pedalStep(o, downhill && !push && o.v > 12 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / warp, dt);
       const gone = f ? liveDone(f) || f.shown <= 0 : visible && t > o.end + 2.5;
-      const want = visible && !gone ? (f ? ALPHA_LIVE : o.rider.old ? ALPHA_OLD : ALPHA) : 0;
+      const want = visible && !gone ? (f ? ALPHA_LIVE : o.rider.rival ? ALPHA_LIVE : o.rider.old ? ALPHA_OLD : ALPHA) : 0;
       o.ghost += (want - o.ghost) * Math.min(1, dt * 2.5);
       if (o.ghost < 0.01) o.ghost = want > 0 ? 0.01 : 0;
     }
@@ -195,14 +233,39 @@ export class GhostPack {
   /** Namensschild für den nächsten sichtbaren Geist voraus (bis 40 m), mit Zeitabstand an der eigenen Stelle */
   tag(t: number, pz: number): RiderTag | null {
     let best: GhostOpp | null = null;
+    let rival: GhostOpp | null = null;
     for (const o of this.opps) {
       if (o.ghost < 0.1) continue;
       const dz = o.z - pz;
       if (dz > 1.5 && dz < 40 && (!best || dz < best.z - pz)) best = o;
+      // der Rivale hat sein Schild auch etwas weiter vorn und neben einem
+      if (o.rider.rival && dz > -6 && dz < 70) rival = o;
     }
+    if (rival) best = rival;
     if (!best) return null;
     if (best.rider.live) return { id: best.id, text: ghostName(best.rider, true), sub: 'live', color: best.rider.color };
     const gap = t - ghostTimeAt(best.rider.trace, pz);
-    return { id: best.id, text: ghostName(best.rider, true), sub: `${gap >= 0 ? '+' : '−'}${Math.abs(gap).toFixed(1).replace('.', ',')}″`, color: best.rider.color };
+    const g = `${gap >= 0 ? '+' : '−'}${Math.abs(gap).toFixed(1).replace('.', ',')}″`;
+    return { id: best.id, text: ghostName(best.rider, true), sub: best.rider.rival ? `Rivale · ${g}` : g, color: best.rider.color };
+  }
+
+  /** letzte Seite des Rivalen (vor oder hinter einem) und wann zuletzt angesagt */
+  private rivalSide = 0;
+  private rivalSaid = -99;
+
+  /**
+   * Rivale überholt oder wieder vorn? (je Bild; t: Rennzeit) – 'passed', wenn man an ihm vorbei ist, 'lost', wenn er
+   * wieder vorn ist; höchstens alle 5 s eine Ansage
+   */
+  rivalEvent(t: number, pz: number): { kind: 'passed' | 'lost'; name: string } | null {
+    const o = this.opps.find((x) => x.rider.rival);
+    if (!o || o.ghost < 0.1) { this.rivalSide = 0; return null; }
+    const dz = o.z - pz;
+    const side = dz > 1 ? 1 : dz < -1 ? -1 : this.rivalSide;
+    const was = this.rivalSide;
+    this.rivalSide = side;
+    if (!was || side === was || t - this.rivalSaid < 5) return null;
+    this.rivalSaid = t;
+    return { kind: side < 0 ? 'passed' : 'lost', name: firstName(o.rider.name) };
   }
 }

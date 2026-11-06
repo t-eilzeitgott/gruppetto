@@ -22,6 +22,7 @@ import { STEEP, STEER_KD, STEER_KEYS, STEER_KP, STEER_MAX, STEER_SMOOTH, STEER_S
 import type { StageRef } from './stageRef';
 import { TRACE_DT, firstName, ghostAt, ghostName, ghostTimeAt, type GhostRider } from '../tt';
 import { liveAdvance, liveAt, liveDone, type LiveFeed, type LiveOut } from '../live';
+import { crossOffset, photoFinish, type PhotoResult, type PhotoRider } from '../photo';
 import { ghostKit, liveRider } from './ghosts';
 import type { Wreck } from './wreck';
 import { canRise, makeWreck, slideOn } from './crash';
@@ -59,6 +60,8 @@ export interface TtSector {
 }
 
 export interface TtResult {
+  /** Zielfoto, wenn es knapp war (photo.ts) */
+  photo?: PhotoResult | null;
   timeMs: number;
   splits: number[];
   /** Platz unter allen Geistern des Tages (nach Endzeit) */
@@ -237,6 +240,7 @@ export class TimeTrial {
     this.txs = this.p.x;
     this.botTx = this.p.x;
     this.opps = [];
+    this.photoLive = [];
     this.parts = [];
     this.popups = [];
     this.tags = [];
@@ -312,6 +316,8 @@ export class TimeTrial {
     for (const o of this.opps) if (o.rider.live && !feeds.includes(o.rider.live)) o.rider.live.gone = true;
   }
   private liveId = 1500;
+  private photoLive: PhotoRider[] = [];
+  private finV = 0;
 
   setViewport(w: number) { this.viewW = Math.max(240, w); }
 
@@ -564,6 +570,11 @@ export class TimeTrial {
       // Ziel
       if (p.z >= TT_FINISH) {
         this.finT = this.time - (p.z - TT_FINISH) / Math.max(1, p.v);
+        // Zielfoto: Live-Mitspieler, wo sie gerade sind (gespeicherte Geister haben ihre genaue Zeit)
+        this.photoLive = this.opps.filter((o) => o.rider.live && o.ghost > 0.05).map((o) => ({
+          id: o.rider.id, name: ghostName(o.rider, true), color: o.rider.color, live: true, t: crossOffset(TT_FINISH, o.z, o.v, p.z, p.v),
+        }));
+        this.finV = p.v;
         const pl = this.place();
         if (pl === 1 && this.ranked.some((o) => !o.rider.me)) { this.pop('Tagesbestzeit!', 'gold', undefined, true); this.confetti(); }
         else if (this.opts.myBest !== null && this.finT * 1000 < this.opts.myBest) { this.pop('Bestzeit!', 'gold', 'persönlich', true); this.confetti(); }
@@ -707,7 +718,8 @@ export class TimeTrial {
           this.flags.add(`pb:${o.id}`);
           this.passedNames.push(o.rider.name);
         }
-        this.pop(o.rider.me ? (o.rider.old ? `${ghostName(o.rider)} überholt` : 'Schneller als dein Bestlauf') : `${ghostName(o.rider)} überholt`, o.rider.me && !o.rider.old ? 'gold' : 'accent', undefined, false, true);
+        if (o.rider.rival) this.pop(`Rivale ${ghostName(o.rider)} überholt!`, 'gold', undefined, true);
+        else this.pop(o.rider.me ? (o.rider.old ? `${ghostName(o.rider)} überholt` : 'Schneller als dein Bestlauf') : `${ghostName(o.rider)} überholt`, o.rider.me && !o.rider.old ? 'gold' : 'accent', undefined, false, true);
       } else if (o.passedBy && dz > 2.5) {
         o.passedBy = false;
       }
@@ -715,7 +727,7 @@ export class TimeTrial {
         if (this.flags.has(`pm:${o.id}`)) continue;
         this.flags.add(`pm:${o.id}`);
         o.passedMe = true;
-        this.pop(`${ghostName(o.rider, true)} zieht vorbei`, 'muted', undefined, false, true);
+        this.pop(o.rider.rival ? `Rivale ${ghostName(o.rider, true)} zieht vorbei` : `${ghostName(o.rider, true)} zieht vorbei`, o.rider.rival ? 'red' : 'muted', undefined, false, !o.rider.rival);
       }
       if (o.passedMe && dz < -1) o.passedMe = false;
     }
@@ -764,12 +776,14 @@ export class TimeTrial {
       pedalStep(o, downhill && o.m !== 1 && o.v > 12 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / this.warp, dt);
       // sichtbar ab „Los“: in den ersten Metern einblenden
       // ältere Geister (andere Tage) etwas blasser
-      const want = !playing || (lf && (liveDone(lf) || lf.shown <= 0)) ? 0 : GHOST_ALPHA * (o.rider.old ? 0.65 : lf ? 1.25 : 1);
+      const want = !playing || (lf && (liveDone(lf) || lf.shown <= 0)) ? 0 : GHOST_ALPHA * (o.rider.old ? 0.65 : lf || o.rider.rival ? 1.25 : 1);
       o.ghost += (want - o.ghost) * Math.min(1, dr * 2.5);
       if (o.ghost < 0.01) o.ghost = want > 0 ? 0.01 : 0;
       // Namensschild: der nächste Geist voraus (bis 45 m)
       const dz = o.z - p.z;
-      if (playing && this.finT < 0 && dz > 1.5 && dz < 45 && (!lf || o.ghost > 0.1) && (!tagged || dz < tagged.z - p.z)) tagged = o;
+      if (playing && this.finT < 0 && dz > 1.5 && dz < 45 && (!lf || o.ghost > 0.1) && (!tagged || dz < tagged.z - p.z) && !tagged?.rider.rival) tagged = o;
+      // der Rivale hat sein Schild auch etwas weiter vorn und neben einem
+      if (playing && this.finT < 0 && o.rider.rival && dz > -6 && dz < 70) tagged = o;
     }
     // fertig ausgeblendete Live-Geister, die nicht mehr gemeldet werden, aus der Liste
     for (let i = this.opps.length - 1; i >= 0; i--) {
@@ -781,7 +795,8 @@ export class TimeTrial {
     } else if (tagged) {
       const gap = this.gapTo(tagged);
       const name = ghostName(tagged.rider, true);
-      this.tags = [{ id: tagged.id, text: name, sub: `${gap >= 0 ? '+' : '−'}${Math.abs(gap).toFixed(1).replace('.', ',')}″`, color: tagged.rider.bot ? '#9aa0a8' : tagged.rider.color }];
+      const g = `${gap >= 0 ? '+' : '−'}${Math.abs(gap).toFixed(1).replace('.', ',')}″`;
+      this.tags = [{ id: tagged.id, text: name, sub: tagged.rider.rival ? `Rivale · ${g}` : g, color: tagged.rider.bot ? '#9aa0a8' : tagged.rider.color }];
     } else this.tags = [];
   }
 
@@ -818,7 +833,13 @@ export class TimeTrial {
       sectors.push({ me, best, bestName, leader });
     }
     const all = [...others.map((o) => ({ name: o.rider.bot ? 'Tempomacher' : o.rider.name, me: false, timeMs: o.rider.timeMs })), { name: this.opts.rider, me: true, timeMs }].sort((a, b) => a.timeMs - b.timeMs);
+    // Zielfoto: Geister des Tages (auch der eigene Bestlauf und der Tempomacher) mit ihrer Zeit, Live-Mitspieler
+    const photo = photoFinish([
+      ...others.map((o) => ({ id: o.rider.id, name: ghostName(o.rider, true), color: o.rider.bot ? '#9aa0a8' : o.rider.color, ghost: true, t: o.rider.timeMs / 1000 - timeMs / 1000 })),
+      ...this.photoLive,
+    ], { name: 'Du', color: this.opts.kit.jersey }, this.finV);
     this.opts.onOver?.({
+      photo,
       timeMs, splits, place, riders: others.length + 1,
       gapMs: bestO ? timeMs - bestO.rider.timeMs : null,
       leader: bestO ? { name: bestO.rider.bot ? 'Tempomacher' : bestO.rider.name, timeMs: bestO.rider.timeMs } : null,

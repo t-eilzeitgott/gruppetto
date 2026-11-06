@@ -24,6 +24,7 @@ import type { StageRef } from './stageRef';
 import { STEEP, STEER_KD, STEER_KEYS, STEER_KP, STEER_MAX, STEER_PACK_GAIN, STEER_PACK_MAX, STEER_SMOOTH, STEER_SPAN, effortFor, pedalStep, smooth, strainOf } from './motion';
 import { GhostPack, GhostRecorder } from './ghosts';
 import type { LiveFeed, LiveOut } from '../live';
+import { photoFinish, type PhotoResult, type PhotoRider } from '../photo';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
 import { canRise, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
@@ -65,6 +66,8 @@ export type BergEvent =
   | { type: 'banner'; title: string; sub?: string; tone?: 'gold' | 'accent' | 'red' };
 
 export interface BergResult {
+  /** Zielfoto, wenn es knapp war (photo.ts) */
+  photo?: PhotoResult | null;
   place: number;
   riders: number;
   score: number;
@@ -203,6 +206,8 @@ export class BergRace {
   private ghostT = 0;
   tx = 0;
   draft = 0;
+  private photoGhosts: PhotoRider[] = [];
+  private finV = 0;
   energy = 1;
   mode: 'sit' | 'go' | 'ease' = 'sit';
   slides = 0;
@@ -277,6 +282,7 @@ export class BergRace {
     this.ghostT = 0;
     this.energy = 1;
     this.draft = 0;
+    this.photoGhosts = [];
     this.finT = -1;
     this.topT = -1;
     this.topV = 0;
@@ -570,8 +576,14 @@ export class BergRace {
     const ease = racing && !go && (this.wantEase || this.keys.down || this.pedal < 0);
     this.mode = go ? 'go' : ease ? 'ease' : 'sit';
     this.tooFast = false;
-    const dr = this.draftFor(p.z, p.x);
+    // Windschatten im Feld – und hinter Mitspielern, die gerade live mitfahren
+    const live = racing ? this.pack.liveDraft(p.z, p.x, 9, 0.85) : 0;
+    const dr = Math.max(this.draftFor(p.z, p.x), live);
     this.draft += (dr - this.draft) * Math.min(1, dt * 6);
+    if (live > 0.5 && this.pack.draftBy && !this.flags.has('livedraft')) {
+      this.flags.add('livedraft');
+      this.opts.onEvent?.({ type: 'banner', title: `Windschatten von ${this.pack.draftBy}`, sub: 'Live am Hinterrad – spart Kraft', tone: 'accent' });
+    }
     const wheel = this.wheelAhead(p.z, p.x, 12);
     const empty = this.energy <= 0.001;
     let P = 0;
@@ -663,6 +675,9 @@ export class BergRace {
     if (this.topT < 0 && z0 < MOUNTAIN_TOP && p.z >= MOUNTAIN_TOP) this.summit();
     if (this.finT < 0 && p.z >= MOUNTAIN_FINISH) {
       this.finT = this.time - (p.z - MOUNTAIN_FINISH) / Math.max(1, p.v);
+      // Zielfoto: Geister und Live-Mitspieler, wo sie gerade sind
+      this.photoGhosts = this.pack.photo(MOUNTAIN_FINISH, p.z, p.v);
+      this.finV = p.v;
       const pl = this.place();
       if (pl === 1) { this.pop('Sieg!', 'gold', 'Etappensieg', true); this.confetti(); }
       else this.pop(`${pl}. Platz`, pl <= 3 ? 'gold' : 'white', undefined, true);
@@ -1114,6 +1129,13 @@ export class BergRace {
     if ((this.phase === 'countdown' || this.phase === 'playing') && this.finT < 0) this.rec.step(dt, p.z, p.x, p.v, this.mode === 'go' ? 1 : this.mode === 'ease' ? 2 : 0);
     if (!this.pack.count) return;
     this.pack.step(this.ghostT, live, dt, warp);
+    // dein Rivale (gespeicherter Lauf): überholt oder wieder vorn
+    const rv = this.phase === 'playing' && this.finT < 0 ? this.pack.rivalEvent(this.ghostT, p.z) : null;
+    if (rv) {
+      this.opts.onEvent?.(rv.kind === 'passed'
+        ? { type: 'banner', title: `${rv.name} überholt`, sub: 'Dein Rivale liegt hinter dir', tone: 'gold' }
+        : { type: 'banner', title: `${rv.name} ist wieder vorn`, sub: 'Dein Rivale – dranbleiben!', tone: 'red' });
+    }
     if (!this.tags.length && this.phase === 'playing' && this.finT < 0) {
       const tag = this.pack.tag(this.ghostT, p.z);
       if (tag) this.tags = [tag];
@@ -1142,8 +1164,17 @@ export class BergRace {
     const gapPts = place === 1 ? Math.min(300, Math.round(Math.max(0, lead) * 25)) : 0;
     const base = placePts + gpmPts + gapPts;
     const typePts = Math.round(base * (this.stats.bonus - 1));
+    // Zielfoto: Fahrer im Feld (genaue Zielzeit; wer noch nicht im Ziel ist, geschätzt), Geister, Live-Mitspieler
+    const others: PhotoRider[] = [
+      ...this.opps.filter((o) => !o.wreck).map((o) => ({
+        id: `f${o.id}`, name: o.name, color: o.kit.jersey,
+        t: o.done ? o.finT - this.finT : this.time + (MOUNTAIN_FINISH - o.z) / Math.max(1, o.v) - this.finT,
+      })),
+      ...this.photoGhosts,
+    ];
+    const photo = photoFinish(others, { name: 'Du', color: this.opts.kit.jersey }, this.finV);
     this.opts.onOver?.({
-      place, riders: this.riders,
+      place, riders: this.riders, photo,
       score: base + typePts,
       parts: { place: placePts, gpm: gpmPts, gap: gapPts, type: typePts },
       winner: win.me ? this.opts.rider.name : win.name,

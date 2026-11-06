@@ -14,7 +14,7 @@ import type { GameGhostRow } from '../game/tt';
 
 type Game = GameGhostRow['game'];
 
-export function useGameGhosts(game: Game) {
+export function useGameGhosts(game: Game, rivalId: string | null = null) {
   const { me } = useApp();
   const members = useMembers();
   const day = berlinDayKey();
@@ -27,8 +27,8 @@ export function useGameGhosts(game: Game) {
       if (id === me.id) return { name: 'Du', color: me.avatar_color };
       const m = members.data?.find((x) => x.id === id);
       return { name: m?.display_name ?? 'Jemand', color: m?.avatar_color ?? '#888888' };
-    });
-  }, [q.data, local, me.id, me.avatar_color, members.data, day]);
+    }, undefined, rivalId);
+  }, [rivalId, q.data, local, me.id, me.avatar_color, members.data, day]);
 
   /** eigenen Lauf als Geist hinterlegen (nur echte Läufe mit Spur) */
   const save = (run: { score: number; meters: number; trace: number[]; bike: string }) => {

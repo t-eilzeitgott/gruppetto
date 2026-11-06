@@ -28,6 +28,7 @@ import { AutoGfx, autoStep, fmtRes } from '../game/abfahrt/autoGfx';
 import { copyText, shareFile } from './admin/gpuKit';
 import { berlinDayKey, berlinDayStart } from '../game/abfahrt/rng';
 import { useLiveGame } from '../app/live';
+import { RivalLine, rivalOf, rivalVerdict, useRival, type Rival } from './rival';
 import { LiveChip } from '../ui/Live';
 import { dailyMissions, type Mission } from '../game/abfahrt/missions';
 import { Avatar, cx, useTitle } from '../ui/kit';
@@ -114,7 +115,9 @@ export function GamePage() {
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>('game:abfahrt:season', () => source.gameLeaderboard('abfahrt'));
   const bikes = useBikes();
-  const gh = useGameGhosts('abfahrt');
+  // dein Rivale (rival.tsx): sein Geist fährt immer mit
+  const rivalId = useMemo(() => rivalOf(season.data, me.id, members.data)?.userId ?? null, [season.data, me.id, members.data]);
+  const gh = useGameGhosts('abfahrt', rivalId);
   const today = useQuery<GameBest[]>(`game:abfahrt:day:${day}`, () => source.gameLeaderboard('abfahrt', since));
   const missions = useMemo(() => dailyMissions(day), [day]);
   const [doneIds, setDoneIds] = useState<string[]>(() => { try { return JSON.parse(lsGet(missionKey(day)) ?? '[]'); } catch { return []; } });
@@ -126,6 +129,7 @@ export function GamePage() {
   const rendererRef = useRef<Renderer3D | null>(null);
   const [glError, setGlError] = useState(false);
   const [ui, setUi] = useState<Ui>('ready');
+  const rival = useRival(season.data, me.id, members.data, ui !== 'ready');
   const [count, setCount] = useState(3);
   const [result, setResult] = useState<RunResult | null>(null);
   const [prevRank, setPrevRank] = useState<{ day: number; season: number } | null>(null);
@@ -776,6 +780,7 @@ export function GamePage() {
         <StartSheet
           game="abfahrt" title="Abfahrt" sub={track.title}
           onStart={() => start()} onClose={() => navigate('/')} plain={showBoard}
+          rival={rival ? <RivalLine rival={rival} game="abfahrt" ghost={gh.ghosts.some((x) => x.rival)} /> : null}
           after={me.is_admin || canMeasure ? (
             <div className="abf-sheet__extra">
               {me.is_admin ? (
@@ -820,6 +825,7 @@ export function GamePage() {
               season={season.data ?? []}
               meId={me.id}
               totalM={(mine?.total_m ?? 0)}
+              rival={cruiseRef.current ? null : rival}
               missions={missions}
               done={doneIds}
               onAgain={() => (cruiseRef.current ? start(cruiseRef.current) : againWithIntro('abfahrt', 'Abfahrt', () => { engineRef.current = race.make(); }, () => start(0)))}
@@ -953,7 +959,8 @@ const PART_SHORT: Record<ScoreCat, string> = {
 };
 const ORDER: ScoreCat[] = ['dist', 'overtake', 'bidons', 'draft', 'curves', 'near', 'air', 'bonus', 'friends', 'missions'];
 
-function Summary({ bikes, result, record, prevRank, today, season, meId, totalM, missions, done, onAgain, onBoard }: {
+function Summary({ bikes, result, record, prevRank, today, season, meId, totalM, missions, done, onAgain, onBoard, rival }: {
+  rival: Rival | null;
   bikes: Bikes; result: RunResult; record: boolean; prevRank: { day: number; season: number } | null; today: GameBest[]; season: GameBest[];
   meId: string; totalM: number; missions: Mission[]; done: string[]; onAgain: () => void; onBoard: () => void;
 }) {
@@ -980,7 +987,7 @@ function Summary({ bikes, result, record, prevRank, today, season, meId, totalM,
         <p className="abf-score"><strong>{nf(shown)}</strong><span className="sr-only"> Punkte</span></p>
         <p className="rp-gap">Punkte{record && result.reason ? ` · ${result.reason}` : ''}</p>
       </div>
-      <Verdict line={verdict({ game: 'abfahrt', seed: result.score, pb: record, crash: result.reason || undefined })} />
+      <Verdict line={verdict({ game: 'abfahrt', seed: result.score, pb: record, crash: result.reason || undefined, rival: rivalVerdict('abfahrt', rival, result.score) })} />
       <RunTiles tiles={[
         { key: 'm', label: 'Strecke', value: km(result.meters) },
         result.avgKmh ? { key: 'v', label: 'Schnitt', value: fmtKmh(result.avgKmh), unit: 'km/h' } : null,

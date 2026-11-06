@@ -15,6 +15,8 @@ import { SPRINT_FINISH } from '../game/abfahrt/track';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { berlinDayKey, berlinDayStart, hashStr } from '../game/abfahrt/rng';
 import { useLiveGame } from '../app/live';
+import { PhotoFinish } from './photoFinish';
+import { RivalLine, rivalOf, rivalVerdict, useRival, type Rival } from './rival';
 import { LiveChip } from '../ui/Live';
 import { HudBanner, PowerRing, RaceBar, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
@@ -80,13 +82,16 @@ export function SprintPage() {
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>('game:sprint:season', () => source.gameLeaderboard('sprint'));
   const bikes = useBikes();
-  const gh = useGameGhosts('sprint');
+  // dein Rivale (rival.tsx): sein Geist fährt immer mit
+  const rivalId = useMemo(() => rivalOf(season.data, me.id, members.data)?.userId ?? null, [season.data, me.id, members.data]);
+  const gh = useGameGhosts('sprint', rivalId);
   const today = useQuery<GameBest[]>(`game:sprint:day:${day}`, () => source.gameLeaderboard('sprint', since));
 
   const stageEl = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<SprintRace | null>(null);
   const [glError, setGlError] = useState(false);
   const [ui, setUi] = useState<Ui>('ready');
+  const rival = useRival(season.data, me.id, members.data, ui !== 'ready');
   const uiRef = useRef<Ui>('ready');
   uiRef.current = ui;
   const [count, setCount] = useState(3);
@@ -298,6 +303,7 @@ export function SprintPage() {
       {ui === 'ready' ? (
         <StartSheet
           game="sprint" title="Sprintfinale"
+          rival={rival ? <RivalLine rival={rival} game="sprint" ghost={gh.ghosts.some((x) => x.rival)} /> : null}
           sub={gameSubFor('sprint', day, ref)}
           onStart={start} onClose={() => navigate('/')} plain={showBoard}
           after={meas.m.can ? <><button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); meas.m.start(); }}>Losfahren mit Messfahrt</button>{meas.abSelect}</> : null}
@@ -317,6 +323,7 @@ export function SprintPage() {
         <OverSheet game="sprint" onClose={() => navigate('/')} plain={showBoard}>
           {showBoard ? boardView : (
             <SprintSummary
+              rival={rival}
               bikes={bikes}
               result={result}
               rider={chosen}
@@ -335,7 +342,8 @@ export function SprintPage() {
   );
 }
 
-function SprintSummary({ bikes, result, rider, record, today, season, meId, onAgain, onRider, onBoard }: {
+function SprintSummary({ bikes, result, rider, record, today, season, meId, onAgain, onRider, onBoard, rival }: {
+  rival: Rival | null;
   bikes: Bikes; result: SprintResult; rider: RiderOption; record: boolean; today: GameBest[]; season: GameBest[]; meId: string;
   onAgain: () => void; onRider: () => void; onBoard: () => void;
 }) {
@@ -347,7 +355,7 @@ function SprintSummary({ bikes, result, rider, record, today, season, meId, onAg
     ['Plätze gutgemacht', result.parts.gain],
     [`${TYPE_STATS[rider.type].label}-Bonus`, result.parts.type],
   ];
-  const line = verdict({ game: 'sprint', seed: result.score, place: result.place, riders: result.riders, win, pb: record, reserve: result.reserve, gapS: win ? undefined : result.gap, leader: result.winner });
+  const line = verdict({ rival: rivalVerdict('sprint', rival, result.score), game: 'sprint', seed: result.score, place: result.place, riders: result.riders, win, pb: record, reserve: result.reserve, gapS: win ? undefined : result.gap, leader: result.winner });
   return (
     <section className="abf-summary" aria-label="Ergebnis">
       <div className="abf-sum-top">
@@ -362,6 +370,7 @@ function SprintSummary({ bikes, result, rider, record, today, season, meId, onAg
         <p className="rp-gap">{win ? 'Sprintsieg vor dem ganzen Feld' : result.gap < 0.05 ? `zeitgleich mit ${result.winner}` : `+${result.gap.toFixed(2).replace('.', ',')} s auf ${result.winner}`}</p>
       </div>
       <Verdict line={line} />
+      {result.photo ? <PhotoFinish photo={result.photo} /> : null}
       <RunTiles tiles={raceTiles({ place: result.place, riders: result.riders, avgKmh: result.avgKmh, reserve: result.reserve, topKmh: result.topKmh })} />
       <Standing today={today} season={season} meId={meId} score={result.score} fmt={nf} bestWord="Bestleistung" onBoard={onBoard} />
       <Podium podium={result.podium} />

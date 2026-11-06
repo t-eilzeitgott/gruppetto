@@ -107,6 +107,8 @@ export interface VerdictIn {
   /** Abfahrt: Sturz / Grund fürs Ende */
   crash?: string;
   leader?: string;
+  /** dein Rivale (rival.tsx): geschlagen oder wie knapp */
+  rival?: { name: string; beaten: boolean; close?: string } | null;
 }
 
 const pick = (lines: string[], seed: number) => lines[Math.abs(Math.round(seed)) % lines.length];
@@ -120,6 +122,15 @@ export function verdict(v: VerdictIn): string {
       'So fährt ein Kapitän. Ich hab Gänsehaut am Funkgerät.',
       'Vorne! Ganz vorne! Wer hat das bitte trainiert?',
       'Das war Weltklasse. Morgen fahren die anderen dir hinterher.',
+    ], v.seed);
+  }
+  if (v.rival?.beaten) {
+    const n = v.rival.name;
+    return pick([
+      `${n} geschlagen! Der war fällig.`,
+      `An ${n} vorbei – das schmeckt ihm heute Abend nicht.`,
+      `${n} ist Geschichte. Such dir einen neuen Rivalen.`,
+      `Rivale erledigt: ${n} schaut jetzt auf deine Rückennummer.`,
     ], v.seed);
   }
   if (v.crash) {
@@ -155,6 +166,12 @@ export function verdict(v: VerdictIn): string {
     return pick([
       `${v.slides}× gerutscht. Die Kurven laufen dir nicht weg.`,
       'Etwas weniger Rodeo in den Kurven, dann klappt’s auch vorne.',
+    ], v.seed);
+  }
+  if (v.rival?.close) {
+    return pick([
+      `Noch ${v.rival.close} auf ${v.rival.name}. Der ist reif.`,
+      `${v.rival.close} fehlen auf ${v.rival.name} – beim nächsten Mal hast du ihn.`,
     ], v.seed);
   }
   if (v.place && v.place <= 3) {

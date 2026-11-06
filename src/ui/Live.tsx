@@ -104,7 +104,7 @@ export function LiveLine({ game }: { game: GameId }) {
             return (
               <li key={p.user_id}>
                 <Avatar name={m?.display_name ?? '?'} color={m?.avatar_color ?? '#888'} size={22} />
-                <span><b>{first(m?.display_name)}</b> {p.state === 'race' ? <>fährt gerade{peerZ(p) > 0 ? ` · ${km(peerZ(p))}` : ''}</> : p.state === 'over' ? 'ist gerade im Ziel' : 'ist im Startblatt'}</span>
+                <span className="live-line__who"><b>{first(m?.display_name)}</b> {p.state === 'race' ? <>fährt gerade{peerZ(p) > 0 ? ` · ${km(peerZ(p))}` : ''}</> : p.state === 'over' ? 'ist gerade im Ziel' : 'ist im Startblatt'}</span>
                 {p.state === 'race' ? <i className="live-dot" aria-label="live" /> : null}
               </li>
             );

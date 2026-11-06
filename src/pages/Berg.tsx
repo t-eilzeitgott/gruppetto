@@ -15,6 +15,8 @@ import { MOUNTAIN_FINISH, MOUNTAIN_TOP, Track } from '../game/abfahrt/track';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { berlinDayKey, berlinDayStart, hashStr } from '../game/abfahrt/rng';
 import { useLiveGame } from '../app/live';
+import { PhotoFinish } from './photoFinish';
+import { RivalLine, rivalOf, rivalVerdict, useRival, type Rival } from './rival';
 import { LiveChip } from '../ui/Live';
 import { HudBanner, PowerRing, RaceBar, SwapIcon, TvAd, raceBar, writeBar, writeRing } from './hud';
 import { cx, useTitle } from '../ui/kit';
@@ -81,13 +83,16 @@ export function BergPage() {
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
   const season = useQuery<GameBest[]>('game:berg:season', () => source.gameLeaderboard('berg'));
   const bikes = useBikes();
-  const gh = useGameGhosts('berg');
+  // dein Rivale (rival.tsx): sein Geist fährt immer mit
+  const rivalId = useMemo(() => rivalOf(season.data, me.id, members.data)?.userId ?? null, [season.data, me.id, members.data]);
+  const gh = useGameGhosts('berg', rivalId);
   const today = useQuery<GameBest[]>(`game:berg:day:${day}`, () => source.gameLeaderboard('berg', since));
 
   const stageEl = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<BergRace | null>(null);
   const [glError, setGlError] = useState(false);
   const [ui, setUi] = useState<Ui>('ready');
+  const rival = useRival(season.data, me.id, members.data, ui !== 'ready');
   const uiRef = useRef<Ui>('ready');
   uiRef.current = ui;
   const [count, setCount] = useState(3);
@@ -333,6 +338,7 @@ export function BergPage() {
       {ui === 'ready' ? (
         <StartSheet
           game="berg" title="Bergfinale"
+          rival={rival ? <RivalLine rival={rival} game="berg" ghost={gh.ghosts.some((x) => x.rival)} /> : null}
           sub={gameSubFor('berg', day, ref)}
           onStart={start} onClose={() => navigate('/')} plain={showBoard}
           after={meas.m.can ? <><button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); meas.m.start(); }}>Losfahren mit Messfahrt</button>{meas.abSelect}</> : null}
@@ -353,6 +359,7 @@ export function BergPage() {
         <OverSheet game="berg" onClose={() => navigate('/')} plain={showBoard}>
           {showBoard ? boardView : (
             <BergSummary
+              rival={rival}
               bikes={bikes}
               result={result}
               rider={chosen}
@@ -401,7 +408,8 @@ function BergProfile({ track }: { track: Track }) {
   );
 }
 
-function BergSummary({ bikes, result, rider, record, today, season, meId, onAgain, onRider, onBoard }: {
+function BergSummary({ bikes, result, rider, record, today, season, meId, onAgain, onRider, onBoard, rival }: {
+  rival: Rival | null;
   bikes: Bikes; result: BergResult; rider: RiderOption; record: boolean; today: GameBest[]; season: GameBest[]; meId: string;
   onAgain: () => void; onRider: () => void; onBoard: () => void;
 }) {
@@ -416,7 +424,7 @@ function BergSummary({ bikes, result, rider, record, today, season, meId, onAgai
   const gapText = win
     ? (result.gap < -0.3 ? `${sec(-result.gap)} s Vorsprung` : 'Sieg am Berg')
     : result.gap < 0.05 ? 'gleiche Zeit' : `+${sec(result.gap)} s`;
-  const line = verdict({ game: 'berg', seed: result.score, place: result.place, riders: result.riders, win, pb: record, reserve: result.reserve, gapS: win ? undefined : result.gap, slides: result.slides, leader: result.winner });
+  const line = verdict({ rival: rivalVerdict('berg', rival, result.score), game: 'berg', seed: result.score, place: result.place, riders: result.riders, win, pb: record, reserve: result.reserve, gapS: win ? undefined : result.gap, slides: result.slides, leader: result.winner });
   return (
     <section className="abf-summary" aria-label="Ergebnis">
       <div className="abf-sum-top">
@@ -431,6 +439,7 @@ function BergSummary({ bikes, result, rider, record, today, season, meId, onAgai
         <p className="rp-gap">{win ? gapText : result.gap < 0.05 ? `zeitgleich mit ${result.winner}` : `${gapText} auf ${result.winner}`} · Bergwertung {result.gpmPlace}.</p>
       </div>
       <Verdict line={line} />
+      {result.photo ? <PhotoFinish photo={result.photo} /> : null}
       <RunTiles tiles={raceTiles({ place: result.place, riders: result.riders, avgKmh: result.avgKmh, reserve: result.reserve, topKmh: result.topKmh })} />
       <Standing today={today} season={season} meId={meId} score={result.score} fmt={nf} bestWord="Bestleistung" onBoard={onBoard} />
       <Podium podium={result.podium} />

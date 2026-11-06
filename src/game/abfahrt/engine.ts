@@ -256,6 +256,8 @@ export class Abfahrt {
   private carBump = -9;
   private lastBarrierZ = 0;
   private draftHeld = 0;
+  /** Windschatten kommt gerade von einem Live-Geist (Name) */
+  private liveDraftBy: string | null = null;
   private draftPopup = 0;
   private edgeT = 0;
   private edgeCool = 0;
@@ -592,6 +594,9 @@ export class Abfahrt {
       if (dx > 0.9) continue;
       draft = Math.max(draft, Math.pow(1 - (dz - 0.9) / 12.1, 0.7) * (1 - dx / 0.9));
     }
+    // auch hinter Mitspielern, die gerade live mitfahren (nicht in der Testfahrt)
+    const liveDraft = this.phase === 'playing' && !this.opts.cruise ? this.pack.liveDraft(p.z, p.x, 13, 0.9) : 0;
+    if (liveDraft > draft) { draft = liveDraft; this.liveDraftBy = this.pack.draftBy; } else this.liveDraftBy = null;
     this.draft += (draft - this.draft) * Math.min(1, dt * 6);
     const steering = Math.abs(this.tx - p.x);
     // Bremsassistent: vor Kurven automatisch auf ein fahrbares Tempo bremsen – aber nie, solange Gas gehalten wird
@@ -723,7 +728,7 @@ export class Abfahrt {
       this.score.draft += 14 * dt * this.mult;
       this.multT = Math.max(this.multT, 1.2);
       if (this.draftHeld > 0.5 && this.draftPopup <= 0) {
-        this.pop('Windschatten', 'blue', '+Tempo');
+        this.pop(this.liveDraftBy ? `Windschatten von ${this.liveDraftBy}` : 'Windschatten', 'blue', this.liveDraftBy ? 'live · +Tempo' : '+Tempo');
         this.draftPopup = 6;
         this.bumpChain();
       }
@@ -1500,6 +1505,9 @@ export class Abfahrt {
     if (live) this.ghostT += dt;
     if (!this.pack.count) return;
     this.pack.step(this.ghostT, live, dt);
+    // dein Rivale (gespeicherter Lauf): überholt oder wieder vorn
+    const rv = this.phase === 'playing' ? this.pack.rivalEvent(this.ghostT, p.z) : null;
+    if (rv) this.pop(rv.kind === 'passed' ? `Rivale ${rv.name} überholt!` : `${rv.name} ist wieder vorn`, rv.kind === 'passed' ? 'gold' : 'red', 'dein Rivale', rv.kind === 'passed');
     const tag = this.phase === 'playing' ? this.pack.tag(this.ghostT, p.z) : null;
     this.tags = tag ? [tag] : [];
   }

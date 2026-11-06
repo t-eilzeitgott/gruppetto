@@ -28,7 +28,9 @@ import { FpsSwitch, GfxSliders, PlayIcon } from './gameKit';
 import { teamRadio } from '../game/teams';
 import { berlinDayKey } from '../game/abfahrt/rng';
 
-export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losfahren', onStart, onClose, plain, after }: {
+export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losfahren', onStart, onClose, plain, after, rival }: {
+  /** dein Rivale (rival.tsx), unten über dem Start */
+  rival?: ReactNode;
   game: GameId;
   title: string;
   sub: ReactNode;
@@ -108,6 +110,7 @@ export function StartSheet({ game, title, sub, tag, extra, children, cta = 'Losf
             </div>
             {children ? <div className="abf-sheet__body abf-scroll">{children}</div> : null}
             <div className="abf-sheet__foot">
+              {rival}
               <LiveLine game={game} />
               <TeamRadio game={game} />
               <button type="button" className="btn btn--primary btn--full abf-go" onClick={go} disabled={leaving}><span>{cta}</span></button>

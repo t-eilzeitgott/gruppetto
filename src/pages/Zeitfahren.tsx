@@ -13,6 +13,8 @@ import { gameSubFor } from '../game/gameSub';
 import { TT_FINISH, TT_SPLITS, TT_TOP, Track } from '../game/abfahrt/track';
 import { berlinDayKey, berlinDayStart, hashStr } from '../game/abfahrt/rng';
 import { useLiveGame } from '../app/live';
+import { PhotoFinish } from './photoFinish';
+import { RivalLine, rivalOf, rivalVerdict, useRival, type Rival } from './rival';
 import { LiveChip } from '../ui/Live';
 import { firstName, fmtGap, fmtTime, ghostDayLabel, pickGhosts, ttMs, ttScore, type GhostRider, type TtGhostRow } from '../game/tt';
 import { bikeById } from '../game/bikes';
@@ -116,6 +118,7 @@ export function ZeitfahrenPage() {
   const engineRef = useRef<TimeTrial | null>(null);
   const [glError, setGlError] = useState(false);
   const [ui, setUi] = useState<Ui>('ready');
+  const rival = useRival(season.data, me.id, members.data, ui !== 'ready');
   const uiRef = useRef<Ui>('ready');
   uiRef.current = ui;
   const [count, setCount] = useState(5);
@@ -143,11 +146,13 @@ export function ZeitfahrenPage() {
   const ghostRows = ghostQ.data;
   // Geister stehen fest (geladen oder nicht erreichbar): bei weniger als drei Mitspielern fährt der Tempomacher mit
   const settled = ghostRows !== undefined || !!ghostQ.error;
+  // dein Rivale (rival.tsx): sein Geist fährt immer mit
+  const rivalId = useMemo(() => rivalOf(season.data, me.id, members.data)?.userId ?? null, [season.data, me.id, members.data]);
   const ghosts = useMemo(() => {
     const all = buildGhosts(ghostRows ?? [], members.data ?? [], me, local, day);
     const others = all.filter((g) => !g.me).length;
-    return pickGhosts(all, all.find((g) => g.me && !g.old)?.timeMs ?? null, others < 3 && settled ? pacerOf(day) : null);
-  }, [ghostRows, settled, members.data, me, local, day]);
+    return pickGhosts(all, all.find((g) => g.me && !g.old)?.timeMs ?? null, others < 3 && settled ? pacerOf(day) : null, undefined, rivalId);
+  }, [ghostRows, settled, members.data, me, local, day, rivalId]);
   // Bestzeit und Tagesführung: nur Fahrten von heute (ältere Geister fuhren eine andere Strecke)
   const myBest = ghosts.find((g) => g.me && !g.old)?.timeMs ?? null;
   const leader = useMemo(() => [...ghosts].filter((g) => !g.bot && !g.old).sort((a, b) => a.timeMs - b.timeMs)[0] ?? null, [ghosts]);
@@ -396,6 +401,7 @@ export function ZeitfahrenPage() {
 
       {ui === 'ready' ? (
         <StartSheet game="zeitfahren" title="Zeitfahren" sub={sub} cta="Auf die Rampe" onStart={start} onClose={() => navigate('/')} plain={showBoard}
+          rival={rival ? <RivalLine rival={rival} game="zeitfahren" ghost={ghosts.some((x) => x.rival)} /> : null}
           after={meas.m.can ? <><button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); meas.m.start(); }}>Auf die Rampe mit Messfahrt</button>{meas.abSelect}</> : null}>
           {showBoard ? boardView : (
             <>
@@ -414,6 +420,7 @@ export function ZeitfahrenPage() {
         <OverSheet game="zeitfahren" onClose={() => navigate('/')} plain={showBoard}>
           {showBoard ? boardView : (
             <TtSummary
+              rival={rival}
               bikes={bikes}
               result={result}
               today={today.data ?? []}
@@ -576,7 +583,8 @@ export function GhostRow({ ghosts, members, me, loading }: { ghosts: GhostRider[
 
 // ------------------------------------------------------------------ Ergebnis
 
-function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, onAgain, onBoard }: {
+function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, onAgain, onBoard, rival }: {
+  rival: Rival | null;
   bikes: Bikes; result: TtResult; today: GameBest[]; season: GameBest[]; meId: string; hadBest: boolean; saveFailed: boolean;
   onAgain: () => void; onBoard: () => void;
 }) {
@@ -597,6 +605,7 @@ function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, on
   const names = ['1 km', '2 km', 'Ziel'];
   const secNames = ['Tal', 'Côte', 'Abfahrt & Ziel'];
   const line = verdict({
+    rival: rivalVerdict('zeitfahren', rival, score),
     game: 'zeitfahren', seed: r.timeMs, place: r.place, riders: r.riders, dayBest: r.dayBest, pb: r.pb && hadBest,
     reserve: r.reserve, gapS: r.gapMs !== null && r.gapMs > 0 ? r.gapMs / 1000 : undefined, slides: r.slides, leader: leaderName || undefined,
   });
@@ -614,6 +623,7 @@ function TtSummary({ bikes, result, today, season, meId, hadBest, saveFailed, on
         <p className="rp-gap">{gapText}</p>
       </div>
       <Verdict line={line} />
+      {result.photo ? <PhotoFinish photo={result.photo} /> : null}
       <RunTiles tiles={raceTiles({ place: r.place, riders: r.riders, avgKmh: r.avgKmh, reserve: r.reserve, topKmh: r.topKmh })} />
       {r.passed.length ? <p className="abf-note"><Icon name="users" size={15} />Überholt: {r.passed.map(firstName).join(', ')}</p> : null}
       <Standing today={today} season={season} meId={meId} score={score} fmt={(b) => fmtTime(ttMs(b))} bestWord="Bestzeit" onBoard={onBoard} />

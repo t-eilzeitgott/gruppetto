@@ -53,6 +53,8 @@ export interface GhostRider {
   old?: string;
   /** Live-Geist: fährt gerade, die Spur wächst (live.ts) – zählt nicht für Platz und Zeiten */
   live?: LiveFeed;
+  /** dein Rivale (pages/rival.tsx): hervorgehoben, Schild „Rivale“, Ansage beim Überholen */
+  rival?: boolean;
 }
 
 /** Geist, wie er in der Datenbank liegt (beste Fahrt des Tages je Mitglied) */
@@ -148,16 +150,19 @@ export const MAX_GHOSTS = 10;
  * dazu die Geister von heute, deren Zeit der eigenen am nächsten liegt (ohne eigene Zeit: die schnellsten), danach
  * die letzten Fahrten derer, die heute noch nicht gefahren sind. Fehlen Mitspieler, fährt der Tempomacher mit.
  */
-export function pickGhosts(all: GhostRider[], myBest: number | null, pacer: GhostRider | null, max = MAX_GHOSTS): GhostRider[] {
+export function pickGhosts(all: GhostRider[], myBest: number | null, pacer: GhostRider | null, max = MAX_GHOSTS, rivalId: string | null = null): GhostRider[] {
   const usable = all.filter((g) => g.trace.length >= 6);
   const fresh = usable.filter((g) => !g.old).sort((a, b) => a.timeMs - b.timeMs);
   const older = usable.filter((g) => g.old).sort((a, b) => a.timeMs - b.timeMs);
   const out: GhostRider[] = [];
-  const add = (g: GhostRider | undefined) => { if (g && !out.includes(g) && out.length < max) out.push(g); };
-  add(fresh[0]);
+  const add = (g: GhostRider | undefined) => { if (g && !out.some((x) => x.id === g.id && !!x.old === !!g.old) && out.length < max) out.push(g); };
+  // dein Rivale fährt immer mit (heute, sonst sein letzter Lauf) – gleich nach dem Schnellsten und dir
+  const rival = rivalId ? fresh.find((g) => g.id === rivalId) ?? older.find((g) => g.id === rivalId) : undefined;
+  add(fresh[0]?.id === rivalId ? { ...fresh[0], rival: true } : fresh[0]);
   add(fresh.find((g) => g.me) ?? older.find((g) => g.me));
+  if (rival) add({ ...rival, rival: true });
   const ref = myBest ?? fresh[0]?.timeMs ?? older[0]?.timeMs ?? 0;
-  const near = (list: GhostRider[]) => list.filter((g) => !out.includes(g)).sort((a, b) => Math.abs(a.timeMs - ref) - Math.abs(b.timeMs - ref) || a.timeMs - b.timeMs);
+  const near = (list: GhostRider[]) => list.filter((g) => !out.some((x) => x.id === g.id && !!x.old === !!g.old)).sort((a, b) => Math.abs(a.timeMs - ref) - Math.abs(b.timeMs - ref) || a.timeMs - b.timeMs);
   for (const g of near(fresh)) add(g);
   for (const g of near(older)) add(g);
   if (pacer && usable.filter((g) => !g.me).length < 3) {
