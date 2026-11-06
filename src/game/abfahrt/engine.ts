@@ -5,6 +5,7 @@
  */
 import { mulberry32, between, chance, pick, type Rng } from './rng';
 import { EDGE, ROAD_HALF, SEG, Track, difficulty, type Obj, type Seg, type Side, type BiomeId } from './track';
+import type { StageRef } from './stageRef';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { Mission, MissionStat } from './missions';
 import { cadenceFor, effortFor, pedalStep, smooth, type Effort, STEER_KD, STEER_KEYS, STEER_KP, STEER_MAX, STEER_SMOOTH, STEER_SPAN } from './motion';
@@ -169,6 +170,8 @@ export interface RunResult {
 export interface GameOptions {
   dayKey: string;
   names: string[];
+  /** Schauplatz des Tages (Ortsbild der Etappe; null = Dolomiten) */
+  venue?: StageRef | null;
   friends: Friend[];
   kit: Kit;
   best: number;
@@ -283,7 +286,7 @@ export class Abfahrt {
     this.opts = opts;
     this.friends = opts.friends.map((f) => ({ ...f, passed: false })).sort((a, b) => a.meters - b.meters);
     this.missionsDone = new Set(opts.missionsDone);
-    this.track = new Track(opts.dayKey, opts.names);
+    this.track = new Track(opts.dayKey, opts.names, 'descent', opts.venue ?? null);
     this.track.ramp = !opts.noRamp;
     if (opts.cruise) { this.track.dropHazards(); this.dbg.speed = opts.cruise; }
     else if (opts.pileups) this.track.dropHazards();
@@ -292,7 +295,7 @@ export class Abfahrt {
   }
 
   reset() {
-    this.track = new Track(this.opts.dayKey, this.opts.names);
+    this.track = new Track(this.opts.dayKey, this.opts.names, 'descent', this.opts.venue ?? null);
     // Start von der Rampe (die WebGPU-Welt baut keine)
     this.track.ramp = !this.opts.noRamp;
     if (this.opts.cruise || this.opts.pileups) this.track.dropHazards();

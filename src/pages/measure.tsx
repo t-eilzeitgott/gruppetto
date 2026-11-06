@@ -16,6 +16,27 @@ import { nextWeatherName, setShadowEvery, setShadowSizeOverride } from '../game/
 import { copyText, shareFile } from './admin/gpuKit';
 import { lsGet, lsSet } from './gameKit';
 import { SEASON_KEY } from '../game/abfahrt/season';
+import { VENUE_KEY, allVenues } from '../game/abfahrt/venue';
+
+/**
+ * Schauplatz ansehen (Admins): eine Etappe von Giro oder Tour 2027 in allen Spielen – Ortsbild, Wahrzeichen, Namen.
+ * Gilt bis zur Rückstellung; die Seite lädt neu (die Welt entsteht neu).
+ */
+export function VenuePick() {
+  const list = allVenues();
+  return (
+    <label className="abf-range__hint">Schauplatz ansehen:{' '}
+      <select value={lsGet(VENUE_KEY) ?? ''} onChange={(e) => { lsSet(VENUE_KEY, e.target.value); window.location.reload(); }}>
+        <option value="">Etappe des Tages</option>
+        {(['giro-2027', 'tour-2027'] as const).map((t) => (
+          <optgroup key={t} label={t === 'giro-2027' ? 'Giro 2027' : 'Tour 2027'}>
+            {list.filter((v) => v.tourId === t).map((v) => <option key={v.key} value={v.key}>{v.stage}. {v.place}</option>)}
+          </optgroup>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 const PLACE_LABEL: Record<string, string> = { frei: 'freie Strecke', ortsdurchfahrt: 'Ortsdurchfahrten', dorf: 'Dörfer' };
 
@@ -175,7 +196,7 @@ export function useMeasure(o: { admin: boolean; game: string; renderer: () => Re
   return {
     m,
     /** Auswahl des Wechseltests (Startkarte) */
-    abSelect: can ? <>{abSelect}{seasonSel}</> : null,
+    abSelect: can ? <>{abSelect}{seasonSel}<VenuePick /></> : null,
     /** Abschnitt im Pausenmenü */
     menu: (eng: () => RaceView | null) => (can ? (
       <div className="abf-gfx">

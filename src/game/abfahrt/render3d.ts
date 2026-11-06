@@ -2010,7 +2010,7 @@ export class Renderer3D {
       // gleiche Tagesstrecke (neuer Lauf, nachgeladene Namen): Landschaft behalten – sie ist identisch,
       // ein Neuaufbau würde ruckeln. Nur Namen auf Schildern und Straße ändern sich.
       const old = this.track;
-      if (old && old.dayKey === g.track.dayKey && old.kind === g.track.kind && old.ramp === g.track.ramp) {
+      if (old && old.dayKey === g.track.dayKey && old.kind === g.track.kind && old.ramp === g.track.ramp && old.venue?.key === g.track.venue?.key && old.region === g.track.region && old.lang === g.track.lang) {
         this.track = g.track;
         this.terrain?.setTrack(g.track);
         this.cam.init = false; this.runners = []; this.runNext = 0;
@@ -2587,7 +2587,7 @@ export class Renderer3D {
   private reset(track: Track) {
     this.track = track;
     track.relief = true;
-    this.setSeason(seasonLook(track.dayKey, track.region));
+    this.setSeason(seasonLook(track.lookDay, track.region));
     this.applyGround(track);
     // Abfahrt: ein fester Abendhimmel (dramatischer Himmel, sky.ts) statt der Stimmung des Tages
     this.mood = track.kind === 'descent' ? { ...DESCENT_SKY } : dailyMood(track.seed);
@@ -2766,7 +2766,7 @@ export class Renderer3D {
     // der Abfahrt eine halbe Sekunde Stillstand unter der Startanimation).
     if (this.descStart && this.descStart.track !== t && (g.phase === 'ready' || g.phase === 'countdown')) {
       const old = this.descStart.track;
-      if (this.descStart.raced || old.dayKey !== t.dayKey || old.ramp !== t.ramp || old.startZ !== t.startZ) { this.descStart.dispose(); this.descStart = null; }
+      if (this.descStart.raced || old.dayKey !== t.dayKey || old.ramp !== t.ramp || old.startZ !== t.startZ || old.venue?.key !== t.venue?.key) { this.descStart.dispose(); this.descStart = null; }
       else this.descStart.track = t;
     }
     if (this.descStart && g.phase === 'playing' && g.p.z > t.startZ + 280) { this.descStart.dispose(); this.descStart = null; return; }

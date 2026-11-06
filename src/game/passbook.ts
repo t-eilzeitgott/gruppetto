@@ -8,7 +8,7 @@ import type { GameRun } from '../data/source';
 import type { Stage } from '../lib/types';
 import { MOUNTAIN_TOP, SEG, Track } from './abfahrt/track';
 import { berlinDayKey } from './abfahrt/rng';
-import { stageRef } from './abfahrt/stageRef';
+import { dayRef, stageRef } from './abfahrt/stageRef';
 
 export interface PassStamp {
   name: string;
@@ -50,10 +50,10 @@ export function passStamps(runs: GameRun[], tourName: string | null | undefined,
     if (r.game === 'abfahrt') {
       if (r.meters <= 0) continue;
       let t = tracks.get(`abfahrt:${day}`);
-      if (!t) { t = new Track(day, [], 'descent'); tracks.set(`abfahrt:${day}`, t); }
+      if (!t) { t = new Track(day, [], 'descent', dayRef(tourName, stages, day, false)); tracks.set(`abfahrt:${day}`, t); }
       for (const p of descentPasses(t, r.meters)) add(p.name, p.alt, day, false);
     } else if (r.game === 'berg') {
-      const ref = stageRef('mountain', tourName, stages, day);
+      const ref = stageRef('mountain', tourName, stages, day, false);
       let t = tracks.get(`berg:${day}`);
       if (!t) { t = new Track(day, [], 'mountain', ref); tracks.set(`berg:${day}`, t); }
       t.seg(MOUNTAIN_TOP / SEG);

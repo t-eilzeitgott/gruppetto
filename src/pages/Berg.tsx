@@ -32,7 +32,7 @@ import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
 import { teamKit } from '../game/teams';
 import {
   FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf,
-  againWithIntro, useGameLock, usePreparedRace, useRaceKeys, useRaceLoop, type Board, type Ui,
+  againWithIntro, useGameLock, usePreparedRace, useRaceKeys, useRaceLoop, type Board, type Ui, venueItems,
 } from './finale';
 
 const LS_RIDER = 'gruppetto.berg.rider';
@@ -341,7 +341,7 @@ export function BergPage() {
             <>
               <BergProfile track={track} />
               <RiderPicker options={options} chosen={chosen} onChoose={choose} info={(t) => BERG_STATS[t]} bars={bars} />
-              <HowTo items={[...controlsHowTo('Angreifen', 'Erholen'), ['⇄', 'Helfer'], ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
+              <HowTo items={[...controlsHowTo('Angreifen', 'Erholen'), ['⇄', 'Helfer'], ...venueItems(ref), ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
               <BikeChip bikes={bikes} />
               <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={nf} />
             </>

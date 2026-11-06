@@ -2,6 +2,9 @@
  * Gemeinsame Bausteine der Rennfinals (Sprintfinale, Bergfinale): 3D-Schleife, Gestensperre,
  * Tastatur, Fahrerauswahl, Bestenlisten und Podium.
  */
+import type { StageRef } from '../game/abfahrt/stageRef';
+import { shortTour } from '../game/abfahrt/stageRef';
+import { forcedVenue } from '../game/abfahrt/venue';
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { acquireStage, hasWarmStage, releaseStage, watchStage, type Stage } from '../game/abfahrt/pool';
 import { FpsMeter } from '../game/fpsMeter';
@@ -396,6 +399,14 @@ export function RiderPicker({ options, chosen, onChoose, info, bars }: {
 }
 
 /** Steuerung in einer Zeile */
+/** Zeile „Schauplatz“ für die Startkarte (Etappe des Tages oder Vorschau eines Schauplatzes) */
+export function venueItems(ref: StageRef | null | undefined): [string, string][] {
+  const v = ref?.venue;
+  if (!v) return [];
+  const pre = forcedVenue() ? `Vorschau ${shortTour(ref.tour)}, ${v.stage}. Etappe – ` : '';
+  return [['⌂', `${pre}${v.blurb}`]];
+}
+
 export function HowTo({ items }: { items: [string, string][] }) {
   return (
     <ul className="spr-keys" aria-label="Steuerung">

@@ -32,7 +32,7 @@ import { PauseIcon, PlayIcon } from './Game';
 import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
 import {
   FinaleBoard, HowTo, dist, lsGet, lsSet, placeIn,
-  againWithIntro, useGameLock, usePreparedRace, useRaceKeys, useRaceLoop, type Board, type Ui,
+  againWithIntro, useGameLock, usePreparedRace, useRaceKeys, useRaceLoop, type Board, type Ui, venueItems,
 } from './finale';
 import type { Profile } from '../lib/types';
 import { teamKit } from '../game/teams';
@@ -402,7 +402,7 @@ export function ZeitfahrenPage() {
               <TtProfile track={track} ref_={ref} />
               <HotSeat leader={leader} myBest={myBest} today={today.data ?? []} meId={me.id} members={members.data ?? []} error={!!ghostQ.error && !ghostQ.data} />
               <GhostRow ghosts={ghosts} members={members.data ?? []} me={me} loading={ghostQ.loading} />
-              <HowTo items={controlsHowTo('Drücken', 'Erholen')} />
+              <HowTo items={[...controlsHowTo('Drücken', 'Erholen'), ...venueItems(ref)]} />
               <BikeChip bikes={bikes} />
               <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={fmtBest} />
             </>

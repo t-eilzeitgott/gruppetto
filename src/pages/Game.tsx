@@ -7,7 +7,8 @@ import { acquireStage, hasWarmStage, prewarm, releaseStage, watchStage, type Sta
 import type { WarmArgs } from '../app/warm';
 import { afterPaint } from '../lib/afterPaint';
 import { useApp } from '../app/context';
-import { useMembers } from '../app/hooks';
+import { useMembers, useTourData } from '../app/hooks';
+import { dayRef } from '../game/abfahrt/stageRef';
 import { invalidate, useQuery } from '../app/query';
 import { navigate } from '../app/router';
 import { BUILD_ID, source } from '../app/config';
@@ -18,7 +19,7 @@ import { Renderer3D } from '../game/abfahrt/render3d';
 import { FpsMeter } from '../game/fpsMeter';
 import { FrameClock, paceText, cancelNext, requestNext } from '../game/frameClock';
 import { Track } from '../game/abfahrt/track';
-import { HowTo, againWithIntro, usePreparedRace } from './finale';
+import { HowTo, againWithIntro, usePreparedRace, venueItems } from './finale';
 import { nextWeatherName } from '../game/abfahrt/weather';
 import { EV, Perf3D, PLACES, SEC, type Report } from '../game/abfahrt/perf3d';
 import { autoRangeDrop, chosenRange, viewRange } from '../game/abfahrt/viewRange';
@@ -37,7 +38,7 @@ import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
 import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
 import { PauseIcon, PlayIcon, useCountUp } from './gameKit';
-import { RecBadge } from './measure';
+import { RecBadge, VenuePick } from './measure';
 import { healFixedSoon } from '../ui/fixedHeal';
 import { teamKit } from '../game/teams';
 import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
@@ -87,6 +88,7 @@ export function warmAbfahrt(a: WarmArgs, reuse = false): Promise<void> {
   return prewarm(() => new Abfahrt({
     dayKey: a.day,
     names: a.names,
+    venue: dayRef(a.tour?.name, a.data?.stages, a.day),
     friends: [],
     kit: teamKit('gruppetto', '27', { bike: a.bike }),
     best: 0,
@@ -105,7 +107,8 @@ export function readAccent(): string {
 /** Minispiel „Abfahrt“: Pass-Abfahrt in 3D mit Gegnern, Windschatten und Bestenliste der Runde */
 export function GamePage() {
   useTitle('Abfahrt');
-  const { me } = useApp();
+  const { me, tour } = useApp();
+  const tourData = useTourData(tour);
   const members = useMembers();
   const day = berlinDayKey();
   const since = useMemo(() => berlinDayStart().toISOString(), [day]);
@@ -153,7 +156,9 @@ export function GamePage() {
   const [costCopied, setCostCopied] = useState(false);
 
   const names = useMemo(() => (members.data ?? []).map((m) => m.display_name ?? '').filter(Boolean), [members.data]);
-  const track = useMemo(() => new Track(day, names), [day, names]);
+  // Schauplatz des Tages (Giro und Tour 2027): Ortsbild der Etappe – Berge und Strecke bleiben
+  const venue = useMemo(() => dayRef(tour?.name, tourData.data?.stages, day), [tour?.name, tourData.data, day]);
+  const track = useMemo(() => new Track(day, names, 'descent', venue), [day, names, venue]);
   const mine = season.data?.find((b) => b.user_id === me.id);
   const myBest = Math.max(best, mine?.best ?? 0);
 
@@ -172,6 +177,7 @@ export function GamePage() {
     const eng = new Abfahrt({
       dayKey: day,
       names,
+      venue,
       friends: playing ? friends : [],
       kit: teamKit('gruppetto', '27', { bike: bikes.current }),
       best: myBest,
@@ -191,7 +197,7 @@ export function GamePage() {
   };
   // das Rennen hinter dem Startblatt ist schon das, das gleich startet (mit Bestmarken der Runde und Geistern):
   // ändert sich etwas daran (Rad, Geister, Bestwerte), wird es gleich neu angelegt – nicht erst beim Losfahren
-  const raceKey = [day, names.join(','), bikes.current, myBest, friends.map((f) => `${f.userId}:${f.meters}`).join(','), gh.sig, doneIds.join(','), missions.map((m) => m.id).join(',')].join('|');
+  const raceKey = [day, venue?.venue?.key ?? '', names.join(','), bikes.current, myBest, friends.map((f) => `${f.userId}:${f.meters}`).join(','), gh.sig, doneIds.join(','), missions.map((m) => m.id).join(',')].join('|');
   const race = usePreparedRace({ engineRef, uiRef, key: raceKey, settled: gh.settled && !!members.data && !season.loading, make: () => makeEngine(true) });
 
   // Ereignisse aus dem Spiel
@@ -782,6 +788,7 @@ export function GamePage() {
               {canMeasure ? (
                 <button type="button" className="btn btn--ghost btn--sm" onClick={() => { start(); startMeasure(); }}>Losfahren mit Messfahrt</button>
               ) : null}
+              {me.is_admin ? <VenuePick /> : null}
             </div>
           ) : null}
         >
@@ -791,7 +798,7 @@ export function GamePage() {
             <>
               <DescentProfile track={track} friends={friends} members={members.data ?? []} max={profileMax} />
               <Missions missions={missions} done={doneIds} compact />
-              <HowTo items={[...controlsHowTo('Gas', 'Bremse'), ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
+              <HowTo items={[...controlsHowTo('Gas', 'Bremse'), ...venueItems(venue), ...(wetter ? [['☼', wetter] as [string, string]] : [])]} />
               <BikeChip bikes={bikes} />
               <BoardLink rows={today.data?.length ? today.data : season.data ?? []} label={today.data?.length ? 'Heute' : 'Saison'} members={members.data ?? []} meId={me.id} onOpen={() => setShowBoard(true)} fmt={nf} />
             </>

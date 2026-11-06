@@ -5,10 +5,10 @@
 import type { GameId } from '../data/source';
 import type { Stage } from '../lib/types';
 import { Track } from './abfahrt/track';
-import { stageRef, type StageRef } from './abfahrt/stageRef';
+import { dayRef, stageRef, type StageRef } from './abfahrt/stageRef';
 
 export function gameSub(id: GameId, day: string, tourName: string | null | undefined, stages: Stage[] | null | undefined): string {
-  if (id === 'abfahrt') return new Track(day).title;
+  if (id === 'abfahrt') return new Track(day, [], 'descent', dayRef(tourName, stages, day)).title;
   const kind = id === 'sprint' ? 'sprint' : id === 'berg' ? 'mountain' : 'tt';
   const ref = stageRef(kind, tourName, stages, day);
   return gameSubFor(id, day, ref);

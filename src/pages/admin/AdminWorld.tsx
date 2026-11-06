@@ -17,7 +17,7 @@ import { Renderer3D } from '../../game/abfahrt/render3d';
 import { FrameClock } from '../../game/frameClock';
 import { EDGE, SEG, Track, type Section } from '../../game/abfahrt/track';
 import { berlinDayKey } from '../../game/abfahrt/rng';
-import { stageRef } from '../../game/abfahrt/stageRef';
+import { dayRef, stageRef } from '../../game/abfahrt/stageRef';
 import type { Marker } from '../../game/abfahrt/editor3d';
 import {
   ANCHOR_LABEL, GAME_KIND, GLOBAL_KEY, PLACEABLE, editsKey, emptyEdits, emptyGlobal, exportText, isEmptyEdits, nearestFeature, newId, spriteName,
@@ -82,7 +82,7 @@ export function WorldEditorPage() {
   const [game, setGame] = useState<WorldGame>('abfahrt');
   const [day, setDay] = useState(() => berlinDayKey());
   const names = useMemo(() => (members.data ?? []).map((x) => x.display_name ?? '').filter(Boolean), [members.data]);
-  const ref = useMemo(() => (game === 'abfahrt' ? null : stageRef(game === 'sprint' ? 'sprint' : game === 'berg' ? 'mountain' : 'tt', tour?.name, tourData.data?.stages, day)), [game, tour?.name, tourData.data, day]);
+  const ref = useMemo(() => (game === 'abfahrt' ? dayRef(tour?.name, tourData.data?.stages, day) : stageRef(game === 'sprint' ? 'sprint' : game === 'berg' ? 'mountain' : 'tt', tour?.name, tourData.data?.stages, day)), [game, tour?.name, tourData.data, day]);
   const track = useMemo(() => new Track(day, names, GAME_KIND[game], ref), [day, names, game, ref]);
   const key = editsKey(game, day);
 

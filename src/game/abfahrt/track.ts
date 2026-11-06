@@ -10,6 +10,7 @@ import type { StageRef } from './stageRef';
 import { finaleGrade, type FinaleSpec } from './finale';
 import { LOOKS, pickWeighted, type Region } from './region';
 import { applyEditsRange, bumpsOf, deriveForSection, emptyDerived, type Derived, type TerrainBump, type WorldEdits } from './worldEdits';
+import { localName, type Scape, type Venue } from './venue';
 
 export const SEG = 2;            // Segmentlänge in m
 export const ROAD_HALF = 2.8;    // halbe Fahrbahnbreite in m
@@ -358,23 +359,44 @@ export class Track {
   private climbScale = 1;
   /** Sprintfinale: Bauplan der letzten Kilometer aus dem echten Streckentext (Kurven, Zielgerade, Steigung, Pflaster) */
   readonly finale: FinaleSpec | null;
-  /** Gegend der Etappe: Bäume, Felder, Hausstile (Abfahrt immer Dolomiten) */
+  /** Gegend der Etappe: Bäume, Felder, Hausstile (Abfahrt: Dolomiten, am Etappentag die Gegend der Etappe) */
   readonly region: Region;
+  /**
+   * Gegend und Sprache wie ohne Schauplatz: alles, was Zufallszahlen der Strecke verbraucht, richtet sich nur danach –
+   * so fahren alle am selben Tag auf derselben Straße, mit oder ohne Ortsbild (andere Rundfahrt gewählt, Vorschau)
+   */
+  private readonly baseRegion: Region;
+  private readonly baseLang: Lang;
+  /** Schauplatz des Tages (Giro und Tour 2027): Ortsbild, Wahrzeichen, Namen der Gegend – Strecke und Berge bleiben */
+  readonly venue: Venue | null;
+  readonly scape: Scape | null;
+  /** Tag für die Jahreszeit (Vorschau eines Schauplatzes: das Etappendatum) */
+  readonly lookDay: string;
 
   constructor(dayKey: string, names: string[] = [], kind: TrackKind = 'descent', town: string | StageRef | null = '') {
     this.dayKey = dayKey;
     this.kind = kind;
     this.ramp = kind === 'descent';
     this.ref = typeof town === 'object' ? town : null;
-    this.lang = this.ref?.lang ?? 'it';
-    this.town = (typeof town === 'string' ? town : town?.town ?? '').trim().slice(0, 24);
+    this.venue = this.ref?.venue ?? null;
+    this.scape = this.venue?.scape ?? null;
+    this.lookDay = this.ref?.lookDay ?? dayKey;
+    // (die Abfahrt bekommt von ihrer Vorlage nur das Ortsbild – Sprache und Gegend des Zufalls bleiben die der Dolomiten)
+    this.baseLang = kind === 'descent' ? 'it' : this.ref?.lang ?? 'it';
+    this.lang = this.scape?.lang ?? this.baseLang;
+    // Abfahrt: nur das Ortsbild der Etappe – der Name des Zielorts steht nicht auf ihren Ortsschildern
+    this.town = kind === 'descent' ? '' : (typeof town === 'string' ? town : town?.town ?? '').trim().slice(0, 24);
     this.finale = kind === 'sprint' ? this.ref?.finale ?? null : null;
-    this.region = kind === 'descent' ? 'dolomiten' : this.ref?.region ?? (kind === 'mountain' ? 'dolomiten' : 'po');
+    this.baseRegion = kind === 'descent' ? 'dolomiten' : this.ref?.region ?? (kind === 'mountain' ? 'dolomiten' : 'po');
+    this.region = this.scape?.region ?? this.baseRegion;
     if (kind === 'mountain' && this.ref?.climb?.grad) this.climbScale = Math.max(0.92, Math.min(1.1, this.ref.climb.grad / 7.8));
     this.seed = hashStr(`${kind === 'sprint' ? 'sprint' : kind === 'mountain' ? 'berg' : kind === 'tt' ? 'zeitfahren' : 'abfahrt'}:${dayKey}`);
     this.rng = mulberry32(this.seed);
     this.names = names.map((n) => n.trim().split(/\s+/)[0]?.toUpperCase()).filter((n): n is string => !!n && n.length <= 10);
     this.passOrder = shuffle(this.rng, PASSES);
+    // Pässe der Gegend des Schauplatzes an Stelle der Dolomitenpässe (gleicher Zufall – die Strecke bleibt)
+    const lp = this.scape?.names.passes;
+    if (lp?.length) this.passOrder = this.passOrder.map((p) => lp[PASSES.indexOf(p) % lp.length]);
     const real = kind === 'mountain' ? this.ref?.climb : null;
     if (real) this.passOrder.unshift([real.name.slice(0, 30), real.alt ?? Math.max(900, this.passOrder[0][1] - 600)]);
     this.planDescent();
@@ -794,8 +816,18 @@ export class Track {
     }
   }
 
+  /** Name der Gegend des Schauplatzes an Stelle eines Dolomiten-Namens (gleiche Zufallszahl, nur ein anderer Text) */
+  private local(list: readonly string[], picked: string): string {
+    const n = this.scape?.names;
+    if (!n) return picked;
+    const own = list === VALLEYS ? n.valleys : list === FORESTS ? n.forests : list === LAKES ? n.lakes : list === HILLS ? n.hills
+      : list === VILLAGES ? [...(this.venue?.towns ?? []), ...n.villages] : undefined;
+    return localName(list, picked, own);
+  }
+
   private planDescent() {
     const r = this.rng;
+    const L = (list: readonly string[], x: string) => this.local(list, x);
     if (this.kind === 'mountain') {
       // Schlussanstieg durch Bergwald und Almen zur Passhöhe, Abfahrt über die Almen in den Zielort
       if (this.descentNo === 0) {
@@ -803,12 +835,12 @@ export class Track {
         const up = pick(r, VALLEYS);
         const down = pick(r, VALLEYS.filter((v) => v !== up));
         const village = pick(r, VILLAGES);
-        this.plan.push({ biome: 'forest', name: pick(r, FORESTS), alt: Math.round((alt - 150) / 5) * 5, descent: 0 });
-        this.plan.push({ biome: 'alpine', name: up, alt: Math.round((alt - 80) / 5) * 5, descent: 0 });
+        this.plan.push({ biome: 'forest', name: L(FORESTS, pick(r, FORESTS)), alt: Math.round((alt - 150) / 5) * 5, descent: 0 });
+        this.plan.push({ biome: 'alpine', name: L(VALLEYS, up), alt: Math.round((alt - 80) / 5) * 5, descent: 0 });
         this.plan.push({ biome: 'pass', name: pass, alt, descent: 0 });
-        this.plan.push({ biome: 'alpine', name: down, alt: Math.round((alt - 60) / 5) * 5, descent: 0 });
-        this.plan.push({ biome: 'village', name: this.town || village, alt: Math.round((alt - 150) / 5) * 5, descent: 0 });
-      } else this.plan.push({ biome: 'village', name: this.sections[4]?.name ?? pick(r, VILLAGES), alt: 1200, descent: 0 });
+        this.plan.push({ biome: 'alpine', name: L(VALLEYS, down), alt: Math.round((alt - 60) / 5) * 5, descent: 0 });
+        this.plan.push({ biome: 'village', name: this.town || L(VILLAGES, village), alt: Math.round((alt - 150) / 5) * 5, descent: 0 });
+      } else this.plan.push({ biome: 'village', name: this.sections[4]?.name ?? L(VILLAGES, pick(r, VILLAGES)), alt: 1200, descent: 0 });
       this.descentNo += 1;
       return;
     }
@@ -824,13 +856,13 @@ export class Track {
         const climb = this.ref?.climb?.name?.slice(0, 30) || TT_CLIMBS[this.lang][climbIdx];
         const hills = pick(r, HILLS.filter((h) => h !== valley));
         const finish = pick(r, VILLAGES.filter((v) => v !== start));
-        this.plan.push({ biome: 'village', name: from || start, alt: 250, descent: 0 });
-        this.plan.push({ biome: lower, name: valley, alt: 245, descent: 0 });
+        this.plan.push({ biome: 'village', name: from || L(VILLAGES, start), alt: 250, descent: 0 });
+        this.plan.push({ biome: lower, name: L(lower === 'lake' ? LAKES : HILLS, valley), alt: 245, descent: 0 });
         this.plan.push({ biome: 'forest', name: climb, alt: 240, descent: 0 });
-        this.plan.push({ biome: 'vineyard', name: hills, alt: 275, descent: 0 });
-        this.plan.push({ biome: 'village', name: this.town || finish, alt: 245, descent: 0 });
+        this.plan.push({ biome: 'vineyard', name: L(HILLS, hills), alt: 275, descent: 0 });
+        this.plan.push({ biome: 'village', name: this.town || L(VILLAGES, finish), alt: 245, descent: 0 });
         this.places.push(...this.plan.map((p) => p.name));
-      } else this.plan.push({ biome: 'village', name: this.places[4] ?? pick(r, VILLAGES), alt: 245, descent: 0 });
+      } else this.plan.push({ biome: 'village', name: this.places[4] ?? L(VILLAGES, pick(r, VILLAGES)), alt: 245, descent: 0 });
       this.descentNo += 1;
       return;
     }
@@ -838,10 +870,10 @@ export class Track {
       // flach durchs Tal (See oder Weinberge), dann in die Zielstadt; danach Auslauf
       if (this.descentNo === 0) {
         const lower: BiomeId = chance(r, 0.5) ? 'lake' : 'vineyard';
-        this.plan.push({ biome: lower, name: lower === 'lake' ? pick(r, LAKES) : pick(r, HILLS), alt: 240, descent: 0 });
+        this.plan.push({ biome: lower, name: lower === 'lake' ? L(LAKES, pick(r, LAKES)) : L(HILLS, pick(r, HILLS)), alt: 240, descent: 0 });
         const village = pick(r, VILLAGES);
-        this.plan.push({ biome: 'village', name: this.town || village, alt: 220, descent: 0 });
-      } else this.plan.push({ biome: 'village', name: this.sections[1]?.name ?? pick(r, VILLAGES), alt: 210, descent: 0 });
+        this.plan.push({ biome: 'village', name: this.town || L(VILLAGES, village), alt: 220, descent: 0 });
+      } else this.plan.push({ biome: 'village', name: this.sections[1]?.name ?? L(VILLAGES, pick(r, VILLAGES)), alt: 210, descent: 0 });
       this.descentNo += 1;
       return;
     }
@@ -852,18 +884,18 @@ export class Track {
     const opening = this.kind === 'descent' && d === 0;
     if (opening) {
       this.plan.push({ biome: 'village', name: pass, alt: Math.round(alt / 5) * 5, descent: d, role: 'top' });
-      this.plan.push({ biome: 'forest', name: pick(r, FORESTS), alt: Math.round(alt / 5) * 5, descent: d, role: 'road' });
+      this.plan.push({ biome: 'forest', name: L(FORESTS, pick(r, FORESTS)), alt: Math.round(alt / 5) * 5, descent: d, role: 'road' });
     }
     const valley = pick(r, VALLEYS);
     const lower: BiomeId = chance(r, 0.5) ? 'lake' : 'vineyard';
     const seq: { biome: BiomeId; name: string }[] = [
       { biome: 'pass', name: pass },
-      { biome: 'alpine', name: valley },
-      { biome: 'forest', name: pick(r, FORESTS) },
-      { biome: 'village', name: pick(r, VILLAGES) },
-      { biome: lower, name: lower === 'lake' ? pick(r, LAKES) : pick(r, HILLS) },
+      { biome: 'alpine', name: L(VALLEYS, valley) },
+      { biome: 'forest', name: L(FORESTS, pick(r, FORESTS)) },
+      { biome: 'village', name: L(VILLAGES, pick(r, VILLAGES)) },
+      { biome: lower, name: lower === 'lake' ? L(LAKES, pick(r, LAKES)) : L(HILLS, pick(r, HILLS)) },
     ];
-    if (chance(r, 0.5)) seq.splice(3, 0, { biome: 'alpine', name: pick(r, VALLEYS.filter((v) => v !== valley)) });
+    if (chance(r, 0.5)) seq.splice(3, 0, { biome: 'alpine', name: L(VALLEYS, pick(r, VALLEYS.filter((v) => v !== valley))) });
     // Höhenangaben im Spielmaßstab: eine Abfahrt führt vom Pass bis ins Tal
     let a = alt;
     for (const s of seq) {
@@ -1707,10 +1739,11 @@ export class Track {
       const sec = this.sections[this.sections.length - 1];
       if (piazza) sec.piazza = piazza;
     }
-    const lang = this.lang;
+    // (Zufall wie ohne Schauplatz: Gegend und Sprache von früher – das Ortsbild wird danach aufgelegt, restyle)
+    const lang = this.baseLang;
     const S = STYLE;
     // Bergdörfer (Bergfinale, Dolomiten-Abfahrt, Weiler) mit Chalets und Bruchstein, Städte mit Bürgerhäusern
-    const look = LOOKS[this.region];
+    const look = LOOKS[this.baseRegion];
     // Anteil Berghäuser: Abfahrt (Dolomiten) wie gehabt, Finale nach der Gegend
     const alpine = biome === 'vineyard' ? 0.1 : this.kind === 'descent' ? (mode === 'hamlet' ? 0.8 : 0.45) : mode === 'hamlet' ? Math.min(1, look.alpine + 0.3) : look.alpine;
     const byLang: number[] = lang === 'en' ? [S.backstein, S.backstein, S.backstein, S.backstein, S.creme, S.haussmann, S.fachwerk]
@@ -1773,7 +1806,43 @@ export class Track {
     const m = top ? 0 : mode === 'town' ? 30 : 4;
     const a = start + m;
     const b = start + n - m;
-    return { L: make(a, b, -1), R: make(a + 2, b, 1) };
+    const out = { L: make(a, b, -1), R: make(a + 2, b, 1) };
+    if (this.scape) for (const bl of [...out.L, ...out.R]) this.restyle(bl, mode, biome);
+    return out;
+  }
+
+  /**
+   * Ortsbild des Schauplatzes auf ein fertig geplantes Haus legen: Stil, Geschosse und Steckschild – aus dem eigenen
+   * Samen des Hauses, ohne Zufallszahlen der Strecke (Lage, Länge und Abstand bleiben, wie sie waren).
+   */
+  private restyle(b: Building, mode: 'town' | 'hamlet', biome: BiomeId) {
+    const sc = this.scape!;
+    const S = STYLE;
+    if (b.style === S.kirche || b.style === S.rathaus) return;
+    const h = (k: number) => {
+      let x = Math.imul((b.seed ^ Math.imul(k + 1, 0x9e3779b1)) >>> 0, 0x85ebca6b);
+      x ^= x >>> 13;
+      x = Math.imul(x, 0xc2b2ae35);
+      return ((x ^ (x >>> 16)) >>> 0) / 4294967296;
+    };
+    const pool: number[] = [];
+    for (const [k, w] of sc.styles) for (let q = 0; q < Math.max(1, Math.round(w * 2)); q++) pool.push(S[k]);
+    const alpPool = sc.country === 'uk' ? [S.bruchstein, S.bruchstein, S.backstein]
+      : sc.styles.some(([k]) => k === 'chalet') ? [S.chalet, S.chalet, S.bruchstein, S.creme] : [S.bruchstein, S.bruchstein, S.creme];
+    // Berghäuser in Weilern und Bergdörfern (auch in der Abfahrt), in Städten nach dem Ortsbild
+    const alp = biome === 'vineyard' ? Math.min(0.1, sc.alpine) : mode === 'hamlet' ? Math.min(1, sc.alpine + (sc.alpine > 0 ? 0.3 : 0)) : sc.alpine;
+    const style = b.arcade ? pool[Math.floor(h(1) * pool.length)] : h(0) < alp ? alpPool[Math.floor(h(1) * alpPool.length)] : pool[Math.floor(h(1) * pool.length)];
+    b.style = style;
+    const fl = sc.floors;
+    let floors = style === S.chalet || style === S.bruchstein ? 1 + Math.floor(h(2) * 2)
+      : fl && mode === 'town' ? fl[0] + Math.floor(h(2) * (fl[1] - fl[0] + 1))
+        : style === S.haussmann ? 3 + Math.floor(h(2) * 2) : 2 + Math.floor(h(2) * 2);
+    if (b.arcade) floors = Math.max(2, floors);
+    if (mode === 'hamlet') floors = Math.min(floors, 2);
+    b.floors = floors;
+    // Steckschilder in der Landessprache: Apothekenkreuz, Tabac/Tabacchi, Pub-Schild
+    const lang = this.lang;
+    if (b.sign >= 0 && b.sign !== 7) b.badge = b.sign === 3 ? (lang !== 'en' ? 0 : -1) : b.sign === 2 ? (lang === 'fr' ? 1 : lang === 'it' ? 2 : -1) : b.sign === 1 && lang === 'en' && h(3) < 0.6 ? 3 : -1;
   }
 
   /** Abschnitt (k von … bis) für einen Weiler: gerade, ohne Kehren und Tunnel */
@@ -1857,8 +1926,10 @@ export class Track {
     // Abschnitte nicht verändern, denn die Geister aller Mitspieler fahren auf genau dieser Strecke
     const r = this.kind === 'tt' ? mulberry32((this.seed ^ Math.imul(start + 3, 0x85ebca6b)) >>> 0) : this.rng;
     // Bäume der Gegend in den Tälern (Pappeln, Zypressen, Oliven, Palmen, Apfelbäume)
-    const look = LOOKS[this.region];
-    const vt = (): SpriteKind => pickWeighted(look.valley, r()) as SpriteKind;
+    // Küste und Plantagen verbrauchen Zufallszahlen: nach der Gegend wie ohne Schauplatz; Baumarten nach dem Ortsbild
+    const look = LOOKS[this.baseRegion];
+    const vlook = LOOKS[this.region];
+    const vt = (): SpriteKind => pickWeighted(vlook.valley, r()) as SpriteKind;
     const S = (i: number) => this.seg(i);
     const sideOf = (s: Seg, sign: number) => (sign < 0 ? s.L : s.R);
     const put = (i: number, sign: number, k: SpriteKind, dx: number, opts: Partial<Sprite> = {}) => {
