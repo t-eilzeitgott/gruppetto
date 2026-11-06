@@ -42,3 +42,26 @@ test('Massensturz: zu schnell aufs Hinterrad reißt dich und den Vordermann um, 
   assert.ok(down >= 2, `nur ${down} Gegner gestürzt`);
   assert.equal(e.phase, 'over');
 });
+
+test('Abfahrt: Sturz auf der Straße ist ein echter Sturz (Rad und Körper rutschen, Funken), daneben der Überschlag', () => {
+  const mk = () => new Abfahrt({ dayKey: '2026-10-29', names: [], friends: [], kit: { jersey: '#f00', side: '#fff', helmet: '#fff', shorts: '#000', skin: '#fc9', shoes: '#fff', number: '1' }, best: 0, missions: [], missionsDone: new Set(), tutorial: false, pileups: true });
+  const e = mk();
+  e.start();
+  for (let i = 0; i < 60 * 6; i++) e.update(1 / 60);
+  assert.equal(e.phase, 'playing');
+  const before = e.parts.filter((q) => q.kind === 'spark').length;
+  e.crash('Steinschlag auf der Straße');
+  assert.equal(e.phase, 'crash');
+  assert.ok(e.wreck, 'liegt nach wreck.ts');
+  assert.ok(e.parts.filter((q) => q.kind === 'spark').length > before + 10, 'Funken');
+  // ein paar Sekunden im Bild, dann Ende
+  let t = 0;
+  for (; t < 60 * 8 && e.phase !== 'over'; t++) e.update(1 / 60);
+  assert.equal(e.phase, 'over');
+  assert.ok(t > 60 * 3, `Sturz nur ${(t / 60).toFixed(1)} s zu sehen`);
+  const f = mk();
+  f.start();
+  for (let i = 0; i < 60 * 6; i++) f.update(1 / 60);
+  f.crash('In den Abgrund', false);
+  assert.equal(f.wreck, null, 'neben der Straße: Überschlag wie bisher');
+});

@@ -383,6 +383,15 @@ const CAM_UP = 2.75;
 const SPRINT_BACK = 7.4;
 const SPRINT_UP = 3.7;
 /**
+ * Stürze bleiben im Bild: Gestürzte werden auch hinter einem noch gezeichnet (bis WRECK_BACK m) und haben bei den
+ * Fahrermodellen Vorrang (als lägen sie WRECK_PRIO m näher) – sonst verschwänden Fahrer und Rad mitten im Sturz,
+ * sobald man vorbei ist. Zeigt die Kamera den Sturz von außen (Fernsehkamera), auch alle anderen bis TV_BACK m hinter
+ * einem: wer in den Sturz hineinfährt, ist schon vorher zu sehen.
+ */
+const WRECK_BACK = 90;
+const WRECK_PRIO = 40;
+const TV_BACK = 70;
+/**
  * Startkran (Startmenü): Winkel aus der Fahrtrichtung (rad; 0 vor dem Fahrer, π hinter ihm) und wie weit er pendelt,
  * Abstand zum Fahrer, Höhe über seiner Körpermitte, Blickpunkt voraus (m, negativ: hinter ihm) und dessen Höhe,
  * Sichtfeld hochkant. Schräg hinter und über dem Fahrer, der Blick über ihn hinweg auf Rampe, Uhr, Zuschauer und
@@ -7621,7 +7630,12 @@ export class Renderer3D {
     // (einfache Grafik: weniger Fahrer als Modell – im Finale die übrigen als Bild, siehe unten)
     const lite = this.lite;
     const cap = lite ? (sprint ? 16 : 8) : (sprint ? 32 : 14) * (this.pc ? 2 : 1);
-    const list = field.filter((o) => o.z > p.z - (sprint ? SPRINT_BACK + 1.5 : 8) && o.z < p.z + 320).sort((a, b) => Math.abs(a.z - p.z) - Math.abs(b.z - p.z)).slice(0, cap);
+    // hinter einem: normal nur knapp (dahinter steht die Kamera); im Sturz von außen gefilmt weiter, Gestürzte immer
+    const tv = this.dirKind === 'crash' || !!g.wreck || g.phase === 'crash' || g.phase === 'over';
+    const back = tv ? TV_BACK : sprint ? SPRINT_BACK + 1.5 : 8;
+    const rank = (o: Opp) => Math.abs(o.z - p.z) - (o.wreck ? WRECK_PRIO : 0);
+    const list = field.filter((o) => o.z < p.z + 320 && (o.z > p.z - back || (!!o.wreck && o.z > p.z - WRECK_BACK)))
+      .sort((a, b) => rank(a) - rank(b)).slice(0, cap);
     const cp = this.camera.position;
     // Startkran (oder der Flug von ihm in die Fahrkamera): verdeckt, wer zwischen ihm und dir steht
     const crane = this.dirKind === 'intro' || (this.dirFromKind === 'intro' && this.dirT < 1);
@@ -7707,7 +7721,7 @@ export class Renderer3D {
       for (const o of g.opps) {
         if (seen.has(o.id) || !spriteable(o.kit)) continue;
         const dz = o.z - p.z;
-        if (dz < -8 || dz > FIELD_FAR) continue;
+        if (dz < -(o.wreck ? WRECK_BACK : back) || dz > FIELD_FAR) continue;
         const a = this.appear(o.id, g) * (1 - smoothstep(FIELD_FAR - 130, FIELD_FAR, dz));
         if (a < 0.02) continue;
         track.world(o.z, o.x, 0, this.w);

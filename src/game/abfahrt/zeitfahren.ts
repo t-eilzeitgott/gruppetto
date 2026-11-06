@@ -25,7 +25,7 @@ import { liveAdvance, liveAt, liveDone, type LiveFeed, type LiveOut } from '../l
 import { crossOffset, photoFinish, type PhotoResult, type PhotoRider } from '../photo';
 import { ghostKit, liveRider } from './ghosts';
 import type { Wreck } from './wreck';
-import { canRise, makeWreck, slideOn } from './crash';
+import { canRise, crashBurst, makeWreck, slideOn } from './crash';
 
 export interface TtOptions {
   dayKey: string;
@@ -632,6 +632,7 @@ export class TimeTrial {
   private crash(side: number, x: number) {
     const p = this.p;
     this.wreck = makeWreck(p.v, side, this.rng() * 100, p.z, clamp(x, -ROAD_HALF + 0.3, ROAD_HALF - 0.3));
+    crashBurst(this.parts, p.z, p.x, p.v, this.rng, 1.2);
     this.pileAt = { z: p.z, x: this.wreck.x0 };
     this.crashes += 1;
     this.shake = 1;

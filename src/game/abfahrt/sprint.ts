@@ -18,7 +18,7 @@ import type { LiveFeed, LiveOut } from '../live';
 import { photoFinish, type PhotoResult, type PhotoRider } from '../photo';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
-import { canRise, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
+import { canRise, crashBurst, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
 
 export type RiderType = 'sprinter' | 'puncheur' | 'allround' | 'rouleur' | 'climber';
 
@@ -696,6 +696,7 @@ export class SprintRace {
   /** Gegner zu Boden (bleibt bis zum Ende liegen) */
   private down(o: Racer, side: number) {
     o.wreck = makeWreck(Math.max(o.v, 9), side, o.id * 1.37 + this.rng(), o.z, o.x);
+    crashBurst(this.parts, o.z, o.x, o.v, this.rng, 0.6);
     o.going = false;
     this.shake = Math.max(this.shake, 0.5);
     this.listDowns();
@@ -705,6 +706,7 @@ export class SprintRace {
   private crash(side: number, x: number) {
     const p = this.p;
     this.wreck = makeWreck(p.v, side, this.rng() * 100, p.z, clamp(x, -ROAD_HALF + 0.3, ROAD_HALF - 0.3));
+    crashBurst(this.parts, p.z, p.x, p.v, this.rng, 1.2);
     this.pileAt ??= { z: p.z, x: this.wreck.x0 };
     this.crashes += 1;
     this.shake = 1;

@@ -27,7 +27,7 @@ import type { LiveFeed, LiveOut } from '../live';
 import { photoFinish, type PhotoResult, type PhotoRider } from '../photo';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
-import { canRise, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
+import { canRise, crashBurst, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
 
 /** Fahrertypen im Bergfinale: Dauerleistung (W/kg), Antritt (W/kg darüber), Abfahrtskönnen, Punktebonus */
 export const BERG_STATS: Record<RiderType, { label: string; cp: number; kick: number; desc: number; bonus: number }> = {
@@ -753,6 +753,7 @@ export class BergRace {
   private crash(side: number, x: number, why: string) {
     const p = this.p;
     this.wreck = makeWreck(p.v, side, this.rng() * 100, p.z, clamp(x, -ROAD_HALF + 0.3, ROAD_HALF - 0.3));
+    crashBurst(this.parts, p.z, p.x, p.v, this.rng, 1.2);
     this.pileAt = { z: p.z, x: this.wreck.x0 };
     this.crashes += 1;
     this.shake = 1;
@@ -864,6 +865,7 @@ export class BergRace {
           if (gap < 12 || gap > 90) continue;
           const out = -Math.sign(this.track.segAt(o.z).curve) || 1;
           o.wreck = makeWreck(Math.max(o.v, 9), out, o.id * 1.37 + this.rng(), o.z, o.x);
+          crashBurst(this.parts, o.z, o.x, o.v, this.rng, 0.7);
           this.pileAt ??= { z: o.z, x: o.x };
           this.aiCrashAt = -1;
           this.pop(`${lastName(o.name)} stürzt!`, 'red', 'Vorsicht in der Kehre', true);
@@ -1019,6 +1021,7 @@ export class BergRace {
         const hit = hitDown(o.z, o.x, this.downs);
         if (hit) {
           o.wreck = makeWreck(o.v, o.x >= hit.x ? 1 : -1, o.id * 1.37 + this.rng(), o.z, o.x);
+          crashBurst(this.parts, o.z, o.x, o.v, this.rng, 0.6);
           for (let i = 0; i < 6; i++) this.dust(o.z, o.x);
           this.listDowns();
           continue;

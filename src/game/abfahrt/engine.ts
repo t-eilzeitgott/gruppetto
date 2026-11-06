@@ -12,6 +12,7 @@ import { cadenceFor, effortFor, pedalStep, smooth, type Effort, STEER_KD, STEER_
 import { GhostPack, GhostRecorder } from './ghosts';
 import type { LiveFeed, LiveOut } from '../live';
 import { wreckSettled, wreckTravel, type Wreck } from './wreck';
+import { crashBurst } from './crash';
 import { BOOST, CAR_HALF, CAR_LEN, carBlock, spawnCar, stepCar, type TeamCar } from './teamcar';
 import type { GhostRider } from '../tt';
 
@@ -816,10 +817,10 @@ export class Abfahrt {
       return;
     }
     if (!kind) {
-      if (side.drop && ax > EDGE + 0.3) { this.crash('In den Abgrund'); return; }
+      if (side.drop && ax > EDGE + 0.3) { this.crash('In den Abgrund', false); return; }
       if (ax > EDGE + 2.3) {
         const why: Record<string, string> = { meadow: 'In der Wiese gelandet', forest: 'Im Wald verschwunden', snow: 'Im Schnee stecken geblieben', field: 'Ab ins Feld', vines: 'In den Weinreben', sunflower: 'In den Sonnenblumen', rock: 'In den Felsen' };
-        this.crash(why[side.ground] ?? 'Von der Straße abgekommen');
+        this.crash(why[side.ground] ?? 'Von der Straße abgekommen', false);
         return;
       }
       if (ax > EDGE) {
@@ -1128,7 +1129,8 @@ export class Abfahrt {
       });
     }
     // Abgehängte weg
-    this.opps = this.opps.filter((o) => o.z > p.z - 60 && o.z < p.z + 520);
+    // (Gestürzte bleiben länger liegen – die Fernsehkamera zeigt den Sturz auch von hinten)
+    this.opps = this.opps.filter((o) => o.z > p.z - (o.wreck ? 120 : 60) && o.z < p.z + 520);
   }
 
   private subN = 0;
@@ -1406,7 +1408,12 @@ export class Abfahrt {
 
   // ------------------------------------------------------------ Sturz und Ende
 
-  crash(reason: string) {
+  /**
+   * Sturz: auf der Straße (Schlagloch, Stein, Kuh, Leitplanke, Felswand, Massensturz) fliegt man richtig ab – Rad
+   * und Körper nach wreck.ts/Ragdoll, die Fernsehkamera zeigt es, Funken und Staub, wer dahinter kommt, fährt hinein.
+   * Neben der Straße (Wiese, Abgrund) der einfache Überschlag. onRoad: auf der Straße
+   */
+  crash(reason: string, onRoad = true) {
     if (this.phase !== 'playing') return;
     // Testfahrt: kein Sturz – zurück auf die Straße
     if (this.opts.cruise) {
@@ -1421,6 +1428,13 @@ export class Abfahrt {
     this.crashReason = reason;
     this.crashSpin = 0;
     this.shake = 1;
+    const p = this.p;
+    if (onRoad && !this.wreck) {
+      const x0 = clamp(p.x, -EDGE + 0.3, EDGE - 0.3);
+      this.wreck = { t: 0, v0: p.v, side: p.vx > 0.5 ? 1 : p.vx < -0.5 ? -1 : p.x >= 0 ? 1 : -1, seed: this.rng() * 100, z0: p.z, x0 };
+      this.pileAt ??= { z: p.z, x: x0 };
+    }
+    if (onRoad) crashBurst(this.parts, p.z, p.x, p.v, this.rng, 1.2);
     for (let i = 0; i < 18; i++) this.dust(this.p.z, this.p.x + (this.rng() - 0.5), 'verge');
     try { navigator.vibrate?.(140); } catch { /* egal */ }
   }
@@ -1448,6 +1462,7 @@ export class Abfahrt {
     if (!this.pileAt) this.pileAt = { z: o.z, x: o.x };
     if (this.pileCount >= 3 && this.phase === 'crash') this.pop(`Massensturz! ${this.pileCount} Fahrer`, 'red', undefined, true);
     for (let i = 0; i < 6; i++) this.dust(o.z, o.x + (this.rng() - 0.5), 'verge');
+    crashBurst(this.parts, o.z, o.x, v, this.rng, 0.6);
     this.shake = Math.max(this.shake, 0.5);
   }
 

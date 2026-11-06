@@ -5,6 +5,7 @@
  * (das Feld ist dann weg). Wer in einen Liegenden hineinfährt, stürzt auch.
  */
 import { wreckSettled, wreckTravel, type Wreck } from './wreck';
+import type { Particle } from './engine';
 
 /** so lange liegt man mindestens (s) – und spätestens dann steigt man wieder auf */
 export const DOWN_MIN = 3.4;
@@ -60,4 +61,36 @@ export function dodge(z: number, x: number, ws: Down[], half: number, look = 32)
   const tx = okL && okR ? (x <= best.x ? left : right) : okL ? left : okR ? right : x;
   // je näher, desto langsamer (wer nicht vorbeikommt, bremst bis fast zum Stand)
   return { tx, vmax: 2 + d * 0.55 };
+}
+
+/**
+ * Sturz mit Wucht: Funken, wo Rad und Pedale über den Asphalt schrammen, Staub und ein paar Steinchen – vom Tempo
+ * mitgerissen. k: Stärke (eigener Sturz 1, Gegner im Massensturz weniger)
+ */
+export function crashBurst(parts: Particle[], z: number, x: number, v: number, rng: () => number, k = 1) {
+  const n = Math.round(14 * k);
+  for (let i = 0; i < n; i++) {
+    const life = 0.35 + rng() * 0.4;
+    parts.push({
+      kind: 'spark', z: z + rng() * 0.8, x: x + (rng() - 0.5) * 0.7, h: 0.1 + rng() * 0.3,
+      vz: v * (0.45 + rng() * 0.45), vx: (rng() - 0.5) * 5, vh: 0.8 + rng() * 3.2, life, max: life,
+      size: 0.04 + rng() * 0.035, color: rng() < 0.3 ? '#fff1c2' : '#ffb347', rot: 0,
+    });
+  }
+  for (let i = 0; i < n; i++) {
+    const life = 0.7 + rng() * 0.6;
+    parts.push({
+      kind: 'dust', z: z - 0.3 + rng() * 1.2, x: x + (rng() - 0.5) * 1.2, h: 0.05,
+      vz: v * (0.2 + rng() * 0.4), vx: (rng() - 0.5) * 2.4, vh: 0.4 + rng() * 1.4, life, max: life,
+      size: 0.18 + rng() * 0.3, color: '#b3a58a', rot: 0,
+    });
+  }
+  for (let i = 0; i < Math.round(6 * k); i++) {
+    const life = 0.6 + rng() * 0.4;
+    parts.push({
+      kind: 'gravel', z: z + rng() * 0.6, x: x + (rng() - 0.5) * 0.8, h: 0.05,
+      vz: v * (0.3 + rng() * 0.4), vx: (rng() - 0.5) * 3, vh: 1 + rng() * 2.5, life, max: life,
+      size: 0.05 + rng() * 0.05, color: '#8c8478', rot: rng() * 6,
+    });
+  }
 }
