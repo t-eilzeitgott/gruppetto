@@ -13,8 +13,9 @@ import { between, chance, mulberry32, pick, type Rng } from './rng';
 import { SKINS, TEAM_KITS, type Kit } from './rider';
 import type { StageRef } from './stageRef';
 import { STEER_KEYS, STEER_PACK_GAIN, STEER_PACK_MAX, STEER_SPAN, pedalStep, strainOf } from './motion';
-import { GhostPack, GhostRecorder } from './ghosts';
-import type { LiveFeed, LiveOut } from '../live';
+import { GhostPack, GhostRecorder, type GhostOpp } from './ghosts';
+import { HIT_MIN, HIT_SHAKY, hitEffect, type LiveFeed, type LiveOut, type RtHit, type RtState } from '../live';
+import { firstName } from '../tt';
 import { photoFinish, type PhotoResult, type PhotoRider } from '../photo';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
@@ -110,6 +111,19 @@ interface Racer extends Opp {
 }
 
 const LANES = [-2.1, -1.05, 0, 1.05, 2.1];
+/** Lobby-Rennen: die Mitspieler stehen nebeneinander in der letzten Reihe (die ist immer frei) – Mitte zuerst */
+const GRID_ROW = 7;
+const GRID_LANES = [2, 1, 3, 0, 4];
+/** Startplatz im Lobby-Rennen: Streckenmeter und seitliche Lage für den i-ten Mitspieler */
+export function gridSlot(i: number): [number, number] {
+  const k = Math.max(0, Math.floor(i));
+  return [48 - (GRID_ROW + Math.floor(k / GRID_LANES.length)) * 2.1, LANES[GRID_LANES[k % GRID_LANES.length]]];
+}
+/** Mitspieler (Echtzeit): so breit ist ein Fahrer mit Ellbogen (m), so lang das Rad (m) */
+const BODY_W = 0.62;
+const BODY_L = 1.6;
+/** so lange nach „Los“ wird noch nicht gerempelt (s) */
+const HIT_GRACE = 2;
 /** Team-Nummer des eigenen Anfahrers */
 const MATE = 9;
 const XMAX = ROAD_HALF - 0.45;
@@ -184,6 +198,18 @@ export class SprintRace {
   private flags = new Set<string>();
   private popSide: 1 | -1 = 1;
   private countShown = 4;
+  /** Lobby-Rennen: Startplatz neben den Mitspielern (null = allein, Platz mitten im Feld) */
+  private grid: number | null = null;
+  /** seitlicher Stoß aus einem Rempler (m/s, klingt ab) */
+  private kick = 0;
+  /** letzter Rempler je Mitspieler (Rennzeit) – nicht mehrfach für dieselbe Berührung */
+  private hitAt = new Map<string, number>();
+  /** letzter Rempler überhaupt (Rennzeit): kurz danach ist man wacklig */
+  private shakyAt = -99;
+  /** bemerkte Rempler für die anderen (live.ts holt sie ab) */
+  private hitsOut: RtHit[] = [];
+  /** Mitspieler, die beim eigenen Zieldurchgang schon durch waren */
+  private rivalsAhead = 0;
 
   constructor(opts: SprintOptions) {
     this.opts = opts;
@@ -209,6 +235,7 @@ export class SprintRace {
     this.phaseT = 0;
     this.time = 0;
     this.pack = new GhostPack(this.track, this.opts.ghosts ?? []);
+    this.pack.solidOn = true;
     this.ghosts = this.pack.opps;
     this.rec.reset();
     this.ghostT = 0;
@@ -227,9 +254,23 @@ export class SprintRace {
       const rc = mulberry32((this.track.seed ^ 0x5c4a) >>> 0);
       this.crashAt = rc() < 0.6 ? between(rc, 650, 1500) : -1;
     }
+    this.kick = 0;
+    this.shakyAt = -99;
+    this.hitAt.clear();
+    this.hitsOut = [];
+    this.rivalsAhead = 0;
     this.spawnField();
     this.placePlayer();
     this.p.y = this.track.heightAt(this.p.z);
+  }
+
+  /**
+   * Lobby-Rennen: Startplatz Nummer i (alle Mitspieler nebeneinander in der letzten Reihe), null = wie allein.
+   * Nur vor dem Start; der eigene Anfahrer rückt mit vor einen, wenn dort Platz ist.
+   */
+  setGrid(i: number | null) {
+    this.grid = i;
+    if (this.phase === 'ready') this.placePlayer();
   }
 
   /** Feld aufstellen: vier Sprinterzüge (drei Anfahrer + Sprinter), dazu einzelne Fahrer */
@@ -298,11 +339,22 @@ export class SprintRace {
 
   /** Startplatz des Spielers: ein freier Platz mitten im Feld */
   private placePlayer() {
-    [this.p.z, this.p.x] = this.startSlot;
+    [this.p.z, this.p.x] = this.grid === null ? this.startSlot : gridSlot(this.grid);
     this.tx = this.p.x;
+    if (this.grid === null) return;
+    const mate = this.opps.find((o) => o.team === MATE);
+    const z = this.p.z + 2.1;
+    if (mate && !this.opps.some((o) => o !== mate && Math.abs(o.z - z) < 1.4 && Math.abs(o.x - this.p.x) < 0.6)) {
+      mate.z = z;
+      mate.x = this.p.x;
+      mate.tx = this.p.x;
+    }
   }
 
-  get riders(): number { return this.opps.length + 1; }
+  get riders(): number { return this.opps.length + 1 + this.rivalCount; }
+
+  /** Mitspieler im selben Lobby-Rennen (höchster Stand – wer ausfällt, zählt weiter mit) */
+  private rivalCount = 0;
 
   setViewport(w: number) { this.viewW = Math.max(240, w); }
 
@@ -385,14 +437,15 @@ export class SprintRace {
       blocked: this.blocked,
       touch: this.steer.active ? { x: this.steer.sx, y: this.steer.sy } : null,
       ahead: ahead?.name ?? null,
-      board: standings(this.opps, this.p, this.finT),
+      board: standings(this.finT < 0 && this.pack.solids().length
+        ? [...this.opps, ...this.pack.solids().map((o) => ({ z: o.z, v: o.v, name: firstName(o.rider.name) }))] : this.opps, this.p, this.finT),
     };
   }
 
   /** aktueller Platz (nach dem Ziel: Platz beim Überqueren der Linie) */
   place(): number {
-    if (this.finT >= 0) return 1 + this.opps.filter((o) => o.done && o.finT < this.finT).length;
-    return 1 + this.opps.filter((o) => o.z > this.p.z).length;
+    if (this.finT >= 0) return 1 + this.opps.filter((o) => o.done && o.finT < this.finT).length + this.rivalsAhead;
+    return 1 + this.opps.filter((o) => o.z > this.p.z).length + this.pack.solids().filter((o) => o.z > this.p.z).length;
   }
 
   // ------------------------------------------------------------ Spieler
@@ -410,7 +463,14 @@ export class SprintRace {
     }
     if (self && !this.wreck) {
       const dz = this.p.z - z;
-      if (dz > 0.05 && dz < bd && Math.abs(this.p.x - x) <= 0.6) best = this.p;
+      if (dz > 0.05 && dz < bd && Math.abs(this.p.x - x) <= 0.6) { bd = dz; best = this.p; }
+    }
+    // Mitspieler im Lobby-Rennen (Echtzeit) sind echte Fahrer: an ihnen kommt niemand einfach durch
+    for (const o of this.pack.solids()) {
+      const dz = o.z - z;
+      if (dz <= 0.05 || dz >= bd || Math.abs(o.x - x) > 0.6) continue;
+      bd = dz;
+      best = { z: o.z, x: o.x, v: o.v, name: firstName(o.rider.name) };
     }
     return best;
   }
@@ -497,7 +557,12 @@ export class SprintRace {
     }
     // seitlich: direkt zum Ziel des Fingers, aber nicht in einen Nebenmann hinein
     const want = clamp((this.tx - p.x) * STEER_PACK_GAIN, -STEER_PACK_MAX, STEER_PACK_MAX);
-    let nx = p.x + want * dt;
+    // Stoß aus einem Rempler: schiebt einen kurz zur Seite, egal wohin der Finger zeigt
+    this.kick *= Math.exp(-dt / 0.16);
+    if (Math.abs(this.kick) < 0.05) this.kick = 0;
+    let nx = p.x + (want + this.kick) * dt;
+    if (this.kick) this.tx = clamp(this.tx + this.kick * dt, -XMAX, XMAX);
+    nx = this.contact(nx, want, racing);
     for (const o of this.opps) {
       if (o.wreck || Math.abs(o.z - p.z) > 1.5) continue;
       const before = p.x - o.x;
@@ -506,6 +571,11 @@ export class SprintRace {
         nx = p.x;
         if (!this.flags.has('bump') && racing) { this.flags.add('bump'); this.shake = 0.5; }
       }
+    }
+    // von einem Mitspieler an die Bande gedrängt
+    if (racing && Math.abs(this.kick) > 1.6 && Math.abs(nx) > XMAX + 0.02 && Math.sign(nx) === Math.sign(this.kick)) {
+      this.crash(-Math.sign(nx), clamp(nx, -XMAX, XMAX), 'An die Bande gedrängt');
+      return;
     }
     p.vx = (nx - p.x) / dt;
     p.x = clamp(nx, -XMAX, XMAX);
@@ -526,10 +596,100 @@ export class SprintRace {
       // Zielfoto: Geister und Live-Mitspieler, wo sie gerade sind
       this.photoGhosts = this.pack.photo(SPRINT_FINISH, p.z, p.v);
       this.finV = p.v;
+      this.rivalsAhead = this.pack.solids().filter((o) => o.z > p.z).length;
       const pl = this.place();
       if (pl === 1) { this.pop('Sieg!', 'gold', 'Etappensieg', true); this.confetti(); }
       else this.pop(`${pl}. Platz`, pl <= 3 ? 'gold' : 'white', undefined, true);
     }
+  }
+
+  // ------------------------------------------------------------ Mitspieler (Echtzeit)
+
+  /**
+   * Berührung mit Mitspielern im Lobby-Rennen: durch sie hindurch geht es nicht – wer mit Schwung in den anderen
+   * zieht (oder in wen gezogen wird), rempelt. Gibt die erlaubte seitliche Lage zurück. Jeder rechnet nur sein
+   * eigenes Rad; der Rempler wird dem anderen gemeldet (takeHits), damit er bei beiden passiert.
+   */
+  private contact(nx: number, want: number, racing: boolean): number {
+    const p = this.p;
+    const solids = this.pack.solids();
+    this.rivalCount = Math.max(this.rivalCount, solids.length);
+    if (!solids.length) return nx;
+    if (!this.flags.has('rt')) {
+      this.flags.add('rt');
+      const names = solids.map((o) => firstName(o.rider.name));
+      this.opts.onEvent?.({ type: 'banner', title: 'Echtzeit-Rennen', sub: `${names.length === 1 ? names[0] : `${names.length} Mitspieler`} neben dir – Rempeln erlaubt`, tone: 'accent' });
+    }
+    const canHit = racing && this.time - this.goT > HIT_GRACE;
+    for (const o of solids) {
+      if (Math.abs(o.z - p.z) > BODY_L) continue;
+      const gap = nx - o.x;
+      if (Math.abs(gap) >= BODY_W) continue;
+      const s: -1 | 1 = (gap !== 0 ? gap : p.x - o.x) >= 0 ? 1 : -1;
+      // seitliche Annäherung: mein Zug zu ihm hin plus seiner zu mir
+      const mine = Math.max(0, -(want + this.kick) * s);
+      const theirs = Math.max(0, o.vx * s);
+      const id = o.rider.live?.userId ?? '';
+      if (canHit && mine + theirs >= HIT_MIN && this.time - (this.hitAt.get(id) ?? -9) > 0.7) {
+        const mineRole = mine >= theirs ? 'a' : 'v';
+        this.hitsOut.push({ to: id, power: mine + theirs, role: mineRole === 'a' ? 'v' : 'a', dir: s === 1 ? -1 : 1 });
+        this.hit(o, mine + theirs, mineRole, s);
+        if (this.wreck) return p.x;
+      }
+      // nicht ineinander: bis an ihn heran, nicht weiter – auch der Finger zieht nicht mehr in ihn hinein
+      // (sonst lenkt, wer weggeschoben wurde, von selbst zurück und rempelt „aus Versehen“)
+      nx = o.x + s * BODY_W;
+      if ((this.tx - o.x) * s < BODY_W) this.tx = clamp(nx, -XMAX, XMAX);
+    }
+    return nx;
+  }
+
+  /** Rempler mit einem Mitspieler: Stoß zur Seite, Tempo und Kraft weg – ein harter bringt einen zu Boden */
+  private hit(o: GhostOpp | null, power: number, role: 'v' | 'a', dir: -1 | 1, name?: string) {
+    const p = this.p;
+    const who = o ? firstName(o.rider.name) : name ?? 'Mitspieler';
+    if (o?.rider.live) this.hitAt.set(o.rider.live.userId, this.time);
+    const e = hitEffect(power, role, this.time - this.shakyAt < HIT_SHAKY, this.rng());
+    this.shakyAt = this.time;
+    this.kick = dir * e.kick;
+    p.v = Math.max(4, p.v - e.slow);
+    this.energy = clamp(this.energy - e.energy, 0, 1);
+    p.wobble = Math.min(1, (p.wobble ?? 0) + 0.5);
+    this.shake = Math.max(this.shake, role === 'v' ? 0.9 : 0.6);
+    crashBurst(this.parts, p.z, p.x - dir * 0.3, p.v, this.rng, 0.25);
+    try { navigator.vibrate?.(role === 'v' ? 80 : 40); } catch { /* egal */ }
+    if (e.down) {
+      this.crash(dir, p.x, role === 'v' ? `Von ${who} abgeräumt` : `Mit ${who} zusammengestoßen`);
+      return;
+    }
+    if (role === 'v') this.pop(`Rempler von ${who}!`, 'red', 'Gegenhalten', false, true);
+    else this.pop(`${who} gerempelt`, 'accent', undefined, false, true);
+  }
+
+  /** Echtzeit: eigener Stand für die Mitspieler der Lobby (null: gerade kein Rennen) */
+  rtOut(): (RtState & { down: boolean }) | null {
+    if ((this.phase !== 'countdown' && this.phase !== 'playing') || this.finT >= 0) return null;
+    const p = this.p;
+    return { z: p.z, x: p.x, v: p.v, vx: p.vx, m: this.mode === 'go' ? 1 : this.mode === 'ease' ? 2 : 0, down: !!this.wreck };
+  }
+
+  /** Echtzeit: Rempler, die man selbst bemerkt hat – für die Betroffenen (werden dabei geleert) */
+  takeHits(): RtHit[] {
+    if (!this.hitsOut.length) return this.hitsOut;
+    const out = this.hitsOut;
+    this.hitsOut = [];
+    return out;
+  }
+
+  /** Echtzeit: ein Mitspieler meldet einen Rempler mit einem selbst (falls man ihn nicht schon selbst bemerkt hat) */
+  rtHit(from: string, h: { power: number; role: 'v' | 'a'; dir: -1 | 1 }) {
+    if (this.phase !== 'playing' || this.finT >= 0 || this.wreck || this.time - this.goT <= HIT_GRACE) return;
+    if (this.time - (this.hitAt.get(from) ?? -9) <= 0.7) return;
+    const o = this.pack.opps.find((x) => x.rider.live?.userId === from) ?? null;
+    // nur, wenn er wirklich neben einem ist (verspätete oder verirrte Meldungen nicht)
+    if (!o || Math.abs(o.z - this.p.z) > BODY_L + 2 || Math.abs(o.x - this.p.x) > BODY_W + 0.9) return;
+    this.hitAt.set(from, this.time);
+    this.hit(o, clamp(h.power, 0, 6), h.role, h.dir);
   }
 
   private windT = 0;
@@ -658,6 +818,10 @@ export class SprintRace {
         if (Math.abs(nx - m.x) < 0.58 && Math.abs(nx - m.x) < Math.abs(o.x - m.x)) nx = o.x;
       }
       if (!this.wreck && Math.abs(this.p.z - o.z) < 1.5 && Math.abs(nx - this.p.x) < 0.58 && Math.abs(nx - this.p.x) < Math.abs(o.x - this.p.x)) nx = o.x;
+      // … und nicht in einen Mitspieler (Echtzeit)
+      for (const m of this.pack.solids()) {
+        if (Math.abs(m.z - o.z) < 1.5 && Math.abs(nx - m.x) < 0.58 && Math.abs(nx - m.x) < Math.abs(o.x - m.x)) nx = o.x;
+      }
       o.vx = (nx - o.x) / dt;
       o.x = clamp(nx, -XMAX, XMAX);
       o.lean += (clamp(-o.vx * 0.12, -0.25, 0.25) - o.lean) * Math.min(1, dt * 8);
@@ -703,14 +867,15 @@ export class SprintRace {
   }
 
   /** eigener Sturz: liegen, dann wieder aufsteigen (das Feld ist weg) */
-  private crash(side: number, x: number) {
+  private crash(side: number, x: number, why = 'In den Massensturz gefahren') {
     const p = this.p;
     this.wreck = makeWreck(p.v, side, this.rng() * 100, p.z, clamp(x, -ROAD_HALF + 0.3, ROAD_HALF - 0.3));
     crashBurst(this.parts, p.z, p.x, p.v, this.rng, 1.2);
     this.pileAt ??= { z: p.z, x: this.wreck.x0 };
     this.crashes += 1;
     this.shake = 1;
-    this.pop('Sturz!', 'red', 'In den Massensturz gefahren', true);
+    this.kick = 0;
+    this.pop('Sturz!', 'red', why, true);
     try { navigator.vibrate?.(140); } catch { /* egal */ }
   }
 

@@ -204,10 +204,12 @@ export function SprintPage() {
 
   useGameLock();
 
-  const start = () => {
+  /** grid: Startplatz im Lobby-Rennen (alle Mitspieler nebeneinander), sonst der Platz mitten im Feld */
+  const start = (grid?: number) => {
     if (!stageEl.current) return;
     // das Rennen hinter dem Startblatt ist schon vorbereitet (usePreparedRace) – beim Start nichts neu bauen
     engineRef.current = race.take();
+    engineRef.current.setGrid(typeof grid === 'number' ? grid : null);
     engineRef.current.start();
     setResult(null);
     setShowBoard(false);
@@ -224,11 +226,12 @@ export function SprintPage() {
     else if (uiRef.current === 'paused') setUi('playing');
   };
 
-  useRaceKeys(engineRef, uiRef, start, togglePause);
+  useRaceKeys(engineRef, uiRef, () => start(), togglePause);
 
   // Live: eigenen Stand melden, die anderen auf derselben Strecke als Live-Geister, Lobby-Rennen pünktlich starten
+  // (dort nebeneinander und in Echtzeit – man kann sich rempeln)
   useLiveGame({
-    game: 'sprint', course: `${day}:${hashStr(JSON.stringify(ref ?? null))}`, bike: bikes.current, engineRef, start: start, members: members.data,
+    game: 'sprint', course: `${day}:${hashStr(JSON.stringify(ref ?? null))}`, bike: bikes.current, engineRef, start: (grid) => start(grid), members: members.data,
     canStart: () => uiRef.current === 'ready' || uiRef.current === 'over', score: result?.score ?? null,
   });
 

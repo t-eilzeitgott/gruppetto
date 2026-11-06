@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SPRINT_FINISH, Track } from './track';
-import { SprintRace, type SprintResult } from './sprint';
+import { SprintRace, gridSlot, type SprintResult } from './sprint';
+import { newFeed, rtSet } from '../live';
 import { riderOptions, rivalNames } from './sprintRiders';
 import type { Profile, TourData } from '../../lib/types';
 import type { StageRef } from './stageRef';
@@ -130,4 +131,142 @@ test('Zielstadt: Stadttor am Ortseingang, Piazza mit zurückgesetzten Palazzi, L
   const gate = t.seg(town.start + 24).banner;
   assert.equal(gate?.kind, 'gate');
   assert.equal(gate?.text, 'Napoli');
+});
+
+// ------------------------------------------------------------ Lobby-Rennen in Echtzeit
+
+/** zwei Rennen (zwei Handys), die sich jede Runde gegenseitig ihren Stand melden – wie über den Lobby-Kanal */
+function duel(day = '2027-05-09') {
+  const mk = () => new SprintRace({ dayKey: day, names: [], rider: { name: 'Test', type: 'sprinter', number: '27' }, rivals: ['Milan', 'Philipsen', 'Merlier'], kit });
+  const a = mk();
+  const b = mk();
+  a.setGrid(0);
+  b.setGrid(1);
+  // was A von B sieht und umgekehrt
+  const seesB = newFeed({ userId: 'B', name: 'Ben Beispiel', color: '#36c', bike: 'aero', run: 'r' });
+  const seesA = newFeed({ userId: 'A', name: 'Anna Beispiel', color: '#c33', bike: 'aero', run: 'r' });
+  for (const f of [seesA, seesB]) { f.solid = true; f.racing = true; }
+  a.setLive([seesB]);
+  b.setLive([seesA]);
+  const step = (dt = 1 / 60) => {
+    const now = performance.now();
+    const sa = a.rtOut();
+    const sb = b.rtOut();
+    if (sa) { rtSet(seesA, sa, 0, now); seesA.down = sa.down; }
+    if (sb) { rtSet(seesB, sb, 0, now); seesB.down = sb.down; }
+    a.update(dt);
+    b.update(dt);
+    // Rempler gehen an den Betroffenen
+    for (const h of a.takeHits()) b.rtHit('A', h);
+    for (const h of b.takeHits()) a.rtHit('B', h);
+  };
+  return { a, b, step };
+}
+
+/** auf gleiche Höhe bringen (das Feld kann einen aufhalten): wer vorn ist, nimmt Tempo raus */
+function align(a: SprintRace, b: SprintRace, step: () => void) {
+  let guard = 0;
+  while (Math.abs(a.p.z - b.p.z) > 0.6 && guard++ < 60 * 20) {
+    const lead = a.p.z > b.p.z ? a : b;
+    lead.setPedal(-1);
+    step();
+    lead.setPedal(0);
+  }
+  assert.ok(Math.abs(a.p.z - b.p.z) <= 1.2, 'nebeneinander');
+}
+
+test('Lobby-Rennen: alle starten nebeneinander in einer Reihe, jeder auf seinem Platz', () => {
+  const slots = [0, 1, 2, 3, 4, 5].map(gridSlot);
+  assert.ok(slots.slice(0, 5).every(([z]) => z === slots[0][0]), 'die ersten fünf in einer Reihe');
+  assert.equal(new Set(slots.slice(0, 5).map(([, x]) => x)).size, 5);
+  assert.ok(slots[5][0] < slots[0][0], 'der sechste eine Reihe dahinter');
+  const { a, b } = duel();
+  assert.equal(a.p.z, b.p.z);
+  assert.ok(Math.abs(Math.abs(a.p.x - b.p.x) - 1.05) < 1e-9, 'Nachbarspuren');
+  // niemand aus dem Feld steht auf einem der Plätze
+  for (const g of [a, b]) for (const o of g.opps) assert.ok(Math.abs(o.z - g.p.z) > 1.2 || Math.abs(o.x - g.p.x) > 0.5, 'Platz frei');
+  // ohne Lobby-Rennen bleibt der Platz mitten im Feld
+  const solo = new SprintRace({ dayKey: '2027-05-09', names: [], rider: { name: 'Test', type: 'sprinter', number: '27' }, rivals: [], kit });
+  assert.ok(solo.p.z > a.p.z);
+});
+
+test('Lobby-Rennen: Mitspieler sind echte Gegner – nebeneinander ins Rennen, kein Durchfahren', () => {
+  const { a, b, step } = duel();
+  a.start();
+  b.start();
+  for (let i = 0; i < 60 * 5; i++) step();
+  assert.equal(a.phase, 'playing');
+  // beide rollen gleich los: nach fünf Sekunden noch Seite an Seite
+  assert.ok(Math.abs(a.p.z - b.p.z) < 8, `dicht beieinander (${(a.p.z - b.p.z).toFixed(2)} m)`);
+  // A sieht B dort, wo B wirklich ist (die Darstellung hängt nicht hinterher)
+  const seen = a.ghosts[a.ghosts.length - 1];
+  assert.ok(Math.abs(seen.z - b.p.z) < 0.35 && Math.abs(seen.x - b.p.x) < 0.1, `Lage stimmt (${(seen.z - b.p.z).toFixed(2)} m)`);
+  assert.equal(a.ghosts.filter((o) => o.ghost! > 0.9).length, 1, 'Mitspieler voll sichtbar, kein Geist');
+  assert.equal(a.riders, a.opps.length + 2);
+  // A zieht langsam zu B hinüber: bleibt an ihm hängen, fährt nicht hinein
+  const side = Math.sign(b.p.x - a.p.x);
+  for (let i = 0; i < 60 * 4; i++) { a.steerBy(side * 0.6); step(); }
+  if (Math.abs(a.p.z - b.p.z) < 1.5) assert.ok(Math.abs(a.p.x - b.p.x) > 0.55, `nicht ineinander (${Math.abs(a.p.x - b.p.x).toFixed(2)} m)`);
+});
+
+test('Lobby-Rennen: Rammen schiebt den anderen weg und kostet ihn Tempo – bei beiden gleich', () => {
+  const { a, b, step } = duel();
+  a.start();
+  b.start();
+  for (let i = 0; i < 60 * 6; i++) step();
+  // auf gleiche Höhe bringen (das Feld kann einen aufhalten): Rammen braucht den anderen neben sich
+  align(a, b, step);
+  const side = Math.sign(b.p.x - a.p.x) || 1;
+  const bx0 = b.p.x;
+  const bv0 = b.p.v;
+  const eb0 = b.energy;
+  let pops = 0;
+  // A reißt den Lenker herum
+  for (let i = 0; i < 90 && !pops; i++) {
+    a.steerBy(side * 60);
+    step();
+    pops = b.popups.filter((q) => q.text.startsWith('Rempler von Anna')).length;
+  }
+  assert.equal(pops, 1, 'B bekommt den Rempler von Anna angesagt');
+  assert.ok(a.popups.some((q) => q.text === 'Ben gerempelt'), 'A hat gerempelt');
+  for (let i = 0; i < 20; i++) step();
+  if (!b.wreck) {
+    assert.ok((b.p.x - bx0) * side > 0.15 || Math.abs(b.p.x) > 2.5, `B wurde weggeschoben (${((b.p.x - bx0) * side).toFixed(2)} m)`);
+    assert.ok(b.p.v < bv0 + 0.2 && b.energy < eb0, 'B verliert Tempo und Kraft');
+  }
+});
+
+test('Lobby-Rennen: der zweite Rempler kurz darauf bringt zu Boden – am Start ist noch Schonfrist', () => {
+  const { a, b, step } = duel();
+  a.start();
+  b.start();
+  for (let i = 0; i < 60 * 2.6; i++) step();
+  // kurz nach „Los“: noch kein Rempeln
+  b.rtHit('A', { power: 4.5, role: 'v', dir: 1 });
+  assert.equal(b.popups.length, 0);
+  for (let i = 0; i < 60 * 3; i++) step();
+  // Meldung von jemandem, der gar nicht neben einem fährt, zählt nicht
+  b.rtHit('X', { power: 4.5, role: 'v', dir: 1 });
+  assert.equal(b.popups.some((q) => q.text.startsWith('Rempler')), false);
+  align(a, b, step);
+  assert.ok(Math.abs(a.p.x - b.p.x) < 1.5, 'Nachbarn');
+  const dir = b.p.x >= a.p.x ? 1 : -1;
+  b.rtHit('A', { power: 4.5, role: 'v', dir });
+  assert.equal(b.wreck, null, 'der erste Rempler schiebt nur weg');
+  assert.ok(b.popups.some((q) => q.text === 'Rempler von Anna!'));
+  // dieselbe Berührung zählt nicht doppelt
+  b.rtHit('A', { power: 4.5, role: 'v', dir });
+  assert.equal(b.wreck, null);
+  // A setzt nach und rempelt gleich noch einmal: B ist noch wacklig
+  for (let i = 0; i < 120 && !b.wreck; i++) {
+    a.steerBy(dir * 40);
+    a.setPedal(a.p.z > b.p.z + 0.3 ? -1 : 0);
+    step();
+  }
+  assert.ok(b.wreck, 'B liegt');
+  assert.ok(b.popups.some((q) => q.sub === 'Von Anna abgeräumt' || q.sub === 'An die Bande gedrängt'), b.popups.map((q) => `${q.text}/${q.sub}`).join(' · '));
+  assert.equal(a.wreck, null, 'A hat gerammt und sitzt noch');
+  // wer liegt, ist für die anderen kein Hindernis mehr
+  for (let i = 0; i < 30; i++) step();
+  assert.equal(a.ghosts.filter((o) => (o as { solid?: boolean }).solid).length, 0);
 });

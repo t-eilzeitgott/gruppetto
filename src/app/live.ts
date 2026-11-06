@@ -8,6 +8,10 @@
  *    und gibt sie der Engine; startet ein Lobby-Rennen pünktlich (Countdown endet für alle zur selben Serverzeit).
  *  - LobbyDirector (einmal in der App): ein neues Lobby-Rennen holt einen ins Spiel – außer man fährt gerade selbst,
  *    dann kommt die Frage „Mitfahren?“.
+ *  - Echtzeit: wer in einer Lobby ist, hängt zusätzlich an ihrem WebSocket-Kanal (realtime.ts). Im Lobby-Rennen
+ *    schickt jeder dort bis zu zehnmal je Sekunde Lage und Tempo (weit auseinander seltener) und Rempler; die
+ *    anderen stehen dadurch genau dort, wo sie gerade sind, und sind im Sprint echte Gegner (game/live.ts).
+ *    Ohne Kanal (kein Netz, Demo) bleibt alles wie zuvor: Live-Geister aus den Meldungen an die Datenbank.
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import { source } from './config';
@@ -16,14 +20,34 @@ import { gameIntroCovered, playGameIntro } from './gameIntro';
 import { afterPaint } from '../lib/afterPaint';
 import type { GameId, LiveLobby, LiveSnapshot } from '../data/source';
 import type { Profile } from '../lib/types';
-import { feedTime, liveTail, mergeTail, newFeed, type LiveFeed, type LiveOut } from '../game/live';
+import { feedTime, gridIndex, liveTail, mergeTail, newFeed, rtFresh, rtSet, type LiveFeed, type LiveOut, type RtHit, type RtState } from '../game/live';
 import { gameInfo } from '../game/games';
+import { RtChannel, type RtStatus } from './realtime';
 
 /** was eine Engine für Live können muss (Abfahrt, Sprint, Berg, Zeitfahren) */
 export interface LiveEngine {
   liveOut(): LiveOut;
   setLive(feeds: LiveFeed[]): void;
+  /** Echtzeit (Lobby-Rennen): eigener Stand jetzt – null, wenn gerade kein Rennen läuft */
+  rtOut?(): (RtState & { down: boolean }) | null;
+  /** Echtzeit: selbst bemerkte Rempler für die Betroffenen */
+  takeHits?(): RtHit[];
+  /** Echtzeit: ein Mitspieler meldet einen Rempler mit einem selbst */
+  rtHit?(from: string, h: { power: number; role: 'v' | 'a'; dir: -1 | 1 }): void;
 }
+
+/** so oft (ms) geht die eigene Lage an die Lobby: dicht beieinander und weit auseinander */
+const RT_NEAR_MS = 100;
+const RT_FAR_MS = 400;
+/** „dicht beieinander“: nächster Mitspieler näher als so viele Meter */
+const RT_NEAR_M = 70;
+
+/** Echtzeit-Meldung im Lobby-Kanal: Lage (cm), Tempo (cm/s), Haltung, Stand (1 fährt, 2 fertig), Serverzeit */
+interface PosMsg { u: string; c: string; r: string; k: string | null; s: number; z: number; x: number; v: number; vx: number; m: number; w: number; b: string; t: number }
+interface HitMsg { u: string; to: string; k: string | null; p: number; r: 'v' | 'a'; d: -1 | 1 }
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+
 
 /** Countdown bis „Los“ je Spiel (s): das Lobby-Rennen startet so viel vor der gemeinsamen Startzeit */
 export const COUNT_S: Record<GameId, number> = { zeitfahren: 3, abfahrt: 2.25, sprint: 2.25, berg: 2.25 };
@@ -41,8 +65,13 @@ const DONE_KEY = 'gruppetto.lobby.done';
 
 class LiveHub {
   snap: LiveSnapshot | null = null;
-  /** Serverzeit − eigene Uhr (ms) */
+  /** Serverzeit − eigene Uhr (ms) – aus den Abfragen mit der kürzesten Laufzeit (die genauesten) */
   offset = 0;
+  private bestRtt = Infinity;
+  /** Echtzeit-Kanal der Lobby: verbunden? (null: kein Kanal) */
+  rt: RtStatus | null = null;
+  /** Lobby-Rennen, zu dem der nächste eigene Lauf gehört (gesetzt beim pünktlichen Start) */
+  pendingRace: string | null = null;
   /** Live-Geister der offenen Spielseite (Anzeige im Rennen) */
   feeds: LiveFeed[] = [];
   /** man fährt gerade selbst ein Rennen */
@@ -78,7 +107,12 @@ class LiveHub {
   /** neuer Stand vom Server (sent: Date.now beim Abschicken – für die Serverzeit) */
   apply(snap: LiveSnapshot | null, sent: number) {
     const recv = Date.now();
-    if (snap) this.offset = snap.now - (sent + recv) / 2;
+    if (snap) {
+      // die Uhr nur aus schnellen Abfragen stellen: je kürzer der Weg, desto genauer die Mitte
+      const rtt = recv - sent;
+      if (rtt >= 0 && rtt <= this.bestRtt + 40) this.offset = snap.now - (sent + recv) / 2;
+      this.bestRtt = rtt >= 0 ? Math.min(this.bestRtt + 2, Math.max(rtt, 20)) : this.bestRtt;
+    }
     this.snap = snap;
     this.emit();
     this.schedule();
@@ -199,7 +233,8 @@ export interface LiveGameOpts {
   engineRef: RefObject<LiveEngine | null>;
   /** im Startblatt oder beim Ergebnis (ein Lobby-Rennen darf starten) */
   canStart: () => boolean;
-  start: () => void;
+  /** grid: Startplatz im Lobby-Rennen (nebeneinander), sonst nicht gesetzt */
+  start: (grid?: number) => void;
   /** eigenes Ergebnis, wenn fertig (wie in game_scores) */
   score: number | null;
   members: Profile[] | undefined;
@@ -228,18 +263,120 @@ export function useLiveGame(o: LiveGameOpts): LobbyRace | null {
     let run = '';
     let lastN = 0;
     let lastState: LiveOut['state'] = 'menu';
+    /** Lobby-Rennen, zu dem der laufende Lauf gehört (dann Echtzeit mit den anderen daraus) */
+    let myRace: string | null = null;
+    const meId = source.currentUser()?.id ?? '';
+    const courseKey = `${game}|${course}`;
+
+    /** Stand der Engine; ein neuer Lauf bekommt eine neue Kennung (die anderen fangen eine neue Spur an) */
+    const current = (): { out: LiveOut; n: number } => {
+      const eng = opts.current.engineRef.current;
+      const out: LiveOut = eng?.liveOut ? eng.liveOut() : { state: 'menu', trace: [] };
+      const n = Math.floor(out.trace.length / 3);
+      if (out.state !== 'menu' && (lastState === 'menu' || n < lastN || !run)) {
+        run = Math.random().toString(36).slice(2, 10);
+        myRace = liveHub.pendingRace;
+        liveHub.pendingRace = null;
+      }
+      if (out.state === 'menu') myRace = null;
+      lastState = out.state;
+      lastN = n;
+      return { out, n };
+    };
+    const publish = () => {
+      liveHub.feeds = [...feeds.values()];
+      opts.current.engineRef.current?.setLive?.(liveHub.feeds);
+    };
+    const feedFor = (userId: string, runId: string, bike: string): LiveFeed => {
+      let f = feeds.get(userId);
+      if (!f || f.run !== runId) {
+        const m = opts.current.members?.find((x) => x.id === userId);
+        f = newFeed({ userId, name: m?.display_name ?? 'Jemand', color: m?.avatar_color ?? '#888888', bike, run: runId });
+        feeds.set(userId, f);
+      }
+      return f;
+    };
+
+    // ---- Echtzeit: Kanal der Lobby
+    let chan: RtChannel | null = null;
+    let chanName = '';
+    let lastSent = 0;
+    let wasRacing = false;
+    let runStart = 0;
+    const onCast = (event: string, payload: unknown) => {
+      if (!on) return;
+      if (event === 'pos') {
+        const m = payload as Partial<PosMsg> | null;
+        if (!m || typeof m.u !== 'string' || m.u === meId || m.c !== courseKey || typeof m.r !== 'string' || !m.r) return;
+        if (!isNum(m.z) || !isNum(m.x) || !isNum(m.v) || !isNum(m.vx) || !isNum(m.t)) return;
+        const fresh = !feeds.has(m.u) || feeds.get(m.u)!.run !== m.r;
+        const f = feedFor(m.u, m.r, typeof m.b === 'string' ? m.b : '');
+        // Alter der Meldung über die Serverzeit; ist die Uhr daneben, ein üblicher Wert
+        let age = Date.now() + liveHub.offset - m.t;
+        if (!(age > -200 && age < 1500)) age = 60;
+        rtSet(f, { z: m.z / 100, x: m.x / 100, v: Math.max(0, m.v / 100), vx: m.vx / 100, m: isNum(m.m) ? m.m : 0 }, Math.max(0, age), performance.now());
+        f.solid = !!m.k && m.k === myRace;
+        f.racing = m.s === 1;
+        f.down = m.w === 1;
+        if (fresh) publish();
+      } else if (event === 'hit') {
+        const h = payload as Partial<HitMsg> | null;
+        if (!h || h.to !== meId || typeof h.u !== 'string' || !h.k || h.k !== myRace || !isNum(h.p)) return;
+        opts.current.engineRef.current?.rtHit?.(h.u, { power: h.p, role: h.r === 'a' ? 'a' : 'v', dir: h.d === -1 ? -1 : 1 });
+      }
+    };
+    /** am Kanal der eigenen Lobby hängen (nur dort) */
+    const syncChannel = () => {
+      const code = liveHub.lobby?.code ?? '';
+      const group = opts.current.members?.find((x) => x.id === meId)?.group_id ?? '';
+      const cfg = source.rtConfig();
+      const name = on && code && group && cfg ? `gruppetto:lobby:${group}:${code}` : '';
+      if (name === chanName) return;
+      chan?.close();
+      chan = null;
+      chanName = name;
+      liveHub.rt = null;
+      if (name && cfg) chan = new RtChannel(cfg, name, onCast, (s) => { liveHub.rt = s === 'closed' ? null : s; liveHub.emit(); });
+      liveHub.emit();
+    };
+    const unsub = liveHub.subscribe(syncChannel);
+    syncChannel();
+
+    const sendPos = (st: RtState & { down: boolean }, s: number) => chan?.send('pos', {
+      u: meId, c: courseKey, r: run, k: myRace, s, z: Math.round(st.z * 100), x: Math.round(st.x * 100), v: Math.round(st.v * 100),
+      vx: Math.round(st.vx * 100), m: st.m, w: st.down ? 1 : 0, b: opts.current.bike, t: Math.round(Date.now() + liveHub.offset),
+    } satisfies PosMsg);
+    let lastSt: (RtState & { down: boolean }) | null = null;
+    const rtTick = () => {
+      if (!on || !chan || chan.status !== 'open' || document.hidden) return;
+      const eng = opts.current.engineRef.current;
+      const st = eng?.rtOut?.() ?? null;
+      const now = performance.now();
+      if (st) {
+        current();
+        if (!myRace) return;
+        if (!wasRacing) { wasRacing = true; runStart = now; }
+        for (const h of eng?.takeHits?.() ?? []) chan.send('hit', { u: meId, to: h.to, k: myRace, p: Math.round(h.power * 100) / 100, r: h.role, d: h.dir } satisfies HitMsg);
+        // dicht beieinander oft, weit auseinander selten (schont das Kontingent an Nachrichten)
+        let near = Infinity;
+        for (const f of feeds.values()) if (f.rt && rtFresh(f, now)) near = Math.min(near, Math.abs(f.rt.z - st.z));
+        const every = near < RT_NEAR_M || now - runStart < 6000 ? RT_NEAR_MS : RT_FAR_MS;
+        if (now - lastSent >= every - 8) { lastSent = now; sendPos(st, 1); }
+        lastSt = st;
+      } else if (wasRacing) {
+        // fertig (Ziel, abgebrochen): einmal sagen, damit die anderen einen nicht weiter fortschreiben
+        wasRacing = false;
+        eng?.takeHits?.();
+        if (lastSt && myRace) sendPos(lastSt, 2);
+      }
+    };
+    const rtTimer = window.setInterval(rtTick, 50);
 
     const tick = async () => {
       if (!on || running) return;
       if (document.hidden) { timer = window.setTimeout(tick, 1000); return; }
       running = true;
-      const eng = opts.current.engineRef.current;
-      const out: LiveOut = eng?.liveOut ? eng.liveOut() : { state: 'menu', trace: [] };
-      const n = Math.floor(out.trace.length / 3);
-      // neuer Lauf: neue Kennung (die anderen fangen eine neue Spur an)
-      if (out.state !== 'menu' && (lastState === 'menu' || n < lastN || !run)) run = Math.random().toString(36).slice(2, 10);
-      lastState = out.state;
-      lastN = n;
+      const { out, n } = current();
       liveHub.racing = out.state === 'race';
       const sent = Date.now();
       const t0 = performance.now();
@@ -256,19 +393,16 @@ export function useLiveGame(o: LiveGameOpts): LobbyRace | null {
         for (const p of snap?.peers ?? []) {
           if (p.game !== game || p.course !== course || p.state === 'menu' || !p.tail || p.tail.length < 3 || p.n < 1) continue;
           seen.add(p.user_id);
-          let f = feeds.get(p.user_id);
-          if (!f || f.run !== p.run) {
-            const m = opts.current.members?.find((x) => x.id === p.user_id);
-            f = newFeed({ userId: p.user_id, name: m?.display_name ?? 'Jemand', color: m?.avatar_color ?? '#888888', bike: p.bike, run: p.run });
-            feeds.set(p.user_id, f);
-          }
+          // die Echtzeit kennt schon einen neueren Lauf: die ältere Meldung der Datenbank nicht darüberlegen
+          const cur = feeds.get(p.user_id);
+          if (cur && cur.run !== p.run && rtFresh(cur, t1)) continue;
+          const f = feedFor(p.user_id, p.run, p.bike);
           mergeTail(f, p.n, p.tail);
           feedTime(f, p.age_ms + half, t1);
-          f.racing = p.state === 'race';
+          if (!rtFresh(f, t1)) f.racing = p.state === 'race';
         }
-        for (const [id, f] of feeds) if (!seen.has(id)) { f.gone = true; feeds.delete(id); }
-        liveHub.feeds = [...feeds.values()];
-        opts.current.engineRef.current?.setLive?.(liveHub.feeds);
+        for (const [id, f] of feeds) if (!seen.has(id) && !rtFresh(f, t1)) { f.gone = true; feeds.delete(id); }
+        publish();
         liveHub.apply(snap, sent);
       } catch {
         /* Netz weg: die Geister fahren noch kurz weiter und bleiben dann stehen */
@@ -292,6 +426,12 @@ export function useLiveGame(o: LiveGameOpts): LobbyRace | null {
     return () => {
       on = false;
       window.clearTimeout(timer);
+      window.clearInterval(rtTimer);
+      unsub();
+      chan?.close();
+      chan = null;
+      liveHub.rt = null;
+      liveHub.pendingRace = null;
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('pagehide', onHide);
       liveHub.sessions--;
@@ -312,7 +452,9 @@ export function useLiveGame(o: LiveGameOpts): LobbyRace | null {
       if (liveHub.race()?.key !== mine.key) return;
       liveHub.done(mine.key);
       if (opts.current.canStart()) {
-        opts.current.start();
+        // alle aus der Lobby starten nebeneinander: fester Platz je Mitglied, der Lauf gehört zu diesem Rennen
+        liveHub.pendingRace = mine.key;
+        opts.current.start(gridIndex(liveHub.lobby?.members ?? [], source.currentUser()?.id ?? ''));
         // die Live-Geister gleich in die frische Engine (nicht erst mit der nächsten Meldung)
         window.setTimeout(() => opts.current.engineRef.current?.setLive?.(liveHub.feeds), 0);
       }

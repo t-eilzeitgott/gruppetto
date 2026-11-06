@@ -29,6 +29,15 @@ Jede Tipprunde ist eine **Gruppe** mit eigenem Einladungscode, eigener Rangliste
 - Eine Rundfahrt lässt sich auf eine Gruppe beschränken (z. B. eine Testrunde): `update public.tours set group_id = '<Gruppe>' where id = '…';` – ohne `group_id` sehen sie alle.
 - Technik: Tabelle `groups`, `profiles.group_id`; Funktionen `create_group`, `join_group`, `my_group`, `group_update`, `group_new_code`, `group_remove_member`, `group_transfer`; Tests in `supabase/tests/groups_test.sql`. Eine bestehende Installation mit einer einzigen Runde stellt `schema.sql` beim nächsten Ausführen um: Die Runde wird zur ersten Gruppe „Gruppetto“ – mit dem bisherigen Einladungscode, der bisherigen Punkteskala und allen Mitgliedern.
 
+## Lobby-Rennen in Echtzeit
+
+Wer in einer Lobby ist, hängt an ihrem WebSocket-Kanal (Supabase Realtime „Broadcast“, `src/app/realtime.ts` – ohne Zusatzpaket). Startet jemand ein Rennen für die Lobby, geht es für alle zur selben Serverzeit los; im Rennen schickt jeder bis zu zehnmal je Sekunde Lage und Tempo direkt an die anderen (weit auseinander nur alle 0,4 s). Die Mitspieler stehen dadurch auf wenige Dezimeter genau dort, wo sie gerade sind.
+
+- **Sprintfinale:** Alle aus der Lobby starten nebeneinander in der letzten Reihe des Feldes und sind echte Gegner statt Geister – man kommt nicht durcheinander hindurch, das Feld weicht ihnen aus, sie zählen in Platz und TV-Tafel mit. Ab zwei Sekunden nach „Los“ darf gerempelt werden: Wer in den anderen zieht, schiebt ihn zur Seite und kostet ihn Tempo und Kraft (und sich selbst etwas weniger). Der Gerempelte ist 2,5 s wacklig – ein zweiter Rempler in dieser Zeit oder die Bande bringt ihn zu Boden. Jeder rechnet nur sein eigenes Rad; den Rempler meldet, wer ihn bemerkt, dem anderen, damit er bei beiden passiert (`src/game/live.ts`, `sprint.ts`).
+- Abfahrt, Berg und Zeitfahren laufen im Lobby-Rennen wie bisher mit Live-Geistern aus den Meldungen an die Datenbank. Dasselbe gilt überall, wenn der Kanal nicht steht (kein Netz, Demo).
+- Der Kanal ist öffentlich, sein Name enthält aber die Kennung der Gruppe und den Lobby-Code (`gruppetto:lobby:<Gruppe>:<Code>`) – beides kennen nur Mitglieder der Gruppe. Es gehen nur Lage, Tempo und Rempler darüber.
+- Kontingent (Supabase Free): 100 Nachrichten je Sekunde, 2 Millionen im Monat, 200 Verbindungen gleichzeitig – für das ganze Supabase-Projekt. Ein Sprint zu zweit braucht grob 6 000 Nachrichten, zu viert rund 25 000.
+
 ## Einrichtung (einmalig, alles kostenlos)
 
 1. **GitHub:** Repo öffentlich, *Settings → Pages → Source: GitHub Actions*.

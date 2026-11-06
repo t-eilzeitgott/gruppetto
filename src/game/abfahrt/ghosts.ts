@@ -12,7 +12,7 @@ import { hashStr } from './rng';
 import { SKINS, type Kit } from './rider';
 import { pedalStep } from './motion';
 import { TRACE_DT, firstName, ghostAt, ghostDayLabel, ghostName, ghostTimeAt, type GameGhostRow, type GhostRider } from '../tt';
-import { liveAdvance, liveAt, liveDone, liveEnd, type LiveFeed } from '../live';
+import { liveAdvance, liveAt, liveDone, liveEnd, liveSamples, rtAt, type LiveFeed } from '../live';
 import { crossOffset, type PhotoRider } from '../photo';
 
 /** Deckkraft: Geister von heute, ältere (andere Tage, andere Strecke) blasser */
@@ -20,6 +20,8 @@ const ALPHA = 0.42;
 const ALPHA_OLD = 0.27;
 /** Live-Geister (fahren gerade) etwas deutlicher */
 const ALPHA_LIVE = 0.55;
+/** Echtzeit-Gegner im Lobby-Rennen: wie ein Fahrer im Feld */
+const ALPHA_SOLID = 1;
 const G = 9.81;
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
@@ -84,6 +86,8 @@ export interface GhostOpp extends Opp {
   rider: GhostRider;
   /** Ende der Spur (s Rennzeit) */
   end: number;
+  /** Echtzeit-Gegner (Lobby-Rennen): steht genau dort, wo der Mitspieler jetzt ist – man kann ihn berühren */
+  solid?: boolean;
 }
 
 /** Geist für einen, der gerade fährt (live.ts) */
@@ -154,6 +158,17 @@ export class GhostPack {
     }));
   }
 
+  /** das Spiel rechnet Berührungen mit Mitspielern (Sprint): nur dann werden sie zu echten Gegnern */
+  solidOn = false;
+
+  /** Echtzeit-Gegner (Mitspieler im selben Lobby-Rennen, gerade sichtbar): mit ihnen stößt man zusammen */
+  solids(): GhostOpp[] {
+    this.solidList.length = 0;
+    for (const o of this.opps) if (o.solid && o.ghost > 0.3) this.solidList.push(o);
+    return this.solidList;
+  }
+  private solidList: GhostOpp[] = [];
+
   /** wer gerade Windschatten gibt (Live-Geist, liveDraft) */
   draftBy: string | null = null;
 
@@ -195,15 +210,25 @@ export class GhostPack {
       const f = o.rider.live;
       const z0 = o.z;
       let nx: number;
+      let rt = false;
       if (f) {
         // Live: eigene Uhr (wo der andere jetzt ist); kleine Sprünge, wenn eine Meldung die Fortschreibung
         // berichtigt, weich ausgleichen
         const lt = liveAdvance(f, dt, now);
-        liveAt(f, Math.max(0, lt), this.pos);
+        // Echtzeit (Lobby-Rennen): frische Meldungen schlagen die Spur – dichter dran, schneller nachgeführt
+        rt = rtAt(f, now, this.pos);
+        if (!rt) liveAt(f, Math.max(0, lt), this.pos);
         const jump = Math.abs(this.pos.z - o.z) > 12 || o.ghost === 0;
-        const k = jump ? 1 : Math.min(1, dt * 6);
+        const k = jump ? 1 : Math.min(1, dt * (rt ? 16 : 6));
+        let x0 = o.x;
+        if (rt && !jump && f.rt) {
+          // Echtzeit: erst mit dem gemeldeten Tempo weiterfahren, dann nur den Rest ausgleichen – so hängt die
+          // Darstellung nicht um die Glättung hinterher (bei 60 km/h wäre das ein ganzes Rad)
+          o.z += f.rt.v * dt;
+          x0 += Math.max(-0.2, Math.min(0.2, f.rt.vx * dt));
+        }
         o.z += (this.pos.z - o.z) * k;
-        nx = o.x + (this.pos.x - o.x) * k;
+        nx = x0 + (this.pos.x - x0) * k;
         o.end = liveEnd(f);
       } else {
         ghostAt(o.rider.trace, visible ? t : 0, this.pos);
@@ -213,6 +238,12 @@ export class GhostPack {
       o.vx = dt > 0 ? (nx - o.x) / dt : 0;
       o.x = nx;
       o.v = dt > 0 ? Math.max(0, (o.z - z0) / dt) : 0;
+      if (rt && f?.rt) {
+        // gemeldetes Tempo statt des aus der Glättung abgeleiteten (ruhiger, wichtig für Berührungen)
+        o.v = f.rt.v;
+        o.vx = f.rt.vx;
+      }
+      o.solid = this.solidOn && rt && !!f?.solid && !!f.racing && !f.gone && !f.down;
       const seg = this.track.segAt(o.z);
       const climbing = seg.grade > 0.025;
       const downhill = seg.grade < -0.03;
@@ -222,8 +253,8 @@ export class GhostPack {
       o.tuck += (tuckT - o.tuck) * Math.min(1, dt * 5);
       o.lean += (clamp(-o.vx * 0.12 + Math.atan2(seg.curve * o.v * o.v, G) * 0.8, -0.55, 0.55) - o.lean) * Math.min(1, dt * 6);
       pedalStep(o, downhill && !push && o.v > 12 ? 0 : Math.min(9.5, 3.2 + o.v * 0.95) / warp, dt);
-      const gone = f ? liveDone(f) || f.shown <= 0 : visible && t > o.end + 2.5;
-      const want = visible && !gone ? (f ? ALPHA_LIVE : o.rider.rival ? ALPHA_LIVE : o.rider.old ? ALPHA_OLD : ALPHA) : 0;
+      const gone = f ? !rt && (liveDone(f) || f.shown <= 0 || liveSamples(f) < 1) : visible && t > o.end + 2.5;
+      const want = visible && !gone ? (o.solid ? ALPHA_SOLID : f ? ALPHA_LIVE : o.rider.rival ? ALPHA_LIVE : o.rider.old ? ALPHA_OLD : ALPHA) : 0;
       o.ghost += (want - o.ghost) * Math.min(1, dt * 2.5);
       if (o.ghost < 0.01) o.ghost = want > 0 ? 0.01 : 0;
     }

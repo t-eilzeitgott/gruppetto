@@ -167,6 +167,10 @@ export class SupabaseSource implements DataSource {
     await this.refreshing;
   }
 
+  rtConfig() {
+    return { url: this.url, key: this.key, token: () => this.token() };
+  }
+
   private async token(): Promise<string | null> {
     if (!this.session) return null;
     if (this.session.expires_at - 60 <= Date.now() / 1000) await this.refresh();

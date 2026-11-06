@@ -206,6 +206,8 @@ export interface DataSource {
   liveList(): Promise<LiveSnapshot | null>;
   /** Live: Spiel verlassen (keepalive: auch beim Schließen der Seite) */
   liveLeave(keepalive?: boolean): Promise<void>;
+  /** Echtzeit-Kanal (WebSocket) für Lobby-Rennen: Zugang – null, wenn es keinen gibt (Demo) */
+  rtConfig(): { url: string; key: string; token: () => Promise<string | null> } | null;
   /** Lobby eröffnen (neuer Code) */
   lobbyCreate(): Promise<string>;
   /** Lobby mit Code beitreten */

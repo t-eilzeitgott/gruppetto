@@ -73,7 +73,11 @@ export function LiveLine({ game }: { game: GameId }) {
         <div className="live-line__text">
           <span className="live-line__eyebrow"><i className="live-dot" />Lobby {lobby.code}{by ? ` · ${by} hat gestartet` : ''}</span>
           <strong>{go ? 'Los geht’s!' : left > COUNT_S[game] ? 'Gleich geht’s los' : 'Countdown läuft'}</strong>
-          <span>{others.length ? `Du fährst mit ${names(others)} – ihr seht euch als Live-Geister.` : 'Alle aus der Lobby fahren zusammen los.'}</span>
+          <span>{others.length
+            ? game === 'sprint' && liveHub.rt === 'open'
+              ? `Du fährst mit ${names(others)} – ihr startet nebeneinander, in Echtzeit. Rempeln erlaubt.`
+              : `Du fährst mit ${names(others)} – ihr seht euch als Live-Geister.`
+            : 'Alle aus der Lobby fahren zusammen los.'}</span>
         </div>
         <button type="button" className="live-line__skip" onClick={() => liveHub.done(mine.key)}>Nicht mitfahren</button>
       </div>

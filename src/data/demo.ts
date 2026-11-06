@@ -381,6 +381,10 @@ export class DemoSource implements DataSource {
     return this.liveSnap(null, null, null);
   }
 
+  rtConfig() {
+    return null;
+  }
+
   async liveLeave(): Promise<void> {
     await wait(20);
   }

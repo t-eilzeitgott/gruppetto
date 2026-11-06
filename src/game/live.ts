@@ -9,6 +9,11 @@
  * Tempo fortgeschrieben (höchstens LIVE_EXTRAP Sekunden) – so fahren zwei, die zusammen gestartet sind, auch
  * nebeneinander und nicht um den Weg durchs Netz versetzt. Die Uhr des Geistes läuft mit dem Spiel und gleicht sich
  * sanft an (Zeitlupe, Pausen, Schwankungen im Netz); kleine Sprünge der Lage glättet die Darstellung (ghosts.ts).
+ *
+ * Echtzeit (Lobby-Rennen, src/app/realtime.ts): wer in derselben Lobby fährt, schickt zusätzlich bis zu zehnmal je
+ * Sekunde Lage und Tempo direkt an die anderen (WebSocket). Solange solche Meldungen frisch sind (RT_FRESH), steht der
+ * andere genau dort (rtAt: letzte Meldung plus Tempo × Alter) statt auf der Spur – und wer im selben Lobby-Rennen
+ * gestartet ist, ist kein Geist mehr, sondern ein echter Gegner (solid): man kann sich berühren und rempeln.
  */
 import { TRACE_DT, ghostAt } from './tt';
 
@@ -20,6 +25,14 @@ export const LIVE_EXTRAP = 2.5;
 export const LIVE_TAIL = 40;
 /** nach dem Ende der Spur noch so lange ausrollen (s), dann ausblenden */
 export const LIVE_ROLL = 2.5;
+/** so lange (s) gilt eine Echtzeit-Meldung als frisch; danach zählt wieder die Spur */
+export const RT_FRESH = 0.9;
+/** höchstens so weit (s) wird eine Echtzeit-Meldung fortgeschrieben: längs mit dem Tempo, seitlich kürzer */
+export const RT_AHEAD = 0.6;
+export const RT_AHEAD_X = 0.18;
+
+/** Echtzeit-Stand eines Fahrers: Streckenmeter, seitliche Lage (m), Tempo längs und seitlich (m/s), Haltung */
+export interface RtState { z: number; x: number; v: number; vx: number; m: number }
 
 export type LiveState = 'menu' | 'race' | 'over';
 
@@ -52,6 +65,13 @@ export interface LiveFeed {
   /** angezeigte Spielzeit des anderen (s) */
   shown: number;
   started: boolean;
+  /** Echtzeit: letzte Meldung und wann sie galt (ms, performance.now – schon um ihr Alter zurückgerechnet) */
+  rt?: RtState;
+  rtAt?: number;
+  /** im selben Lobby-Rennen gestartet: echter Gegner statt Geist (solange die Echtzeit-Meldungen frisch sind) */
+  solid?: boolean;
+  /** liegt gerade (Sturz) */
+  down?: boolean;
 }
 
 export function newFeed(p: { userId: string; name: string; color: string; bike: string; run: string }): LiveFeed {
@@ -154,4 +174,63 @@ export function liveAt(f: LiveFeed, t: number, out: { z: number; x: number; m: n
     out.m = 0;
   }
   return out;
+}
+
+/** Echtzeit-Meldung übernehmen (ageMs: so alt war sie beim Empfang, nowMs: jetzt, performance.now) */
+export function rtSet(f: LiveFeed, s: RtState, ageMs: number, nowMs: number) {
+  const at = nowMs - Math.max(0, Math.min(1000, ageMs));
+  // Meldungen können sich überholen: eine ältere nicht über eine neuere legen
+  if (f.rt && f.rtAt !== undefined && at < f.rtAt) return;
+  f.rt = s;
+  f.rtAt = at;
+}
+
+/** sind die Echtzeit-Meldungen frisch? */
+export function rtFresh(f: LiveFeed, nowMs: number): boolean {
+  return !!f.rt && f.rtAt !== undefined && nowMs - f.rtAt < RT_FRESH * 1000;
+}
+
+/** Lage aus der letzten Echtzeit-Meldung, um ihr Alter fortgeschrieben; false, wenn keine frische da ist */
+export function rtAt(f: LiveFeed, nowMs: number, out: { z: number; x: number; m: number }): boolean {
+  if (!rtFresh(f, nowMs)) return false;
+  const r = f.rt!;
+  const age = Math.max(0, (nowMs - f.rtAt!) / 1000);
+  out.z = r.z + r.v * Math.min(age, RT_AHEAD);
+  out.x = r.x + r.vx * Math.min(age, RT_AHEAD_X);
+  out.m = r.m;
+  return true;
+}
+
+/** so lange (s) ist man nach einem Rempler wacklig: ein zweiter in dieser Zeit bringt einen zu Boden */
+export const HIT_SHAKY = 2.5;
+/** ab dieser seitlichen Annäherung (m/s) zählt eine Berührung als Rempler */
+export const HIT_MIN = 0.9;
+
+/** Rempler zwischen zwei Mitspielern – wer ihn bemerkt, meldet ihn dem anderen (damit er bei beiden passiert) */
+export interface RtHit {
+  /** an wen (Mitglied) */
+  to: string;
+  /** seitliche Annäherung (m/s) */
+  power: number;
+  /** Rolle des Empfängers: gerammt ('v') oder selbst hineingezogen ('a') */
+  role: 'v' | 'a';
+  /** Richtung, in die der Empfänger gestoßen wird (−1 links, 1 rechts) */
+  dir: -1 | 1;
+}
+
+/**
+ * Was ein Rempler mit einem macht: seitlicher Stoß (m/s), Tempoverlust (m/s), Kraft (0–1), Sturz. Der erste Rempler
+ * schiebt nur weg und macht wacklig (shaky: kurz zuvor schon einer) – der zweite bringt den Gerammten zu Boden.
+ */
+export function hitEffect(power: number, role: 'v' | 'a', shaky: boolean, roll: number): { kick: number; slow: number; energy: number; down: boolean } {
+  const p = Math.max(0, Math.min(6, power));
+  if (role === 'v') return { kick: 0.9 + 0.75 * p, slow: 0.5 + 0.2 * p, energy: 0.03 + 0.008 * p, down: shaky };
+  // wer rammt, prallt zurück und zahlt weniger – ist er selbst noch wacklig, kann es auch ihn erwischen
+  return { kick: 0.5 + 0.35 * p, slow: 0.25 + 0.1 * p, energy: 0.02 + 0.006 * p, down: shaky && roll < 0.5 };
+}
+
+/** Startplatz im Lobby-Rennen: alle Mitglieder der Lobby in fester Reihenfolge – bei allen dieselbe */
+export function gridIndex(members: { user_id: string }[], meId: string): number {
+  const ids = members.map((m) => m.user_id).sort();
+  return Math.max(0, ids.indexOf(meId));
 }
