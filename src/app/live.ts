@@ -291,6 +291,9 @@ export function useLiveGame(o: LiveGameOpts): LobbyRace | null {
       return { out, n };
     };
     const publish = () => {
+      // wer in der eigenen Lobby ist, wird auf der Strecke hervorgehoben
+      const lobby = liveHub.lobby?.members ?? [];
+      for (const f of feeds.values()) f.mate = lobby.some((m) => m.user_id === f.userId);
       liveHub.feeds = [...feeds.values()];
       opts.current.engineRef.current?.setLive?.(liveHub.feeds);
     };

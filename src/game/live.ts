@@ -72,6 +72,8 @@ export interface LiveFeed {
   solid?: boolean;
   /** liegt gerade (Sturz) */
   down?: boolean;
+  /** ist in der eigenen Lobby: auf der Strecke deutlich hervorgehoben (großes Namensschild, Ring, voll sichtbar) */
+  mate?: boolean;
 }
 
 export function newFeed(p: { userId: string; name: string; color: string; bike: string; run: string }): LiveFeed {

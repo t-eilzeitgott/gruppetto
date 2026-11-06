@@ -7568,8 +7568,10 @@ export class Renderer3D {
   }
 
   /** Namensschilder im Bild: Position, Deckkraft (weich ein- und ausgeblendet) */
-  private tagView = new Map<number, { x: number; y: number; text: string; mate: boolean; a: number; on: boolean; sub?: string; color?: string }>();
+  private tagView = new Map<number, { x: number; y: number; text: string; mate: boolean; a: number; on: boolean; sub?: string; color?: string; big?: boolean; fy?: number }>();
   private tagV = new THREE.Vector3();
+  /** Mitspieler aus der Lobby, die gerade nicht im Bild sind (hinter einem): Hinweis am Bildrand */
+  private markOff: { name: string; color: string; dz: number; left: boolean }[] = [];
 
   private updateRiders(g: RaceView) {
     const p = g.p;
@@ -7637,6 +7639,15 @@ export class Renderer3D {
     const list = field.filter((o) => o.z < p.z + 320 && (o.z > p.z - back || (!!o.wreck && o.z > p.z - WRECK_BACK)))
       .sort((a, b) => rank(a) - rank(b)).slice(0, cap);
     const cp = this.camera.position;
+    // Mitspieler aus der Lobby hinter einem (nicht im Bild): Hinweis am Bildrand, auf seiner Seite
+    this.markOff.length = 0;
+    if (g.ghosts && g.phase === 'playing') {
+      for (const o of g.ghosts) {
+        if (!o.mark || (o.ghost ?? 0) < 0.1 || list.includes(o)) continue;
+        const dz = o.z - p.z;
+        if (dz < 0 && dz > -60) this.markOff.push({ name: o.mark.name, color: o.mark.color, dz, left: o.x < p.x });
+      }
+    }
     // Startkran (oder der Flug von ihm in die Fahrkamera): verdeckt, wer zwischen ihm und dir steht
     const crane = this.dirKind === 'intro' || (this.dirFromKind === 'intro' && this.dirT < 1);
     const rsOn = this.rs.ready;
@@ -7680,18 +7691,32 @@ export class Renderer3D {
       // weit weg (Kamera): kleine Teile weglassen – erst, wenn sie sich im Shader schon aufgelöst haben
       const fh = RiderModel.FAR_HIDE;
       m.setFar(this.camera.position.distanceToSquared(m.group.position) > (m.isFar ? (fh - 1) ** 2 : fh * fh));
-      const tag = g.tags?.find((t) => t.id === o.id);
-      if (tag) {
+      // Mitspieler aus der eigenen Lobby: immer ein großes Schild in seiner Farbe und ein Ring um das Rad
+      const mark = o.mark && (o.ghost === undefined || o.ghost > 0.1) ? o.mark : null;
+      const tag = mark ? null : g.tags?.find((t) => t.id === o.id);
+      if (tag || mark) {
         // über dem Kopf des Fahrers (this.w hält nach placeOpp seine Weltposition)
+        const fy = mark ? (-this.tagV.set(this.w.x, this.w.y + 0.05, this.w.z).project(this.camera).y * 0.5 + 0.5) * this.H : 0;
         const v = this.tagV.set(this.w.x, this.w.y + 2.05, this.w.z).project(this.camera);
         if (v.z < 1) {
           const tv = this.tagView.get(o.id) ?? { x: 0, y: 0, text: '', mate: false, a: 0, on: false };
           tv.x = (v.x * 0.5 + 0.5) * this.W;
           tv.y = (-v.y * 0.5 + 0.5) * this.H;
-          tv.text = tag.text;
-          tv.mate = !!tag.mate;
-          tv.sub = tag.sub;
-          tv.color = tag.color;
+          if (mark) {
+            const dz = o.z - p.z;
+            tv.text = mark.name;
+            tv.mate = false;
+            tv.sub = Math.abs(dz) >= 4 ? `${dz > 0 ? '+' : '−'}${Math.round(Math.abs(dz))} m` : undefined;
+            tv.color = mark.color;
+            tv.big = true;
+            tv.fy = fy;
+          } else if (tag) {
+            tv.text = tag.text;
+            tv.mate = !!tag.mate;
+            tv.sub = tag.sub;
+            tv.color = tag.color;
+            tv.big = false;
+          }
           tv.on = true;
           this.tagView.set(o.id, tv);
         }
@@ -8241,7 +8266,7 @@ export class Renderer3D {
 
   private drawOverlay(g: RaceView) {
     const c = this.overlay;
-    const busy = (g.p.v > 21 && g.phase === 'playing') || this.tagView.size > 0 || g.popups.length > 0;
+    const busy = (g.p.v > 21 && g.phase === 'playing') || this.tagView.size > 0 || this.markOff.length > 0 || g.popups.length > 0;
     if (!busy && !this.overlayDirty) return;
     this.overlayDirty = busy;
     c.clearRect(0, 0, this.W, this.H);
@@ -8275,8 +8300,9 @@ export class Renderer3D {
     for (const [id, t] of this.tagView) {
       t.a += ((t.on ? 1 : 0) - t.a) * Math.min(1, this.lastDt * 9);
       if (!t.on && t.a < 0.02) { this.tagView.delete(id); continue; }
-      this.drawTag(c, t);
+      if (t.big) this.drawMark(c, t); else this.drawTag(c, t);
     }
+    this.drawMarkOff(c);
     // Hinweise links und rechts über dem Fahrer: nur Schrift, kleine Feder-Animation
     const ps = this.playerScreen;
     const tones: Record<string, string> = { accent: this.accent, gold: '#ffd23f', white: '#ffffff', muted: '#e4e4ea', red: '#ff8a7a', blue: '#9fd4ff' };
@@ -8355,6 +8381,125 @@ export class Renderer3D {
       c.restore();
     }
     c.globalAlpha = 1;
+  }
+
+  /**
+   * Mitspieler aus der Lobby: Ring um das Rad und ein großes Schild in seiner Farbe (Name, Abstand) mit weißem Rand –
+   * auf den ersten Blick von Feld und Geistern zu unterscheiden
+   */
+  private drawMark(c: CanvasRenderingContext2D, t: { x: number; y: number; text: string; a: number; sub?: string; color?: string; fy?: number }) {
+    const font = 'ui-rounded, "SF Pro Rounded", -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+    const col = t.color ?? this.accent;
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
+    c.save();
+    // Ring am Boden um das Rad (Größe aus der Höhe des Fahrers im Bild)
+    const hpx = Math.max(0, (t.fy ?? t.y) - t.y);
+    if (hpx > 10) {
+      const rx = Math.min(90, hpx * 0.42);
+      c.globalAlpha = t.a * (0.55 + 0.35 * pulse);
+      c.strokeStyle = col;
+      c.lineWidth = Math.max(2.5, Math.min(5, hpx * 0.035));
+      c.shadowColor = col;
+      c.shadowBlur = 12;
+      c.beginPath();
+      c.ellipse(t.x, t.fy!, rx * (1 + 0.06 * pulse), rx * 0.3 * (1 + 0.06 * pulse), 0, 0, Math.PI * 2);
+      c.stroke();
+      c.shadowBlur = 0;
+    }
+    // Schild
+    c.globalAlpha = t.a;
+    c.font = `800 15px ${font}`;
+    const tw = c.measureText(t.text).width;
+    c.font = `700 12px ${font}`;
+    const sw = t.sub ? c.measureText(t.sub).width + 8 : 0;
+    const w = tw + sw + 26;
+    const h = 30;
+    const x = Math.max(8, Math.min(this.W - 8 - w, t.x - w / 2));
+    const y = Math.max(8, t.y - h - 12 - (1 - t.a) * 8);
+    const r = h / 2;
+    const pill = () => {
+      c.beginPath();
+      c.moveTo(x + r, y);
+      c.lineTo(x + w - r, y);
+      c.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+      c.lineTo(x + r, y + h);
+      c.arc(x + r, y + r, r, Math.PI / 2, (Math.PI * 3) / 2);
+      c.closePath();
+    };
+    c.shadowColor = 'rgba(0, 0, 0, 0.45)';
+    c.shadowBlur = 10;
+    c.shadowOffsetY = 2;
+    c.fillStyle = col;
+    pill();
+    c.fill();
+    c.shadowBlur = 0;
+    c.shadowOffsetY = 0;
+    // dunkler Schleier für die Lesbarkeit auf hellen Farben, weißer Rand
+    c.fillStyle = 'rgba(0, 0, 0, 0.18)';
+    pill();
+    c.fill();
+    c.strokeStyle = '#fff';
+    c.lineWidth = 2;
+    pill();
+    c.stroke();
+    // Zeiger zum Fahrer
+    const px = Math.max(x + 14, Math.min(x + w - 14, t.x));
+    c.fillStyle = '#fff';
+    c.beginPath();
+    c.moveTo(px - 7, y + h + 0.5);
+    c.lineTo(px + 7, y + h + 0.5);
+    c.lineTo(px, y + h + 9);
+    c.closePath();
+    c.fill();
+    c.fillStyle = '#fff';
+    c.textAlign = 'left';
+    c.textBaseline = 'middle';
+    c.font = `800 15px ${font}`;
+    c.fillText(t.text, x + 13, y + h / 2 + 0.5);
+    if (t.sub) {
+      c.font = `700 12px ${font}`;
+      c.fillStyle = 'rgba(255,255,255,0.88)';
+      c.fillText(t.sub, x + 13 + tw + 8, y + h / 2 + 0.5);
+    }
+    c.restore();
+  }
+
+  /** Mitspieler hinter einem: Schild am linken oder rechten Bildrand (wo er fährt) mit Abstand */
+  private drawMarkOff(c: CanvasRenderingContext2D) {
+    if (!this.markOff.length) return;
+    const font = 'ui-rounded, "SF Pro Rounded", -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+    const slots = { l: 0, r: 0 };
+    c.save();
+    c.textBaseline = 'middle';
+    for (const m of [...this.markOff].sort((a, b) => b.dz - a.dz).slice(0, 4)) {
+      const label = `▼ ${m.name} · ${Math.max(1, Math.round(-m.dz))} m`;
+      c.font = `800 13px ${font}`;
+      const w = c.measureText(label).width + 22;
+      const h = 28;
+      const k = m.left ? slots.l++ : slots.r++;
+      const x = m.left ? 10 : this.W - 10 - w;
+      const y = this.H * 0.6 + k * (h + 6);
+      const r = h / 2;
+      c.globalAlpha = -m.dz < 8 ? 1 : 0.85;
+      c.fillStyle = m.color;
+      c.beginPath();
+      c.moveTo(x + r, y);
+      c.lineTo(x + w - r, y);
+      c.arc(x + w - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+      c.lineTo(x + r, y + h);
+      c.arc(x + r, y + r, r, Math.PI / 2, (Math.PI * 3) / 2);
+      c.closePath();
+      c.fill();
+      c.fillStyle = 'rgba(0, 0, 0, 0.18)';
+      c.fill();
+      c.strokeStyle = '#fff';
+      c.lineWidth = 2;
+      c.stroke();
+      c.fillStyle = '#fff';
+      c.textAlign = 'left';
+      c.fillText(label, x + 11, y + h / 2 + 0.5);
+    }
+    c.restore();
   }
 
   private drawTag(c: CanvasRenderingContext2D, t: { x: number; y: number; text: string; mate: boolean; a: number; sub?: string; color?: string }) {
