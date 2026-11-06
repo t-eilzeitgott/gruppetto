@@ -31,8 +31,32 @@ create table if not exists public.profiles (
 -- Pro-Anfrage (keine Zahlung, nur Vermerk; der Admin schaltet is_pro frei)
 alter table public.profiles add column if not exists pro_requested_at timestamptz;
 
-create unique index if not exists profiles_display_name_unique
-  on public.profiles (lower(display_name));
+
+-- Gruppen (Tipprunden): jede Gruppe hat ihren eigenen Einladungscode, ihre eigene Rangliste und ihre eigenen
+-- Regeln. Rundfahrten, Etappen, Fahrer und Ergebnisse gelten für alle Gruppen. Wer eine Gruppe gründet, leitet
+-- sie (owner_id): Name, Regeln, Einladungscode, Mitglieder. Kein direkter Zugriff – nur über die Funktionen unten.
+create table if not exists public.groups (
+  id             uuid primary key default gen_random_uuid(),
+  name           text not null check (char_length(btrim(name)) between 2 and 30),
+  invite_code    text not null unique check (invite_code = upper(btrim(invite_code)) and char_length(invite_code) between 4 and 20),
+  owner_id       uuid references public.profiles (id) on delete set null,
+  -- Regeln der Gruppe: Punkte je Platz im Etappenziel (Platz 1 zuerst), Punkte für Platz 1–3 einer Bonuswertung,
+  -- wie oft derselbe Fahrer pro Rundfahrt tippbar ist (null = unbegrenzt), Außenseiter-Bonus an/aus
+  stage_points   int[] not null default '{20,15,10,7,6,5,4,3,2,1}'
+                 check (cardinality(stage_points) between 1 and 10 and 0 <= all (stage_points) and 100 >= all (stage_points)),
+  bonus_points   int[] not null default '{15,10,5}'
+                 check (cardinality(bonus_points) = 3 and 0 <= all (bonus_points) and 100 >= all (bonus_points)),
+  tip_limit      int default 3 check (tip_limit is null or tip_limit between 1 and 21),
+  underdog_bonus boolean not null default true,
+  created_at     timestamptz not null default now()
+);
+alter table public.profiles add column if not exists group_id uuid references public.groups (id) on delete set null;
+create index if not exists profiles_group_idx on public.profiles (group_id);
+
+-- Anzeigenamen sind je Gruppe eindeutig (früher: über alle Konten)
+drop index if exists public.profiles_display_name_unique;
+create unique index if not exists profiles_group_name_unique
+  on public.profiles (group_id, lower(display_name));
 
 create table if not exists public.tours (
   id          text primary key,                       -- z. B. 'giro-2027'
@@ -50,8 +74,10 @@ create table if not exists public.tours (
   constraint tours_dates check (end_date >= start_date)
 );
 
--- Wie oft man denselben Fahrer pro Rundfahrt tippen darf (null = unbegrenzt)
+-- Früher das Tipp-Limit je Rundfahrt – abgelöst durch groups.tip_limit (gilt nur noch für Konten ohne Gruppe)
 alter table public.tours add column if not exists tip_limit int default 3 check (tip_limit is null or tip_limit >= 1);
+-- Rundfahrt nur für eine Gruppe (z. B. eine Testrunde); null = für alle Gruppen
+alter table public.tours add column if not exists group_id uuid references public.groups (id) on delete set null;
 
 create table if not exists public.riders (
   id                 bigint generated always as identity primary key,
@@ -59,7 +85,7 @@ create table if not exists public.riders (
   bib                int,
   name               text not null,
   team               text not null,
-  tip_limit          int check (tip_limit is null or tip_limit >= 0),  -- eigenes Limit, sonst das der Rundfahrt
+  tip_limit          int check (tip_limit is null or tip_limit >= 0),  -- eigenes Limit, sonst das der Gruppe
   excluded_from_rest boolean not null default false,                  -- für "Best of the Rest"
   status             text not null default 'active' check (status in ('active', 'out')),
   constraint riders_unique_name unique (tour_id, name),
@@ -275,10 +301,6 @@ insert into public.stage_point_scale (position, points) values
   (1, 20), (2, 15), (3, 10), (4, 7), (5, 6), (6, 5), (7, 4), (8, 3), (9, 2), (10, 1)
 on conflict (position) do nothing;
 
-insert into public.app_settings (key, value)
-values ('invite_code', upper(substr(md5(random()::text), 1, 6)))
-on conflict (key) do nothing;
-
 insert into public.tours (id, name, short_name, theme, year, start_date, end_date, pcs_slug) values
   ('giro-2027',   'Giro d''Italia 2027',     'Giro',   'giro',   2027, '2027-05-08', '2027-05-30', 'giro-d-italia/2027'),
   ('tour-2027',   'Tour de France 2027',     'Tour',   'tour',   2027, '2027-07-02', '2027-07-25', 'tour-de-france/2027'),
@@ -298,6 +320,68 @@ create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as $$
   select coalesce((select p.is_admin from public.profiles p where p.id = auth.uid()), false);
 $$;
+
+-- Eigene Gruppe (null, solange man keiner beigetreten ist)
+create or replace function public.my_group_id()
+returns uuid language sql stable security definer set search_path = public as $$
+  select p.group_id from public.profiles p where p.id = auth.uid() and p.is_member;
+$$;
+
+-- Alle Mitglieder der eigenen Gruppe (inkl. man selbst) – Grundlage der Sichtbarkeit zwischen Mitgliedern
+create or replace function public.group_mates()
+returns setof uuid language sql stable security definer set search_path = public as $$
+  select p.id from public.profiles p
+   where p.is_member
+     and p.group_id = (select me.group_id from public.profiles me where me.id = auth.uid() and me.is_member);
+$$;
+
+-- Darf die eigene Gruppe verwalten: wer sie gegründet hat bzw. leitet (und Admins der App in ihrer eigenen Gruppe)
+create or replace function public.can_manage_group()
+returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select g.owner_id = auth.uid() or p.is_admin
+      from public.profiles p join public.groups g on g.id = p.group_id
+     where p.id = auth.uid() and p.is_member), false);
+$$;
+
+-- Neuer Einladungscode: sechs Zeichen ohne leicht verwechselbare (0/O, 1/I), noch nicht vergeben
+create or replace function public.new_invite_code()
+returns text language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_code text;
+begin
+  for i in 1..50 loop
+    v_code := (select string_agg(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 1 + floor(random() * 32)::int, 1), '') from generate_series(1, 6));
+    if not exists (select 1 from public.groups g where g.invite_code = v_code) then
+      return v_code;
+    end if;
+  end loop;
+  raise exception 'no_code';
+end;
+$$;
+
+-- Leitung sichern: hat die Gruppe keine (mehr) oder ist die Leitung kein Mitglied mehr, übernimmt das dienstälteste
+-- Mitglied; eine Gruppe ohne Mitglieder verschwindet
+create or replace function public.group_fix_owner(p_group uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.groups g
+     set owner_id = (select p.id from public.profiles p
+                      where p.group_id = g.id and p.is_member order by p.created_at, p.id limit 1)
+   where g.id = p_group
+     and not exists (select 1 from public.profiles o where o.id = g.owner_id and o.group_id = g.id and o.is_member);
+  delete from public.groups g where g.id = p_group and g.owner_id is null;
+end;
+$$;
+
+revoke execute on function public.my_group_id()         from public, anon;
+revoke execute on function public.group_mates()         from public, anon;
+revoke execute on function public.can_manage_group()    from public, anon;
+revoke execute on function public.new_invite_code()     from public, anon, authenticated;
+revoke execute on function public.group_fix_owner(uuid) from public, anon, authenticated;
+grant  execute on function public.my_group_id()         to authenticated;
+grant  execute on function public.group_mates()         to authenticated;
+grant  execute on function public.can_manage_group()    to authenticated;
 
 create or replace function public.stage_started(p_stage bigint)
 returns boolean language sql stable security definer set search_path = public as $$
@@ -339,19 +423,71 @@ create trigger on_auth_user_created
 -- Konten, die schon vor dem Schema existierten, bekommen ebenfalls ein Profil
 insert into public.profiles (id) select u.id from auth.users u on conflict (id) do nothing;
 
+-- Umstellung auf Gruppen (einmalig): Gab es bisher eine einzige Runde, wird sie zur ersten Gruppe – mit dem
+-- bisherigen Einladungscode, der bisherigen Punkteskala und allen Mitgliedern. Leitung: der dienstälteste Admin.
+do $$
+declare
+  v_group uuid;
+begin
+  if exists (select 1 from public.profiles where is_member and group_id is null)
+     and not exists (select 1 from public.groups) then
+    insert into public.groups (name, invite_code, owner_id, stage_points, tip_limit)
+    values (
+      'Gruppetto',
+      coalesce((select upper(btrim(s.value)) from public.app_settings s
+                 where s.key = 'invite_code' and char_length(btrim(s.value)) between 4 and 20),
+               public.new_invite_code()),
+      (select p.id from public.profiles p where p.is_member order by p.is_admin desc, p.created_at, p.id limit 1),
+      coalesce((select array_agg(x.points order by x.position)
+                  from public.stage_point_scale x where x.position <= 10 and x.points <= 100),
+               '{20,15,10,7,6,5,4,3,2,1}'),
+      3)
+    returning id into v_group;
+    update public.profiles set group_id = v_group where is_member and group_id is null;
+    delete from public.app_settings where key = 'invite_code';
+  end if;
+end $$;
+
+-- Konto gelöscht: die Gruppe braucht ggf. eine neue Leitung
+create or replace function public.profiles_after_delete()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.group_id is not null then
+    perform public.group_fix_owner(old.group_id);
+  end if;
+  return old;
+end;
+$$;
+
+drop trigger if exists profiles_owner_handover on public.profiles;
+create trigger profiles_owner_handover
+  after delete on public.profiles
+  for each row execute function public.profiles_after_delete();
+
 -- Etappentipp prüfen: Fahrer gehört zur Rundfahrt, ist noch im Rennen, Joker-Limit
+-- (eigenes Limit des Fahrers, sonst das der Gruppe; null = unbegrenzt)
 create or replace function public.check_stage_tip()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare
   v_tour        text;
   v_rider_tour  text;
+  v_rider_limit int;
   v_limit       int;
+  v_in_group    boolean;
+  v_group_limit int;
   v_status      text;
   v_used        int;
 begin
   select s.tour_id into v_tour from public.stages s where s.id = new.stage_id;
-  select r.tour_id, coalesce(r.tip_limit, t.tip_limit), r.status into v_rider_tour, v_limit, v_status
+  select r.tour_id, r.tip_limit, t.tip_limit, r.status into v_rider_tour, v_rider_limit, v_limit, v_status
     from public.riders r join public.tours t on t.id = r.tour_id where r.id = new.rider_id;
+  select true, g.tip_limit into v_in_group, v_group_limit
+    from public.profiles p join public.groups g on g.id = p.group_id where p.id = new.user_id;
+  if v_rider_limit is not null then
+    v_limit := v_rider_limit;
+  elsif v_in_group then
+    v_limit := v_group_limit;
+  end if;
 
   if v_rider_tour is distinct from v_tour then
     raise exception 'rider_not_in_tour' using errcode = 'P0001';
@@ -452,29 +588,159 @@ create trigger stages_check_publish
 -- 5. RPC-Funktionen für die App
 -- ---------------------------------------------------------------------
 
--- Der Runde beitreten (Einladungscode + Anzeigename)
+-- Einer Gruppe beitreten (ihr Einladungscode + Anzeigename)
 create or replace function public.join_group(p_code text, p_name text)
 returns void language plpgsql security definer set search_path = public as $$
 declare
-  v_code text;
-  v_name text := btrim(coalesce(p_name, ''));
+  v_group uuid;
+  v_mine  uuid;
+  v_name  text := btrim(coalesce(p_name, ''));
 begin
   if auth.uid() is null then
     raise exception 'not_authenticated' using errcode = 'P0001';
   end if;
-  select s.value into v_code from public.app_settings s where s.key = 'invite_code';
-  if v_code is null or upper(btrim(coalesce(p_code, ''))) <> upper(btrim(v_code)) then
+  select g.id into v_group from public.groups g
+   where g.invite_code = upper(btrim(coalesce(p_code, '')));
+  if v_group is null then
     raise exception 'invalid_code' using errcode = 'P0001';
+  end if;
+  select p.group_id into v_mine from public.profiles p where p.id = auth.uid() and p.is_member;
+  if v_mine is not null and v_mine <> v_group then
+    raise exception 'already_in_group' using errcode = 'P0001';
   end if;
   if char_length(v_name) < 2 or char_length(v_name) > 20 then
     raise exception 'invalid_name' using errcode = 'P0001';
   end if;
   if exists (select 1 from public.profiles p
-              where lower(p.display_name) = lower(v_name) and p.id <> auth.uid()) then
+              where p.group_id = v_group and lower(p.display_name) = lower(v_name) and p.id <> auth.uid()) then
     raise exception 'name_taken' using errcode = 'P0001';
   end if;
   insert into public.profiles (id) values (auth.uid()) on conflict (id) do nothing;
-  update public.profiles set display_name = v_name, is_member = true where id = auth.uid();
+  update public.profiles set display_name = v_name, is_member = true, group_id = v_group where id = auth.uid();
+end;
+$$;
+
+-- Eine neue Gruppe gründen: wer sie anlegt, leitet sie und bekommt ihren Einladungscode (Rückgabe)
+create or replace function public.create_group(p_group_name text, p_name text)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_group uuid;
+  v_code  text;
+  v_title text := btrim(coalesce(p_group_name, ''));
+  v_name  text := btrim(coalesce(p_name, ''));
+begin
+  if auth.uid() is null then
+    raise exception 'not_authenticated' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from public.profiles p where p.id = auth.uid() and p.is_member and p.group_id is not null) then
+    raise exception 'already_in_group' using errcode = 'P0001';
+  end if;
+  if char_length(v_title) < 2 or char_length(v_title) > 30 then
+    raise exception 'invalid_group_name' using errcode = 'P0001';
+  end if;
+  if char_length(v_name) < 2 or char_length(v_name) > 20 then
+    raise exception 'invalid_name' using errcode = 'P0001';
+  end if;
+  insert into public.profiles (id) values (auth.uid()) on conflict (id) do nothing;
+  v_code := public.new_invite_code();
+  insert into public.groups (name, invite_code, owner_id) values (v_title, v_code, auth.uid())
+  returning id into v_group;
+  update public.profiles set display_name = v_name, is_member = true, group_id = v_group where id = auth.uid();
+  return v_code;
+end;
+$$;
+
+-- Die eigene Gruppe: Name, Leitung, Regeln; den Einladungscode sieht nur, wer sie verwalten darf
+create or replace function public.my_group()
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+           'id', g.id, 'name', g.name, 'owner_id', g.owner_id, 'created_at', g.created_at,
+           'stage_points', to_jsonb(g.stage_points), 'bonus_points', to_jsonb(g.bonus_points),
+           'tip_limit', g.tip_limit, 'underdog_bonus', g.underdog_bonus,
+           'can_manage', public.can_manage_group(),
+           'invite_code', case when public.can_manage_group() then g.invite_code end)
+    from public.groups g
+   where g.id = public.my_group_id();
+$$;
+
+-- Leitung: Name und Regeln der Gruppe ändern
+create or replace function public.group_update(p_name text, p_stage_points int[], p_bonus_points int[], p_tip_limit int, p_underdog boolean)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_title text := btrim(coalesce(p_name, ''));
+begin
+  if not public.can_manage_group() then
+    raise exception 'not_group_owner' using errcode = 'P0001';
+  end if;
+  if char_length(v_title) < 2 or char_length(v_title) > 30 then
+    raise exception 'invalid_group_name' using errcode = 'P0001';
+  end if;
+  if p_stage_points is null or coalesce(cardinality(p_stage_points), 0) not between 1 and 10
+     or array_position(p_stage_points, null) is not null
+     or not (0 <= all (p_stage_points) and 100 >= all (p_stage_points))
+     or p_bonus_points is null or coalesce(cardinality(p_bonus_points), 0) <> 3
+     or array_position(p_bonus_points, null) is not null
+     or not (0 <= all (p_bonus_points) and 100 >= all (p_bonus_points))
+     or (p_tip_limit is not null and p_tip_limit not between 1 and 21) then
+    raise exception 'invalid_rules' using errcode = 'P0001';
+  end if;
+  update public.groups
+     set name = v_title, stage_points = p_stage_points, bonus_points = p_bonus_points,
+         tip_limit = p_tip_limit, underdog_bonus = coalesce(p_underdog, true)
+   where id = public.my_group_id();
+end;
+$$;
+
+-- Leitung: neuer Einladungscode (der alte gilt nicht mehr; wer dabei ist, bleibt dabei)
+create or replace function public.group_new_code()
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  v_code text;
+begin
+  if not public.can_manage_group() then
+    raise exception 'not_group_owner' using errcode = 'P0001';
+  end if;
+  v_code := public.new_invite_code();
+  update public.groups set invite_code = v_code where id = public.my_group_id();
+  return v_code;
+end;
+$$;
+
+-- Leitung: ein Mitglied aus der Gruppe nehmen (seine Tipps bleiben gespeichert und zählen wieder, wenn es zurückkommt)
+create or replace function public.group_remove_member(p_user uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_group uuid := public.my_group_id();
+begin
+  if not public.can_manage_group() then
+    raise exception 'not_group_owner' using errcode = 'P0001';
+  end if;
+  if p_user = auth.uid() then
+    raise exception 'cannot_remove_self' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from public.groups g where g.id = v_group and g.owner_id = p_user) then
+    raise exception 'cannot_remove_owner' using errcode = 'P0001';
+  end if;
+  update public.profiles set is_member = false, group_id = null
+   where id = p_user and group_id = v_group;
+  delete from public.game_lobby_members where user_id = p_user;
+  delete from public.game_live where user_id = p_user;
+end;
+$$;
+
+-- Leitung an ein anderes Mitglied der Gruppe übergeben
+create or replace function public.group_transfer(p_user uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_group uuid := public.my_group_id();
+begin
+  if not public.can_manage_group() then
+    raise exception 'not_group_owner' using errcode = 'P0001';
+  end if;
+  if not exists (select 1 from public.profiles p where p.id = p_user and p.group_id = v_group and p.is_member) then
+    raise exception 'not_in_group' using errcode = 'P0001';
+  end if;
+  update public.groups set owner_id = p_user where id = v_group;
 end;
 $$;
 
@@ -494,7 +760,8 @@ begin
     raise exception 'invalid_color' using errcode = 'P0001';
   end if;
   if exists (select 1 from public.profiles p
-              where lower(p.display_name) = lower(v_name) and p.id <> auth.uid()) then
+              where lower(p.display_name) = lower(v_name) and p.id <> auth.uid()
+                and p.group_id = (select me.group_id from public.profiles me where me.id = auth.uid())) then
     raise exception 'name_taken' using errcode = 'P0001';
   end if;
   update public.profiles set display_name = v_name, avatar_color = p_color where id = auth.uid();
@@ -515,7 +782,8 @@ $$;
 -- Wer hat für eine Etappe schon getippt? (nur IDs, nie der Fahrer)
 create or replace function public.stage_tippers(p_stage bigint)
 returns setof uuid language sql stable security definer set search_path = public as $$
-  select t.user_id from public.stage_tips t where t.stage_id = p_stage and public.is_member();
+  select t.user_id from public.stage_tips t
+   where t.stage_id = p_stage and t.user_id in (select public.group_mates());
 $$;
 
 -- Pro anfragen bzw. Anfrage zurückziehen (2,99 €/Monat, nur als Vermerk)
@@ -531,12 +799,12 @@ begin
 end;
 $$;
 
--- Admin: alle Konten inkl. E-Mail
+-- Admin: alle Konten inkl. E-Mail und Gruppe
 drop function if exists public.admin_list_users();
 create or replace function public.admin_list_users()
 returns table (id uuid, email text, display_name text, avatar_color text,
                is_member boolean, is_admin boolean, is_pro boolean, pro_requested_at timestamptz,
-               created_at timestamptz)
+               created_at timestamptz, group_id uuid, group_name text, is_owner boolean)
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then
@@ -544,16 +812,21 @@ begin
   end if;
   return query
     select p.id, u.email::text, p.display_name, p.avatar_color,
-           p.is_member, p.is_admin, p.is_pro, p.pro_requested_at, p.created_at
+           p.is_member, p.is_admin, p.is_pro, p.pro_requested_at, p.created_at,
+           p.group_id, g.name, coalesce(g.owner_id = p.id, false)
       from public.profiles p
       join auth.users u on u.id = p.id
+      left join public.groups g on g.id = p.group_id
      order by p.created_at;
 end;
 $$;
 
--- Admin: Mitgliedschaft, Admin- und Pro-Status setzen
+-- Admin: Mitgliedschaft, Admin- und Pro-Status setzen. Wer noch in keiner Gruppe ist und Mitglied wird,
+-- kommt in die Gruppe des Admins; verliert die Leitung einer Gruppe die Mitgliedschaft, rückt jemand nach.
 create or replace function public.admin_set_flags(p_user uuid, p_member boolean, p_admin boolean, p_pro boolean)
 returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_group uuid;
 begin
   if not public.is_admin() then
     raise exception 'not_admin' using errcode = 'P0001';
@@ -561,9 +834,19 @@ begin
   if p_user = auth.uid() and not p_admin then
     raise exception 'cannot_remove_own_admin' using errcode = 'P0001';
   end if;
+  select p.group_id into v_group from public.profiles p where p.id = p_user;
+  if p_member and v_group is null then
+    v_group := public.my_group_id();
+    if v_group is null then
+      raise exception 'no_group' using errcode = 'P0001';
+    end if;
+  end if;
   update public.profiles
-     set is_member = p_member, is_admin = p_admin, is_pro = p_pro
+     set is_member = p_member, is_admin = p_admin, is_pro = p_pro, group_id = v_group
    where id = p_user;
+  if v_group is not null then
+    perform public.group_fix_owner(v_group);
+  end if;
 end;
 $$;
 
@@ -572,6 +855,18 @@ create or replace function public.ping()
 returns text language sql stable as $$ select 'pong'::text; $$;
 
 revoke execute on function public.join_group(text, text)                       from public, anon;
+revoke execute on function public.create_group(text, text)                     from public, anon;
+revoke execute on function public.my_group()                                   from public, anon;
+revoke execute on function public.group_update(text, int[], int[], int, boolean) from public, anon;
+revoke execute on function public.group_new_code()                             from public, anon;
+revoke execute on function public.group_remove_member(uuid)                    from public, anon;
+revoke execute on function public.group_transfer(uuid)                         from public, anon;
+grant  execute on function public.create_group(text, text)                     to authenticated;
+grant  execute on function public.my_group()                                   to authenticated;
+grant  execute on function public.group_update(text, int[], int[], int, boolean) to authenticated;
+grant  execute on function public.group_new_code()                             to authenticated;
+grant  execute on function public.group_remove_member(uuid)                    to authenticated;
+grant  execute on function public.group_transfer(uuid)                         to authenticated;
 revoke execute on function public.update_my_profile(text, text)                from public, anon;
 revoke execute on function public.delete_my_account()                          from public, anon;
 revoke execute on function public.stage_tippers(bigint)                        from public, anon;
@@ -592,6 +887,7 @@ grant  execute on function public.ping()                                        
 -- ---------------------------------------------------------------------
 
 alter table public.app_settings      enable row level security;
+alter table public.groups            enable row level security;
 alter table public.profiles          enable row level security;
 alter table public.tours             enable row level security;
 alter table public.riders            enable row level security;
@@ -612,21 +908,26 @@ alter table public.bonus_results     enable row level security;
 -- Profile werden nur über die RPC-Funktionen geändert
 revoke insert, update, delete on public.profiles from anon, authenticated;
 
--- app_settings: nur Admins (enthält den Einladungscode)
+-- groups: kein direkter Zugriff (Einladungscodes) – nur über my_group() und die group_*-Funktionen
+revoke all on public.groups from anon, authenticated;
+
+-- app_settings: nur Admins
 drop policy if exists settings_admin on public.app_settings;
 create policy settings_admin on public.app_settings
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
--- profiles: eigenes Profil immer, andere Mitglieder nur als Mitglied
+-- profiles: eigenes Profil immer, sonst nur die Mitglieder der eigenen Gruppe
+-- (Admins sehen alle Konten über admin_list_users())
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles
   for select to authenticated
-  using (id = auth.uid() or (is_member and public.is_member()) or public.is_admin());
+  using (id = auth.uid() or id in (select public.group_mates()));
 
--- Stammdaten: Mitglieder lesen, Admins schreiben
+-- Stammdaten: Mitglieder lesen, Admins schreiben. Eine Rundfahrt mit group_id sieht nur diese Gruppe.
 drop policy if exists tours_select on public.tours;
 create policy tours_select on public.tours
-  for select to authenticated using (public.is_member() or public.is_admin());
+  for select to authenticated
+  using (public.is_admin() or (public.is_member() and (group_id is null or group_id = (select public.my_group_id()))));
 drop policy if exists tours_admin on public.tours;
 create policy tours_admin on public.tours
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
@@ -640,26 +941,27 @@ create policy riders_admin on public.riders
 
 drop policy if exists game_scores_select on public.game_scores;
 create policy game_scores_select on public.game_scores
-  for select to authenticated using (public.is_member() or public.is_admin());
+  for select to authenticated using (user_id in (select public.group_mates()));
 drop policy if exists game_scores_insert on public.game_scores;
 create policy game_scores_insert on public.game_scores
   for insert to authenticated with check (user_id = auth.uid() and public.is_member());
 
--- Geister: Mitglieder sehen alle, jeder schreibt nur seine eigene Fahrt
+-- Geister: Mitglieder sehen die ihrer Gruppe, jeder schreibt nur seine eigene Fahrt
 drop policy if exists tt_ghosts_select on public.tt_ghosts;
 create policy tt_ghosts_select on public.tt_ghosts
-  for select to authenticated using (public.is_member() or public.is_admin());
+  for select to authenticated using (user_id in (select public.group_mates()));
 drop policy if exists tt_ghosts_write on public.tt_ghosts;
 create policy tt_ghosts_write on public.tt_ghosts
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member());
 drop policy if exists game_ghosts_select on public.game_ghosts;
 create policy game_ghosts_select on public.game_ghosts
-  for select to authenticated using (public.is_member() or public.is_admin());
+  for select to authenticated using (user_id in (select public.group_mates()));
 drop policy if exists game_ghosts_write on public.game_ghosts;
 create policy game_ghosts_write on public.game_ghosts
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid() and public.is_member());
 
--- Bestenliste: beste Punktzahl, weiteste Strecke und Gesamtstrecke je Mitglied (optional ab einem Zeitpunkt),
+-- Bestenliste der eigenen Gruppe (über die Sichtbarkeit von game_scores): beste Punktzahl, weiteste Strecke und
+-- Gesamtstrecke je Mitglied (optional ab einem Zeitpunkt),
 -- dazu Kennzahlen und Zeitpunkt des besten Laufs
 drop function if exists public.game_leaderboard(text);
 drop function if exists public.game_leaderboard(text, timestamptz);
@@ -724,6 +1026,10 @@ create table if not exists public.game_lobby_members (
   joined_at timestamptz not null default now(),
   seen_at   timestamptz not null default now()
 );
+-- Lobbys gehören zu einer Gruppe: beitreten kann nur, wer in derselben ist
+alter table public.game_lobbies add column if not exists group_id uuid references public.groups (id) on delete cascade;
+update public.game_lobbies l set group_id = (select p.group_id from public.profiles p where p.id = l.created_by)
+ where l.group_id is null;
 alter table public.game_lobbies       enable row level security;
 alter table public.game_lobby_members enable row level security;
 revoke all on public.game_lobbies, public.game_lobby_members from anon, authenticated;
@@ -743,7 +1049,8 @@ returns jsonb language sql stable security definer set search_path = public as $
                'age_ms', (extract(epoch from (now() - l.updated_at)) * 1000)::int)
              order by l.updated_at desc)
         from public.game_live l
-       where l.user_id <> auth.uid() and l.updated_at > now() - interval '15 seconds'), '[]'::jsonb),
+       where l.user_id <> auth.uid() and l.updated_at > now() - interval '15 seconds'
+         and l.user_id in (select public.group_mates())), '[]'::jsonb),
     'lobby', (
       select jsonb_build_object(
                'code', g.code, 'seq', g.race_seq, 'game', g.race_game,
@@ -809,7 +1116,7 @@ begin
   loop
     v_code := (select string_agg(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 1 + floor(random() * 32)::int, 1), '') from generate_series(1, 4));
     begin
-      insert into public.game_lobbies (code, created_by) values (v_code, auth.uid());
+      insert into public.game_lobbies (code, created_by, group_id) values (v_code, auth.uid(), public.my_group_id());
       exit;
     exception when unique_violation then
       v_try := v_try + 1;
@@ -829,7 +1136,7 @@ declare
   v_old  text;
 begin
   if not public.is_member() then raise exception 'not_member' using errcode = '42501'; end if;
-  if not exists (select 1 from public.game_lobbies where code = v_code) then
+  if not exists (select 1 from public.game_lobbies where code = v_code and group_id = public.my_group_id()) then
     raise exception 'lobby_not_found' using errcode = 'P0002';
   end if;
   select code into v_old from public.game_lobby_members where user_id = auth.uid();
@@ -947,11 +1254,12 @@ drop policy if exists stage_results_admin on public.stage_results;
 create policy stage_results_admin on public.stage_results
   for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
--- Etappentipps: eigene immer, fremde erst ab Etappenstart (gilt auch für Admins)
+-- Etappentipps: eigene immer, die der eigenen Gruppe erst ab Etappenstart (gilt auch für Admins)
 drop policy if exists stage_tips_select on public.stage_tips;
 create policy stage_tips_select on public.stage_tips
   for select to authenticated
-  using (public.is_member() and (user_id = auth.uid() or public.stage_started(stage_id)));
+  using (public.is_member() and (user_id = auth.uid()
+         or (public.stage_started(stage_id) and user_id in (select public.group_mates()))));
 drop policy if exists stage_tips_insert on public.stage_tips;
 create policy stage_tips_insert on public.stage_tips
   for insert to authenticated
@@ -966,11 +1274,12 @@ create policy stage_tips_delete on public.stage_tips
   for delete to authenticated
   using (user_id = auth.uid() and not public.stage_started(stage_id));
 
--- Bonustipps: eigene immer, fremde erst ab Start von Etappe 1
+-- Bonustipps: eigene immer, die der eigenen Gruppe erst ab Start von Etappe 1
 drop policy if exists bonus_tips_select on public.bonus_tips;
 create policy bonus_tips_select on public.bonus_tips
   for select to authenticated
-  using (public.is_member() and (user_id = auth.uid() or public.bonus_deadline(tour_id) <= now()));
+  using (public.is_member() and (user_id = auth.uid()
+         or (public.bonus_deadline(tour_id) <= now() and user_id in (select public.group_mates()))));
 drop policy if exists bonus_tips_insert on public.bonus_tips;
 create policy bonus_tips_insert on public.bonus_tips
   for insert to authenticated

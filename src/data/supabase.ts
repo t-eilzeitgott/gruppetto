@@ -1,14 +1,26 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type { GameGhostRow, TtGhostRow } from '../game/tt';
 import type {
-  AdminUser, BonusCategory, BonusResult, BonusTip, NewsItem, PointScale, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
+  AdminUser, BonusCategory, BonusResult, BonusTip, Group, GroupRules, NewsItem, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
   Tour, TourData, StageSyncInfo, SyncLogEntry, SyncMode, SyncStatus,
 } from '../lib/types';
+import { DEFAULT_RULES, scaleOf } from '../lib/scoring';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
   type StageInput, type TourInput, type GameId, type GameBest, type GameRun, type RunStats, cleanStats,
-  type LivePing, type LiveSnapshot,
+  type LivePing, type LiveSnapshot, type GroupInput,
 } from './source';
+
+/** Regeln aus der Antwort der Datenbank – lückenhafte Angaben fallen auf die Standardregeln zurück */
+function cleanRules(g: Partial<GroupRules> | null | undefined): GroupRules {
+  const nums = (v: unknown, fallback: number[]) => (Array.isArray(v) && v.length && v.every((x) => typeof x === 'number') ? (v as number[]) : fallback);
+  return {
+    stage_points: nums(g?.stage_points, DEFAULT_RULES.stage_points),
+    bonus_points: nums(g?.bonus_points, DEFAULT_RULES.bonus_points),
+    tip_limit: g && g.tip_limit !== undefined ? g.tip_limit : DEFAULT_RULES.tip_limit,
+    underdog_bonus: g?.underdog_bonus !== false,
+  };
+}
 
 interface StoredSession {
   access_token: string;
@@ -201,7 +213,13 @@ export class SupabaseSource implements DataSource {
   }
 
   loadMembers(): Promise<Profile[]> {
+    // die Datenbank zeigt nur die Mitglieder der eigenen Gruppe
     return this.rest<Profile[]>('profiles?select=*&is_member=eq.true&order=display_name.asc');
+  }
+
+  async loadGroup(): Promise<Group | null> {
+    const g = await schemaCheck(() => this.rpc<Group | null>('my_group'));
+    return g ? { ...g, ...cleanRules(g), can_manage: g.can_manage === true, invite_code: g.invite_code ?? null } : null;
   }
 
   loadTours(): Promise<Tour[]> {
@@ -210,13 +228,15 @@ export class SupabaseSource implements DataSource {
 
   async loadTourData(tour: Tour): Promise<TourData> {
     const t = encodeURIComponent(tour.id);
-    const [stages, riders, bonusTips, bonusResults, scale] = await Promise.all([
+    const [stages, riders, bonusTips, bonusResults, group] = await Promise.all([
       this.rest<Stage[]>(`stages?tour_id=eq.${t}&select=*&order=number.asc`),
       this.rest<Rider[]>(`riders?tour_id=eq.${t}&select=*&order=bib.asc.nullslast,name.asc`),
       this.rest<BonusTip[]>(`bonus_tips?tour_id=eq.${t}&select=tour_id,user_id,category,rider_id,team`),
       this.rest<BonusResult[]>(`bonus_results?tour_id=eq.${t}&select=tour_id,category,position,rider_id,team&order=category.asc,position.asc`),
-      this.rest<PointScale[]>('stage_point_scale?select=*&order=position.asc'),
+      // Regeln der eigenen Gruppe (Punkte, Limit, Außenseiter-Bonus)
+      this.rpc<Partial<GroupRules> | null>('my_group').catch(() => null),
     ]);
+    const rules = cleanRules(group);
     let tips: StageTip[] = [];
     let results: StageResult[] = [];
     let standings: StageStanding[] = [];
@@ -230,14 +250,16 @@ export class SupabaseSource implements DataSource {
       ]);
     }
     return {
-      tour,
+      // das Tipp-Limit ist eine Regel der Gruppe
+      tour: { ...tour, tip_limit: rules.tip_limit },
       stages: stages.map((s) => ({ ...s, distance_km: s.distance_km === null ? null : Number(s.distance_km) })),
       riders,
       tips,
       results,
       bonusTips,
       bonusResults,
-      scale,
+      scale: scaleOf(rules.stage_points),
+      rules,
       standings,
     };
   }
@@ -408,11 +430,36 @@ export class SupabaseSource implements DataSource {
     return this.rpc<string[]>('stage_tippers', { p_stage: stageId });
   }
 
-  // ---------- Spieler ----------
+  // ---------- Gruppe ----------
 
   async joinGroup(code: string, name: string): Promise<void> {
     await this.rpc('join_group', { p_code: code, p_name: name });
   }
+
+  async createGroup(groupName: string, name: string): Promise<string> {
+    return schemaCheck(() => this.rpc<string>('create_group', { p_group_name: groupName, p_name: name }));
+  }
+
+  async updateGroup(input: GroupInput): Promise<void> {
+    await this.rpc('group_update', {
+      p_name: input.name, p_stage_points: input.stage_points, p_bonus_points: input.bonus_points,
+      p_tip_limit: input.tip_limit, p_underdog: input.underdog_bonus,
+    });
+  }
+
+  async newInviteCode(): Promise<string> {
+    return this.rpc<string>('group_new_code');
+  }
+
+  async removeMember(userId: string): Promise<void> {
+    await this.rpc('group_remove_member', { p_user: userId });
+  }
+
+  async transferGroup(userId: string): Promise<void> {
+    await this.rpc('group_transfer', { p_user: userId });
+  }
+
+  // ---------- Spieler ----------
 
   async updateProfile(name: string, color: string): Promise<void> {
     await this.rpc('update_my_profile', { p_name: name, p_color: color });
@@ -468,19 +515,6 @@ export class SupabaseSource implements DataSource {
 
   async adminSetFlags(userId: string, member: boolean, admin: boolean, pro: boolean): Promise<void> {
     await this.rpc('admin_set_flags', { p_user: userId, p_member: member, p_admin: admin, p_pro: pro });
-  }
-
-  async getInviteCode(): Promise<string> {
-    const rows = await this.rest<{ value: string }[]>('app_settings?key=eq.invite_code&select=value');
-    return rows[0]?.value ?? '';
-  }
-
-  async setInviteCode(code: string): Promise<void> {
-    await this.rest('app_settings?on_conflict=key', {
-      method: 'POST',
-      body: { key: 'invite_code', value: code.trim().toUpperCase() },
-      prefer: 'resolution=merge-duplicates,return=minimal',
-    });
   }
 
   async saveTour(tour: TourInput): Promise<void> {

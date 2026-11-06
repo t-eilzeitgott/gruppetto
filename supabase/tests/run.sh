@@ -9,6 +9,7 @@ psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/tests/supabase_shim.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/schema.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/schema.sql   # zweiter Lauf: wiederholbar?
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/tests/rls_test.sql
+psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/tests/groups_test.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/tests/sync_test.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_testrunde.sql
 psql -q -v ON_ERROR_STOP=1 -d $DB -f supabase/seed_testrunde.sql   # wiederholbar?

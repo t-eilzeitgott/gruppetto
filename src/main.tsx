@@ -11,7 +11,7 @@ import './styles.css';
 applyTheme();
 installFixedHeal();
 // Zuletzt gesehener Stand sofort, frische Daten im Hintergrund (nicht im Demo-Modus)
-if (source.mode !== 'demo') persistQueries(`gruppetto.cache.${BUILD_ID}`, /^(me:|tours$|tour:|members$|game:|tippers:|news$|favorites$|emblems:)/);
+if (source.mode !== 'demo') persistQueries(`gruppetto.cache.${BUILD_ID}`, /^(me:|tours$|tour:|members$|group$|game:|tippers:|news$|favorites$|emblems:)/);
 document.documentElement.dataset.tour = document.documentElement.dataset.tour ?? 'neutral';
 
 createRoot(document.getElementById('root')!).render(

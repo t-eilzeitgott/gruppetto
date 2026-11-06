@@ -1,7 +1,7 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type { GameGhostRow, TtGhostRow } from '../game/tt';
 import type {
-  AdminUser, BonusCategory, BonusResult, NewsItem, Profile, Rider, Stage, Tour, TourData, StageKind, TourTheme,
+  AdminUser, BonusCategory, BonusResult, Group, GroupRules, NewsItem, Profile, Rider, Stage, Tour, TourData, StageKind, TourTheme,
   SyncMode, SyncStatus,
 } from '../lib/types';
 
@@ -67,6 +67,11 @@ export interface GameBest {
   stats?: RunStats | null;
 }
 
+/** Was die Leitung an ihrer Gruppe ändern kann: Name und Regeln */
+export interface GroupInput extends GroupRules {
+  name: string;
+}
+
 export interface TourInput {
   id: string;
   name: string;
@@ -78,7 +83,6 @@ export interface TourInput {
   is_visible: boolean;
   bonus_final: boolean;
   pcs_slug: string | null;
-  tip_limit?: number | null;
 }
 
 export interface StageInput {
@@ -215,8 +219,23 @@ export interface DataSource {
   loadNews(): Promise<NewsItem[]>;
   setFavorite(cyclistId: number, on: boolean): Promise<void>;
 
-  // Spieler
+  // Gruppe
+  /** Einer Gruppe mit ihrem Einladungscode beitreten */
   joinGroup(code: string, name: string): Promise<void>;
+  /** Eine neue Gruppe gründen (man leitet sie); gibt ihren Einladungscode zurück */
+  createGroup(groupName: string, name: string): Promise<string>;
+  /** Die eigene Gruppe mit ihren Regeln (null: in keiner Gruppe) */
+  loadGroup(): Promise<Group | null>;
+  /** Leitung: Name und Regeln ändern */
+  updateGroup(input: GroupInput): Promise<void>;
+  /** Leitung: neuer Einladungscode (der alte gilt nicht mehr) */
+  newInviteCode(): Promise<string>;
+  /** Leitung: Mitglied aus der Gruppe nehmen */
+  removeMember(userId: string): Promise<void>;
+  /** Leitung an ein anderes Mitglied übergeben */
+  transferGroup(userId: string): Promise<void>;
+
+  // Spieler
   updateProfile(name: string, color: string): Promise<void>;
   deleteAccount(): Promise<void>;
   requestPro(request: boolean): Promise<void>;
@@ -228,8 +247,6 @@ export interface DataSource {
   // Admin
   adminListUsers(): Promise<AdminUser[]>;
   adminSetFlags(userId: string, member: boolean, admin: boolean, pro: boolean): Promise<void>;
-  getInviteCode(): Promise<string>;
-  setInviteCode(code: string): Promise<void>;
   saveTour(tour: TourInput): Promise<void>;
   deleteTour(id: string): Promise<void>;
   saveStages(tourId: string, stages: StageInput[]): Promise<void>;
@@ -268,7 +285,15 @@ const MESSAGES: Record<string, string> = {
   rider_not_in_tour: 'Dieser Fahrer fährt diese Rundfahrt nicht.',
   team_not_in_tour: 'Dieses Team fährt diese Rundfahrt nicht.',
   stage_not_started: 'Die Etappe ist noch nicht gestartet – Ergebnisse erst danach veröffentlichen.',
-  invalid_code: 'Der Einladungscode stimmt nicht.',
+  invalid_code: 'Diesen Einladungscode gibt es nicht – prüf ihn noch einmal.',
+  already_in_group: 'Du bist schon in einer Gruppe.',
+  invalid_group_name: 'Der Name der Gruppe muss 2 bis 30 Zeichen lang sein.',
+  invalid_rules: 'Diese Regeln passen nicht: Punkte von 0 bis 100, höchstens zehn Plätze, Limit von 1 bis 21.',
+  not_group_owner: 'Das kann nur die Leitung der Gruppe.',
+  cannot_remove_self: 'Dich selbst kannst du nicht entfernen.',
+  cannot_remove_owner: 'Die Leitung kann nicht entfernt werden – übergib sie vorher.',
+  not_in_group: 'Diese Person ist nicht in deiner Gruppe.',
+  no_group: 'Du bist selbst in keiner Gruppe.',
   name_taken: 'Dieser Name ist schon vergeben.',
   invalid_name: 'Der Name muss 2 bis 20 Zeichen lang sein.',
   invalid_color: 'Ungültige Farbe.',
@@ -276,7 +301,7 @@ const MESSAGES: Record<string, string> = {
   cannot_remove_own_admin: 'Du kannst dir die Admin-Rechte nicht selbst entziehen.',
   not_authenticated: 'Bitte melde dich erneut an.',
   locked: 'Tippschluss ist vorbei – der Tipp kann nicht mehr geändert werden.',
-  schema_outdated: 'Die Datenbank kennt die Automatik noch nicht – bitte supabase/schema.sql im SQL Editor neu ausführen.',
+  schema_outdated: 'Die Datenbank ist nicht auf dem neuesten Stand – bitte supabase/schema.sql im SQL Editor neu ausführen.',
   lobby_not_found: 'Diese Lobby gibt es nicht (mehr) – prüf den Code.',
   no_lobby: 'Du bist in keiner Lobby.',
 };

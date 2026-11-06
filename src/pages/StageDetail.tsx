@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
-import { scoreStage, underdog, DEFAULT_SCALE } from '../lib/scoring';
+import { scoreStageOf, underdog, DEFAULT_SCALE } from '../lib/scoring';
 import { KIND_LABEL, fmtDay, stageState, fmtClock, fmtKm, sortStages } from '../lib/time';
 import type { Profile, Stage, TourData } from '../lib/types';
 import { Avatar, ProBadge, Countdown, Empty, ErrorBox, LinkButton, Loading, Notice, TopBar, cx, useTitle, Link } from '../ui/kit';
@@ -126,7 +126,7 @@ function RunningStage({ stage, data, me, members }: { stage: Stage; data: TourDa
 }
 
 function DoneStage({ stage, data, me, members }: { stage: Stage; data: TourData; me: Profile; members: Profile[] }) {
-  const scores = useMemo(() => scoreStage(stage, data.tips, data.results, data.scale), [stage, data]);
+  const scores = useMemo(() => scoreStageOf(data, stage), [stage, data]);
   const results = data.results.filter((r) => r.stage_id === stage.id).sort((a, b) => a.position - b.position);
   const winner = results.find((r) => r.position === 1);
   const winnerRider = data.riders.find((r) => r.id === winner?.rider_id);

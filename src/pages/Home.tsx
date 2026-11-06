@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
-import { leaderboard, jokerRemaining, bonusScoresFor, scoreStage, tipUsage, tourTipLimit } from '../lib/scoring';
+import { leaderboard, jokerRemaining, bonusScoresFor, scoreStageOf, tipUsage, tourTipLimit } from '../lib/scoring';
 import { bonusDeadline, fmtDay, lastPublishedStage, nextOpenStage, runningStages, tourPhase, dayDiff, fmtClock, fmtKm } from '../lib/time';
 import { BONUS_CATEGORIES, type Stage, type Tour, type TourData } from '../lib/types';
 import { Avatar, Countdown, Empty, ErrorBox, Link, LinkButton, cx, useTitle } from '../ui/kit';
@@ -479,7 +479,7 @@ function isFreshResult(stageId: number): boolean {
 }
 
 function LastResultCard({ stage, data, me }: { stage: Stage; data: TourData; me: Profile }) {
-  const scores = scoreStage(stage, data.tips, data.results, data.scale);
+  const scores = scoreStageOf(data, stage);
   const mine = scores.find((s) => s.userId === me.id);
   const winner = data.results.find((r) => r.stage_id === stage.id && r.position === 1);
   const fresh = useMemo(() => isFreshResult(stage.id), [stage.id]);

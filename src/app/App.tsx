@@ -32,6 +32,7 @@ import { PageBoundary } from '../ui/PageBoundary';
 import { LobbyDirector } from '../ui/Live';
 
 import { Profile } from '../pages/Profile';
+import { GroupPage } from '../pages/Group';
 import { Datenschutz, Impressum } from '../pages/Legal';
 import { AdminHome } from '../pages/admin/AdminHome';
 import { AdminTours } from '../pages/admin/AdminTours';
@@ -155,6 +156,9 @@ function MemberApp({ me }: { me: ProfileT }) {
         break;
       case 'profil':
         page = <Profile />;
+        break;
+      case 'gruppe':
+        page = <GroupPage />;
         break;
       case 'admin':
         page = me.is_admin ? <AdminRouter section={second} /> : <NotFound />;

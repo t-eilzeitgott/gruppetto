@@ -6,7 +6,7 @@ import { useFavorites, useNow } from '../app/hooks';
 import { source } from '../app/config';
 import { invalidate } from '../app/query';
 import { navigate } from '../app/router';
-import { BONUS_POINTS, bonusScoresFor, bonusStandings } from '../lib/scoring';
+import { bonusPointsOf, bonusScoresFor, bonusStandings } from '../lib/scoring';
 import { CATEGORY_INFO, categoryTitle } from '../lib/categories';
 import { normalize } from '../lib/pcsParse';
 import { bonusDeadline, fmtDayTime } from '../lib/time';
@@ -233,7 +233,7 @@ export function BonusPicker({ category }: { category: BonusCategory }) {
       />
       <div className="stack">
         <p className="muted">
-          Platz 1, 2 oder 3 am Ende der Rundfahrt bringt {BONUS_POINTS[1]}, {BONUS_POINTS[2]} oder {BONUS_POINTS[3]} Punkte.
+          Platz 1, 2 oder 3 am Ende der Rundfahrt bringt {bonusPointsOf(data)[1]}, {bonusPointsOf(data)[2]} oder {bonusPointsOf(data)[3]} Punkte.
           {category === 'rest' && excludedNames(data) ? ` Gewertet wird die Gesamtwertung ohne ${excludedNames(data)}.` : ''}
           {info.hint && category !== 'rest' ? ` ${info.hint}.` : ''}
         </p>

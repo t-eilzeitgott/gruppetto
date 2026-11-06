@@ -1,5 +1,5 @@
 import type {
-  BonusCategory, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData, PointScale,
+  BonusCategory, GroupRules, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData, PointScale,
 } from './types';
 
 /** Standard: jeden Fahrer höchstens so oft pro Rundfahrt tippen. */
@@ -14,6 +14,30 @@ export const DEFAULT_SCALE: PointScale[] = [
   { position: 7, points: 4 }, { position: 8, points: 3 }, { position: 9, points: 2 },
   { position: 10, points: 1 },
 ];
+
+/** Standardregeln: gelten für jede neue Gruppe, bis die Leitung sie ändert. */
+export const DEFAULT_RULES: GroupRules = {
+  stage_points: DEFAULT_SCALE.map((s) => s.points),
+  bonus_points: [BONUS_POINTS[1], BONUS_POINTS[2], BONUS_POINTS[3]],
+  tip_limit: DEFAULT_TIP_LIMIT,
+  underdog_bonus: true,
+};
+
+/** Regeln der Gruppe, zu der die Daten gehören. */
+export function rulesOf(data?: Pick<TourData, 'rules'> | null): GroupRules {
+  return data?.rules ?? DEFAULT_RULES;
+}
+
+/** Punkteskala aus den Punkten je Platz (Platz 1 zuerst). */
+export function scaleOf(points: number[]): PointScale[] {
+  return points.map((p, i) => ({ position: i + 1, points: p }));
+}
+
+/** Punkte für Platz 1/2/3 einer Bonuswertung nach den Regeln der Gruppe. */
+export function bonusPointsOf(data?: Pick<TourData, 'rules'> | null): Record<number, number> {
+  const [a, b, c] = rulesOf(data).bonus_points;
+  return { 1: a ?? 0, 2: b ?? 0, 3: c ?? 0 };
+}
 
 export interface StageScore {
   userId: string;
@@ -56,12 +80,18 @@ export function underdog(stageTips: StageTip[], winner: number | null): Underdog
   return { bonus: max, favoriteId };
 }
 
+/** Punkte aller Tipps einer Etappe nach den Regeln der Gruppe. */
+export function scoreStageOf(data: TourData, stage: Stage): StageScore[] {
+  return scoreStage(stage, data.tips, data.results, data.scale, rulesOf(data).underdog_bonus);
+}
+
 /** Punkte aller Tipps einer Etappe. Gibt nur für veröffentlichte Etappen Werte zurück. */
 export function scoreStage(
   stage: Stage,
   tips: StageTip[],
   results: StageResult[],
   scale: PointScale[],
+  underdogBonus = true,
 ): StageScore[] {
   if (!stage.results_published) return [];
   const stageTips = tips.filter((t) => t.stage_id === stage.id);
@@ -69,7 +99,7 @@ export function scoreStage(
   const posByRider = new Map(stageResults.map((r) => [r.rider_id, r.position]));
   const points = scaleMap(scale);
   const winner = stageResults.find((r) => r.position === 1)?.rider_id ?? null;
-  const extra = underdog(stageTips, winner).bonus;
+  const extra = underdogBonus ? underdog(stageTips, winner).bonus : 0;
 
   return stageTips.map((t) => {
     const position = posByRider.get(t.rider_id) ?? null;
@@ -129,6 +159,7 @@ export interface BonusScore {
 
 /** Bonuspunkte eines Spielers je Wertung (Hochrechnung bzw. Endstand). */
 export function bonusScoresFor(data: TourData, userId: string, standings = bonusStandings(data)): BonusScore[] {
+  const points = bonusPointsOf(data);
   return data.bonusTips
     .filter((t) => t.user_id === userId)
     .map((t) => {
@@ -136,7 +167,7 @@ export function bonusScoresFor(data: TourData, userId: string, standings = bonus
         s.category === t.category &&
         ((t.rider_id !== null && s.riderId === t.rider_id) || (t.team !== null && s.team === t.team)));
       const best = matches.reduce<number | null>((min, s) => (min === null || s.position < min ? s.position : min), null);
-      return { category: t.category, position: best, points: best === null ? 0 : BONUS_POINTS[best] ?? 0 };
+      return { category: t.category, position: best, points: best === null ? 0 : points[best] ?? 0 };
     });
 }
 
@@ -164,7 +195,7 @@ export function byName(a: { name: string }, b: { name: string }): number {
 /** Rangliste einer Rundfahrt. */
 export function leaderboard(data: TourData, members: Profile[]): LeaderRow[] {
   const published = data.stages.filter((s) => s.results_published).sort((a, b) => a.number - b.number);
-  const scoresByStage = new Map(published.map((s) => [s.id, scoreStage(s, data.tips, data.results, data.scale)]));
+  const scoresByStage = new Map(published.map((s) => [s.id, scoreStageOf(data, s)]));
   const lastStage = published[published.length - 1] ?? null;
   const standings = bonusStandings(data);
 

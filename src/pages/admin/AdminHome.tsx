@@ -20,12 +20,11 @@ function Sections({ tour }: { tour: Tour }) {
   const now = useNow(60000);
   const d = q.data;
   const pending = d ? runningStages(d.stages, now) : [];
-  const limit = tour.tip_limit === undefined ? 3 : tour.tip_limit;
   const out = d?.riders.filter((r) => r.status === 'out').length ?? 0;
   const items: { to: string; icon: IconName; title: string; sub: string; alert?: boolean }[] = [
     { to: '/admin/rundfahrten', icon: 'calendar', title: 'Rundfahrten', sub: 'Anlegen, Zeitraum, sichtbar, Endstand' },
     { to: '/admin/etappen', icon: 'flag', title: 'Etappen', sub: d ? `${d.stages.length} angelegt · Tippschluss = Startzeit` : 'Lädt …' },
-    { to: '/admin/startliste', icon: 'users', title: 'Startliste', sub: d ? `${d.riders.length} Fahrer${out ? ` · ${out} ausgestiegen` : ''} · ${limit === null ? 'beliebig oft tippbar' : `max. ${limit}× pro Fahrer`}` : 'Lädt …' },
+    { to: '/admin/startliste', icon: 'users', title: 'Startliste', sub: d ? `${d.riders.length} Fahrer${out ? ` · ${out} ausgestiegen` : ''}` : 'Lädt …' },
     {
       to: '/admin/ergebnis',
       icon: 'trophy',
@@ -40,7 +39,8 @@ function Sections({ tour }: { tour: Tour }) {
       title: 'Automatische Ergebnisse',
       sub: !tour.sync_mode || tour.sync_mode === 'off' ? 'Aus · Ergebnisse von procyclingstats.com holen' : `Von procyclingstats.com · ${SYNC_MODE_LABEL[tour.sync_mode]}`,
     },
-    { to: '/admin/mitglieder', icon: 'user', title: 'Mitglieder & Einladung', sub: 'Einladungscode, Admins, Pro' },
+    { to: '/admin/mitglieder', icon: 'user', title: 'Konten', sub: 'Alle Konten und Gruppen, Admins, Pro' },
+    { to: '/gruppe', icon: 'users', title: 'Deine Gruppe', sub: 'Einladungscode, Mitglieder, Regeln' },
     { to: '/admin/intro', icon: 'star', title: 'Start-Animationen', sub: 'Themenwochen, Feiertage, Renntage – alle Varianten ansehen' },
     { to: '/admin/akku', icon: 'zap', title: 'Minispiel „Akku leer!“', sub: 'Prototyp · nur für Admins sichtbar' },
     { to: '/admin/welt', icon: 'mountain', title: 'Welt-Editor', sub: 'Durch die 3D-Welten fliegen, Requisiten und Gelände ändern, Notizen für Claude' },

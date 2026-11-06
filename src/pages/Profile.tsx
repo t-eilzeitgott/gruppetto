@@ -2,10 +2,10 @@ import { useState, type FormEvent } from 'react';
 import { useApp } from '../app/context';
 import { useTourData } from '../app/hooks';
 import { source, BUILD_ID } from '../app/config';
-import { invalidate, resetCache } from '../app/query';
+import { invalidate, resetCache, useQuery } from '../app/query';
 import { setThemePref, useThemePref, type ThemePref } from '../app/theme';
-import { DEFAULT_SCALE, DEFAULT_TIP_LIMIT, BONUS_POINTS, tourTipLimit } from '../lib/scoring';
-import type { TourData } from '../lib/types';
+import { DEFAULT_SCALE, DEFAULT_TIP_LIMIT, bonusPointsOf, rulesOf, tourTipLimit } from '../lib/scoring';
+import type { Group, TourData } from '../lib/types';
 import { Avatar, ProBadge, Button, ErrorBox, Link, PageTitle, Segmented, cx, toast, useAction, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { lastName } from '../ui/bits';
@@ -40,6 +40,8 @@ export function Profile() {
     await source.signOut();
     resetCache();
   });
+
+  const group = useQuery<Group | null>('group', () => source.loadGroup()).data;
 
   const onDelete = () => {
     if (!window.confirm('Konto wirklich löschen? Alle deine Tipps werden entfernt. Das lässt sich nicht rückgängig machen.')) return;
@@ -86,12 +88,21 @@ export function Profile() {
           <InstallHint />
         </section>
 
+        <Link to="/gruppe" className="card card--row">
+          <Icon name="users" />
+          <span className="card__main">
+            <strong>{group?.name ?? 'Deine Gruppe'}</strong>
+            <span className="muted">{group?.can_manage ? 'Einladungscode, Mitglieder, Regeln' : 'Mitglieder und Regeln'}</span>
+          </span>
+          <Icon name="chevron" className="muted" />
+        </Link>
+
         {me.is_admin ? (
           <Link to="/admin" className="card card--row">
             <Icon name="settings" />
             <span className="card__main">
               <strong>Admin-Bereich</strong>
-              <span className="muted">Rundfahrten, Etappen, Startliste, Ergebnisse, Mitglieder</span>
+              <span className="muted">Rundfahrten, Etappen, Startliste, Ergebnisse, Konten</span>
             </span>
             <Icon name="chevron" className="muted" />
           </Link>
@@ -178,6 +189,8 @@ export function Rules({ data }: { data?: TourData }) {
   const limit = data ? tourTipLimit(data.tour) : DEFAULT_TIP_LIMIT;
   const special = data && limit !== null ? data.riders.filter((r) => r.tip_limit !== null && r.tip_limit !== limit) : [];
   const excluded = data?.riders.filter((r) => r.excluded_from_rest) ?? [];
+  const bonus = bonusPointsOf(data);
+  const first = scale[0]?.points ?? 0;
   const names = (list: { name: string }[]) => list.map((r) => lastName(r.name)).join(' und ');
   return (
     <section className="card rules" aria-labelledby="rules-title">
@@ -194,14 +207,16 @@ export function Rules({ data }: { data?: TourData }) {
           ))}
         </ol>
       </div>
-      <div className="rule">
-        <h3>Außenseiter-Bonus</h3>
-        <p className="muted">
-          Hast du als Einziger den Etappensieger getippt, gibt es so viele Extrapunkte, wie Tipps auf den Favoriten gingen,
-          also auf den meistgetippten Fahrer. Beispiel: 4× Milan, nur du tippst Merlier, Merlier gewinnt: 20&nbsp;+&nbsp;4 = 24.
-          Tippen zwei oder mehr auf den Sieger, gibt es keinen Bonus.
-        </p>
-      </div>
+      {rulesOf(data).underdog_bonus ? (
+        <div className="rule">
+          <h3>Außenseiter-Bonus</h3>
+          <p className="muted">
+            Hast du als Einziger den Etappensieger getippt, gibt es so viele Extrapunkte, wie Tipps auf den Favoriten gingen,
+            also auf den meistgetippten Fahrer. Beispiel: 4× Milan, nur du tippst Merlier, Merlier gewinnt: {first}&nbsp;+&nbsp;4 = {first + 4}.
+            Tippen zwei oder mehr auf den Sieger, gibt es keinen Bonus.
+          </p>
+        </div>
+      ) : null}
       <div className="rule">
         <h3>Höchstens {limit ?? '∞'}× pro Fahrer</h3>
         <p className="muted">
@@ -219,7 +234,7 @@ export function Rules({ data }: { data?: TourData }) {
         <h3>Bonustipps</h3>
         <p className="muted">
           Acht Wertungen, Tipp bis zum Start von Etappe&nbsp;1. Liegt dein Fahrer am Ende auf Platz 1, 2 oder 3,
-          gibt es {BONUS_POINTS[1]}, {BONUS_POINTS[2]} oder {BONUS_POINTS[3]} Punkte.
+          gibt es {bonus[1]}, {bonus[2]} oder {bonus[3]} Punkte.
           {excluded.length ? ` „Best of the Rest“ ist die Gesamtwertung ohne ${names(excluded)}.` : ''}
         </p>
       </div>

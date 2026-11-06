@@ -14,15 +14,25 @@ Das Grand-Tour-Tippspiel für eure Runde: Giro, Tour und Vuelta – ein Tipp pro
 | Bonustipp: Fahrer/Team am Ende auf Platz 1 / 2 / 3 der Wertung | 15 / 10 / 5 |
 
 - Tippschluss ist der Start der jeweiligen Etappe (Standard 12:00 Uhr, pro Etappe einstellbar). Bis dahin sieht niemand fremde Tipps – das erzwingt die Datenbank (Row Level Security), nicht nur die Oberfläche.
-- Joker-Limit: Fahrer wie Pogačar und Vingegaard dürfen pro Rundfahrt nur begrenzt oft getippt werden (Admin legt das Limit je Fahrer fest, Standard 3).
+- Joker-Limit: Jeden Fahrer darf man pro Rundfahrt nur begrenzt oft tippen (Standard 3, je Gruppe einstellbar; ein Admin kann einzelnen Fahrern ein eigenes Limit geben, das für alle Gruppen gilt).
 - Bonuswertungen: Gesamtsieger, Best of the Rest (Gesamtwertung ohne ausgeklammerte Favoriten), Punkte, Berg, Nachwuchs, Kämpferischster Fahrer, Meiste Etappensiege (automatisch berechnet), Bestes Team. Tipp bis zum Start von Etappe 1.
 - Gleichstand: geteilter Platz.
+
+## Gruppen
+
+Jede Tipprunde ist eine **Gruppe** mit eigenem Einladungscode, eigener Rangliste und eigenen Regeln. Rundfahrten, Etappen, Startlisten und Ergebnisse gelten für alle Gruppen; Mitglieder, Tipps, Bestenlisten der Minispiele, Geister, Live-Anzeige und Lobbys sieht man nur innerhalb der eigenen Gruppe (Row Level Security).
+
+- **Gründen:** Wer sich anmeldet und keinen Einladungscode hat, wählt „Neue Gruppe“, gibt ihr einen Namen und leitet sie. Der Einladungscode (sechs Zeichen) steht danach unter *Profil → Gruppe* – mit „Einladung teilen“ geht ein Link raus, der den Code gleich einträgt (`…/?code=ABC123`).
+- **Leitung** (wer die Gruppe gegründet hat): Name der Gruppe, neuer Einladungscode, Mitglieder entfernen, Leitung übergeben – und die Regeln: Punkte je Platz im Etappenziel (bis zu zehn Plätze), Punkte für Platz 1–3 der Bonuswertungen, wie oft derselbe Fahrer pro Rundfahrt tippbar ist, Außenseiter-Bonus an/aus. Die oben genannten Regeln sind der Standard jeder neuen Gruppe. Weitere Rechte hat die Leitung nicht: Rundfahrten, Etappen, Startlisten und Ergebnisse pflegen nur die Admins der App.
+- **Admins der App** (`profiles.is_admin`) sehen unter *Admin → Konten* alle Konten mit ihrer Gruppe und dürfen ihre eigene Gruppe wie die Leitung verwalten.
+- Löscht die Leitung ihr Konto, übernimmt das dienstälteste Mitglied; die letzte Person nimmt die Gruppe mit.
+- Eine Rundfahrt lässt sich auf eine Gruppe beschränken (z. B. eine Testrunde): `update public.tours set group_id = '<Gruppe>' where id = '…';` – ohne `group_id` sehen sie alle.
+- Technik: Tabelle `groups`, `profiles.group_id`; Funktionen `create_group`, `join_group`, `my_group`, `group_update`, `group_new_code`, `group_remove_member`, `group_transfer`; Tests in `supabase/tests/groups_test.sql`. Eine bestehende Installation mit einer einzigen Runde stellt `schema.sql` beim nächsten Ausführen um: Die Runde wird zur ersten Gruppe „Gruppetto“ – mit dem bisherigen Einladungscode, der bisherigen Punkteskala und allen Mitgliedern.
 
 ## Einrichtung (einmalig, alles kostenlos)
 
 1. **GitHub:** Repo öffentlich, *Settings → Pages → Source: GitHub Actions*.
-2. **Supabase:** Projekt in *Central EU (Frankfurt)* anlegen, im *SQL Editor* [`supabase/schema.sql`](supabase/schema.sql) ausführen, Einladungscode setzen:
-   `update public.app_settings set value = 'TOUR27' where key = 'invite_code';`
+2. **Supabase:** Projekt in *Central EU (Frankfurt)* anlegen, im *SQL Editor* [`supabase/schema.sql`](supabase/schema.sql) ausführen. Einen Einladungscode braucht es vorab nicht mehr: Die erste Gruppe gründest du in der App (siehe [Gruppen](#gruppen)).
 3. **Mailversand:** eigenes Gmail-Konto mit Zwei-Schritt-Bestätigung und App-Passwort; in Supabase *Authentication → Emails → SMTP Settings* eintragen (`smtp.gmail.com`, Port 465).
 4. **Login per Code:** In *Authentication → Emails → Templates* bei *Confirm signup* und *Magic Link* `{{ .Token }}` in die Mail schreiben – Betreff `{{ .Token }} ist dein gruppetto-Code`, Text z. B. `<p>Dein Code für gruppetto lautet: <strong>{{ .Token }}</strong></p>` (so erkennt iOS den Code und schlägt ihn in der Tastatur vor); Site URL auf die App-Adresse setzen; Rate Limit für E-Mails auf 100/h.
 5. **Verbinden:** In GitHub unter *Settings → Secrets and variables → Actions → Variables* `VITE_SUPABASE_URL` und `VITE_SUPABASE_PUBLISHABLE_KEY` (Publishable key, `sb_publishable_…`) anlegen, dann *Actions → Deploy → Run workflow*.

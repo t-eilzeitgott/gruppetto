@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  scoreStage, leaderboard, bonusStandings, bonusScoresFor, competitionRanks, jokerRemaining, DEFAULT_SCALE,
+  scoreStage, scoreStageOf, scaleOf, rulesOf, DEFAULT_RULES, leaderboard, bonusStandings, bonusScoresFor, competitionRanks, jokerRemaining, DEFAULT_SCALE,
 } from './scoring';
 import type { Profile, Rider, Stage, StageResult, StageTip, TourData } from './types';
 
@@ -154,4 +154,27 @@ test('Tipp-Limit gilt für jeden Fahrer und ignoriert den Tipp der gleichen Etap
   assert.equal(jokerRemaining({ ...tour, tip_limit: 5 }, milan, tips, 'anna', 3), 3);
   assert.equal(jokerRemaining({ ...tour, tip_limit: null }, milan, tips, 'anna', 3), null);
   assert.equal(jokerRemaining({ ...tour, tip_limit: null }, rider(300, 'Pogi', 'UAE', 1), tips, 'anna', 3), 1);
+});
+
+test('Regeln der Gruppe: eigene Punkteskala, Bonuspunkte, Außenseiter-Bonus aus', () => {
+  const data = baseData();
+  // Etappe 1: Milan (100) gewinnt vor Groves (200); 2× Groves, nur Anna auf Milan
+  data.tips = [tip(1, 'anna', 100), tip(1, 'ben', 200), tip(1, 'carl', 200)];
+  assert.deepEqual(rulesOf(data), DEFAULT_RULES);
+  assert.equal(scoreStageOf(data, data.stages[0]).find((x) => x.userId === 'anna')!.total, 22);
+
+  data.rules = { stage_points: [10, 4], bonus_points: [9, 6, 3], tip_limit: null, underdog_bonus: false };
+  data.scale = scaleOf(data.rules.stage_points);
+  const scores = scoreStageOf(data, data.stages[0]);
+  assert.deepEqual(scores.map((x) => [x.userId, x.base, x.bonus]), [['anna', 10, 0], ['ben', 4, 0], ['carl', 4, 0]]);
+
+  data.bonusResults = [{ tour_id: 't', category: 'gc', position: 2, rider_id: 200, team: null }];
+  data.bonusTips = [
+    { tour_id: 't', user_id: 'anna', category: 'gc', rider_id: 200, team: null },
+    { tour_id: 't', user_id: 'anna', category: 'stage_wins', rider_id: 100, team: null },
+  ];
+  assert.deepEqual(bonusScoresFor(data, 'anna').map((x) => x.points), [6, 9]);
+  data.tour.bonus_final = true;
+  const row = leaderboard(data, [member('anna', 'Anna'), member('ben', 'Ben')])[0];
+  assert.deepEqual([row.name, row.stagePoints, row.bonusPoints, row.underdogHits], ['Anna', 10, 15, 0]);
 });

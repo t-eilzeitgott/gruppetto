@@ -1,7 +1,7 @@
 import { Fragment, useMemo } from 'react';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
-import { scoreStage } from '../lib/scoring';
+import { scoreStageOf } from '../lib/scoring';
 import { KIND_SHORT, dayDiff, fmtKm, fmtRange, sortStages, stageState } from '../lib/time';
 import type { Stage, Tour, TourData, Profile } from '../lib/types';
 import { Empty, ErrorBox, Link, Loading, PageTitle, cx, useTitle } from '../ui/kit';
@@ -42,7 +42,7 @@ function StageList({ data, me, now }: { data: TourData; me: Profile; now: number
   const myPoints = useMemo(() => {
     const map = new Map<number, number>();
     for (const s of stages) {
-      const mine = scoreStage(s, data.tips, data.results, data.scale).find((x) => x.userId === me.id);
+      const mine = scoreStageOf(data, s).find((x) => x.userId === me.id);
       if (mine) map.set(s.id, mine.total);
     }
     return map;

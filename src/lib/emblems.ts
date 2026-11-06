@@ -6,7 +6,7 @@
  * berechnet (keine eigene Tabelle) – auf jedem Gerät dasselbe, rückwirkend für alle gespielten Rundfahrten.
  * Jedes Emblem hat einen festen Schlüssel; daran merkt sich das Gerät, ob es schon verliehen (gezeigt) wurde.
  */
-import { bonusScoresFor, bonusStandings, competitionRanks, scoreStage, type StageScore } from './scoring';
+import { bonusScoresFor, bonusStandings, competitionRanks, scoreStageOf, type StageScore } from './scoring';
 import type { Profile, Stage, Tour, TourData, TourTheme } from './types';
 
 /** Embleme zählen ab dem Giro 2026 (der ersten Runde mit der App) */
@@ -86,7 +86,7 @@ function runTour(data: TourData, ids: string[]): TourRun {
     return new Map(ids.map((id) => [id, r.get(id)!]));
   };
   const steps = stages.map((stage) => {
-    const scores = scoreStage(stage, data.tips, data.results, data.scale).filter((s) => totals.has(s.userId));
+    const scores = scoreStageOf(data, stage).filter((s) => totals.has(s.userId));
     const day = new Map(ids.map((id) => [id, 0]));
     for (const s of scores) { day.set(s.userId, s.total); participants.add(s.userId); }
     for (const id of ids) totals.set(id, totals.get(id)! + day.get(id)!);

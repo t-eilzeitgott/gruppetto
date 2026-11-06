@@ -15,11 +15,41 @@ export interface Profile {
   is_pro: boolean;
   /** Pro angefragt (keine Zahlung, nur Vermerk) */
   pro_requested_at?: string | null;
+  /** Gruppe (Tipprunde), der man angehört */
+  group_id?: string | null;
   created_at: string;
 }
 
 export interface AdminUser extends Profile {
   email: string;
+  group_name?: string | null;
+  /** leitet seine Gruppe */
+  is_owner?: boolean;
+}
+
+/** Regeln einer Gruppe – die Leitung kann sie anpassen */
+export interface GroupRules {
+  /** Punkte je Platz im Etappenziel, Platz 1 zuerst (bis zu zehn Plätze) */
+  stage_points: number[];
+  /** Punkte für Platz 1, 2 und 3 einer Bonuswertung */
+  bonus_points: number[];
+  /** Wie oft man denselben Fahrer pro Rundfahrt höchstens tippen darf (null = unbegrenzt) */
+  tip_limit: number | null;
+  /** Außenseiter-Bonus für den einzigen Tipp auf den Etappensieger */
+  underdog_bonus: boolean;
+}
+
+/** Gruppe (Tipprunde): eigener Einladungscode, eigene Rangliste, eigene Regeln */
+export interface Group extends GroupRules {
+  id: string;
+  name: string;
+  /** Leitung: wer die Gruppe gegründet hat (oder an wen sie übergeben wurde) */
+  owner_id: string | null;
+  created_at: string;
+  /** darf ich Name, Regeln, Code und Mitglieder verwalten? */
+  can_manage: boolean;
+  /** nur für die Leitung sichtbar */
+  invite_code: string | null;
 }
 
 export interface Tour {
@@ -33,7 +63,7 @@ export interface Tour {
   is_visible: boolean;
   bonus_final: boolean;
   pcs_slug: string | null;
-  /** Wie oft man denselben Fahrer pro Rundfahrt höchstens tippen darf (null = unbegrenzt) */
+  /** Wie oft man denselben Fahrer pro Rundfahrt höchstens tippen darf (null = unbegrenzt) – in den Daten einer Rundfahrt (TourData) steht hier das Limit der eigenen Gruppe */
   tip_limit?: number | null;
   info?: TourInfo;
   /** Automatische Ergebnisse von procyclingstats.com: aus, als Vorschlag oder automatisch veröffentlichen */
@@ -236,7 +266,10 @@ export interface TourData {
   results: StageResult[];
   bonusTips: BonusTip[];
   bonusResults: BonusResult[];
+  /** Punkteskala der eigenen Gruppe */
   scale: PointScale[];
+  /** Regeln der eigenen Gruppe (fehlen sie, gelten die Standardregeln) */
+  rules?: GroupRules;
   /** Wertungsstände nach den Etappen (z. B. Gesamtwertung Top 10) */
   standings?: StageStanding[];
 }

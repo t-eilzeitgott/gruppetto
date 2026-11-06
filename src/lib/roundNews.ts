@@ -7,7 +7,7 @@
  * Etappe (beim Neuladen dieselbe Meldung) – und nie zweimal hintereinander dieselbe Fassung einer Lage.
  * Ohne Personalpronomen und ohne „der Sieger“/„die Siegerin“ für Mitglieder (wir kennen kein Geschlecht).
  */
-import { bonusScoresFor, bonusStandings, competitionRanks, scoreStage } from './scoring';
+import { bonusScoresFor, bonusStandings, competitionRanks, scoreStageOf } from './scoring';
 import type { Profile, Stage, TourData } from './types';
 
 export type RoundKind = 'start' | 'lead' | 'change' | 'tie' | 'final' | 'open' | 'none';
@@ -359,7 +359,7 @@ export function roundNews(data: TourData, members: Profile[], now: number): Roun
 
   published.forEach((stage, idx) => {
     P.stage(stage.number);
-    const scores = scoreStage(stage, data.tips, data.results, data.scale).filter((s) => nameOf.has(s.userId));
+    const scores = scoreStageOf(data, stage).filter((s) => nameOf.has(s.userId));
     const day = new Map(rows.map((r) => [r.id, scores.find((s) => s.userId === r.id)?.total ?? 0]));
     const tipped = new Set(scores.map((s) => s.userId));
     for (const r of rows) totals.set(r.id, totals.get(r.id)! + day.get(r.id)!);

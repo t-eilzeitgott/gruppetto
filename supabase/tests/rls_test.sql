@@ -29,15 +29,19 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000a', 'anna@example.com'),
   ('00000000-0000-0000-0000-00000000000b', 'ben@example.com'),
   ('00000000-0000-0000-0000-00000000000c', 'carl@example.com');
-update public.app_settings set value = 'TEST27' where key = 'invite_code';
 select pg_temp.expect_eq((select count(*) from public.profiles), 3, 'Profile per Trigger angelegt');
 
 -- ---------- Beitreten ----------
 begin;
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a', true);
-select public.join_group('test27', 'Anna');
+select pg_temp.expect_error($q$ select public.join_group('TEST27', 'Anna') $q$, 'invalid_code');
+select pg_temp.expect_error($q$ select public.create_group('X', 'Anna') $q$, 'invalid_group_name');
+select pg_temp.expect_eq((public.create_group(' Testrunde ', 'Anna') ~ '^[A-HJ-NP-Z2-9]{6}$')::int, 1, 'Gruppe gegründet: Code mit sechs Zeichen');
+select pg_temp.expect_error($q$ select public.create_group('Noch eine', 'Anna') $q$, 'already_in_group');
+select pg_temp.expect_eq((public.my_group() ->> 'name' = 'Testrunde' and (public.my_group() ->> 'can_manage')::boolean)::int, 1, 'Gründerin leitet die Gruppe');
 commit;
+update public.groups set invite_code = 'TEST27';
 
 begin;
 set local role authenticated;
@@ -78,8 +82,9 @@ insert into public.riders (tour_id, bib, name, team, tip_limit, status) values
   ('open-test', 3, 'Raus Fahrer', 'Lidl-Trek', null, 'out'),
   ('past-test', 1, 'Kaden Groves', 'Alpecin', null, 'active'),
   ('past-test', 2, 'Mads Pedersen', 'Lidl-Trek', null, 'active');
-update public.tours set tip_limit = 1 where id = 'open-test';  -- Standard-Limit der Rundfahrt
-select pg_temp.expect_eq((select count(*) from public.app_settings), 1, 'Admin liest Einstellungen');
+select public.group_update('Testrunde', '{20,15,10,7,6,5,4,3,2,1}', '{15,10,5}', 1, true);  -- Limit der Gruppe: 1× je Fahrer
+select pg_temp.expect_eq((public.my_group() ->> 'invite_code' = 'TEST27')::int, 1, 'Leitung sieht den Einladungscode');
+select pg_temp.expect_error($q$ select * from public.groups $q$, 'permission denied');
 select pg_temp.expect_eq((select count(*) from public.admin_list_users()), 3, 'Admin listet Konten');
 select pg_temp.expect_error($q$ select public.admin_set_flags('00000000-0000-0000-0000-00000000000a', true, false, false) $q$, 'cannot_remove_own_admin');
 commit;
@@ -101,7 +106,7 @@ insert into public.stage_tips (stage_id, rider_id)
 select pg_temp.expect_error($q$
   update public.stage_tips set rider_id = (select id from public.riders where name = 'Tadej Pogačar')
    where stage_id = (select id from public.stages where tour_id = 'open-test' and number = 2) $q$, 'joker_limit_reached');
--- Limit der Rundfahrt gilt auch ohne eigenes Fahrer-Limit
+-- Limit der Gruppe gilt auch ohne eigenes Fahrer-Limit
 select pg_temp.expect_error($q$
   insert into public.stage_tips (stage_id, rider_id)
   select s.id, r.id from public.stages s, public.riders r
@@ -163,7 +168,10 @@ select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b
 select pg_temp.expect_eq((select count(*) from public.stage_results), 0, 'Unveröffentlichte Ergebnisse verdeckt');
 update public.stages set results_published = true where tour_id = 'past-test' and number = 1;  -- wirkt nicht (kein Admin)
 select pg_temp.expect_error($q$ select * from public.admin_list_users() $q$, 'not_admin');
-select pg_temp.expect_eq((select count(*) from public.app_settings), 0, 'Einladungscode nur für Admins');
+select pg_temp.expect_eq((public.my_group() ->> 'name' = 'Testrunde' and public.my_group() ->> 'invite_code' is null)::int, 1, 'Einladungscode nur für die Leitung');
+select pg_temp.expect_error($q$ select public.group_update('Gekapert', '{1}', '{1,1,1}', null, true) $q$, 'not_group_owner');
+select pg_temp.expect_error($q$ select public.group_new_code() $q$, 'not_group_owner');
+select pg_temp.expect_error($q$ select public.group_remove_member('00000000-0000-0000-0000-00000000000a') $q$, 'not_group_owner');
 select pg_temp.expect_eq((select count(*) from public.profiles), 2, 'Mitglied sieht alle Mitglieder');
 commit;
 

@@ -1,16 +1,16 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type {
-  AdminUser, BonusCategory, BonusResult, BonusTip, NewsItem, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData,
+  AdminUser, BonusCategory, BonusResult, BonusTip, Group, NewsItem, Profile, Rider, Stage, StageResult, StageTip, Tour, TourData,
   SyncLogEntry, SyncMode, SyncStatus, StageSyncInfo,
 } from '../lib/types';
-import { DEFAULT_SCALE, tipLimit } from '../lib/scoring';
+import { DEFAULT_RULES, scaleOf, tipLimit } from '../lib/scoring';
 import { bonusDeadline } from '../lib/time';
 import { TRACE_DT, ttScore, type GameGhostRow, type TtGhostRow } from '../game/tt';
 import { berlinDayKey, hashStr } from '../game/abfahrt/rng';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
   type StageInput, type TourInput, type GameId, type GameBest, type GameRun, type RunStats, cleanStats,
-  type LivePeer, type LivePing, type LiveSnapshot,
+  type LivePeer, type LivePing, type LiveSnapshot, type GroupInput,
 } from './source';
 import {
   DEMO_BONUS_RESULTS, DEMO_BONUS_TIPS, DEMO_ME, DEMO_NOW, DEMO_PROFILES, DEMO_RESULTS, DEMO_RIDERS, DEMO_STAGES,
@@ -59,7 +59,11 @@ export class DemoSource implements DataSource {
   private bonusTips: BonusTip[] = clone(DEMO_BONUS_TIPS);
   private bonusResults: BonusResult[] = clone(DEMO_BONUS_RESULTS);
   private profiles: Profile[] = clone(DEMO_PROFILES);
-  private inviteCode = 'GIRO27';
+  /** die Gruppe der Demo – „du“ leitest sie */
+  private group: Group = {
+    id: 'g-demo', name: 'Gruppetto', owner_id: DEMO_ME, created_at: new Date(DEMO_NOW - 200 * 864e5).toISOString(),
+    ...clone(DEFAULT_RULES), can_manage: true, invite_code: 'GIRO27',
+  };
   private nextId = 50000;
   /** Automatik: von Hand pausierte Etappen (wie der Trigger in der Datenbank) und eigene Protokolleinträge */
   private syncPaused = new Map<number, string>();
@@ -134,7 +138,7 @@ export class DemoSource implements DataSource {
     const ids = new Set(stages.map((s) => s.id));
     const started = new Set(stages.filter((s) => new Date(s.starts_at).getTime() <= now).map((s) => s.id));
     const published = new Set(stages.filter((s) => s.results_published).map((s) => s.id));
-    const t = this.tours.find((x) => x.id === tour.id) ?? tour;
+    const t = { ...(this.tours.find((x) => x.id === tour.id) ?? tour), tip_limit: this.group.tip_limit };
     const bonusOpen = now < bonusDeadline(t, stages).getTime();
     return clone({
       tour: t,
@@ -145,7 +149,8 @@ export class DemoSource implements DataSource {
       results: this.results.filter((r) => published.has(r.stage_id)).sort((a, b) => a.position - b.position),
       bonusTips: this.bonusTips.filter((b) => b.tour_id === tour.id && (b.user_id === DEMO_ME || !bonusOpen)),
       bonusResults: this.bonusResults.filter((b) => b.tour_id === tour.id),
-      scale: DEFAULT_SCALE,
+      scale: scaleOf(this.group.stage_points),
+      rules: { stage_points: this.group.stage_points, bonus_points: this.group.bonus_points, tip_limit: this.group.tip_limit, underdog_bonus: this.group.underdog_bonus },
       standings: DEMO_STANDINGS.filter((x) => published.has(x.stage_id)),
     });
   }
@@ -472,16 +477,70 @@ export class DemoSource implements DataSource {
     return this.tips.filter((t) => t.stage_id === stageId).map((t) => t.user_id);
   }
 
-  // ---------- Spieler ----------
+  // ---------- Gruppe ----------
 
   async joinGroup(code: string, name: string): Promise<void> {
     await wait(300);
-    if (code.trim().toUpperCase() !== this.inviteCode) throw new ApiError('invalid_code');
+    if (code.trim().toUpperCase() !== this.group.invite_code) throw new ApiError('invalid_code');
     this.checkName(name);
     const me = this.profiles.find((p) => p.id === DEMO_ME)!;
     me.display_name = name.trim();
     me.is_member = true;
   }
+
+  async createGroup(groupName: string, name: string): Promise<string> {
+    await wait(300);
+    const title = groupName.trim();
+    if (title.length < 2 || title.length > 30) throw new ApiError('invalid_group_name');
+    this.checkName(name);
+    const me = this.profiles.find((p) => p.id === DEMO_ME)!;
+    me.display_name = name.trim();
+    me.is_member = true;
+    this.group = { ...this.group, ...clone(DEFAULT_RULES), name: title, owner_id: DEMO_ME, invite_code: this.randomCode() };
+    return this.group.invite_code!;
+  }
+
+  private randomCode(): string {
+    const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    return Array.from({ length: 6 }, () => abc[Math.floor(Math.random() * abc.length)]).join('');
+  }
+
+  async loadGroup(): Promise<Group | null> {
+    await wait();
+    const me = this.profiles.find((p) => p.id === DEMO_ME);
+    return me?.is_member ? clone(this.group) : null;
+  }
+
+  async updateGroup(input: GroupInput): Promise<void> {
+    await wait();
+    const title = input.name.trim();
+    if (title.length < 2 || title.length > 30) throw new ApiError('invalid_group_name');
+    const ok = (list: number[], min: number, max: number) => list.length >= min && list.length <= max && list.every((x) => Number.isInteger(x) && x >= 0 && x <= 100);
+    if (!ok(input.stage_points, 1, 10) || !ok(input.bonus_points, 3, 3) || (input.tip_limit !== null && (input.tip_limit < 1 || input.tip_limit > 21))) throw new ApiError('invalid_rules');
+    this.group = { ...this.group, name: title, stage_points: [...input.stage_points], bonus_points: [...input.bonus_points], tip_limit: input.tip_limit, underdog_bonus: input.underdog_bonus };
+  }
+
+  async newInviteCode(): Promise<string> {
+    await wait();
+    this.group.invite_code = this.randomCode();
+    return this.group.invite_code;
+  }
+
+  async removeMember(userId: string): Promise<void> {
+    await wait();
+    if (userId === DEMO_ME) throw new ApiError('cannot_remove_self');
+    const p = this.profiles.find((x) => x.id === userId);
+    if (p) p.is_member = false;
+  }
+
+  async transferGroup(userId: string): Promise<void> {
+    await wait();
+    if (!this.profiles.some((p) => p.id === userId && p.is_member)) throw new ApiError('not_in_group');
+    // Demo: du bleibst Admin der App und kannst die Gruppe deshalb weiter verwalten
+    this.group.owner_id = userId;
+  }
+
+  // ---------- Spieler ----------
 
   private checkName(name: string) {
     const n = name.trim();
@@ -517,7 +576,7 @@ export class DemoSource implements DataSource {
     const rider = this.riders.find((r) => r.id === riderId)!;
     if (rider.tour_id !== stage.tour_id) throw new ApiError('rider_not_in_tour');
     if (rider.status !== 'active') throw new ApiError('rider_not_active');
-    const tour = this.tours.find((t) => t.id === stage.tour_id)!;
+    const tour = { ...this.tours.find((t) => t.id === stage.tour_id)!, tip_limit: this.group.tip_limit };
     const limit = tipLimit(tour, rider);
     if (limit !== null) {
       const tourStages = new Set(this.stages.filter((s) => s.tour_id === stage.tour_id).map((s) => s.id));
@@ -551,7 +610,7 @@ export class DemoSource implements DataSource {
 
   async adminListUsers(): Promise<AdminUser[]> {
     await wait();
-    return clone(this.profiles.map((p) => ({ ...p, email: `${p.id.slice(2)}@beispiel.de` })));
+    return clone(this.profiles.map((p) => ({ ...p, email: `${p.id.slice(2)}@beispiel.de`, group_name: p.is_member ? this.group.name : null, is_owner: p.id === this.group.owner_id })));
   }
 
   async adminSetFlags(userId: string, member: boolean, admin: boolean, pro: boolean): Promise<void> {
@@ -559,16 +618,6 @@ export class DemoSource implements DataSource {
     if (userId === DEMO_ME && !admin) throw new ApiError('cannot_remove_own_admin');
     const p = this.profiles.find((x) => x.id === userId)!;
     Object.assign(p, { is_member: member, is_admin: admin, is_pro: pro });
-  }
-
-  async getInviteCode(): Promise<string> {
-    await wait();
-    return this.inviteCode;
-  }
-
-  async setInviteCode(code: string): Promise<void> {
-    await wait();
-    this.inviteCode = code.trim().toUpperCase();
   }
 
   async saveTour(tour: TourInput): Promise<void> {

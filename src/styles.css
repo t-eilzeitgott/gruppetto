@@ -926,6 +926,19 @@ tr.is-me > * { background: var(--accent-soft); }
 .slot select { flex: 1 1 auto; }
 
 .invite-code { font-size: 34px; font-weight: 700; letter-spacing: 0.12em; overflow-wrap: anywhere; }
+/* Gruppe: Punkte je Platz (Regeln der Leitung) */
+.points-field legend { margin-bottom: 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.points-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.points-grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.points-cell { display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 0; }
+.points-cell span { font-size: 11.5px; color: var(--muted); text-align: center; }
+.points-cell input { width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px; text-align: center; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; }
+.points-cell input::-webkit-outer-spin-button, .points-cell input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.form > .text-btn { align-self: flex-start; }
+.member-row { padding-top: 10px; padding-bottom: 10px; }
+.member-row__head { width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
+.member-row__chev { flex: none; transition: transform 0.15s; }
+.member-row__chev.is-open { transform: rotate(90deg); }
 .user-row { gap: 12px; }
 .toggles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .toggle {
