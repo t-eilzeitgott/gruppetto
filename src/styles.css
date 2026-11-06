@@ -3319,12 +3319,12 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 .home-page {
   flex: 0 0 100%; min-width: 0; box-sizing: border-box; scroll-snap-align: start; scroll-snap-stop: always;
   padding: 0 calc(16px + var(--safe-r)) 0 calc(16px + var(--safe-l));
-  /* eigene Ebene: der Versatz der nicht sichtbaren Seite (beim Scrollen nachgeführt) kostet kein Neuzeichnen */
-  will-change: transform;
 }
 /* die gerade nicht sichtbare Seite: nur auf Bildschirmhöhe gekürzt (die Seite ist so lang wie die sichtbare), aber
-   weiter gezeichnet – gleitet sie herein, steht sie schon */
-.home-page.is-away { max-height: 100vh; max-height: 100lvh; overflow: hidden; }
+   weiter gezeichnet – gleitet sie herein, steht sie schon. Eigene Ebene: ihr Versatz (beim Scrollen nachgeführt)
+   kostet kein Neuzeichnen. Die sichtbare Seite hat bewusst KEINE eigene Ebene: Auf dem iPhone blieben in so einer
+   Ebene Teile unbemalt, wenn die Seite nach dem Laden wuchs (halbe Reiter, Karte ohne Hintergrund, Knöpfe weg). */
+.home-page.is-away { max-height: 100vh; max-height: 100lvh; overflow: hidden; will-change: transform; }
 @media (min-width: 900px) { .home-pager { margin: -8px -40px 0; } .home-page { padding: 0 40px; } }
 
 /* Titel: hell = aktiv, gedämpft = daneben – stufenlos nach --p (0 Heute … 1 News), gesetzt vom Pager */

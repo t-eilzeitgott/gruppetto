@@ -18,7 +18,7 @@ import { stageOfDay } from '../game/abfahrt/sprintRiders';
 import { berlinDayKey } from '../game/abfahrt/rng';
 import type { Profile } from '../lib/types';
 import { NewsPeek, NewsTab, hasUnread, markNewsSeen, newestAt, useNewsItems, useRoundNews } from '../ui/NewsFeed';
-import { markUiBusy } from '../game/uiBusy';
+import { markUiBusy, uiBusy } from '../game/uiBusy';
 
 type HomeTab = 'heute' | 'news';
 const TAB_KEY = 'gruppetto.home.tab';
@@ -61,6 +61,8 @@ function HomeTabs({ tab, onTab, unread, ctl }: { tab: HomeTab; onTab: (t: HomeTa
 }
 
 const calm = () => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+/** iPhone/iPad (WebKit) – dort gibt es die Zeichenfehler, die der Pager unten ausgleicht */
+const IOS = typeof navigator !== 'undefined' && (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 const ORDER: HomeTab[] = ['heute', 'news'];
 
 /**
@@ -150,6 +152,21 @@ function usePager(tab: HomeTab, commit: (t: HomeTab) => void, tabs: RefObject<Ta
       raf = requestAnimationFrame(() => { raf = 0; align(); });
     };
     const onResize = () => { el.scrollLeft = idx.current * width(); align(); };
+    // iPhone (WebKit): wächst oder schrumpft eine Seite (Daten geladen, Bestenlisten da), bleiben manchmal Teile der
+    // Seite unbemalt stehen, bis man wischt. Nach jeder Größenänderung – in einem ruhigen Moment – einmal neu
+    // zeichnen lassen: der Pager bekommt für zwei Bilder eine eigene Ebene (sichtbar ändert sich nichts).
+    let healT = 0;
+    const heal = () => {
+      if (uiBusy()) { healT = window.setTimeout(heal, 300); return; }
+      el.style.opacity = '0.999';
+      requestAnimationFrame(() => requestAnimationFrame(() => { el.style.opacity = ''; }));
+    };
+    const healSoon = () => { window.clearTimeout(healT); healT = window.setTimeout(heal, 160); };
+    const ro = IOS && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(healSoon) : null;
+    if (ro) for (const p of pages()) ro.observe(p);
+    const onShow = () => { if (IOS && !document.hidden) healSoon(); };
+    document.addEventListener('visibilitychange', onShow);
+    window.addEventListener('pageshow', onShow);
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('scrollend', onEnd);
     el.addEventListener('touchstart', onDown, { passive: true });
@@ -159,6 +176,11 @@ function usePager(tab: HomeTab, commit: (t: HomeTab) => void, tabs: RefObject<Ta
     window.addEventListener('resize', onResize);
     return () => {
       window.clearTimeout(timer);
+      window.clearTimeout(healT);
+      ro?.disconnect();
+      document.removeEventListener('visibilitychange', onShow);
+      window.removeEventListener('pageshow', onShow);
+      el.style.opacity = '';
       cancelAnimationFrame(raf);
       el.removeEventListener('scroll', onScroll);
       el.removeEventListener('scrollend', onEnd);
