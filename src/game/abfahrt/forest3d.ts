@@ -17,8 +17,8 @@ import { GB, M, bakedTexture, lin, mixC, mulC, softNormals } from './models3d';
 import { mulberry32 } from './rng';
 import { TREE_CLASS } from './season';
 
-export type TreeKind = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'palm' | 'poplar' | 'apple';
-export const TREE_KINDS = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'palm', 'poplar', 'apple']);
+export type TreeKind = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'palm' | 'poplar' | 'apple' | 'plane' | 'stonePine';
+export const TREE_KINDS = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'palm', 'poplar', 'apple', 'plane', 'stonePine']);
 
 
 // ------------------------------------------------------------------ Modelle
@@ -108,13 +108,14 @@ function conifer(o: { h: number; w: number; tiers: number; br: number; dark: str
 }
 
 /** Laubbaum: Stamm mit Ästen, Krone aus vielen Blätterballen (außen und oben hell, innen dunkel) */
-function broadleaf(o: { cw: number; ch: number; trunkH: number; n: number; dark: string; light: string; seed: number; hd: boolean; blob?: number }): THREE.BufferGeometry {
+function broadleaf(o: { cw: number; ch: number; trunkH: number; n: number; dark: string; light: string; seed: number; hd: boolean; blob?: number; bark?: string; stem?: number }): THREE.BufferGeometry {
   const b = new GB();
   const r: Rnd = mulberry32(o.seed * 6007 + 5);
-  const trunk = lin('#5a4030');
+  const trunk = lin(o.bark ?? '#5a4030');
   const D = lin(o.dark);
   const Lc = lin(o.light);
-  b.addFn(new THREE.CylinderGeometry(0.13, 0.3, o.trunkH + 0.9, o.hd ? 8 : 5), M(0, (o.trunkH + 0.9) / 2), (p) => mulC(trunk, 0.75 + 0.3 * Math.min(1, p.y / o.trunkH)));
+  const st = o.stem ?? 1;
+  b.addFn(new THREE.CylinderGeometry(0.13 * st, 0.3 * st, o.trunkH + 0.9, o.hd ? 8 : 5), M(0, (o.trunkH + 0.9) / 2), (p) => mulC(trunk, 0.75 + 0.3 * Math.min(1, p.y / o.trunkH)));
   const nb = o.hd ? 6 : 3;
   for (let i = 0; i < nb; i++) {
     const a = (i / nb) * Math.PI * 2 + r() * 0.6;
@@ -264,6 +265,12 @@ const VARIANTS: Variant[] = [
   { kind: 'poplar', make: (hd) => cypress(hd, 33, { H: 12.5, w: 1.1, dark: '#5e7046', light: '#b0bb7c', trunk: 2.0 }) },
   // Apfelbaum (Südtirol): klein, rund, kurzer Stamm
   { kind: 'apple', make: (hd) => broadleaf({ cw: 3.0, ch: 2.6, trunkH: 1.1, n: hd ? 48 : 8, dark: '#52663f', light: '#9eb06c', seed: 53, hd }) },
+  // Platane (Alleen in Südfrankreich, Boulevards): hoher heller Stamm, breite lockere Krone
+  { kind: 'plane', make: (hd) => broadleaf({ cw: 7.4, ch: 6.6, trunkH: 4.4, n: hd ? 96 : 13, dark: '#4c613b', light: '#a3b46c', seed: 61, hd, bark: '#a59d82', stem: 1.35 }) },
+  { kind: 'plane', make: (hd) => broadleaf({ cw: 6.6, ch: 7.4, trunkH: 4.9, n: hd ? 96 : 13, dark: '#47603a', light: '#9aae66', seed: 67, hd, bark: '#9c9479', stem: 1.3, blob: 1.05 }) },
+  // Pinie (Rom, Latium, Adria): langer nackter Stamm, flacher Schirm
+  { kind: 'stonePine', make: (hd) => broadleaf({ cw: 8.2, ch: 2.7, trunkH: 6.6, n: hd ? 84 : 12, dark: '#2b4328', light: '#6b8650', seed: 71, hd, bark: '#6e4c38', stem: 1.15, blob: 1.15 }) },
+  { kind: 'stonePine', make: (hd) => broadleaf({ cw: 7.0, ch: 2.4, trunkH: 5.6, n: hd ? 76 : 11, dark: '#2e472b', light: '#718b55', seed: 79, hd, bark: '#6a4a36', stem: 1.1, blob: 1.15 }) },
 ];
 
 /**

@@ -26,6 +26,11 @@ export interface CampanileSpec {
   rnd: (k: number) => number;
   /** Landessprache der Strecke (Backstein vor allem in Italien) */
   lang: string;
+  /**
+   * Turmform nach dem Ortsbild (venue.ts): Campanile (Italien), Clocher mit hohem schlankem Schieferhelm und Wetterhahn
+   * (Frankreich), englischer Kirchturm mit Zinnen und vier Fialen ohne Helm
+   */
+  kind?: 'campanile' | 'clocher' | 'tower';
 }
 
 const sh = (c: RGBf, f: number): RGBf => [c[0] * f, c[1] * f, c[2] * f];
@@ -57,7 +62,8 @@ export function campanile(T: Town, S: CampanileSpec) {
   const dark = lin('#1b1714');
   const reveal = sh(wallC, 0.7);
   const blueDial = rnd(4) < 0.4;
-  const helmKind = tall ? (rnd(5) < 0.7 ? 0 : 2) : S.lang === 'it' ? (rnd(5) < 0.6 ? 0 : 1) : rnd(5) < 0.55 ? 1 : 2;
+  const form = S.kind ?? 'campanile';
+  const helmKind = form === 'clocher' ? (rnd(5) < 0.85 ? 1 : 2) : tall ? (rnd(5) < 0.7 ? 0 : 2) : S.lang === 'it' ? (rnd(5) < 0.6 ? 0 : 1) : rnd(5) < 0.55 ? 1 : 2;
   const helmC: RGBf = lin(['#a75a3a', '#5a6266', '#5e9480'][helmKind]);
 
   // ---- Seiten: Normale (u längs, v quer) und Richtung „rechts“ von außen gesehen
@@ -280,10 +286,36 @@ export function campanile(T: Town, S: CampanileSpec) {
   corbels(crown0, crown1);
   const roof0 = cornice(crown1, 0.5, 0.42);
 
-  // ---- Helm: achteckig über dem Quadrat, Ecken mit Blei abgedeckt, beim Campanile vier Fialen
+  // ---- englischer Kirchturm: Zinnen und vier Fialen, flaches Dach (kein Helm)
+  if (form === 'tower') {
+    const cr = roof0;
+    const merl = 0.55;
+    for (const f of faces) {
+      const n = 5;
+      for (let k = 0; k < n; k++) {
+        if (k % 2) continue;
+        const s0 = -hw + (k * 2 * hw) / n, s1 = -hw + ((k + 1) * 2 * hw) / n;
+        block(plain, f, s0, s1, cr, cr + 0.9, -0.05, 0.25, trim);
+      }
+      rect(plain, f, -hw, hw, cr - 0.05, cr + merl, 0.2, sh(wallC, 0.95));
+    }
+    plain.quad(P(-hw, -hw, cr), P(hw, -hw, cr), P(hw, hw, cr), P(-hw, hw, cr), sh(wallC, 0.7));
+    for (const [su, sv] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const cu = su * (hw - 0.25), cv = sv * (hw - 0.25);
+      const r = 0.3;
+      const base = [[cu - r, cv - r], [cu + r, cv - r], [cu + r, cv + r], [cu - r, cv + r]];
+      for (let q = 0; q < 4; q++) {
+        const [a0, b0] = base[q], [a1, b1] = base[(q + 1) % 4];
+        plain.quad(P(a0, b0, cr), P(a1, b1, cr), P(a1, b1, cr + 1.4), P(a0, b0, cr + 1.4), trim);
+        plain.tri(P(a0, b0, cr + 1.4), P(a1, b1, cr + 1.4), P(cu, cv, cr + 3.2), trim);
+      }
+    }
+    return;
+  }
+  // ---- Helm: achteckig über dem Quadrat, Ecken mit Blei abgedeckt, beim Campanile vier Fialen; Clocher hoch und schlank
   const hb = hw + 0.16;
   const R8 = hb / Math.cos(PI / 8);
-  const hH = tall ? 10.5 : helmKind === 0 ? 7.5 : 9.5;
+  const hH = form === 'clocher' ? 15 + rnd(8) * 6 : tall ? 10.5 : helmKind === 0 ? 7.5 : 9.5;
   const tipH = roof0 + hH;
   const oct = (k: number) => {
     const a = PI / 8 + (k * PI) / 4;
@@ -302,7 +334,7 @@ export function campanile(T: Town, S: CampanileSpec) {
     const su = Math.sign(Math.cos(ang)), sv = Math.sign(Math.sin(ang));
     const a = oct(2 * c), b = oct(2 * c + 1);
     plain.tri(P(su * hb, sv * hb, roof0 - 0.02), P(a[0], a[1], roof0), P(b[0], b[1], roof0), lead);
-    if (tall || helmKind === 0) {
+    if ((tall || helmKind === 0) && form === 'campanile') {
       // Fiale: Sockel und schlanke vierseitige Spitze auf der Ecke
       const cu = su * (hb - 0.32), cv = sv * (hb - 0.32);
       const r = 0.24, fh = tall ? 2.4 : 1.7;
@@ -340,4 +372,11 @@ export function campanile(T: Town, S: CampanileSpec) {
   // Kreuz (flach wie ein echtes, Arme längs der Straße)
   box3(-0.05, 0.05, -0.05, 0.05, bc + br - 0.05, bc + br + 1.5, gold);
   box3(-0.42, 0.42, -0.05, 0.05, bc + br + 0.98, bc + br + 1.1, gold);
+  // Clocher: Wetterhahn auf dem Kreuz
+  if (form === 'clocher') {
+    const hy = bc + br + 1.6;
+    box3(-0.32, 0.22, -0.04, 0.04, hy, hy + 0.32, gold);
+    box3(0.12, 0.3, -0.04, 0.04, hy + 0.32, hy + 0.62, gold);
+    box3(-0.42, -0.24, -0.04, 0.04, hy + 0.2, hy + 0.55, gold);
+  }
 }

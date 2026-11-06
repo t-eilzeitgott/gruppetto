@@ -128,7 +128,7 @@ export function seasonLook(dayKey: string, region: Region): SeasonLook {
 /** Baumklassen für die Färbung (Bildbäume, forest3d.ts) */
 export const TREE_CLASS: Record<string, number> = {
   pine: 0, pineSnow: 0, cypress: 0, olive: 0, palm: 0,
-  tree: 1, treeRound: 1, poplar: 1,
+  tree: 1, treeRound: 1, poplar: 1, plane: 1, stonePine: 0,
   larch: 2,
   apple: 3,
 };

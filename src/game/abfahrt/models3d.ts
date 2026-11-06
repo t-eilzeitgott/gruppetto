@@ -365,7 +365,7 @@ export const mixC = (a: RGBf, b: RGBf, t: number): RGBf => [a[0] + (b[0] - a[0])
 export const mulC = (a: RGBf, f: number): RGBf => [a[0] * f, a[1] * f, a[2] * f];
 
 export type Prop3D = 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'olive' | 'bush' | 'rock' | 'boulder'
-  | 'snowpole' | 'hay' | 'vinerow' | 'fence' | 'lamp' | 'logs' | 'palm' | 'poplar' | 'apple'
+  | 'snowpole' | 'hay' | 'vinerow' | 'fence' | 'lamp' | 'logs' | 'palm' | 'poplar' | 'apple' | 'plane' | 'stonePine'
   // Paris (paris3d.ts)
   | 'lampParis' | 'morris' | 'kiosk' | 'wallace' | 'obelisk';
 

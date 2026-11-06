@@ -38,6 +38,8 @@ export interface Scape {
   alpine: number;
   /** Geschosse über dem Erdgeschoss in der Stadt (von … bis) */
   floors?: [number, number];
+  /** Wandfarben der Häuser mit eigener Farbe (Indizes in WALL_PAL, facade.ts); fehlt es: nach Gegend und Sprache */
+  walls?: number[];
   roof: RoofKind;
   church: ChurchKind;
   lamp: LampKind;
@@ -178,7 +180,7 @@ export const SCAPES = {
   }),
   cotentin: sc({
     id: 'cotentin', label: 'Cotentin', country: 'fr', lang: 'fr', region: 'nord',
-    styles: [['bruchstein', 3], ['creme', 1], ['haussmann', 1]], alpine: 0.3, roof: 'slate', church: 'clocher', lamp: 'fr', flags: ['fr', 'normandie'],
+    styles: [['bruchstein', 3], ['creme', 1], ['haussmann', 1]], alpine: 0.3, walls: [12, 15, 17, 17, 19, 13, 27], roof: 'slate', church: 'clocher', lamp: 'fr', flags: ['fr', 'normandie'],
     names: {
       villages: ['Barfleur', 'Saint-Vaast-la-Hougue', 'Valognes', 'Les Pieux', 'Beaumont-Hague', 'Quettehou', 'Bricquebec', 'Saint-Pierre-Église', 'Omonville', 'Auderville'],
       valleys: ['Val de Saire', 'La Hague', 'Vallée de la Divette', 'Vallée de la Douve', 'Marais du Cotentin'],
@@ -190,7 +192,7 @@ export const SCAPES = {
   }),
   bretagne: sc({
     id: 'bretagne', label: 'Bretagne', country: 'fr', lang: 'fr', region: 'nord',
-    styles: [['bruchstein', 3], ['creme', 2], ['fachwerk', 0.5]], alpine: 0.4, roof: 'slate', church: 'clocher', lamp: 'fr', flags: ['bzh', 'bzh', 'fr'],
+    styles: [['bruchstein', 3], ['creme', 2], ['fachwerk', 0.5]], alpine: 0.4, walls: [17, 17, 12, 15, 19, 27, 28], roof: 'slate', church: 'clocher', lamp: 'fr', flags: ['bzh', 'bzh', 'fr'],
     names: {
       villages: ['Combourg', 'Bécherel', 'Saint-Méen-le-Grand', 'Ploërmel', 'Sérent', 'Josselin', 'Pleine-Fougères', 'Rochefort-en-Terre', 'Malestroit', 'Guer'],
       valleys: ["Vallée de l'Oust", 'Vallée de la Rance', 'Landes de Lanvaux', 'Pays de Brocéliande', 'Vallée du Couesnon'],
@@ -202,7 +204,7 @@ export const SCAPES = {
   }),
   anjou: sc({
     id: 'anjou', label: 'Anjou und Loire', country: 'fr', lang: 'fr', region: 'nord',
-    styles: [['creme', 3], ['haussmann', 1.5], ['bruchstein', 1], ['fachwerk', 0.5]], alpine: 0.1, roof: 'slate', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr'],
+    styles: [['creme', 3], ['haussmann', 1.5], ['bruchstein', 1], ['fachwerk', 0.5]], alpine: 0.1, walls: [12, 17, 17, 15, 13, 14], roof: 'slate', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr'],
     names: {
       villages: ['Bouchemaine', 'Candé', 'Nozay', 'Redon', 'Guémené-Penfao', 'Savennières', 'Saumur', 'Cour-Cheverny', 'Cellettes', 'Mont-près-Chambord', 'Bracieux', 'Chaumont-sur-Loire'],
       valleys: ['Val de Loire', 'Vallée de la Maine', 'Vallée du Loir', 'Sologne', 'Vallée du Cher', 'Coteaux du Layon'],
@@ -214,7 +216,7 @@ export const SCAPES = {
   }),
   burgund: sc({
     id: 'burgund', label: 'Berry und Burgund', country: 'fr', lang: 'fr', region: 'nord',
-    styles: [['creme', 3], ['ocker', 1], ['bruchstein', 2], ['fachwerk', 0.7]], alpine: 0.25, roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'bourgogne'],
+    styles: [['creme', 3], ['ocker', 1], ['bruchstein', 2], ['fachwerk', 0.7]], alpine: 0.25, walls: [12, 13, 14, 18, 15, 16], roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'bourgogne'],
     names: {
       villages: ['Avord', 'Nevers', 'Château-Chinon', 'Autun', 'Mesvres', 'Glux-en-Glenne', 'Saint-Léger-sous-Beuvray', 'Châtillon-en-Bazois', 'Montcenis', 'Uchon'],
       valleys: ['Bazois', 'Vallée de la Loire', 'Vallée de l’Arroux', 'Champagne berrichonne', 'Vallée de l’Yonne'],
@@ -226,7 +228,7 @@ export const SCAPES = {
   }),
   bugey: sc({
     id: 'bugey', label: 'Dombes und Bugey', country: 'fr', lang: 'fr', region: 'alpen',
-    styles: [['bruchstein', 2], ['creme', 2], ['ocker', 1], ['chalet', 0.5]], alpine: 0.45, roof: 'tile', church: 'clocher', lamp: 'fr', flags: ['fr'],
+    styles: [['bruchstein', 2], ['creme', 2], ['ocker', 1], ['chalet', 0.5]], alpine: 0.45, walls: [32, 33, 34, 12, 13, 37], roof: 'tile', church: 'clocher', lamp: 'fr', flags: ['fr'],
     names: {
       villages: ['Chalamont', "Pont-d'Ain", 'Poncin', 'Nantua', 'Injoux', 'Artemare', 'Culoz', 'Ochiaz', 'Hautecourt', 'Belley'],
       valleys: ['Dombes', 'Valromey', 'Vallée de l’Ain', 'Bugey', 'Marais de Lavours', 'Vallée du Rhône'],
@@ -238,7 +240,7 @@ export const SCAPES = {
   }),
   savoyen: sc({
     id: 'savoyen', label: 'Savoyen', country: 'fr', lang: 'fr', region: 'alpen',
-    styles: [['chalet', 2], ['creme', 2], ['bruchstein', 1], ['ocker', 1]], alpine: 0.6, roof: 'slate', church: 'clocher', lamp: 'fr', flags: ['fr', 'savoie'],
+    styles: [['chalet', 2], ['creme', 2], ['bruchstein', 1], ['ocker', 1]], alpine: 0.6, walls: [32, 33, 34, 35, 36, 37], roof: 'slate', church: 'clocher', lamp: 'fr', flags: ['fr', 'savoie'],
     names: {
       villages: ['La Clusaz', 'Le Grand-Bornand', 'Thônes', 'Beaufort', 'Megève', 'Saint-Gervais', 'Passy', 'Cluses', 'Bonneville', 'Hauteluce', 'Villard-sur-Doron', 'Ugine'],
       valleys: ['Vallée de l’Arve', 'Beaufortain', 'Val d’Arly', 'Vallée du Giffre', 'Aravis', 'Tarentaise'],
@@ -250,7 +252,7 @@ export const SCAPES = {
   }),
   dauphine: sc({
     id: 'dauphine', label: 'Dauphiné und Rhonetal', country: 'fr', lang: 'fr', region: 'provence',
-    styles: [['creme', 2], ['ocker', 2], ['lachs', 1], ['gelb', 1], ['bruchstein', 1]], alpine: 0.2, roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr'],
+    styles: [['creme', 2], ['ocker', 2], ['lachs', 1], ['gelb', 1], ['bruchstein', 1]], alpine: 0.2, walls: [12, 13, 14, 16, 18, 0, 3, 7], roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr'],
     names: {
       villages: ['Saint-Laurent-du-Pont', 'Voiron', 'Vinay', 'Roybon', 'Hauterives', 'Romans-sur-Isère', 'Tullins', 'Saint-Marcellin', 'Tain-l’Hermitage', 'Tournon'],
       valleys: ['Vallée de l’Isère', 'Vallée du Rhône', 'Chambaran', 'Bas-Dauphiné', 'Royans', 'Drôme des Collines'],
@@ -262,7 +264,7 @@ export const SCAPES = {
   }),
   languedoc: sc({
     id: 'languedoc', label: 'Cevennen und Languedoc', country: 'fr', lang: 'fr', region: 'provence',
-    styles: [['ocker', 2], ['creme', 2], ['lachs', 1], ['bruchstein', 1.5]], alpine: 0.2, roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'occitanie'],
+    styles: [['ocker', 2], ['creme', 2], ['lachs', 1], ['bruchstein', 1.5]], alpine: 0.2, walls: [13, 14, 16, 18, 12, 0, 7, 3], roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'occitanie'],
     names: {
       villages: ['Largentière', 'Lablachère', 'Saint-Ambroix', 'Alès', 'Anduze', 'Quissac', 'Saint-Mathieu-de-Tréviers', 'Castelnau-le-Lez', 'Aniane', 'Le Vigan', 'Saint-Guilhem-le-Désert'],
       valleys: ['Vallée de l’Hérault', 'Garrigues', 'Vallée du Gardon', 'Pic Saint-Loup', 'Vallée de la Cèze', 'Vallée de l’Ardèche'],
@@ -274,7 +276,7 @@ export const SCAPES = {
   }),
   cevennen: sc({
     id: 'cevennen', label: 'Cevennen und Lozère', country: 'fr', lang: 'fr', region: 'pyrenaeen',
-    styles: [['bruchstein', 3], ['creme', 1.5], ['ocker', 0.5]], alpine: 0.6, roof: 'lauze', church: 'clocher', lamp: 'fr', flags: ['fr', 'occitanie'],
+    styles: [['bruchstein', 3], ['creme', 1.5], ['ocker', 0.5]], alpine: 0.6, walls: [13, 15, 12, 18, 37], roof: 'lauze', church: 'clocher', lamp: 'fr', flags: ['fr', 'occitanie'],
     names: {
       villages: ['Florac', 'Saint-Maurice-Navacelles', 'Le Vigan', 'Meyrueis', 'Ispagnac', 'Sainte-Enimie', 'Balsièges', 'Le Pont-de-Montvert', 'Langogne', 'Marvejols'],
       valleys: ['Cirque de Navacelles', 'Causse Méjean', 'Gorges du Tarn', 'Vallée du Lot', 'Causse de Sauveterre', 'Vallée Française'],
@@ -286,7 +288,7 @@ export const SCAPES = {
   }),
   albi: sc({
     id: 'albi', label: 'Aveyron und Albigeois', country: 'fr', lang: 'fr', region: 'provence',
-    styles: [['backstein', 3], ['ocker', 1], ['lachs', 1], ['bruchstein', 1], ['fachwerk', 0.6]], alpine: 0.2, roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'occitanie'],
+    styles: [['backstein', 3], ['ocker', 1], ['lachs', 1], ['bruchstein', 1], ['fachwerk', 0.6]], alpine: 0.2, walls: [16, 18, 13, 3, 7, 12], roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'occitanie'],
     names: {
       villages: ['Naucelle', 'Rieupeyroux', 'Villefranche-de-Rouergue', 'Laguépie', 'Monestiés', 'Cordes-sur-Ciel', 'Carmaux', 'Sauveterre-de-Rouergue', 'Najac', 'Lescure'],
       valleys: ['Vallée du Tarn', 'Ségala', 'Vallée du Viaur', 'Vallée de l’Aveyron', 'Causse Comtal', 'Gaillacois'],
@@ -298,7 +300,7 @@ export const SCAPES = {
   }),
   toulouse: sc({
     id: 'toulouse', label: 'Toulouse', country: 'fr', lang: 'fr', region: 'provence',
-    styles: [['backstein', 4], ['lachs', 1.5], ['creme', 1]], alpine: 0, floors: [2, 4], roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'occitanie', 'toulouse'],
+    styles: [['backstein', 4], ['lachs', 1.5], ['creme', 1]], alpine: 0, walls: [16, 3, 7, 8, 13, 18], floors: [2, 4], roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'occitanie', 'toulouse'],
     names: {
       villages: ['Portet-sur-Garonne', 'Pinsaguel', 'Lacroix-Falgarde', 'Muret', 'Carbonne', 'Saint-Sernin', 'Les Carmes', 'Empalot', 'Rangueil', 'Colomiers'],
       valleys: ['Vallée de la Garonne', 'Lauragais', 'Vallée de l’Ariège', 'Comminges', 'Coteaux du Volvestre'],
@@ -310,7 +312,7 @@ export const SCAPES = {
   }),
   bearn: sc({
     id: 'bearn', label: 'Gascogne und Béarn', country: 'fr', lang: 'fr', region: 'pyrenaeen',
-    styles: [['creme', 2], ['bruchstein', 2], ['ocker', 1], ['haussmann', 1]], alpine: 0.35, roof: 'slate', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'bearn', 'occitanie'],
+    styles: [['creme', 2], ['bruchstein', 2], ['ocker', 1], ['haussmann', 1]], alpine: 0.35, walls: [12, 13, 15, 17, 19, 32], roof: 'slate', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'bearn', 'occitanie'],
     names: {
       villages: ['Aurignac', 'Boulogne-sur-Gesse', 'Castelnau-Magnoac', 'Trie-sur-Baïse', 'Rabastens-de-Bigorre', 'Vic-en-Bigorre', 'Morlaàs', 'Lescar', 'Nay', 'Oloron-Sainte-Marie', 'Laruns', 'Arette'],
       valleys: ['Vallée d’Ossau', 'Vallée d’Aspe', 'Vallée du Gave de Pau', 'Coteaux de Gascogne', 'Magnoac', 'Plaine de Tarbes'],
@@ -322,7 +324,7 @@ export const SCAPES = {
   }),
   bigorre: sc({
     id: 'bigorre', label: 'Hautes-Pyrénées', country: 'fr', lang: 'fr', region: 'pyrenaeen',
-    styles: [['bruchstein', 3], ['creme', 1.5], ['chalet', 0.5]], alpine: 0.65, roof: 'slate', church: 'clocher', lamp: 'fr', flags: ['fr', 'occitanie'],
+    styles: [['bruchstein', 3], ['creme', 1.5], ['chalet', 0.5]], alpine: 0.65, walls: [12, 15, 17, 32, 33, 13], roof: 'slate', church: 'clocher', lamp: 'fr', flags: ['fr', 'occitanie'],
     names: {
       villages: ['Asson', 'Argelès-Gazost', 'Luz-Saint-Sauveur', 'Barèges', 'Sainte-Marie-de-Campan', 'Arreau', 'Saint-Lary-Soulan', 'Vielle-Aure', 'Pierrefitte', 'Cauterets'],
       valleys: ['Vallée de Campan', 'Val d’Azun', 'Pays Toy', 'Vallée d’Aure', 'Vallée du Louron', 'Vallée des Gaves'],
@@ -334,7 +336,7 @@ export const SCAPES = {
   }),
   baskenland: sc({
     id: 'baskenland', label: 'Baskenland', country: 'fr', lang: 'fr', region: 'pyrenaeen',
-    styles: [['fachwerk', 3], ['creme', 2], ['bruchstein', 0.6]], alpine: 0.3, roof: 'tile', church: 'clocher', lamp: 'fr', flags: ['eus', 'eus', 'fr'],
+    styles: [['fachwerk', 3], ['creme', 2], ['bruchstein', 0.6]], alpine: 0.3, walls: [17, 17, 27, 32, 12, 20], roof: 'tile', church: 'clocher', lamp: 'fr', flags: ['eus', 'eus', 'fr'],
     names: {
       villages: ['Hasparren', 'Saint-Jean-le-Vieux', 'Saint-Jean-Pied-de-Port', 'Larrau', 'Sainte-Engrâce', 'Mauléon', 'Tardets', 'Espelette', 'Cambo-les-Bains', 'Iholdy'],
       valleys: ['Pays de Cize', 'Soule', 'Vallée de la Nive', 'Labourd', 'Basse-Navarre', 'Barétous'],
@@ -346,7 +348,7 @@ export const SCAPES = {
   }),
   gironde: sc({
     id: 'gironde', label: 'Gascogne und Gironde', country: 'fr', lang: 'fr', region: 'provence',
-    styles: [['creme', 3], ['bruchstein', 1.5], ['ocker', 1], ['haussmann', 0.6]], alpine: 0.1, roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'occitanie'],
+    styles: [['creme', 3], ['bruchstein', 1.5], ['ocker', 1], ['haussmann', 0.6]], alpine: 0.1, walls: [12, 13, 14, 18, 15, 16], roof: 'tile', church: 'clocher', lamp: 'fr', alley: 'plane', flags: ['fr', 'occitanie'],
     names: {
       villages: ['Plaisance', 'Eauze', 'Sos', 'Casteljaloux', 'Cocumont', 'La Réole', 'Sauveterre-de-Guyenne', 'Saint-Quentin-de-Baron', 'Saint-Émilion', 'Pomerol', 'Fronsac', 'Castillon-la-Bataille'],
       valleys: ['Entre-deux-Mers', 'Vallée de la Dordogne', 'Armagnac', 'Vallée de la Garonne', 'Landes de Gascogne', 'Bazadais'],
@@ -359,7 +361,7 @@ export const SCAPES = {
   // Großbritannien
   grenzland: sc({
     id: 'grenzland', label: 'Scottish Borders und Cumbria', country: 'uk', lang: 'en', region: 'nord',
-    styles: [['bruchstein', 4], ['creme', 1], ['backstein', 0.6]], alpine: 0.6, roof: 'slate', church: 'tower', lamp: 'uk', flags: ['sco', 'sco', 'eng', 'uk'],
+    styles: [['bruchstein', 4], ['creme', 1], ['backstein', 0.6]], alpine: 0.6, walls: [26, 27, 15, 13, 17], roof: 'slate', church: 'tower', lamp: 'uk', flags: ['sco', 'sco', 'eng', 'uk'],
     names: {
       villages: ['Innerleithen', 'Galashiels', 'Melrose', 'Hawick', 'Newcastleton', 'Longtown', 'Brampton', 'Peebles', 'Selkirk', 'Jedburgh', 'Penrith', 'Wigton'],
       valleys: ['Tweeddale', 'Teviotdale', 'Liddesdale', 'Ettrick Valley', 'Eden Valley', 'Solway Plain'],
@@ -371,7 +373,7 @@ export const SCAPES = {
   }),
   lancashire: sc({
     id: 'lancashire', label: 'Lake District und Lancashire', country: 'uk', lang: 'en', region: 'nord',
-    styles: [['backstein', 4], ['bruchstein', 2], ['creme', 1]], alpine: 0.4, roof: 'slate', church: 'tower', lamp: 'uk', flags: ['eng', 'uk', 'lancs'],
+    styles: [['backstein', 4], ['bruchstein', 2], ['creme', 1]], alpine: 0.4, walls: [26, 27, 28, 29, 30, 31], roof: 'slate', church: 'tower', lamp: 'uk', flags: ['eng', 'uk', 'lancs'],
     names: {
       villages: ['Windermere', 'Milnthorpe', 'Carnforth', 'Lancaster', 'Blackburn', 'Chorley', 'Prescot', 'Clitheroe', 'Dunsop Bridge', 'Waddington', 'Belmont', 'Parbold'],
       valleys: ['Ribble Valley', 'Forest of Bowland', 'Lune Valley', 'Langdale', 'Borrowdale', 'West Pennine Moors'],
@@ -383,7 +385,7 @@ export const SCAPES = {
   }),
   wales: sc({
     id: 'wales', label: 'Wales', country: 'uk', lang: 'en', region: 'nord',
-    styles: [['bruchstein', 3], ['creme', 2], ['backstein', 1]], alpine: 0.5, roof: 'slate', church: 'chapel', lamp: 'uk', flags: ['cym', 'cym', 'uk'],
+    styles: [['bruchstein', 3], ['creme', 2], ['backstein', 1]], alpine: 0.5, walls: [26, 27, 28, 29, 30, 31, 10, 5], roof: 'slate', church: 'chapel', lamp: 'uk', flags: ['cym', 'cym', 'uk'],
     names: {
       villages: ['Newtown', 'Llandrindod Wells', 'Builth Wells', 'Brecon', 'Hirwaun', 'Treorchy', 'Ferndale', 'Aberdare', 'Nelson', 'Caerphilly', 'Llanidloes', 'Pontypridd'],
       valleys: ['Rhondda Fawr', 'Rhondda Fach', 'Cynon Valley', 'Vale of Usk', 'Wye Valley', 'Taff Valley'],
@@ -396,7 +398,7 @@ export const SCAPES = {
   // Italien und Slowenien
   triest: sc({
     id: 'triest', label: 'Triest und Karst', country: 'it', lang: 'it', region: 'riviera',
-    styles: [['creme', 3], ['gelb', 1.5], ['ocker', 1], ['haussmann', 1.5], ['bruchstein', 0.8]], alpine: 0.2, floors: [3, 5], roof: 'tile', church: 'campanile', lamp: 'it', flags: ['it', 'trieste'],
+    styles: [['creme', 3], ['gelb', 1.5], ['ocker', 1], ['haussmann', 1.5], ['bruchstein', 0.8]], alpine: 0.2, walls: [6, 2, 12, 14, 3, 10, 15], floors: [3, 5], roof: 'tile', church: 'campanile', lamp: 'it', flags: ['it', 'trieste'],
     names: {
       villages: ['Opicina', 'Sistiana', 'Duino', 'Prosecco', 'Muggia', 'Basovizza', 'Sgonico', 'Aurisina', 'Monrupino', 'Santa Croce'],
       valleys: ['Carso', 'Val Rosandra', 'Costiera Triestina', 'Altopiano carsico', 'Golfo di Trieste'],
@@ -432,7 +434,7 @@ export const SCAPES = {
   }),
   romagna: sc({
     id: 'romagna', label: 'Romagna und Adria', country: 'it', lang: 'it', region: 'riviera',
-    styles: [['gelb', 2], ['lachs', 2], ['creme', 2], ['ocker', 1]], alpine: 0, roof: 'tile', church: 'campanile', lamp: 'it', alley: 'pine', flags: ['it', 'romagna'],
+    styles: [['gelb', 2], ['lachs', 2], ['creme', 2], ['ocker', 1]], alpine: 0, walls: [2, 3, 7, 38, 41, 6], roof: 'tile', church: 'campanile', lamp: 'it', alley: 'pine', flags: ['it', 'romagna'],
     names: {
       villages: ['Argenta', 'Lugo', 'Cervia', 'Cesenatico', 'Bellaria', 'Riccione', 'Cattolica', 'Santarcangelo', 'Coriano', 'Ravenna'],
       valleys: ['Valli di Comacchio', 'Pianura romagnola', 'Valle del Marecchia', 'Riviera romagnola', 'Valle del Conca'],
@@ -468,7 +470,7 @@ export const SCAPES = {
   }),
   neapel: sc({
     id: 'neapel', label: 'Kampanien und Neapel', country: 'it', lang: 'it', region: 'riviera',
-    styles: [['gelb', 2], ['lachs', 2], ['ocker', 2], ['creme', 1], ['terrakotta', 1]], alpine: 0.05, floors: [3, 6], roof: 'tile', church: 'campanile', lamp: 'it', alley: 'pine', cobble: 0.4, flags: ['it', 'napoli'],
+    styles: [['gelb', 2], ['lachs', 2], ['ocker', 2], ['creme', 1], ['terrakotta', 1]], alpine: 0.05, walls: [38, 39, 40, 41, 42, 2, 3], floors: [3, 6], roof: 'tile', church: 'campanile', lamp: 'it', alley: 'pine', cobble: 0.4, flags: ['it', 'napoli'],
     names: {
       villages: ['Mergellina', 'Posillipo', 'Pozzuoli', 'Caserta', 'Capua', 'Venafro', 'Isernia', 'Castel di Sangro', 'Ercolano', 'Portici', 'Torre del Greco'],
       valleys: ['Valle del Volturno', 'Campi Flegrei', 'Valle Roveto', 'Terra di Lavoro', 'Agro aversano'],

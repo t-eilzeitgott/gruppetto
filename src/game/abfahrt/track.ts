@@ -90,7 +90,7 @@ export type SpriteKind =
   | 'pine' | 'pineSnow' | 'larch' | 'tree' | 'treeRound' | 'cypress' | 'palm' | 'olive' | 'bush' | 'flowers'
   | 'rock' | 'boulder' | 'snowpole' | 'chalet' | 'barn' | 'rifugio' | 'farmhouse' | 'cow' | 'cowBW' | 'hay'
   | 'fence' | 'vinerow' | 'sunflowers' | 'crowd' | 'chevron' | 'lamp' | 'parasol' | 'boat' | 'logs'
-  | 'tornante' | 'townSign' | 'passSign' | 'fountain' | 'flagpole' | 'campervan' | 'grassTuft' | 'stoneWall' | 'poplar' | 'apple'
+  | 'tornante' | 'townSign' | 'passSign' | 'fountain' | 'flagpole' | 'campervan' | 'grassTuft' | 'stoneWall' | 'poplar' | 'apple' | 'plane' | 'stonePine'
   // Straßenmöbel der Schauplätze (paris3d.ts)
   | 'lampParis' | 'morris' | 'kiosk' | 'wallace' | 'obelisk';
 
@@ -2158,8 +2158,10 @@ export class Track {
    */
   private venueDeco(start: number, n: number, biome: BiomeId, sec: number) {
     const sc = this.scape!;
-    if (biome !== 'village' || !this.boulevard) return;
     const r = mulberry32((this.seed ^ Math.imul(start + 29, 0x27d4eb2d)) >>> 0);
+    const alleyKind: SpriteKind = sc.alley === 'plane' ? 'plane' : sc.alley === 'pine' ? 'stonePine' : 'treeRound';
+    if (biome !== 'village') { this.countryAlley(start, n, biome, alleyKind, r); return; }
+    if (!this.boulevard) return;
     const pz = this.sections[sec].piazza;
     const free = (i: number, sg: number) => {
       const s = this.seg(i);
@@ -2168,7 +2170,7 @@ export class Track {
     };
     const put = (i: number, sg: number, k: SpriteKind, dx: number, s = 1) => this.add(i, { k, x: sg * (EDGE + dx), h: 0, s, v: Math.floor(r() * 4), f: r() < 0.5 });
     // Baumreihen (Platanen) alle 10 m auf beiden Seiten
-    if (sc.alley) for (let i = start + 2; i < start + n - 2; i += 5) for (const sg of [-1, 1]) if (free(i, sg)) put(i, sg, 'treeRound', 3.3, 0.95 + r() * 0.2);
+    if (sc.alley) for (let i = start + 2; i < start + n - 2; i += 5) for (const sg of [-1, 1]) if (free(i, sg)) put(i, sg, alleyKind === 'stonePine' ? 'stonePine' : 'treeRound', 3.3, 0.95 + r() * 0.2);
     // Straßenmöbel zwischen den Bäumen
     const kinds = sc.furniture ?? [];
     if (!kinds.length) return;
@@ -2179,6 +2181,34 @@ export class Track {
       const i = next - ((next - start - 2) % 5) + 2;   // zwischen zwei Bäumen
       if (i < start + n - 3 && free(i, sg)) put(i, sg, k, k === 'kiosk' ? 2.4 : 2.0);
       next += 22 + Math.floor(r() * 26);
+    }
+  }
+
+  /**
+   * Allee über Land: Platanen an den Landstraßen Südfrankreichs, Pinien an den Straßen Latiums und der Adria.
+   * Ein Stück von 150–400 m je Abschnitt (nicht in jedem), Bäume alle 8 m auf beiden Seiten, nur wo neben der
+   * Straße ebene Wiese oder Feld ist. Eigener Zufall – die Strecke selbst bleibt gleich.
+   */
+  private countryAlley(start: number, n: number, biome: BiomeId, kind: SpriteKind, r: () => number) {
+    const sc = this.scape!;
+    if (!(sc.alley === 'plane' || sc.alley === 'pine') || this.kind === 'descent') return;
+    if (biome === 'pass' || biome === 'alpine' || biome === 'forest') return;
+    // im Bergfinale nur unten im Tal
+    const zMax = this.kind === 'mountain' ? 700 / SEG : Infinity;
+    if (start > zMax || r() > 0.75 || n < 90) return;
+    const len = Math.min(n - 20, 75 + Math.floor(r() * 125));
+    const i0 = start + 10 + Math.floor(r() * Math.max(1, n - len - 20));
+    const ok = (s: Seg, side: Side) => !s.tunnel && !(s.bridge > 0) && !s.crowd && !side.drop && side.wall === 0 && Math.abs(side.tilt) < 0.3
+      && (side.ground === 'meadow' || side.ground === 'field' || side.ground === 'vines' || side.ground === 'sunflower') && !(side === s.L ? s.bL : s.bR);
+    const dx = kind === 'stonePine' ? 3.4 : 2.8;
+    for (let i = i0; i < i0 + len && i < start + n - 2; i += 4) {
+      const s = this.seg(i);
+      for (const sg of [-1, 1]) {
+        const side = sg < 0 ? s.L : s.R;
+        if (!ok(s, side) || r() < 0.06) continue;   // ab und zu fehlt ein Baum
+        const x = dx + (r() - 0.5) * 0.5;
+        this.add(i, { k: kind, x: sg * (EDGE + x), h: Track.groundH(side, x), s: 0.9 + r() * 0.25, v: Math.floor(r() * 4), f: r() < 0.5 });
+      }
     }
   }
 

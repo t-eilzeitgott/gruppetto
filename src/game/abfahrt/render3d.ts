@@ -29,7 +29,7 @@ import { buildPeaks, buildPeaksSteps, isPcPeaks, peakKeepers, peakLight, peakSun
 import { Grass3D, grassMaterial, grassWarm } from './grass3d';
 import { TeamCar3D } from './teamcar3d';
 import { FAC_B, FAC_H, FAC_W, TB, portalFacade, tunnelMaterial, tunnelName, tunnelRing, tunnelUniforms, type TunnelUniforms } from './tunnel3d';
-import { FAC_M, STYLE, STYLE_PITCH, STYLE_ROOF, STYLE_WALL, TINTABLE, WALL_PAL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
+import { FAC_M, STYLE, STYLE_ROOF, STYLE_WALL, TINTABLE, WALL_PAL, badgeUV, facU, facV, facadeAtlas, roofTex, signAtlas, signUV, type FacPart } from './facade';
 import { GB, alphaTex, lin, lin255, propGeometries, type Prop3D, type RGBf } from './models3d';
 import { RiderModel, riderKitKey, type RiderPose } from './rider3d';
 import { JOINTS, Ragdoll, type Ground } from './ragdoll';
@@ -57,7 +57,7 @@ import { apIn, apOut, apQ, appearify, appearifyTree, setAp, setApDiscard } from 
 import { RiderSprites, SPRITE_FAR, SPRITE_NEAR, spriteable } from './riderSprites';
 import type { WeatherEnv } from './weather';
 import { gfxAA, gfxOn, gfxRes, onGfxChange, onGfxSettings } from './gfxOpts';
-import { buildHouse, rowUnits, roofColor, roofKind, wallSet, type At, type Town } from './house3d';
+import { buildHouse, roofPitch, rowUnits, roofColor, roofKind, setTownLook, townLook, wallSet, type At, type Town } from './house3d';
 import { TEAMS } from '../teams';
 import { menuInset } from '../menuView';
 
@@ -437,7 +437,7 @@ const FAN_SAG = 0.2;     // so weit hängt das Band in der Mitte durch
 const FAN_FIRST = 14;    // erster Bogen 28 m nach dem Anfang einer Zuschauerzone …
 const FAN_EVERY = 44;    // … und bei langen Zonen alle 88 m ein weiterer
 
-const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'bush', 'rock', 'boulder', 'snowpole', 'hay', 'vinerow', 'fence', 'lamp', 'logs', 'palm', 'poplar', 'apple', 'lampParis', 'morris', 'kiosk', 'wallace', 'obelisk']);
+const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound', 'cypress', 'olive', 'bush', 'rock', 'boulder', 'snowpole', 'hay', 'vinerow', 'fence', 'lamp', 'logs', 'palm', 'poplar', 'apple', 'plane', 'stonePine', 'lampParis', 'morris', 'kiosk', 'wallace', 'obelisk']);
 const BILLBOARD: Record<string, { variants: number; frames: number }> = {
   cow: { variants: 2, frames: 1 }, cowBW: { variants: 2, frames: 1 }, chevron: { variants: 1, frames: 1 },
   dosso: { variants: 1, frames: 1 }, chalet: { variants: 2, frames: 1 }, barn: { variants: 2, frames: 1 }, rifugio: { variants: 1, frames: 1 },
@@ -2640,6 +2640,7 @@ export class Renderer3D {
     this.treeBlocks = [];
     this.rdReg = null;
     this.villages = null;
+    this.applyLook(track);
     if (track.kind === 'descent') {
       const T = this.terrain;
       this.villages = new Villages3D({
@@ -2672,6 +2673,20 @@ export class Renderer3D {
   }
 
   // ---------------------------------------------------------------- Wahrzeichen des Schauplatzes (venue.ts)
+
+  /** Ortsbild des Schauplatzes für alle Häuser (house3d.ts): Dachdeckung, Wandfarben, Dachneigung, Hinterhäuser */
+  private applyLook(t: Track) {
+    const sc = t.scape;
+    if (!sc) { setTownLook(null); return; }
+    const pool: number[] = [];
+    for (const [k, w] of sc.styles) if (k !== 'chalet') for (let q = 0; q < Math.max(1, Math.round(w * 2)); q++) pool.push(STYLE[k]);
+    const south = sc.country === 'it' || sc.country === 'si' || sc.region === 'provence';
+    setTownLook({
+      roof: sc.roof, walls: sc.walls, pool: pool.length ? pool : undefined,
+      alpPool: sc.styles.some(([k]) => k === 'chalet') ? [STYLE.chalet, STYLE.chalet, STYLE.bruchstein, STYLE.creme] : [STYLE.bruchstein, STYLE.bruchstein, STYLE.creme],
+      pitch: sc.roof === 'slate' ? 1.25 : sc.roof === 'lauze' ? 1.3 : sc.roof === 'tile' && south ? 0.85 : 1,
+    });
+  }
 
   /** geplante Wahrzeichen je Segment (gebaut im Abschnitt, der dieses Segment enthält) */
   private marks = new Map<number, VenueMark[]>();
@@ -6185,7 +6200,7 @@ export class Renderer3D {
     const region = t.region;
     const pal = wallSet(region, lang);
     const alpineFront = b.style === STYLE.chalet || b.style === STYLE.bruchstein;
-    const pool = alpineFront ? [STYLE.chalet, STYLE.chalet, STYLE.bruchstein, STYLE.creme] : lang === 'en' ? [STYLE.backstein, STYLE.backstein, STYLE.creme, STYLE.fachwerk] : [STYLE.ocker, STYLE.lachs, STYLE.creme, STYLE.gelb, STYLE.terrakotta, b.style];
+    const pool = alpineFront ? townLook().alpPool ?? [STYLE.chalet, STYLE.chalet, STYLE.bruchstein, STYLE.creme] : townLook().pool ?? (lang === 'en' ? [STYLE.backstein, STYLE.backstein, STYLE.creme, STYLE.fachwerk] : [STYLE.ocker, STYLE.lachs, STYLE.creme, STYLE.gelb, STYLE.terrakotta, b.style]);
     let lat0 = b.setback + b.depth;
     for (let row = 0; row < rows; row++) {
       const s2 = lat0 + 2.6 + h(row * 7 + 2) * 2.8;
@@ -6377,7 +6392,7 @@ export class Renderer3D {
     }
 
     // ---- Dach
-    const pitch = STYLE_PITCH[st];
+    const pitch = roofPitch(st);
     const chalet = st === STYLE.chalet;
     const ovE = chalet ? 1.1 : 0.42;
     const ovG = chalet ? 0.75 : 0.28;
@@ -6388,7 +6403,11 @@ export class Renderer3D {
     const eF = l0 - sg * ovE;
     const eB = l1 + sg * ovE;
     const tint = 0.9 + hs(3) * 0.18;
-    const roofCol = shadeF(lin(STYLE_ROOF[st]), tint);
+    // Ortsbild des Schauplatzes: Palazzi wie die Häuser gedeckt, Kirchen unter Schiefer, Zink und Lauzes dunkel
+    const look = townLook().roof;
+    const roofCol = !look ? shadeF(lin(STYLE_ROOF[st]), tint)
+      : church ? shadeF(lin(look === 'tile' ? STYLE_ROOF[st] : look === 'lauze' ? '#5f5a53' : '#4d5156'), tint)
+        : roofColor(st, t.region, t.lang, hs(3));
     const slopeLen = Math.hypot(half + ovE, rh - ee);
     const g0 = -ovG;
     const g1 = L + ovG;
@@ -6490,7 +6509,8 @@ export class Renderer3D {
     if (church) {
       const tw = b.tall ? 5.2 : 4.4;
       const t0 = l0 + out * 0.6;
-      campanile(T, { at, cl: t0 - (out * tw) / 2, ca: -0.6 + tw / 2, w: tw, tall: !!b.tall, rnd: (k) => hs(60 + k), lang: t.lang });
+      const ck = t.scape?.church;
+      if (ck !== 'chapel') campanile(T, { at, cl: t0 - (out * tw) / 2, ca: -0.6 + tw / 2, w: tw, tall: !!b.tall, rnd: (k) => hs(60 + k), lang: t.lang, kind: ck === 'clocher' || ck === 'tower' ? ck : 'campanile' });
     }
 
     // ---- Rathaus: Fahnen in den Landesfarben

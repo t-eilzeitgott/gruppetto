@@ -78,8 +78,31 @@ const LEAVES = lin('#3f6b2f');
 
 // ------------------------------------------------------------------ Paletten und Wahl
 
+/**
+ * Ortsbild des Tages (Schauplatz aus venue.ts): Dachdeckung, Wandfarben, Dachneigung und die Stile der hinteren
+ * Häuser. Leer heißt: alles nach Gegend und Sprache wie bisher. Der Renderer setzt es beim Aufbau einer Strecke.
+ */
+export interface TownLook {
+  roof?: 'tile' | 'slate' | 'zinc' | 'lauze';
+  walls?: readonly number[];
+  /** Faktor auf die Dachneigung (Schiefer und Lauzes steil, Ziegel im Süden flach) */
+  pitch?: number;
+  /** Stile der Hinterhäuser */
+  pool?: number[];
+  /** Stile der Hinterhäuser hinter Berghäusern (Chalet, Bruchstein) */
+  alpPool?: number[];
+}
+let LOOK: TownLook = {};
+export function setTownLook(l: TownLook | null) {
+  LOOK = l ?? {};
+}
+export const townLook = (): TownLook => LOOK;
+/** Dachneigung eines Stils im Ortsbild des Tages (Chalets behalten ihre) */
+export const roofPitch = (style: number) => STYLE_PITCH[style] * (STYLE_KIND[style] === 'chalet' || STYLE_KIND[style] === 'church' ? 1 : LOOK.pitch ?? 1);
+
 /** Wandfarben einer Gegend (Indizes in WALL_PAL) */
 export function wallSet(region: Region, lang: Lang): readonly number[] {
+  if (LOOK.walls?.length) return LOOK.walls;
   switch (region) {
     case 'dolomiten': case 'suedtirol': case 'alpen': return WALL_SETS.alp;
     case 'toskana': return WALL_SETS.toskana;
@@ -95,12 +118,29 @@ export function wallSet(region: Region, lang: Lang): readonly number[] {
 
 const TILE_ROOFS = ['#a8492a', '#b5582f', '#9a4426', '#8f4a33', '#b86a3e', '#a65a3c', '#94503a'];
 const SLATE_ROOFS = ['#566070', '#4f5560', '#5c6068', '#62666c'];
+/** Schiefer der Schauplätze (Bretagne, Anjou, Wales): dunkler und weniger blau */
+const SLATE_DARK = ['#4b5056', '#53575c', '#474a4f', '#5a5d62', '#4f5359'];
+/** Zinkblech (Paris): hell blaugrau */
+const ZINC_ROOFS = ['#7f8a94', '#8a949c', '#747e88', '#8f989f'];
+/** Lauzes (Steinplatten der Cevennen und Alpen): graubraun */
+const LAUZE_ROOFS = ['#5f5a53', '#6a635a', '#56514b', '#635c53'];
+const pick = (a: string[], r: number) => a[Math.floor(r * a.length) % a.length];
 
 /** Dachfarbe eines Hauses: Ziegel in Abstufungen, Schiefer im Norden und bei Pariser Häusern, Holz bei Chalets */
 export function roofColor(style: number, region: Region, lang: Lang, r: number): RGBf {
   const k = STYLE_KIND[style];
   const north = region === 'nord' || lang === 'en';
   let hex = STYLE_ROOF[style];
+  const look = LOOK.roof;
+  if (look && k !== 'chalet' && k !== 'church') {
+    // Ortsbild des Tages: Deckung der Gegend, ein paar Häuser anders
+    const q = hash(Math.floor(r * 1e6) + 17);
+    if (look === 'zinc') hex = k === 'haus' || k === 'mairie' || q < 0.75 ? pick(ZINC_ROOFS, r) : pick(SLATE_DARK, r);
+    else if (look === 'slate') hex = q < 0.97 || k === 'haus' ? pick(SLATE_DARK, r) : pick(TILE_ROOFS, r);
+    else if (look === 'lauze') hex = q < 0.85 ? pick(LAUZE_ROOFS, r) : pick(SLATE_DARK, r);
+    else hex = (k === 'haus' || k === 'mairie') && q < 0.6 ? pick(SLATE_DARK, r) : pick(TILE_ROOFS, r);
+    return shadeF(lin(hex), 0.9 + (hash(Math.floor(r * 1e6)) * 0.18));
+  }
   if (k === 'town' || k === 'timber') hex = north && r < 0.5 ? SLATE_ROOFS[Math.floor(r * 8) % SLATE_ROOFS.length] : TILE_ROOFS[Math.floor(r * TILE_ROOFS.length)];
   else if (k === 'haus' || k === 'mairie') hex = SLATE_ROOFS[Math.floor(r * SLATE_ROOFS.length)];
   else if (k === 'stone') hex = r < 0.6 ? SLATE_ROOFS[Math.floor(r * 6) % SLATE_ROOFS.length] : '#6a5a4c';
@@ -521,7 +561,7 @@ function roof(T: Town, at: At, h: HouseSpec, H: number, wallC: RGBf, trimC: RGBf
     P.tri(R(q0 - 0.2, x - w - ov, top - 0.05), R(q0 - 0.2, x + w + ov, top - 0.05), R(q0 - 0.2, x, rd), board);
   };
 
-  const pitch0 = STYLE_PITCH[st];
+  const pitch0 = roofPitch(st);
   switch (h.roof) {
     case 'gable': {
       gableAlong(pitch0, chalet ? 1.1 : 0.42);
