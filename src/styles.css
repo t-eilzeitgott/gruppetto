@@ -849,6 +849,8 @@ tr.is-me > * { background: var(--accent-soft); }
 .setting + .setting { border-top: 1px solid var(--line); padding-top: 14px; }
 .setting__label { font-size: 15px; font-weight: 600; }
 .setting--column p svg { display: inline-block; vertical-align: -3px; }
+.support { border-color: var(--accent); background: var(--accent-soft); color: var(--text); text-decoration: none; }
+.support > .icon:first-child, .support > svg:first-child { color: var(--accent); flex: none; }
 .link-list { padding: 4px 16px; gap: 0; }
 .link-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; font-size: 15px; border-bottom: 1px solid var(--line); }
 .link-row:last-child { border-bottom: 0; }

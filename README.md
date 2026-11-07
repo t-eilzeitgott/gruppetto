@@ -93,6 +93,10 @@ Läuft an Renntagen alle 10 Minuten von 13 bis 22 Uhr, dazu morgens und vor dem 
 
 GitHub schaltet Zeitpläne in Repos ohne Aktivität nach 60 Tagen ab – vor einer Rundfahrt unter *Actions → Ergebnisse* prüfen und gegebenenfalls wieder einschalten.
 
+## Unterstützen
+
+Spenden-Link (Ko-fi oder Buy Me a Coffee) in `src/app/support.ts` eintragen: `SUPPORT_URL`. Solange der Wert leer ist, zeigt die App nichts an. Mit Link erscheint im Profil über Impressum und Datenschutz eine Karte „Gefällt dir gruppetto?“. Es wird nichts freigeschaltet, der Link ist eine freiwillige Unterstützung ohne Gegenleistung.
+
 ## Entwicklung
 
 ```bash

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useApp } from '../app/context';
 import { useTourData } from '../app/hooks';
 import { source, BUILD_ID } from '../app/config';
+import { SUPPORT_ENABLED, SUPPORT_URL } from '../app/support';
 import { invalidate, resetCache, useQuery } from '../app/query';
 import { setThemePref, useThemePref, type ThemePref } from '../app/theme';
 import { DEFAULT_SCALE, DEFAULT_TIP_LIMIT, bonusPointsOf, rulesOf, tourTipLimit } from '../lib/scoring';
@@ -109,6 +110,17 @@ export function Profile() {
         ) : null}
 
         <Rules data={tourQ.data} />
+
+        {SUPPORT_ENABLED ? (
+          <a href={SUPPORT_URL} target="_blank" rel="noopener" className="card card--row support">
+            <Icon name="coffee" />
+            <span className="card__main">
+              <strong>Gefällt dir gruppetto?</strong>
+              <span className="muted">Das Tippspiel bleibt kostenlos. Ein Kaffee hilft beim Weiterbauen.</span>
+            </span>
+            <Icon name="external" className="muted" />
+          </a>
+        ) : null}
 
         <section className="card link-list">
           <Link to="/impressum" className="link-row"><span>Impressum</span><Icon name="chevron" className="muted" /></Link>
