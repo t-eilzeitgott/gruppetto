@@ -850,8 +850,8 @@ export class SprintRace {
       this.down(b, side);
       this.pileAt = { z: a.z, x: (a.x + b.x) / 2 };
       this.crashAt = -1;
-      this.pop('Sturz im Feld!', 'red', 'Weich aus!', true);
-      this.opts.onEvent?.({ type: 'banner', title: `${lastName(b.name)} hakt bei ${lastName(a.name)} ein`, sub: 'Massensturz – vorbei, aber vorsichtig!', tone: 'red' });
+      this.pop('Sturz vor dir!', 'red', 'Weich aus!', true);
+      this.opts.onEvent?.({ type: 'banner', title: `${lastName(b.name)} hakt bei ${lastName(a.name)} ein`, sub: 'Beide liegen – such dir die Lücke', tone: 'red' });
       this.listDowns();
       return;
     }
@@ -867,7 +867,7 @@ export class SprintRace {
   }
 
   /** eigener Sturz: liegen, dann wieder aufsteigen (das Feld ist weg) */
-  private crash(side: number, x: number, why = 'In den Massensturz gefahren') {
+  private crash(side: number, x: number, why = 'Über Gestürzte geflogen') {
     const p = this.p;
     this.wreck = makeWreck(p.v, side, this.rng() * 100, p.z, clamp(x, -ROAD_HALF + 0.3, ROAD_HALF - 0.3));
     crashBurst(this.parts, p.z, p.x, p.v, this.rng, 1.2);

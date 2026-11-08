@@ -3801,3 +3801,39 @@ a.news-row:hover .news-row__title { text-decoration: underline; text-decoration-
 @keyframes react-sway { from { transform: translateX(-9px) rotate(-8deg); } to { transform: translateX(9px) rotate(8deg); } }
 @media (min-width: 900px) { .react-floats { left: var(--sidebar-w); bottom: 32px; } }
 @media (prefers-reduced-motion: reduce) { .react-floats, .react-burst { display: none; } }
+
+/* Sturz im Feld: Bauchbinde wie in der Übertragung (hud.tsx PileCard) */
+.pile-card {
+  position: absolute; left: calc(var(--safe-l) + 12px); bottom: calc(var(--safe-b) + 22px);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  max-width: min(calc(100% - 24px - var(--safe-l) - var(--safe-r)), 300px);
+  padding: 10px 14px 11px 12px; border-radius: 16px; color: #fff; pointer-events: none;
+  background: linear-gradient(100deg, rgba(160, 20, 26, 0.92), rgba(20, 12, 16, 0.86) 62%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 10px 30px rgba(0, 0, 0, 0.35);
+  animation: pile-in 0.5s cubic-bezier(0.2, 0.9, 0.25, 1.15) both;
+}
+@keyframes pile-in { from { opacity: 0; transform: translateX(-24px) skewX(-6deg); } to { opacity: 1; transform: none; } }
+.pile-card__tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.9;
+}
+.pile-card__tag i { width: 6px; height: 6px; border-radius: 50%; background: #ff4d4d; animation: pile-blink 1s steps(2, start) infinite; }
+.pile-card__tag.is-slow { color: #ffd23f; }
+.pile-card__tag.is-slow i { background: #ffd23f; animation-duration: 0.5s; }
+@keyframes pile-blink { to { visibility: hidden; } }
+.pile-card__main { display: flex; align-items: baseline; gap: 7px; }
+.pile-card__n {
+  font-size: 34px; font-weight: 900; line-height: 0.9; font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
+  animation: pile-bump 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.5);
+}
+@keyframes pile-bump { 0% { transform: scale(1.6) translateY(-3px); color: #ffd23f; } 100% { transform: none; } }
+.pile-card__label { font-size: 12.5px; font-weight: 700; opacity: 0.88; white-space: nowrap; }
+.pile-card__bikes { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+.pile-card__bike {
+  display: grid; color: rgba(255, 255, 255, 0.9);
+  animation: pile-fall 0.45s cubic-bezier(0.3, 1.4, 0.4, 1) both;
+}
+.pile-card__bike svg { transform: rotate(-14deg); }
+@keyframes pile-fall { from { opacity: 0; transform: translateY(-10px) rotate(40deg) scale(0.6); } to { opacity: 1; transform: none; } }
+.pile-card__more { font-size: 11px; font-weight: 800; opacity: 0.85; }
+@media (prefers-reduced-motion: reduce) { .pile-card, .pile-card__n, .pile-card__bike { animation: none !important; } }

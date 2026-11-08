@@ -182,6 +182,38 @@ export function HudBanner({ banner, onEnd }: { banner: HudBannerData; onEnd: () 
   );
 }
 
+// ---------------------------------------------------------------- Sturz im Feld
+
+/** gestürztes Rad (klein, für die Zählleiste) */
+const DownIcon = () => (
+  <svg width="18" height="12" viewBox="0 0 18 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="4" cy="8" r="3" /><circle cx="14" cy="8" r="3" /><path d="M4 8 7.5 4.5h4L14 8M7.5 4.5 9 2.5" />
+  </svg>
+);
+
+/**
+ * Bauchbinde wie in der Übertragung, solange du nach einem Sturz im Feld liegst: Zeitlupe, dann zählt mit, wie viele
+ * am Boden liegen – je Fahrer ein Rad, das hineinfällt.
+ */
+export function PileCard({ n, slow }: { n: number; slow: boolean }) {
+  const shown = Math.min(n, 12);
+  return (
+    <div className="pile-card" role="status" aria-live="polite">
+      <span className={cx('pile-card__tag', slow && 'is-slow')}>
+        <i aria-hidden="true" />{slow ? 'Zeitlupe' : 'Live'}
+      </span>
+      <div className="pile-card__main">
+        <strong key={n} className="pile-card__n">{n}</strong>
+        <span className="pile-card__label">Fahrer am Boden</span>
+      </div>
+      <span className="pile-card__bikes" aria-hidden="true">
+        {Array.from({ length: shown }, (_, i) => <span key={i} className="pile-card__bike" style={{ animationDelay: `${Math.max(0, i - (shown - 1)) * 0.05}s` }}><DownIcon /></span>)}
+        {n > shown ? <span className="pile-card__more">+{n - shown}</span> : null}
+      </span>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- Werbung (erfundene Marken)
 
 const I = (d: ReactNode) => (

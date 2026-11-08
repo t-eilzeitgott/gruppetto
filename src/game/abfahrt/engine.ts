@@ -155,10 +155,14 @@ export type GameEvent =
   | { type: 'mission'; id: string; text: string }
   | { type: 'friend'; name: string; color: string }
   | { type: 'record' }
-  | { type: 'tip'; text: string };
+  | { type: 'tip'; text: string }
+  /** Sturz im Feld (du liegst): so viele am Boden, Zeitlupe läuft */
+  | { type: 'pile'; n: number; slow: boolean };
 
 export interface RunResult {
   score: number; meters: number; topKmh: number; reason: string;
+  /** so viele lagen am Ende des Sturzes am Boden (mit dir; 0 = kein Sturz im Feld) */
+  pile: number;
   /** Durchschnitt vom Startschuss bis zum Ende (km/h) */
   avgKmh: number;
   parts: Record<ScoreCat, number>;
@@ -313,6 +317,7 @@ export class Abfahrt {
     this.wreck = null;
     this.pileCount = 0;
     this.pileAt = null;
+    this.pileShown = '';
     // Start mitten im Startort (auf der Piazza), allein – das Feld kommt erst nach dem Ort ins Bild
     const z0 = this.track.startZ;
     this.p = {
@@ -475,6 +480,9 @@ export class Abfahrt {
       if (this.wreck) {
         // Massensturz: kurz Zeitlupe, dann in Echtzeit zusehen, wie das Feld drüberfällt – Ende, wenn alles liegt
         this.timeScale = this.phaseT < 1.1 ? 0.4 : Math.min(1, this.timeScale + dtReal * 1.5);
+        const slow = this.timeScale < 0.8;
+        const key = `${this.pileCount}:${slow}`;
+        if (key !== this.pileShown) { this.pileShown = key; this.opts.onEvent?.({ type: 'pile', n: Math.max(1, this.pileCount), slow }); }
         const moving = this.opps.some((o) => o.wreck && !wreckSettled(o.wreck));
         if ((this.phaseT > 3.2 && !moving && wreckSettled(this.wreck)) || this.phaseT > 6.5) this.finish();
       } else {
@@ -486,6 +494,8 @@ export class Abfahrt {
   }
 
   private countShown = 4;
+  /** zuletzt gemeldeter Stand des Sturzes (Anzahl und Zeitlupe) */
+  private pileShown = '';
 
   /**
    * Teamwagen: an einer breiten Stelle kommt er von hinten (nicht, wenn gerade andere Fahrer um dich sind), bietet
@@ -1453,7 +1463,7 @@ export class Abfahrt {
     this.wreckOpp(o, o.v + closing * 0.35, -side);
     this.wreck = { t: 0, v0: p.v, side, seed: this.rng() * 100, z0: p.z, x0: p.x };
     this.pileCount += 1;
-    this.crash('Massensturz – zu schnell aufs Hinterrad');
+    this.crash('Aufs Hinterrad gefahren');
   }
 
   private wreckOpp(o: Opp, v: number, side: number) {
@@ -1462,7 +1472,6 @@ export class Abfahrt {
     o.bump = 0;
     this.pileCount += 1;
     if (!this.pileAt) this.pileAt = { z: o.z, x: o.x };
-    if (this.pileCount >= 3 && this.phase === 'crash') this.pop(`Massensturz! ${this.pileCount} Fahrer`, 'red', undefined, true);
     for (let i = 0; i < 6; i++) this.dust(o.z, o.x + (this.rng() - 0.5), 'verge');
     crashBurst(this.parts, o.z, o.x, v, this.rng, 0.6);
     this.shake = Math.max(this.shake, 0.5);
@@ -1497,7 +1506,7 @@ export class Abfahrt {
       if (w) {
         this.wreck = { t: 0, v0: p.v, side: p.x >= w.x ? 1 : -1, seed: this.rng() * 100, z0: p.z, x0: p.x };
         this.pileCount += 1;
-        this.crash('In den Massensturz gefahren');
+        this.crash('Über Gestürzte geflogen');
       }
     }
   }
@@ -1562,6 +1571,7 @@ export class Abfahrt {
       topKmh: Math.round(this.stats.topKmh),
       avgKmh: this.time > this.goT + 1 ? Math.round(((this.p.z - this.goZ) / (this.time - this.goT)) * 36) / 10 : 0,
       reason: this.crashReason,
+      pile: this.wreck ? Math.max(1, this.pileCount) : 0,
       parts: { ...this.score, dist: Math.round(this.score.dist), draft: Math.round(this.score.draft) },
       stats: { ...this.stats },
       missionsDone: done,

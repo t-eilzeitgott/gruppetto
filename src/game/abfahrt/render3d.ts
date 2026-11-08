@@ -4326,11 +4326,22 @@ export class Renderer3D {
     const L = doll && g.wreck && doll.w === g.wreck
       ? this.tvR.set(doll.d.p[0], doll.d.p[1] + 0.15, doll.d.p[2])
       : this.riderAt(g, new THREE.Vector3(), 0.45);
+    // Abfahrt mit mehreren am Boden: Blick zwischen dich und die Mitte des Haufens, Bild so weit, dass alle drin sind
+    let spread = 0;
+    if (t.kind === 'descent' && this.dolls.size > 1) {
+      let cx = 0, cy = 0, cz = 0, n = 0;
+      for (const D of this.dolls.values()) { cx += D.d.p[0]; cy += D.d.p[1]; cz += D.d.p[2]; n++; }
+      cx /= n; cy /= n; cz /= n;
+      for (const D of this.dolls.values()) spread = Math.max(spread, Math.hypot(D.d.p[0] - cx, D.d.p[2] - cz));
+      L.set(L.x * 0.55 + cx * 0.45, L.y * 0.55 + (cy + 0.15) * 0.45, L.z * 0.55 + cz * 0.45);
+    }
     out.look.copy(this.follow(L, dt));
     const d = out.pos.distanceTo(L);
     const push = clamp((g.wreck ? g.wreck.t : g.phaseT) / 4, 0, 1);
     // Bildhöhe am Ziel: in der Abfahrt der ganze Haufen, in den Finals näher an den einen Gestürzten
-    const half = t.kind === 'descent' ? (portrait ? 9 : 6.5) - 2 * push : (portrait ? 6.5 : 5) - 1.6 * push;
+    const half = t.kind === 'descent'
+      ? Math.max((portrait ? 9 : 6.5) - 2 * push, Math.min(16, spread * (portrait ? 1.25 : 0.9) + 2.5))
+      : (portrait ? 6.5 : 5) - 1.6 * push;
     out.fov = clamp((2 * Math.atan(half / d) * 180) / Math.PI, 12, 60);
   }
 

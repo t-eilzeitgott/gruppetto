@@ -37,7 +37,7 @@ import { useGameGhosts } from '../ui/useGameGhosts';
 import { BikeChip, NewBikePill } from './bikeChip';
 import { Icon } from '../ui/Icon';
 import { BoardLink, Countdown, OverSheet, PauseSheet, StartSheet } from './startSheet';
-import { HudBanner, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
+import { HudBanner, PileCard, PowerRing, RaceBar, TvAd, writeBar, writeRing, type BarState } from './hud';
 import { PauseIcon, PlayIcon, useCountUp } from './gameKit';
 import { RecBadge, VenuePick } from './measure';
 import { healFixedSoon } from '../ui/fixedHeal';
@@ -133,6 +133,7 @@ export function GamePage() {
   const [count, setCount] = useState(3);
   const [result, setResult] = useState<RunResult | null>(null);
   const [prevRank, setPrevRank] = useState<{ day: number; season: number } | null>(null);
+  const [pile, setPile] = useState<{ n: number; slow: boolean } | null>(null);
   const [banner, setBanner] = useState<{ key: number; title: string; sub?: string; tone?: 'gold' | 'accent' } | null>(null);
   const [board, setBoard] = useState<Board>('day');
   const [showBoard, setShowBoard] = useState(false);
@@ -236,6 +237,11 @@ export function GamePage() {
       case 'tip':
         bannerKey.current += 1;
         setBanner({ key: bannerKey.current, title: e.text });
+        break;
+      case 'pile':
+        setBanner(null);
+    setPile(null);
+        setPile({ n: e.n, slow: e.slow });
         break;
     }
   };
@@ -708,8 +714,9 @@ export function GamePage() {
           </div>
           <RaceBar bind={bind} wide marks={friends.map((f) => ({ at: f.meters / profileMax, kind: 'friend' as const, color: f.color }))} />
           <LiveChip engineRef={engineRef} />
-          {banner && ui === 'playing' ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
-          <TvAd hidden={!!coach || ui !== 'playing'} />
+          {banner && ui === 'playing' && !pile ? <HudBanner banner={banner} onEnd={() => setBanner(null)} /> : null}
+          {pile && ui === 'playing' ? <PileCard n={pile.n} slow={pile.slow} /> : null}
+          <TvAd hidden={!!coach || ui !== 'playing' || !!pile} />
         </div>
       ) : null}
 
@@ -980,7 +987,7 @@ function Summary({ bikes, result, record, prevRank, today, season, meId, totalM,
         <div className="abf-badges">
           <span className={cx('abf-badge', record && 'is-gold')}>
             <Icon name={record ? 'trophy' : 'flame'} size={14} />
-            {record ? 'Bestleistung' : result.reason || 'Ende'}
+            {record ? 'Bestleistung' : result.reason || 'Ende'}{!record && result.pile >= 3 ? ` · ${result.pile} am Boden` : ''}
           </span>
           <NewBikePill bikes={bikes} />
         </div>
