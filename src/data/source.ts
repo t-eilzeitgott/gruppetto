@@ -1,5 +1,6 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type { GameGhostRow, TtGhostRow } from '../game/tt';
+import type { ReactionEmoji, StageReaction } from '../lib/reactions';
 import type {
   AdminUser, BonusCategory, BonusResult, Group, GroupRules, NewsItem, Profile, Rider, Stage, Tour, TourData, StageKind, TourTheme,
   SyncMode, SyncStatus,
@@ -179,6 +180,10 @@ export interface DataSource {
   loadTours(): Promise<Tour[]>;
   loadTourData(tour: Tour): Promise<TourData>;
   stageTippers(stageId: number): Promise<string[]>;
+  /** Emoji-Reaktionen der eigenen Gruppe zu einer Etappe */
+  loadReactions(stageId: number): Promise<StageReaction[]>;
+  /** eigene Reaktion setzen bzw. zurücknehmen */
+  setReaction(stageId: number, emoji: ReactionEmoji, on: boolean): Promise<void>;
   /** Höhenprofil einer Etappe (aus GPX), null wenn keins hinterlegt */
   loadStageProfile(stageId: number): Promise<StageProfileData | null>;
   saveStageProfile(stageId: number, points: ProfilePoint[] | null, source?: string): Promise<void>;

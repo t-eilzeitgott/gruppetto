@@ -1,5 +1,6 @@
 import type { ProfilePoint, StageProfileData } from '../lib/gpx';
 import type { GameGhostRow, TtGhostRow } from '../game/tt';
+import { isReaction, type ReactionEmoji, type StageReaction } from '../lib/reactions';
 import type {
   AdminUser, BonusCategory, BonusResult, BonusTip, Group, GroupRules, NewsItem, Profile, Rider, Stage, StageResult, StageStanding, StageTip,
   Tour, TourData, StageSyncInfo, SyncLogEntry, SyncMode, SyncStatus,
@@ -432,6 +433,24 @@ export class SupabaseSource implements DataSource {
 
   stageTippers(stageId: number): Promise<string[]> {
     return this.rpc<string[]>('stage_tippers', { p_stage: stageId });
+  }
+
+  async loadReactions(stageId: number): Promise<StageReaction[]> {
+    const rows = await schemaCheck(() => this.rest<StageReaction[]>(`stage_reactions?stage_id=eq.${stageId}&select=stage_id,user_id,emoji,created_at&order=created_at.asc`));
+    return rows.filter((x) => isReaction(x.emoji));
+  }
+
+  async setReaction(stageId: number, emoji: ReactionEmoji, on: boolean): Promise<void> {
+    if (on) {
+      await schemaCheck(() => this.rest('stage_reactions?on_conflict=stage_id,user_id,emoji', {
+        method: 'POST',
+        body: { stage_id: stageId, emoji },
+        prefer: 'resolution=ignore-duplicates,return=minimal',
+      }));
+    } else {
+      const user = this.currentUser();
+      await this.rest(`stage_reactions?stage_id=eq.${stageId}&emoji=eq.${encodeURIComponent(emoji)}${user ? `&user_id=eq.${user.id}` : ''}`, { method: 'DELETE' });
+    }
   }
 
   // ---------- Gruppe ----------

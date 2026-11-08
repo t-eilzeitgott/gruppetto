@@ -168,6 +168,17 @@ create table if not exists public.stage_profiles (
 );
 alter table public.stage_profiles add column if not exists waypoints jsonb;  -- [{km, alt, name}] Durchfahrtsorte
 
+-- Emoji-Reaktionen je Etappe: jedes Mitglied jede Reaktion einmal (an/aus). Sichtbar nur in der eigenen Gruppe.
+-- Die Auswahl steht auch in src/lib/reactions.ts (REACTIONS).
+create table if not exists public.stage_reactions (
+  stage_id   bigint not null references public.stages (id) on delete cascade,
+  user_id    uuid   not null default auth.uid() references public.profiles (id) on delete cascade,
+  emoji      text   not null check (emoji in ('🔥', '👏', '😱', '😂', '🤯', '🐐', '💀', '🚴')),
+  created_at timestamptz not null default now(),
+  primary key (stage_id, user_id, emoji)
+);
+create index if not exists stage_reactions_user_idx on public.stage_reactions (user_id);
+
 -- Minispiele: jeder Lauf mit Punktzahl
 create table if not exists public.game_scores (
   id         bigint generated always as identity primary key,
@@ -898,6 +909,7 @@ alter table public.tours             enable row level security;
 alter table public.riders            enable row level security;
 alter table public.cyclists          enable row level security;
 alter table public.favorite_cyclists enable row level security;
+alter table public.stage_reactions   enable row level security;
 alter table public.stage_standings   enable row level security;
 alter table public.stage_profiles    enable row level security;
 alter table public.game_scores       enable row level security;
@@ -950,6 +962,18 @@ create policy game_scores_select on public.game_scores
 drop policy if exists game_scores_insert on public.game_scores;
 create policy game_scores_insert on public.game_scores
   for insert to authenticated with check (user_id = auth.uid() and public.is_member());
+
+-- Reaktionen: Mitglieder sehen die ihrer Gruppe; jeder setzt und löscht nur seine eigenen, nur zu sichtbaren Etappen
+drop policy if exists stage_reactions_select on public.stage_reactions;
+create policy stage_reactions_select on public.stage_reactions
+  for select to authenticated using (user_id in (select public.group_mates()));
+drop policy if exists stage_reactions_insert on public.stage_reactions;
+create policy stage_reactions_insert on public.stage_reactions
+  for insert to authenticated with check (
+    user_id = auth.uid() and public.is_member() and exists (select 1 from public.stages s where s.id = stage_id));
+drop policy if exists stage_reactions_delete on public.stage_reactions;
+create policy stage_reactions_delete on public.stage_reactions
+  for delete to authenticated using (user_id = auth.uid());
 
 -- Geister: Mitglieder sehen die ihrer Gruppe, jeder schreibt nur seine eigene Fahrt
 drop policy if exists tt_ghosts_select on public.tt_ghosts;

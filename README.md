@@ -29,6 +29,14 @@ Jede Tipprunde ist eine **Gruppe** mit eigenem Einladungscode, eigener Rangliste
 - Eine Rundfahrt lässt sich auf eine Gruppe beschränken (z. B. eine Testrunde): `update public.tours set group_id = '<Gruppe>' where id = '…';` – ohne `group_id` sehen sie alle.
 - Technik: Tabelle `groups`, `profiles.group_id`; Funktionen `create_group`, `join_group`, `my_group`, `group_update`, `group_new_code`, `group_remove_member`, `group_transfer`; Tests in `supabase/tests/groups_test.sql`. Eine bestehende Installation mit einer einzigen Runde stellt `schema.sql` beim nächsten Ausführen um: Die Runde wird zur ersten Gruppe „Gruppetto“ – mit dem bisherigen Einladungscode, der bisherigen Punkteskala und allen Mitgliedern.
 
+## Reaktionen je Etappe
+
+Auf jeder Etappenseite gibt es die *Stimmung der Runde*: acht feste Emojis (🔥 👏 😱 😂 🤯 🐐 💀 🚴), jedes Mitglied kann jedes einmal setzen und wieder zurücknehmen. Beim Tippen springt das Emoji mit Ring, Funken und aufsteigendem Emoji; reagiert jemand anderes, steigt seine Reaktion mit Namen vom unteren Rand auf. Bei „Bewegung reduzieren“ entfällt die Animation.
+
+- Tabelle `stage_reactions` (Etappe, Mitglied, Emoji), sichtbar nur in der eigenen Gruppe; jeder setzt und löscht nur seine eigenen (Row Level Security, Tests in `supabase/tests/groups_test.sql`). Die erlaubten Emojis stehen in der Datenbank und in `src/lib/reactions.ts`.
+- Nachladen alle 20 s, solange die Seite offen und sichtbar ist. Gruppen mit `groups.realtime = true` bekommen Reaktionen zusätzlich sofort über den WebSocket-Kanal `gruppetto:react:<Gruppe>:<Etappe>` (eine Meldung je Tippen).
+- Einrichtung: `supabase/schema.sql` neu ausführen.
+
 ## Lobby-Rennen in Echtzeit
 
 Wer in einer Lobby ist, hängt an ihrem WebSocket-Kanal (Supabase Realtime „Broadcast“, `src/app/realtime.ts` – ohne Zusatzpaket). Startet jemand ein Rennen für die Lobby, geht es für alle zur selben Serverzeit los; im Rennen schickt jeder bis zu zehnmal je Sekunde Lage und Tempo direkt an die anderen (weit auseinander nur alle 0,4 s). Die Mitspieler stehen dadurch auf wenige Dezimeter genau dort, wo sie gerade sind.

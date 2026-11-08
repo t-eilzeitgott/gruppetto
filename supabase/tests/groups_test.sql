@@ -91,6 +91,43 @@ select pg_temp.expect_eq(
   2, 'Erste Gruppe: weiter zwei Tippende');
 commit;
 
+-- ---------- Reaktionen je Etappe ----------
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000d', true);
+insert into public.stage_reactions (stage_id, emoji)
+  select id, e from public.stages, unnest(array['🔥', '🐐']) e where tour_id = 'open-test' and number = 1;
+select pg_temp.expect_error($q$
+  insert into public.stage_reactions (stage_id, emoji) select id, '🍕' from public.stages where tour_id = 'open-test' and number = 1 $q$, 'check');
+select pg_temp.expect_error($q$
+  insert into public.stage_reactions (stage_id, emoji) select id, '🔥' from public.stages where tour_id = 'open-test' and number = 1 $q$, 'duplicate');
+select pg_temp.expect_error($q$
+  insert into public.stage_reactions (stage_id, user_id, emoji)
+  select id, '00000000-0000-0000-0000-00000000000e', '👏' from public.stages where tour_id = 'open-test' and number = 1 $q$, 'row-level security');
+select pg_temp.expect_eq((select count(*) from public.stage_reactions), 2, 'Reaktionen: eigene sichtbar');
+commit;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000e', true);
+select pg_temp.expect_eq((select count(*) from public.stage_reactions), 2, 'Reaktionen: Gruppe sieht sie');
+delete from public.stage_reactions;
+select pg_temp.expect_eq((select count(*) from public.stage_reactions), 2, 'Reaktionen: fremde nicht löschbar');
+commit;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+select pg_temp.expect_eq((select count(*) from public.stage_reactions), 0, 'Reaktionen der anderen Gruppe unsichtbar');
+commit;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000d', true);
+delete from public.stage_reactions where emoji = '🐐';
+select pg_temp.expect_eq((select count(*) from public.stage_reactions), 1, 'Reaktionen: eigene zurücknehmen');
+commit;
+
 -- ---------- Regeln ändern ----------
 begin;
 set local role authenticated;

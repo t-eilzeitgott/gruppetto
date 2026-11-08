@@ -7,6 +7,7 @@ import { DEFAULT_RULES, scaleOf, tipLimit } from '../lib/scoring';
 import { bonusDeadline } from '../lib/time';
 import { TRACE_DT, ttScore, type GameGhostRow, type TtGhostRow } from '../game/tt';
 import { berlinDayKey, hashStr } from '../game/abfahrt/rng';
+import { REACTIONS, type ReactionEmoji, type StageReaction } from '../lib/reactions';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
   type StageInput, type TourInput, type GameId, type GameBest, type GameRun, type RunStats, cleanStats,
@@ -68,6 +69,9 @@ export class DemoSource implements DataSource {
   /** Automatik: von Hand pausierte Etappen (wie der Trigger in der Datenbank) und eigene Protokolleinträge */
   private syncPaused = new Map<number, string>();
   private syncLog: SyncLogEntry[] = [];
+  /** Emoji-Reaktionen je Etappe (beim ersten Abruf mit festen Beispielen gefüllt) und wann zuletzt „live“ jemand reagierte */
+  private reactions = new Map<number, StageReaction[]>();
+  private reactionLive = new Map<number, number>();
 
   constructor(start: 'app' | 'login' | 'join' = 'app', baseTime?: number) {
     this.base = baseTime ?? DEMO_NOW;
@@ -474,6 +478,45 @@ export class DemoSource implements DataSource {
     await wait(60);
     if (on) this.favorites.add(cyclistId);
     else this.favorites.delete(cyclistId);
+  }
+
+  async loadReactions(stageId: number): Promise<StageReaction[]> {
+    await wait(80);
+    const stage = this.stages.find((s) => s.id === stageId);
+    if (!stage) return [];
+    const now = this.now();
+    const others = this.profiles.filter((p) => p.is_member && p.id !== DEMO_ME);
+    let rows = this.reactions.get(stageId);
+    if (!rows) {
+      // feste Beispiele: nach dem Start reagieren mehr Leute als vorher
+      rows = [];
+      const started = Date.parse(stage.starts_at) <= now;
+      for (const p of others) {
+        const h = hashStr(`${stageId}:${p.id}`);
+        if (h % 100 > (started ? 55 : 20)) continue;
+        const emoji = REACTIONS[h % (started ? REACTIONS.length : 3)];
+        rows.push({ stage_id: stageId, user_id: p.id, emoji, created_at: new Date(Math.min(now, Date.parse(stage.starts_at)) - (h % 7200) * 1000).toISOString() });
+      }
+      this.reactions.set(stageId, rows);
+      this.reactionLive.set(stageId, Date.now());
+    } else if (others.length && Date.now() - (this.reactionLive.get(stageId) ?? 0) > 18_000) {
+      // Demo: ab und zu reagiert „live“ jemand aus der Runde
+      this.reactionLive.set(stageId, Date.now());
+      const h = hashStr(`${stageId}:${Date.now()}`);
+      const p = others[h % others.length];
+      const emoji: ReactionEmoji = REACTIONS[(h >> 3) % REACTIONS.length];
+      if (!rows.some((r) => r.user_id === p.id && r.emoji === emoji)) {
+        rows.push({ stage_id: stageId, user_id: p.id, emoji, created_at: new Date(now).toISOString() });
+      }
+    }
+    return clone(rows);
+  }
+
+  async setReaction(stageId: number, emoji: ReactionEmoji, on: boolean): Promise<void> {
+    await wait(80);
+    const rows = (this.reactions.get(stageId) ?? []).filter((r) => !(r.user_id === DEMO_ME && r.emoji === emoji));
+    if (on) rows.push({ stage_id: stageId, user_id: DEMO_ME, emoji, created_at: new Date(this.now()).toISOString() });
+    this.reactions.set(stageId, rows);
   }
 
   async stageTippers(stageId: number): Promise<string[]> {

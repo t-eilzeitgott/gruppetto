@@ -9,6 +9,7 @@ import { Icon } from '../ui/Icon';
 import { Tippers, lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
 import { StageFactsCard, StageProfileCard, StageRouteCard } from '../ui/StageProfile';
 import { flag } from '../lib/countries';
+import { StageReactions } from '../ui/Reactions';
 
 export function StageDetail({ id }: { id: number }) {
   const { me, data, members, loading, error, reload } = useTourContext();
@@ -46,6 +47,7 @@ export function StageDetail({ id }: { id: number }) {
         {state === 'open' ? <OpenStage stage={stage} data={data} me={me} members={members} now={now} /> : null}
         {state === 'running' ? <RunningStage stage={stage} data={data} me={me} members={members} /> : null}
         {state === 'done' ? <DoneStage stage={stage} data={data} me={me} members={members} /> : null}
+        <StageReactions key={stage.id} stage={stage} me={me} members={members} />
         <StageRouteCard stage={stage} />
         <StageProfileCard stage={stage} tour={data.tour} />
         <StageFactsCard stage={stage} tour={data.tour} />
