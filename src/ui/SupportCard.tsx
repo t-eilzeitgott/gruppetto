@@ -26,9 +26,11 @@ export function SupportCard({ compact }: { compact?: boolean }) {
 function SupportSheet({ onClose }: { onClose: () => void }) {
   const [leaving, setLeaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const closing = useRef(false);
   const timer = useRef(0);
   const close = () => {
-    if (leaving) return;
+    if (closing.current) return;
+    closing.current = true;
     setLeaving(true);
     timer.current = window.setTimeout(onClose, 220);
   };
@@ -36,7 +38,8 @@ function SupportSheet({ onClose }: { onClose: () => void }) {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); window.clearTimeout(timer.current); };
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return createPortal(
     <div className={cx('lobby-layer', leaving && 'is-leaving')} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className="lobby-sheet support-sheet" role="dialog" aria-modal="true" aria-labelledby="support-title">
