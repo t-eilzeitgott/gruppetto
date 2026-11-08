@@ -95,7 +95,7 @@ GitHub schaltet Zeitpläne in Repos ohne Aktivität nach 60 Tagen ab – vor ein
 
 ## Unterstützen
 
-Spenden-Link (Ko-fi oder Buy Me a Coffee) in `src/app/support.ts` eintragen: `SUPPORT_URL`. Solange der Wert leer ist, zeigt die App nichts an. Mit Link erscheint im Profil über Impressum und Datenschutz eine Karte „Gefällt dir gruppetto?“. Es wird nichts freigeschaltet, der Link ist eine freiwillige Unterstützung ohne Gegenleistung.
+Spenden-Link (Ko-fi oder Buy Me a Coffee) in `src/app/support.ts` eintragen: `SUPPORT_URL`. Solange der Wert leer ist, zeigt die App nichts an. Mit Link erscheint auf „Heute“ unter den Spielen und im Profil eine Karte „Gefällt dir gruppetto?“ (`src/ui/SupportCard.tsx`); sie öffnet ein Sheet im App-Look mit dem eingebetteten Ko-fi-Formular und einem Link zur Ko-fi-Seite. Es wird nichts freigeschaltet, der Link ist eine freiwillige Unterstützung ohne Gegenleistung.
 
 ## Entwicklung
 

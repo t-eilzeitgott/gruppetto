@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { SupportCard } from '../ui/SupportCard';
 import { useTourContext } from '../app/context';
 import { useNow } from '../app/hooks';
 import { leaderboard, jokerRemaining, bonusScoresFor, scoreStageOf, tipUsage, tourTipLimit } from '../lib/scoring';
@@ -376,6 +377,8 @@ function HomeBody({ data, members, me, now, onNews }: { data: TourData; members:
       {phase !== 'upcoming' ? <Tiles data={data} me={me} next={next} /> : null}
 
       <GamesCard stageKind={todayStage?.kind ?? null} tourName={data.tour.name} stages={data.stages} />
+
+      <SupportCard />
     </>
   );
 }

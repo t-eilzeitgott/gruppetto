@@ -849,8 +849,18 @@ tr.is-me > * { background: var(--accent-soft); }
 .setting + .setting { border-top: 1px solid var(--line); padding-top: 14px; }
 .setting__label { font-size: 15px; font-weight: 600; }
 .setting--column p svg { display: inline-block; vertical-align: -3px; }
-.support { border-color: var(--accent); background: var(--accent-soft); color: var(--text); text-decoration: none; }
-.support > .icon:first-child, .support > svg:first-child { color: var(--accent); flex: none; }
+.support { border-color: var(--accent); background: var(--accent-soft); color: var(--text); text-decoration: none; text-align: left; font: inherit; width: 100%; cursor: pointer; }
+.support:active { transform: scale(0.99); }
+.support__icon { display: grid; place-items: center; flex: none; width: 42px; height: 42px; border-radius: 13px; background: var(--accent); color: var(--on-accent); }
+.support-sheet { gap: 12px; }
+.support-frame { position: relative; border-radius: 18px; overflow: hidden; background: var(--surface); border: 1px solid var(--line); height: min(620px, calc(100dvh - var(--safe-t) - 230px)); }
+.support-frame__wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: 14px; }
+.support-frame__wait svg { color: var(--accent); animation: support-steam 1.6s ease-in-out infinite; }
+@keyframes support-steam { 0%, 100% { transform: translateY(0); opacity: 0.7; } 50% { transform: translateY(-3px); opacity: 1; } }
+.support-frame iframe { position: relative; display: block; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity 0.4s ease; }
+.support-frame.is-on iframe { opacity: 1; }
+.support-frame.is-on .support-frame__wait { display: none; }
+.support-sheet__ext { align-self: center; }
 .link-list { padding: 4px 16px; gap: 0; }
 .link-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; font-size: 15px; border-bottom: 1px solid var(--line); }
 .link-row:last-child { border-bottom: 0; }
