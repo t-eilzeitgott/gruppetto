@@ -38,6 +38,7 @@ const HOME_V2_KEY = 'gruppetto.homeV2';
 /**
  * Alte Installationen starten mit der alten start_url und landen per Weiterleitung ohne `?app=2` hier.
  * Neue Installationen bringen den Marker beim ersten Start mit und merken sich das (eigener Speicher je App).
+ * Kommt der Aufruf über einen Link von einer anderen Seite, ist es kein altes App-Symbol.
  * Zum Ansehen im Browser: ?moved=1
  */
 function detectLegacyInstall(standalone: boolean): boolean {
@@ -49,7 +50,10 @@ function detectLegacyInstall(standalone: boolean): boolean {
       localStorage.setItem(HOME_V2_KEY, '1');
       return false;
     }
-    return localStorage.getItem(HOME_V2_KEY) !== '1';
+    if (localStorage.getItem(HOME_V2_KEY) === '1') return false;
+    // Über einen Link geöffnet (z. B. von talfahrt.dev in der Ansicht einer anderen Web-App) – kein altes App-Symbol
+    const ref = document.referrer;
+    return !ref || ref.includes('github.io');
   } catch {
     return false;
   }
