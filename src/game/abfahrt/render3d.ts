@@ -5860,6 +5860,9 @@ export class Renderer3D {
     // hinauf – in der dunklen Farbe des Seegrunds stand es als fast schwarzer Keil neben der Straße. Es bekommt die
     // Farben des Ufers, zu dem es gehört.
     const shore = sa.ground === 'water' && sb.ground !== 'water' && !bt;
+    // Stützmauer: Weg entlang des Querprofils (für die Lagen des Mauerwerks, siehe unten)
+    let ma = 0;
+    let mb = 0;
     for (let k = k0; k < pa.o.length - 1; k++) {
       const xa0 = sg * (EDGE + pa.o[k]);
       const xa1 = sg * (EDGE + pa.o[k + 1]);
@@ -5871,11 +5874,16 @@ export class Renderer3D {
       const B1 = P(b, xb1, pb.h[k + 1] - 0.04);
       const col = shore ? pb.cols[k] ?? pa.cols[k] : pa.cols[k];
       if (sa.stone && k < 5) {
-        // Stützmauer: Bruchstein, Lagen waagrecht entlang der Strecke
+        // Stützmauer: Bruchstein, Lagen entlang der Strecke. Quer dazu zählt der Weg entlang des Profils, nicht die
+        // Höhe: auf der fast waagrechten Mauerkrone (und dem Streifen am Mauerfuß) stand sonst jede Steinfarbe als
+        // Streifen quer über die Fläche; an der senkrechten Wand ist beides dasselbe
         const za = a.seg.i * SEG / 1.8;
         const zb = za + SEG / 1.8;
-        const hv = (h: number) => h / 1.8;
-        const q = [[za * sg, hv(pa.h[k])], [za * sg, hv(pa.h[k + 1])], [zb * sg, hv(pb.h[k + 1])], [zb * sg, hv(pb.h[k])]];
+        const ma1 = ma + Math.hypot(pa.o[k + 1] - pa.o[k], pa.h[k + 1] - pa.h[k]) / 1.8;
+        const mb1 = mb + Math.hypot(pb.o[k + 1] - pb.o[k], pb.h[k + 1] - pb.h[k]) / 1.8;
+        const q = [[za * sg, ma], [za * sg, ma1], [zb * sg, mb1], [zb * sg, mb]];
+        ma = ma1;
+        mb = mb1;
         if (sg > 0) mas.quad(A0, A1, B1, B0, col, q);
         else mas.quad(A1, A0, B0, B1, col, [q[1], q[0], q[3], q[2]]);
         continue;
