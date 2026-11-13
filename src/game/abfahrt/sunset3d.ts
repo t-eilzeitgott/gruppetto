@@ -42,6 +42,11 @@ export class SunsetGlow {
       blendEquation: THREE.AddEquation,
       blendSrc: THREE.OneMinusDstColorFactor,
       blendDst: THREE.ConstantColorFactor,
+      // Deckkraft des Bilds unangetastet lassen (Quelle · 0 + Ziel · 1): ohne eigene Faktoren gälten die der Farbe auch
+      // für Alpha – (1 − 1) + 1 · 0 = 0, die Leinwand wurde durchsichtig und der dunkelblaue Seitenhintergrund legte
+      // sich als milchiger Schleier über das ganze Bild (three.js legt den Kontext immer mit Alpha an)
+      blendSrcAlpha: THREE.ZeroFactor,
+      blendDstAlpha: THREE.OneFactor,
     });
     this.mat.blendColor = new THREE.Color(1, 1, 1);
     this.mat.name = 'sunset';

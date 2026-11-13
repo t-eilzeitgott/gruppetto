@@ -374,6 +374,8 @@ export function WorldEditorPage() {
         const img = ctx.createImageData(W, H);
         // WebGL liefert die Zeilen von unten nach oben
         for (let y = 0; y < H; y++) img.data.set(px.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
+        // das Bild ist deckend, was auch immer im Alphakanal des Bildpuffers steht (sonst kämen durchsichtige Prüfbilder heraus)
+        for (let i = 3; i < img.data.length; i += 4) img.data[i] = 255;
         ctx.putImageData(img, 0, 0);
         return cv.toDataURL('image/png');
       },

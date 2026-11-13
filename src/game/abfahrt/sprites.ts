@@ -228,6 +228,16 @@ const grassTuft: DrawFn = (c, r) => {
   }
 };
 
+/** dasselbe Büschel im Herbst und Winter: strohige, trockene Halme (season.ts) – grüne standen sonst neonhell in der Herbstwiese */
+const grassDry: DrawFn = (c, r) => {
+  c.lineWidth = 0.05;
+  for (let i = 0; i < 18; i++) {
+    const x = (r() - 0.5) * 0.9;
+    c.strokeStyle = i % 3 === 0 ? '#c2b06a' : i % 3 === 1 ? '#a09450' : '#7c783e';
+    c.beginPath(); c.moveTo(x, 0); c.quadraticCurveTo(x + (r() - 0.5) * 0.3, -0.3, x + (r() - 0.5) * 0.5, -0.45 - r() * 0.35); c.stroke();
+  }
+};
+
 // ------------------------------------------------------------------ Felsen
 
 function rockShape(c: Ctx, r: Rng, w: number, h: number, base: string, light: string, dark: string, moss: boolean) {
@@ -636,6 +646,7 @@ const DEFS: Record<string, Def> = {
   bush: { w: 1.9, h: 1.2, ppm: 70, variants: 4, draw: bush },
   flowers: { w: 1.6, h: 0.65, ppm: 80, variants: 4, draw: flowers },
   grassTuft: { w: 1, h: 0.85, ppm: 80, variants: 2, draw: grassTuft },
+  grassDry: { w: 1, h: 0.85, ppm: 80, variants: 2, draw: grassDry },
   rock: { w: 1.6, h: 1.1, ppm: 70, variants: 3, draw: (c, r) => rockShape(c, r, 0.75, 1.0, '#8e8a82', '#b4b0a7', '#5f5b55', false) },
   boulder: { w: 3.6, h: 2.6, ppm: 40, variants: 3, draw: (c, r) => rockShape(c, r, 1.7, 2.4, '#8a867c', '#aeaaa0', '#5a564f', true) },
   snowpole: { w: 0.2, h: 2.05, ppm: 70, variants: 1, draw: snowpole },

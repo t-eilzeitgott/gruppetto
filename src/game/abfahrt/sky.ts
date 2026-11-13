@@ -88,12 +88,19 @@ float lumF( vec3 c ) { return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); }
 float hash21( vec2 p ) { p = fract( p * vec2( 123.34, 456.21 ) ); p += dot( p, p + 45.32 ); return fract( p.x * p.y ); }
 
 /* Wolkendichte-Rauschen: drei Kanäle der Textur in drei Maßstäben (0 … 1) */
-float cloudNoise( vec2 p, float t ) {
+float cloudNoise( vec2 p, float t, out float fine ) {
 	float a = texture2D( uNoise, p * 0.055 + vec2( t * 0.004, t * 0.0015 ) ).r;
 	float b = texture2D( uNoise, p * 0.17 + vec2( 0.37, 0.11 ) - vec2( t * 0.006, 0.0 ) ).g;
 	float c = texture2D( uNoise, p * 0.5 + vec2( 0.71, 0.53 ) + vec2( 0.0, t * 0.01 ) ).b;
-	float e = texture2D( uNoise, p * 1.5 + vec2( 0.13, 0.87 ) - vec2( t * 0.012, t * 0.004 ) ).r;
-	return a * 0.54 + b * 0.28 + c * 0.12 + e * 0.06;
+	fine = texture2D( uNoise, p * 1.5 + vec2( 0.13, 0.87 ) - vec2( t * 0.012, t * 0.004 ) ).r * 0.06;
+	return a * 0.54 + b * 0.28 + c * 0.12 + fine;
+}
+/* dasselbe ohne die feinste Lage (fürs Relief: zwei Nachbarproben – die feinste Lage trug dort nur Flimmern bei) */
+float cloudNoise3( vec2 p, float t ) {
+	float a = texture2D( uNoise, p * 0.055 + vec2( t * 0.004, t * 0.0015 ) ).r;
+	float b = texture2D( uNoise, p * 0.17 + vec2( 0.37, 0.11 ) - vec2( t * 0.006, 0.0 ) ).g;
+	float c = texture2D( uNoise, p * 0.5 + vec2( 0.71, 0.53 ) + vec2( 0.0, t * 0.01 ) ).b;
+	return a * 0.54 + b * 0.28 + c * 0.12;
 }
 
 void main(){
@@ -117,7 +124,10 @@ void main(){
 
 	/* --- Himmel: am Zenit tiefer und satter, zum Horizont heller; bei Front und Hochnebel grau */
 	vec3 zen = top * mix( 1.0, 0.78, uTowers * 0.4 );
-	vec3 hz = horizon;
+	/* Horizont: zur Sonne hin ihre Farbe (Abendrot), von ihr weg der kühle Dunst (below) – dieselbe Staffelung wie im
+	   Dunst der Landschaft (grade.ts), so geht die Ferne dort nahtlos in den Himmel über */
+	float cosS = dot( d, sd );
+	vec3 hz = mix( below, horizon, clamp( cosS * 0.6 + 0.62, 0.0, 1.0 ) );
 	float dusk = uWarm;
 	zen = mix( zen, zen * vec3( 0.42, 0.47, 0.62 ) + vec3( 0.02, 0.02, 0.05 ), storm * 0.9 );
 	hz = mix( hz, hz * vec3( 0.5, 0.52, 0.58 ), storm * 0.85 );
@@ -138,7 +148,6 @@ void main(){
 	vec3 dShadow = vec3( 0.0 );
 	float facing = 0.0;
 	float frontL = 0.0;
-	float cosS = dot( d, sd );
 	float towerA = 0.0;
 	if ( drama > 0.001 ) {
 		dBase = max( lumF( zen ) * 0.5 + lumF( hz ) * 0.5, 0.01 );
@@ -149,30 +158,37 @@ void main(){
 		/* Blick von der Sonne weg (angestrahlt) … zur Sonne (Gegenlicht) */
 		facing = dot( normalize( d.xz + vec2( 1e-5, 0.0 ) ), normalize( sd.xz + vec2( 1e-5, 0.0 ) ) );
 		frontL = ( 1.0 - facing ) * 0.5;
-		/* Quelltürme rund um den Horizont: Höhenzug mit blumenkohligen Kanten, um die Sonne eine Lücke; von der
-		   Sonne weg angestrahlt (Alpenglühen), zur Sonne hin Schattenrisse mit Lichtsaum, unten im Dunst */
-		float az = atan( d.z, d.x );
-		vec2 cs = vec2( cos( az ), sin( az ) );
-		float ridge = texture2D( uNoise, cs * 0.55 + vec2( 0.31, 0.12 ) ).g * 0.6 + texture2D( uNoise, cs * 1.4 + vec2( 0.73, 0.41 ) ).r * 0.4;
-		float region = smoothstep( 0.35, 0.65, texture2D( uNoise, cs * 0.21 + vec2( 0.5, 0.9 ) ).b );
+		/* Quelltürme rund um den Horizont: breite Wolkenberge (einige je Himmelsrichtung) mit runden Bauschen, um die
+		   Sonne eine Lücke; von der Sonne weg angestrahlt (Alpenglühen), zur Sonne hin Schattenrisse mit Lichtsaum,
+		   unten im Dunst. Das Profil läuft langsam um den Horizont (früher rasch: Nadeln und Splitter statt Wolken) */
+		vec2 cs = normalize( d.xz + vec2( 1e-5, 0.0 ) );
+		float ridge = texture2D( uNoise, cs * 0.17 + vec2( 0.31, 0.12 ) ).g * 0.65 + texture2D( uNoise, cs * 0.46 + vec2( 0.73, 0.41 ) ).r * 0.35;
+		float region = smoothstep( 0.3, 0.62, texture2D( uNoise, cs * 0.2 + vec2( 0.5, 0.9 ) ).r );
 		float gap = 1.0 - smoothstep( 0.86, 0.97, facing ) * 0.85;
-		float top = ( 0.025 + pow( ridge, 1.5 ) * 0.5 * region ) * gap + 0.006;
-		/* Kante: runde Bauschen (grob längs des Horizonts, wenig in der Höhe – sonst züngelt es wie Flammen) */
-		vec2 qb = cs * 4.2 + vec2( 0.0, h * 2.6 );
-		float bill = texture2D( uNoise, qb ).r * 0.7 + texture2D( uNoise, qb * 2.1 + 0.37 ).g * 0.3;
-		float edge = top + ( bill - 0.5 ) * ( top * 0.42 + 0.012 );
+		/* (Kuppen statt Spitzen: das Profil oben abgeflacht, die Rundungen kommen von den Bauschen) */
+		float rr = 1.0 - ridge * ridge * ( 3.0 - 2.0 * ridge );
+		float top = ( 0.018 + ( 1.0 - rr * rr ) * 0.34 * region ) * gap + 0.006;
+		/* Bauschen: Rauschen auf den Zylinder um den Horizont gelegt (zwei Projektionen, nach der Richtung gemischt) –
+		   gleich fein längs des Horizonts und in der Höhe, also rund statt züngelnd */
+		vec2 w2 = cs * cs;
+		float hb = h * 2.1;
+		/* (alle drei Kanäle einer Probe: grobe Bauschen plus feine Krause, ohne weiteren Texturzugriff) */
+		const vec3 BW = vec3( 0.56, 0.28, 0.16 );
+		float bill = dot( texture2D( uNoise, vec2( cs.x * 2.1 + 0.11, hb ) ).rgb, BW ) * w2.y + dot( texture2D( uNoise, vec2( cs.y * 2.1 + 0.57, hb + 0.31 ) ).rgb, BW ) * w2.x;
+		bill = 0.5 + ( bill - 0.5 ) * inversesqrt( w2.x * w2.x + w2.y * w2.y );
+		float edge = top + ( bill - 0.5 ) * ( min( top, 0.16 ) * 0.8 + 0.014 );
 		float inside = edge - h;
-		towerA = smoothstep( 0.0, 0.012, inside ) * smoothstep( - 0.08, - 0.01, h ) * drama * 0.9;
+		towerA = smoothstep( 0.0, 0.022, inside ) * smoothstep( - 0.08, - 0.01, h ) * drama * 0.9;
 		if ( towerA > 0.001 ) {
 			float h01 = clamp( h / max( top, 0.01 ), 0.0, 1.0 );
-			float above = texture2D( uNoise, cs * 4.2 + vec2( 0.0, ( h + 0.05 ) * 2.6 ) ).r;
-			float relief = clamp( ( bill - above ) * 3.0 + 0.5, 0.0, 1.0 );
-			/* unten im eigenen Schatten, oben und an den Bauschen angestrahlt */
-			float tl = clamp( frontL * 0.35 + smoothstep( 0.1, 0.95, h01 ) * 0.5 + ( relief - 0.5 ) * 0.9 - 0.08, 0.0, 1.0 );
-			vec3 tc = mix( dShadow, dLit, smoothstep( 0.08, 0.85, tl ) );
-			float rimT = exp( - max( inside, 0.0 ) / 0.0035 ) * ( max( facing, 0.0 ) * 0.9 * dLow + 0.2 );
-			tc += dWarm * max( lumF( c ), dBase ) * rimT * 0.65;
-			tc = mix( tc, c, pow( 1.0 - h01, 3.0 ) * 0.55 );
+			/* unten im eigenen Schatten, oben und auf den Bauschen angestrahlt, in den Falten dazwischen dunkler */
+			float tl = clamp( frontL * 0.4 + smoothstep( 0.1, 0.95, h01 ) * 0.42 + ( bill - 0.5 ) * 0.8 - 0.02, 0.0, 1.0 );
+			/* (weit weg: die Schatten bleiben hell – tiefe Schieferflecken sahen aus wie Löcher) */
+			vec3 tc = mix( dShadow, dLit, 0.3 + 0.7 * smoothstep( 0.1, 0.8, tl ) );
+			float rimT = exp( - max( inside, 0.0 ) / 0.006 ) * ( max( facing, 0.0 ) * 0.9 * dLow + 0.2 );
+			tc += dWarm * max( lumF( c ), dBase ) * rimT * 0.55;
+			/* weit weg: im Dunst des Horizonts (unten ganz, oben noch ein Schleier) */
+			tc = mix( tc, c, 0.2 + ( 1.0 - h01 ) * ( 1.0 - h01 ) * 0.74 );
 			c = mix( c, tc, towerA );
 		}
 	}
@@ -181,16 +197,22 @@ void main(){
 	float pe = e + 0.09;
 	vec2 p = d.xz / pe * 0.75 + uSeed;
 	float t = uTime * ( 1.0 + storm * 1.6 );
-	/* zum Horizont hin verschwinden die Wolken im Dunst – darunter gar keine */
-	float fadeH = smoothstep( 0.0, 0.09, e );
+	/* zum Horizont hin verschwinden die Wolken im Dunst – darunter gar keine. Die flache Schicht läuft früh und weich
+	   aus (so tief sähe man Wolken von der Seite, nicht als gestauchte Flecken); Front und Hochnebel reichen als
+	   Decke bis hinunter */
+	float fadeH = mix( smoothstep( 0.015, 0.2, e ), smoothstep( 0.0, 0.07, e ), max( storm, over ) );
 	float alpha = 0.0;
 	if ( fadeH > 0.0 ) {
-		float n = cloudNoise( p, t );
+		float fineN;
+		float n = cloudNoise( p, t, fineN );
 		/* große Wolkenfelder und weite Lücken: eine sehr grobe Welle hebt und senkt die Bedeckung */
 		float big = texture2D( uNoise, p * 0.011 + vec2( t * 0.0012, 0.0 ) + vec2( 0.4 ) ).g;
 		float cover = clamp( uCover + storm * 0.35 + over + ( big - 0.5 ) * 0.5 * ( 1.0 - over ) * ( 1.0 - storm * 0.5 ), 0.0, 1.0 );
-		float lo = 0.64 - cover * 0.46;
-		float dens = smoothstep( lo, lo + 0.17 + 0.08 * over, n );
+		/* (lockerer als früher: zwischen den Wolken bleibt Himmel – eine fast geschlossene Decke aus hellen Rändern und
+		   dunklen Kernen sah aus wie ein Tarnmuster; weichere Ränder) */
+		float deck = max( storm, over );
+		float lo = 0.64 - cover * mix( 0.38, 0.46, deck );
+		float dens = smoothstep( lo, lo + mix( 0.22, 0.17, deck ) + 0.08 * over, n );
 		/* dichte Kerne: Hochnebel wird zur glatten Decke */
 		dens = mix( dens, clamp( dens * 1.6 + over * 0.6, 0.0, 1.0 ), over );
 		alpha = dens * fadeH;
@@ -198,27 +220,31 @@ void main(){
 		if ( alpha > 0.0 ) {
 			/* Plastik: die Dichte als Relief gelesen – jede Beule hat eine Sonnen- und eine Schattenseite (Blumenkohl) */
 			float dp = 0.07;
-			float nx = cloudNoise( p + vec2( dp, 0.0 ), t );
-			float ny = cloudNoise( p + vec2( 0.0, dp ), t );
+			float n3 = n - fineN;
+			float nx = cloudNoise3( p + vec2( dp, 0.0 ), t );
+			float ny = cloudNoise3( p + vec2( 0.0, dp ), t );
 			float bump = ( 0.9 + 1.1 * uTowers ) * 0.9;
-			vec3 N = normalize( vec3( - ( nx - n ) / dp * bump, - ( ny - n ) / dp * bump, 1.0 ) );
+			vec3 N = normalize( vec3( - ( nx - n3 ) / dp * bump, - ( ny - n3 ) / dp * bump, 1.0 ) );
 			vec3 Lp = normalize( vec3( sd.x, sd.z, max( sd.y, 0.04 ) + 0.25 ) );
 			float lit = clamp( dot( N, Lp ) * 1.15 - 0.05, 0.0, 1.0 );
 			/* dicke Kerne (von unten gesehen die grauen Bäuche) und dünne, helle Ränder */
-			float thick = smoothstep( lo, lo + 0.42, n );
+			float thick = smoothstep( lo + 0.05 * ( 1.0 - deck ), lo + 0.44, n );
 			float core = thick;
 			/* tiefe Sonne scheint von unten in die Wolkenbäuche – das Abendrot der Wolken */
 			float lowSun = vSun.y;
 			vec3 ambient = mix( hz, zen, 0.5 );
 			vec3 sunLit = vSunLit;
-			vec3 shadeCol = ambient * ( 0.62 - 0.3 * thick - 0.08 * uTowers );
+			vec3 shadeCol = ambient * ( 0.66 - 0.2 * thick - 0.07 * uTowers );
+			/* tagsüber helle, nur leicht graue Bäuche (die Wolke streut ihr eigenes Licht) – dunkle Schieferkerne gibt
+			   es erst im Abendlicht und unter der Front */
+			shadeCol = mix( shadeCol, ( ambient * 0.5 + vec3( 0.44 ) * lumF( sunLit ) ) * ( 1.0 - 0.28 * thick ), ( 1.0 - dusk ) * 0.9 );
 			vec3 litCol = sunLit * ( 0.72 + 0.28 * ( 1.0 - thick ) );
-			vec3 cloudCol = mix( shadeCol, litCol, lit * mix( 0.5, 1.0, 1.0 - thick * uTowers ) );
+			vec3 cloudCol = mix( shadeCol, litCol, lit * mix( 0.66, 1.0, 1.0 - thick * uTowers ) );
 			cloudCol = mix( cloudCol, sunCol * ( 1.1 + 0.3 * dusk ), lowSun * thick * ( 0.3 + 0.3 * lit ) );
 			if ( drama > 0.001 ) {
 				/* aufgerissenes Wolkenfeld: dünne Ränder zur Sonne leuchten, dicke Kerne bleiben schieferblau; im
 				   Gegenlicht Glut in den dünnen Teilen, die dicken als Schattenriss */
-				float Lk = clamp( lit * 0.75 + frontL * 0.3 - thick * 0.25 + 0.1, 0.0, 1.0 );
+				float Lk = clamp( lit * 0.75 + frontL * 0.3 - thick * 0.17 + 0.1, 0.0, 1.0 );
 				vec3 dc = mix( dShadow, dLit, Lk );
 				float back = pow( cosS * 0.5 + 0.5, 8.0 );
 				dc = mix( dc, dShadow * 0.85 + dWarm * max( lumF( c ), dBase ) * ( 1.0 - thick ) * 1.15, back * 0.85 );
@@ -238,15 +264,16 @@ void main(){
 			cloudCol = mix( cloudCol, mix( hz, zen, 0.3 ) * vec3( 0.84, 0.85, 0.87 ), over * 0.85 );
 			/* (zum Horizont hin flacher) */
 			float farMix = 1.0 - smoothstep( 0.0, 0.35, e );
-			cloudCol = mix( cloudCol, hz, farMix * 0.4 );
+			cloudCol = mix( cloudCol, hz, farMix * mix( 0.72, 0.4, deck ) );
 			c = mix( c, cloudCol, alpha );
 		}
 	}
 
 	/* --- Regenvorhänge der Front: senkrechte Schleier unter der Decke, zum Horizont hin */
 	if ( storm > 0.01 ) {
-		float ang = atan( d.x, d.z );
-		float veil = texture2D( uNoise, vec2( ang * 0.9 + uSeed * 0.1, e * 0.35 + t * 0.02 ) ).r;
+		/* um den Horizont herum ohne Naht (über den Winkel gelesen gab es gegenüber eine senkrechte Kante im Schleier) */
+		vec2 va = normalize( d.xz + vec2( 1e-5, 0.0 ) ) * 0.3;
+		float veil = texture2D( uNoise, va + vec2( uSeed * 0.1, e * 0.35 + t * 0.02 ) ).r;
 		veil = smoothstep( 0.45, 0.8, veil ) * ( 1.0 - smoothstep( 0.05, 0.42, e ) ) * smoothstep( -0.02, 0.03, h );
 		c = mix( c, mix( hz, vec3( 0.36, 0.38, 0.43 ), 0.6 ), veil * storm * 0.75 );
 	}

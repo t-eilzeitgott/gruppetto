@@ -1141,15 +1141,17 @@ export function vergeTex(kind: VergeKind, bump: boolean): GroundTex {
   // Grundfläche in Zonen: Kies, Erde, Gras
   const img = c.getImageData(0, 0, S, S);
   const d = img.data;
-  const soil: RGB = dry ? [150, 128, 98] : [104, 88, 66];
-  const grav: RGB = dry ? [184, 172, 148] : [142, 136, 124];
-  const grass: RGB = dry ? [128, 128, 74] : [88, 112, 56];
+  // (Kies und Erde im Ton näher beieinander als früher: die Kachel wiederholt sich alle 3 m, und helle Kiesflecken
+  // neben dunkler Erde lagen von der Fahrbahn aus gesehen als gleichmäßige Querstreifen im Bankett – wie Schwellen)
+  const soil: RGB = dry ? [158, 138, 109] : [112, 99, 79];
+  const grav: RGB = dry ? [176, 162, 137] : [133, 125, 111];
+  const grass: RGB = dry ? [132, 130, 82] : [96, 112, 64];
   for (let i = 0, j = 0; i < d.length; i += 4, j++) {
     const z = zone[j];
     const g = r();
     let col = z < 0.42 ? grav : z < 0.6 ? mix(grav, soil, (z - 0.42) / 0.18) : soil;
     const gr = Math.max(0, (z - (dry ? 0.66 : 0.56)) * 4);
-    if (gr > 0 && g < gr) col = mix(col, grass, 0.7);
+    if (gr > 0 && g < gr) col = mix(col, grass, 0.55);
     d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2];
   }
   c.putImageData(img, 0, 0);

@@ -263,11 +263,12 @@ vec3 wPatch(float u, float vm, float len, float chance, float c, vec4 h0, vec4 h
   float k = h0.w;
   float ua = k < 0.3 ? 0.5 : k < 0.55 ? 0.0 : k < 0.8 ? 0.12 + h1.x * 0.5 : 0.0;
   float ub = k < 0.3 ? 1.0 : k < 0.55 ? 0.5 : k < 0.8 ? ua + 0.2 + h1.y * 0.12 : 1.0;
-  // Ränder ausgefranst (sonst ein Rechteck wie mit dem Lineal): quer um bis zu ±12 cm, längs um bis zu ±30 cm
-  ua += wv.x * 0.045;
-  ub += wv.y * 0.045;
-  float va0 = v0 + wu.x * 0.6;
-  float va1 = v0 + l + wu.y * 0.6;
+  // Ränder gesägt, aber nicht wie mit dem Lineal: quer um bis zu ±5 cm, längs um bis zu ±12 cm (früher ±12 und ±40 cm:
+  // mit dem dunklen Flicken darin sah das aus wie ausgelaufener Teer)
+  ua += wv.x * 0.014;
+  ub += wv.y * 0.014;
+  float va0 = v0 + wu.x * 0.18;
+  float va1 = v0 + l + wu.y * 0.18;
   float inU = wSpan(u, ua, ub);
   float inV = wSpan(vm, va0, va1);
   float edge = min(max((wStripe(vm - va0, 0.035) + wStripe(vm - va1, 0.035)) * inU, (wStripe((u - ua) * 5.6, 0.035) + wStripe((u - ub) * 5.6, 0.035)) * inV), 1.0) * on;
@@ -287,13 +288,14 @@ vec3 roadWear(vec3 col, float um, float vm, float e, float rd, vec2 slow) {
     vec4 U0 = (wearU(um, 0.0) - 0.5) * 1.4;
     float cA = floor(vm / 13.0);
     float cB = floor(vm / 37.0);
-    vec3 A = wPatch(u, vm, 13.0, 0.45, cA, wearC(cA, 0), wearC(cA, 1), V0.xy, U0.xy);
-    vec3 B = wPatch(u, vm, 37.0, 0.5, cB, wearC(cB, 3), wearC(cB, 4), V0.zw, U0.zw);
-    // Flicken: frisch dunkel, alt heller und ausgebleicht; Fugen schwarz (Bitumen)
-    col = mix(col, B.z < 0.55 ? col * 0.42 : col * 1.3, B.x * 0.9 * kP);
-    col = mix(col, col * 0.28, B.y * 0.85 * kP);
-    col = mix(col, A.z < 0.55 ? col * 0.42 : col * 1.3, A.x * kP);
-    col = mix(col, col * 0.28, A.y * 0.85 * kP);
+    vec3 A = wPatch(u, vm, 13.0, 0.26, cA, wearC(cA, 0), wearC(cA, 1), V0.xy, U0.xy);
+    vec3 B = wPatch(u, vm, 37.0, 0.34, cB, wearC(cB, 3), wearC(cB, 4), V0.zw, U0.zw);
+    // Flicken: frisch etwas dunkler, alt heller und ausgebleicht; Fugen dunkel (Bitumen). Der Unterschied bleibt der
+    // eines neueren Belags (ein Viertel dunkler) – fast schwarze Flächen über die halbe Fahrbahn lasen sich als Loch
+    col = mix(col, B.z < 0.55 ? col * 0.74 : col * 1.15, B.x * 0.9 * kP);
+    col = mix(col, col * 0.46, B.y * 0.7 * kP);
+    col = mix(col, A.z < 0.55 ? col * 0.74 : col * 1.15, A.x * kP);
+    col = mix(col, col * 0.46, A.y * 0.7 * kP);
   }
   float kL = smoothstep(48.0, 36.0, rd);
   if (kL > 0.0) {
@@ -304,9 +306,9 @@ vec3 roadWear(vec3 col, float um, float vm, float e, float rd, vec2 slow) {
     // Querriss: schlängelt sich (zwei Oktaven) und läuft schräg
     float wav = (wearU(um, 1.0).x - 0.5) * 0.8 + (um - 2.8) * (c1 - 0.5) * 0.3;
     float reach = smoothstep(c2 * 0.6, c2 * 0.6 + 0.1, c3 < 0.5 ? u : 1.0 - u);
-    float crack = wStripe(vm - vc - wav, 0.018) * step(0.35, c4) * reach;
-    float joint = wStripe(um - 2.8 + (V1.x - 0.5) * 0.2, 0.02) * V1.y;
-    col = mix(col, col * 0.24, max(crack, joint) * 0.9 * kL);
+    float crack = wStripe(vm - vc - wav, 0.012) * step(0.45, c4) * reach;
+    float joint = wStripe(um - 2.8 + (V1.x - 0.5) * 0.2, 0.014) * V1.y;
+    col = mix(col, col * 0.36, max(crack, joint) * 0.85 * kL);
   }
 #ifdef ROAD_RICH
   // Fahrspuren: je Spur zwei glattgefahrene, hellere Radspuren, dazwischen ein dunkler Ölstreifen (stärker und
@@ -323,8 +325,8 @@ vec3 roadWear(vec3 col, float um, float vm, float e, float rd, vec2 slow) {
     float tv0 = tc * 13.0 + t0.x * 4.0;
     float tlen = 4.0 + t0.y * 8.0;
     float tpath = t0.z * 5.6 + (vm - tv0) * (t0.w - 0.5) * 1.1 + (V1.z - 0.5) * 0.4;
-    float tar = wStripe(um - tpath, 0.02) * wSpan(vm, tv0, tv0 + tlen) * step(0.4, wearC(tc, 1).w);
-    col = mix(col, vec3(0.04, 0.038, 0.04), tar * 0.72 * kL);
+    float tar = wStripe(um - tpath, 0.016) * wSpan(vm, tv0, tv0 + tlen) * step(0.66, wearC(tc, 1).w);
+    col = mix(col, vec3(0.05, 0.048, 0.05), tar * 0.62 * kL);
   }
   // ausgefranster Rand: die letzten Dezimeter bröckeln – heller Splitt, dunkle Löcher, unregelmäßig breit
   float ed = min(um + e, 5.6 + e - um) + (V1.w - 0.5) * 0.24;
@@ -475,7 +477,7 @@ const PROP3D = new Set<string>(['pine', 'pineSnow', 'larch', 'tree', 'treeRound'
 const BILLBOARD: Record<string, { variants: number; frames: number }> = {
   cow: { variants: 2, frames: 1 }, cowBW: { variants: 2, frames: 1 }, chevron: { variants: 1, frames: 1 },
   dosso: { variants: 1, frames: 1 }, chalet: { variants: 2, frames: 1 }, barn: { variants: 2, frames: 1 }, rifugio: { variants: 1, frames: 1 },
-  farmhouse: { variants: 1, frames: 1 }, flowers: { variants: 4, frames: 1 }, grassTuft: { variants: 2, frames: 1 }, sunflowers: { variants: 2, frames: 1 },
+  farmhouse: { variants: 1, frames: 1 }, flowers: { variants: 4, frames: 1 }, grassTuft: { variants: 2, frames: 1 }, grassDry: { variants: 2, frames: 1 }, sunflowers: { variants: 2, frames: 1 },
   parasol: { variants: 4, frames: 1 }, boat: { variants: 4, frames: 1 }, fountain: { variants: 1, frames: 1 }, flagpole: { variants: 13, frames: 2 },
   campervan: { variants: 4, frames: 1 },
 };
@@ -598,6 +600,9 @@ export class Renderer3D {
   private sun = new THREE.DirectionalLight(0xffffff, 1.6);
   /** sanftes Gegenlicht: Schattenseiten von Fels und Wänden saufen nicht ab */
   private fill = new THREE.DirectionalLight(0xbcd4ff, 0.5);
+  /** Dunst von der Sonne weg und kühles Himmelslicht am Abend (updateLight; ohne neue Objekte je Bild) */
+  private coolC = new THREE.Color();
+  private coolSky = new THREE.Color();
   private fog = new THREE.FogExp2(0xcfe0ea, 0.0024);
   /** Bild mit Kantenglättung (mehrere Abtastpunkte je Bildpunkt) */
   private msaa = true;
@@ -947,6 +952,8 @@ export class Renderer3D {
 
     // Talboden: nur noch Rückfallfläche tief unten (die Landschaft kommt aus dem Höhenfeld)
     this.valleyMat = new THREE.MeshBasicMaterial({ color: 0xcfe0ea, fog: true }) as unknown as THREE.MeshLambertMaterial;
+    // (Dunst mit Sonne wie die Landschaft davor, grade.ts – sonst stünde die Fläche zur Sonne hin kühl hinter warmen Hängen)
+    this.valleyMat.onBeforeCompile = (sh) => { Object.assign(sh.uniforms, ATMO); };
     this.valley = new THREE.Mesh(new THREE.PlaneGeometry(30000, 30000), this.valleyMat);
     this.valley.userData.nopick = true;
     this.valley.rotation.x = -Math.PI / 2;
@@ -1305,7 +1312,8 @@ export class Renderer3D {
               float sF2 = sF1 * sF1;
               float sFr = sF2 * sF2 * sF1 * ${sn.toFixed(2)};
               #ifdef USE_FOG
-                vec3 sSky = fogColor;
+                // (Dunst zwischen der kühlen, sonnenabgewandten Seite und dem warmen Schein zur Sonne hin – grade.ts)
+                vec3 sSky = fogColor + fogSunCol * 0.3;
               #else
                 vec3 sSky = vec3(0.6);
               #endif
@@ -3717,7 +3725,13 @@ export class Renderer3D {
     if (S.warm > 0) haze = mixRGB(haze, [236, 206, 168], S.warm * 0.22);
     else if (S.warm < 0) haze = mixRGB(haze, [214, 224, 238], -S.warm * 0.3);
     const fogC = new THREE.Color().setRGB(haze[0] / 255, haze[1] / 255, haze[2] / 255, THREE.SRGBColorSpace);
-    this.fog.color.copy(fogC);
+    // Abend: 0 am Nachmittag … 1 zur tiefen Abendsonne, nach Sonnenuntergang wieder 0 (dann gibt es keine Sonnenseite)
+    const eve = smooth01((L.t - 0.3) / 0.3) * (1 - smooth01((L.t - 0.72) / 0.13));
+    // Dunst von der Sonne weg: abends kühl – das Blau des Himmels dort statt des Abendrots (grade.ts); zur Sonne hin
+    // kommt der warme Dunst über fogSunCol dazu
+    const coolRGB = mixRGB(haze, mixRGB(L.skyTop, [255, 255, 255], 0.42), 0.62 * eve);
+    const coolC = this.coolC.setRGB(coolRGB[0] / 255, coolRGB[1] / 255, coolRGB[2] / 255, THREE.SRGBColorSpace);
+    this.fog.color.copy(coolC);
     // klare Bergluft: Nahes knackig, Fernes sanft im Dunst
     // Luftperspektive: Fernes verblasst deutlich – gibt den Bergen Tiefe statt einer Wand
     this.fog.density = (0.00085 + L.hazeAmt * 0.0002) * this.range.fog * (1 + S.haze * 0.55);
@@ -3725,17 +3739,22 @@ export class Renderer3D {
     // abends etwas weniger Licht – aber die Strecke bleibt gut lesbar
     const dayK = 1 - L.lights * 0.45;
     this.hemi.color.setRGB(0.74, 0.84, 1, THREE.SRGBColorSpace).multiply(tint);
+    // Abendlicht: die Schatten bekommen das kühle Licht des Himmels über ihnen (nicht das Abendrot der Sonne) – warme
+    // Lichter, blaue Schatten; das Bodenlicht (von besonnten Hängen zurückgeworfen) bleibt warm
+    this.hemi.color.lerp(this.coolSky.setRGB(0.6, 0.74, 1, THREE.SRGBColorSpace), 0.25 * eve);
     // Bodenlicht: helle Wiesen, Fels und Schnee werfen viel Licht zurück – auch Schattenseiten bleiben freundlich
     this.hemi.groundColor.setRGB(0.64, 0.6, 0.5, THREE.SRGBColorSpace).multiply(tint);
     // Himmels- und Bodenlicht: Schattenseiten (Felswände, Hänge weg von der Sonne) bleiben lesbar, aber deutlich
     // dunkler als die Sonnenseite – Licht mit Richtung statt gleichmäßiger Helligkeit
-    this.hemi.intensity = (1.7 + 0.55 * dayK) * dim;
+    this.hemi.intensity = (1.7 + 0.55 * dayK) * dim * (1 - 0.08 * eve);
     const sunRGB = S.warm > 0 ? mixRGB(L.sun, [255, 196, 128], S.warm * 0.2) : S.warm < 0 ? mixRGB(L.sun, [228, 236, 255], -S.warm * 0.25) : L.sun;
     const sunC = new THREE.Color().setRGB(sunRGB[0] / 255, sunRGB[1] / 255, sunRGB[2] / 255, THREE.SRGBColorSpace);
     this.sun.color.copy(sunC);
     // Winter: kühleres Himmelslicht, Schnee wirft viel Licht zurück
     if (S.warm < 0) { this.hemi.color.lerp(new THREE.Color(0.8, 0.88, 1.0), -S.warm * 0.25); this.hemi.groundColor.lerp(new THREE.Color(0.78, 0.82, 0.9), S.snow * 0.35); }
-    this.sun.intensity = Math.max(0.6, Math.min(3.0, (L.sunY + 0.14) * 7.0)) * dayK * dim;
+    // (abends kräftiger gegen das Himmelslicht: das tiefe Licht modelliert Hänge, Häuser und Fahrer, statt im
+    // gleichmäßigen Dämmerlicht unterzugehen)
+    this.sun.intensity = Math.max(0.6, Math.min(3.0, (L.sunY + 0.14) * 7.0)) * dayK * dim * (1 + 0.5 * eve);
     // Sonnenstand: am Nachmittag schräg von hinten und von der Seite (die Berge vor einem liegen im Licht, Hänge
     // bekommen Licht- und Schattenseite), zum Abend hin wandert die Sonne nach Westen, steht tiefer und taucht
     // seitlich vor einem ins Abendrot
@@ -3745,6 +3764,8 @@ export class Renderer3D {
     // Dunst zur Sonne hin in ihrer Farbe: nachmittags zart, am Abend ein Glühen (siehe grade.ts)
     ATMO.fogSunDir.value.copy(sd);
     ATMO.fogSunCol.value.copy(sunC).multiplyScalar((0.18 + 0.55 * L.hazeAmt) * Math.max(0, Math.min(1, 1 - L.stars * 1.5)) * dim);
+    // … plus der Unterschied zwischen warmem Dunst (Sonnenseite) und kühlem (abgewandt)
+    ATMO.fogSunCol.value.r += fogC.r - coolC.r; ATMO.fogSunCol.value.g += fogC.g - coolC.g; ATMO.fogSunCol.value.b += fogC.b - coolC.b;
     this.peakU.uGlow.value.copy(ATMO.fogSunCol.value);
     // Glitzern auf dem Wasser: Sonnenlicht, nachts (Sterne) fast nichts
     if (this.waterU) {
@@ -3767,7 +3788,7 @@ export class Renderer3D {
     const hz = mixRGB(L.skyHorizon, pal.skyHorizon, 0.35 * (1 - L.t));
     (u.top.value as THREE.Color).setRGB(top[0] / 255, top[1] / 255, top[2] / 255, THREE.SRGBColorSpace);
     (u.horizon.value as THREE.Color).setRGB(hz[0] / 255, hz[1] / 255, hz[2] / 255, THREE.SRGBColorSpace);
-    (u.below.value as THREE.Color).copy(fogC);
+    (u.below.value as THREE.Color).copy(coolC);
     (u.sunDir.value as THREE.Vector3).copy(sd);
     (u.sunCol.value as THREE.Color).copy(sunC).multiplyScalar(L.sunY > -0.1 ? 1 : 0);
     // Wolken: Stimmung des Tages, vom Wetter der Fahrt überstimmt
@@ -3789,7 +3810,7 @@ export class Renderer3D {
     this.mats.glow.opacity = Math.max(0, lampsOn - 0.2) * 1.1;
     // Halos und Lichtkegel der Laternen (lamps3d.ts)
     LAMP_U.uLampK.value = Math.max(0, Math.min(1, (lampsOn - 0.12) / 0.55));
-    if (!this.holeMode) this.valleyMat.color.copy(fogC);
+    if (!this.holeMode) this.valleyMat.color.copy(coolC);
     // Berge am Horizont: dasselbe Licht wie die Landschaft (Lambert: Lichtfarbe · Stärke / π)
     {
       const P = this.peakU;
@@ -3800,7 +3821,7 @@ export class Renderer3D {
       P.uGroundC.value.copy(this.hemi.groundColor).multiplyScalar(this.hemi.intensity * ip);
       P.uFillDir.value.set(-sd.x, 0.45, -sd.z).normalize();
       P.uFillC.value.copy(this.fill.color).multiplyScalar(this.fill.intensity * ip);
-      P.uHaze.value.copy(fogC);
+      P.uHaze.value.copy(coolC);
     }
     // Tunnel: warmweiße Leuchten, an den Portalen Tageslicht in der Farbe des Dunstes
     // Augen gewöhnen sich an das Dunkel: im Tunnel heller belichten – die Röhre bleibt gleich, draußen
@@ -5830,6 +5851,10 @@ export class Renderer3D {
     const pb = this.profile(sb, bt ? a.seg : b.seg, sg, bt ? limA : limB);
     // im Ort (beide Querschnitte): Bordstein und Gehweg als eigene Netze mit Texturen, das Gelände erst dahinter
     const k0 = sa.ground === 'pavement' && sb.ground === 'pavement' && pa.w !== undefined && pa.w === pb.w && this.paveGB ? this.paveSide(this.paveGB, a, b, sg, P, pa, pb) : 0;
+    // Seeende: der nächste Querschnitt ist schon Land (Wiese, Hang). Das Stück dazwischen steigt vom Seegrund den Hang
+    // hinauf – in der dunklen Farbe des Seegrunds stand es als fast schwarzer Keil neben der Straße. Es bekommt die
+    // Farben des Ufers, zu dem es gehört.
+    const shore = sa.ground === 'water' && sb.ground !== 'water' && !bt;
     for (let k = k0; k < pa.o.length - 1; k++) {
       const xa0 = sg * (EDGE + pa.o[k]);
       const xa1 = sg * (EDGE + pa.o[k + 1]);
@@ -5839,7 +5864,7 @@ export class Renderer3D {
       const A1 = P(a, xa1, pa.h[k + 1] - 0.04);
       const B0 = P(b, xb0, pb.h[k] - 0.04);
       const B1 = P(b, xb1, pb.h[k + 1] - 0.04);
-      const col = pa.cols[k];
+      const col = shore ? pb.cols[k] ?? pa.cols[k] : pa.cols[k];
       if (sa.stone && k < 5) {
         // Stützmauer: Bruchstein, Lagen waagrecht entlang der Strecke
         const za = a.seg.i * SEG / 1.8;
@@ -5854,7 +5879,7 @@ export class Renderer3D {
       // grün neben nicht grün (Rinne → Wiese, Fels → Grasnarbe, Kies → Wiese): innen die Farbe des vorigen Bands, der
       // Shader macht daraus einen ausgefransten Übergang (im Ort übernimmt das der Gehweg)
       const green = (c: RGBf) => c[1] - Math.max(c[0], c[2]) > 0.012;
-      if (k > 0 && sa.ground !== 'pavement' && green(pa.cols[k]) !== green(pa.cols[k - 1])) {
+      if (k > 0 && !shore && sa.ground !== 'pavement' && green(pa.cols[k]) !== green(pa.cols[k - 1])) {
         const ca = pa.cols[k - 1], cb = pb.cols[k - 1] ?? ca, cob = pb.cols[k] ?? col;
         if (sg > 0) terr.quadC(A0, A1, B1, B0, ca, col, cob, cb, [uv(A0), uv(A1), uv(B1), uv(B0)]);
         else terr.quadC(A1, A0, B0, B1, col, ca, cb, cob, [uv(A1), uv(A0), uv(B0), uv(B1)]);
@@ -6813,7 +6838,8 @@ export class Renderer3D {
       group.add(mesh);
       return;
     }
-    const kind = sp.k === 'chevron' && sp.v === 9 ? 'dosso' : sp.k;
+    // (Jahreszeit: Grasbüschel am Wegrand strohig, sobald es die Wiesen sind – season.ts)
+    const kind = sp.k === 'chevron' && sp.v === 9 ? 'dosso' : sp.k === 'grassTuft' && this.season.dry > 0.4 ? 'grassDry' : sp.k;
     const def = BILLBOARD[kind];
     if (!def) return;
     // Fahnen der Gegend des Schauplatzes (Trikolore, Gwenn-ha-Du, Ikurriña, Saltire …) statt der italienischen

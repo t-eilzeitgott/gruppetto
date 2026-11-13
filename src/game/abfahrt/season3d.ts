@@ -30,14 +30,16 @@ void main() {
   p = mod(p - uCam, uBox) - uBox * 0.5 + uCam;
   vec4 mv = viewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
-  float size = uMode < 1.5 ? 0.16 + w * 0.08 : uMode < 2.5 ? 0.045 + w * 0.04 : 0.07 + w * 0.03;
-  gl_PointSize = clamp(size * uScale / max(0.5, -mv.z), 0.0, 48.0);
+  // Laub in Blattgröße (9–15 cm; vorher bis 24 cm – nah vor der Kamera segelten orange Scheiben durchs Bild)
+  float size = uMode < 1.5 ? 0.09 + w * 0.06 : uMode < 2.5 ? 0.045 + w * 0.04 : 0.07 + w * 0.03;
+  gl_PointSize = clamp(size * uScale / max(0.5, -mv.z), 0.0, uMode < 1.5 ? 26.0 : 48.0);
   // zum Rand des Kastens und ganz nah weich aus (kein Aufblitzen beim Wiedereintritt, nichts klebt an der Linse)
   vec3 q = abs(p - uCam) / (uBox * 0.5);
-  vA = (1.0 - smoothstep(0.75, 1.0, max(q.x, max(q.y, q.z)))) * smoothstep(0.6, 2.2, -mv.z);
-  // Laub: Goldgelb bis Rostrot und Braun; Blüten: weiß bis rosa
-  vec3 c1 = mix(vec3(0.95, 0.62, 0.12), vec3(0.8, 0.24, 0.07), fract(w * 7.3));
-  c1 = mix(c1, vec3(0.5, 0.3, 0.12), step(0.78, fract(w * 3.1)));
+  vA = (1.0 - smoothstep(0.75, 1.0, max(q.x, max(q.y, q.z)))) * smoothstep(uMode < 1.5 ? 1.4 : 0.6, uMode < 1.5 ? 4.2 : 2.2, -mv.z);
+  // Laub: Ocker und Goldgelb bis Rostrot, ein Drittel schon braun; Blüten: weiß bis rosa
+  vec3 c1 = mix(vec3(0.86, 0.6, 0.15), vec3(0.68, 0.26, 0.08), fract(w * 7.3));
+  c1 = mix(c1, vec3(0.42, 0.27, 0.13), step(0.66, fract(w * 3.1)));
+  c1 *= 0.82 + 0.36 * fract(w * 13.7);
   vCol = uMode < 1.5 ? c1 : uMode < 2.5 ? vec3(0.95, 0.97, 1.0) : mix(vec3(1.0, 0.86, 0.9), vec3(0.98, 0.97, 0.95), fract(w * 5.7));
   vAng = w * 6.283 + t * (uMode < 1.5 ? 2.0 + w * 3.0 : 1.2) * (fract(w * 11.0) < 0.5 ? -1.0 : 1.0);
 }`;
@@ -51,20 +53,25 @@ varying float vA;
 void main() {
   vec2 q = gl_PointCoord - 0.5;
   float a;
+  float lit = 1.0;
   if (uMode > 1.5 && uMode < 2.5) {
     // Schneeflocke: weicher Punkt
     a = 1.0 - smoothstep(0.18, 0.5, length(q));
   } else {
-    // Blatt: gedrehte Ellipse, die sich beim Taumeln verkürzt (Kippen um die Längsachse)
+    // Blatt: zwei Bögen, die sich in Spitzen treffen (kein Oval), beim Taumeln schmaler (Kippen um die Längsachse);
+    // die beiden Hälften an der Mittelrippe verschieden hell, die Unterseite blasser
     float c = cos(vAng), s = sin(vAng);
     vec2 r = vec2(c * q.x - s * q.y, s * q.x + c * q.y);
-    float flip = 0.35 + 0.65 * abs(sin(vAng * 1.7));
-    float e = (r.x * r.x) / 0.16 + (r.y * r.y) / (0.045 * flip * flip + 0.004);
-    a = 1.0 - smoothstep(0.7, 1.0, e);
+    float sf = sin(vAng * 1.7);
+    float flip = 0.3 + 0.7 * abs(sf);
+    float x = r.x / 0.44;
+    float wid = (0.2 * flip + 0.03) * (1.0 - x * x) * (1.0 - 0.28 * x);
+    a = (1.0 - smoothstep(0.55, 1.0, abs(r.y) / max(wid, 1e-3))) * step(abs(x), 1.0);
+    lit = (r.y > 0.0 ? 1.1 : 0.84) * (sf > 0.0 ? 1.0 : 0.8) * (1.0 - 0.3 * smoothstep(0.03, 0.0, abs(r.y)));
   }
   a *= vA;
   if (a < 0.02) discard;
-  gl_FragColor = vec4(vCol * uLight, a);
+  gl_FragColor = vec4(vCol * uLight * lit, a);
   #include <colorspace_fragment>
 }`;
 

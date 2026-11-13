@@ -151,8 +151,9 @@ void main() {
   float far = smoothstep(uR0, uR1, r);
   float low = 1.0 - smoothstep(-80.0, uAmp * 0.45, h);
   float hz = clamp(0.1 + far * 0.55 + low * 0.2, 0.0, 0.9);
-  // Dunst zur Sonne hin in ihrer Farbe (wie der Nebel der Landschaft, grade.ts)
-  col = mix(col, uHaze + uGlow * pow(max(dot(normalize(vP), uSunDir), 0.0), 5.0), hz);
+  // Dunst von der Sonne weg kühl, zu ihr hin in ihrer Farbe (wie der Nebel der Landschaft, grade.ts)
+  float hzS = dot(normalize(vP), uSunDir) * 0.5 + 0.5;
+  col = mix(col, uHaze + uGlow * (hzS * hzS * hzS), hz);
   gl_FragColor = vec4(col, uOpacity);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

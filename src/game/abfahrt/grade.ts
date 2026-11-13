@@ -32,7 +32,18 @@ chunk.tonemapping_pars_fragment = chunk.tonemapping_pars_fragment.replace('vec3 
  * Dazu Dunst mit Sonne: zur Sonne hin leuchtet der Dunst in ihrer Farbe (Streulicht), gegenüber bleibt er kühl –
  * das gibt dem Licht eine Richtung und dem Abend sein Glühen. Richtung und Farbe kommen aus ATMO (von allen
  * Materialien geteilt, der Renderer setzt sie je Bild); Materialien ohne diese Uniforms (Wert 0) bleiben wie bisher.
+ *
+ * Die Farbe des Dunstes ist die von der Sonne abgewandte (abends kühl, bläulich wie der Himmel dort); fogSunCol ist
+ * der Unterschied zur Sonnenseite plus ihr Glühen und kommt weich über den ganzen Himmel dazu (w³ mit w = 0 gegenüber
+ * der Sonne … 1 zu ihr hin). So staffeln sich Hänge und Täler abends von Gold nach Blau – ohne eine Rechnung mehr
+ * als vorher (ein Skalarprodukt, zwei Multiplikationen).
+ *
+ * Luftperspektive: zum quadratischen Dunst (Nahes klar, Fernes verschwindet) ein linearer Anteil – schon ein Hang in
+ * einem halben Kilometer hebt sich leicht vom nächsten ab (Tiefe statt einer dunklen Wand); derselbe eine exp.
  */
+/** linearer Anteil der Luftperspektive (siehe oben); auch die Berge am Horizont rechnen damit (peaks3d.ts) */
+export const FOG_LIN = 0.28;
+
 export const ATMO = {
   fogSunDir: { value: new THREE.Vector3(0, 1, 0) },
   fogSunCol: { value: new THREE.Color(0, 0, 0) },
@@ -43,10 +54,10 @@ chunk.fog_pars_fragment = chunk.fog_pars_fragment.replace('varying float vFogDep
 chunk.fog_fragment = chunk.fog_fragment
   .replace(
     'float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );',
-    'float fogK = fogDensity * ( 1.0 + 0.85 * clamp( - vFogRel / 170.0, - 0.45, 1.5 ) );\n\t\tfloat fogFactor = 1.0 - exp( - fogK * fogK * vFogDepth * vFogDepth );',
+    `float fogK = fogDensity * ( 1.0 + 0.85 * clamp( - vFogRel / 170.0, - 0.45, 1.5 ) ) * vFogDepth;\n\t\tfloat fogFactor = 1.0 - exp( - fogK * ( fogK + ${FOG_LIN.toFixed(2)} ) );`,
   )
   .replace(
     'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );',
-    // (hoch 5 als Multiplikationen – pow kostet log2 und exp2 in jedem Bildpunkt)
-    'float fogSun = max( dot( normalize( vFogDir ), fogSunDir ), 0.0 );\n\tfloat fogSun2 = fogSun * fogSun;\n\tfogSun *= fogSun2 * fogSun2;\n\tgl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor + fogSunCol * fogSun, fogFactor );',
+    // (hoch 3 als Multiplikationen – pow kostet log2 und exp2 in jedem Bildpunkt)
+    'float fogSun = dot( normalize( vFogDir ), fogSunDir ) * 0.5 + 0.5;\n\tgl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor + fogSunCol * ( fogSun * fogSun * fogSun ), fogFactor );',
   );
