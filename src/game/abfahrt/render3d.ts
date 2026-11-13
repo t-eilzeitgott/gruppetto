@@ -3766,7 +3766,6 @@ export class Renderer3D {
     ATMO.fogSunCol.value.copy(sunC).multiplyScalar((0.18 + 0.55 * L.hazeAmt) * Math.max(0, Math.min(1, 1 - L.stars * 1.5)) * dim);
     // … plus der Unterschied zwischen warmem Dunst (Sonnenseite) und kühlem (abgewandt)
     ATMO.fogSunCol.value.r += fogC.r - coolC.r; ATMO.fogSunCol.value.g += fogC.g - coolC.g; ATMO.fogSunCol.value.b += fogC.b - coolC.b;
-    this.peakU.uGlow.value.copy(ATMO.fogSunCol.value);
     // Glitzern auf dem Wasser: Sonnenlicht, nachts (Sterne) fast nichts
     if (this.waterU) {
       this.waterU.uSunC.value.copy(sunC).multiplyScalar(this.sun.intensity * Math.max(0.08, Math.min(1, 1 - L.stars * 1.2)));
@@ -3821,7 +3820,13 @@ export class Renderer3D {
       P.uGroundC.value.copy(this.hemi.groundColor).multiplyScalar(this.hemi.intensity * ip);
       P.uFillDir.value.set(-sd.x, 0.45, -sd.z).normalize();
       P.uFillC.value.copy(this.fill.color).multiplyScalar(this.fill.intensity * ip);
-      P.uHaze.value.copy(coolC);
+      // Dunst in der Farbe des Himmels dahinter (sky.ts: am Horizont von der Sonne weg kühl, zu ihr hin ihre Farbe,
+      // unter einer Gewitterfront dunkler); gegen die tiefe Sonne dichter (peaks3d.ts)
+      const hC = u.horizon.value as THREE.Color;
+      const st = M.storm * 0.85;
+      P.uHaze.value.setRGB(coolC.r * (1 - 0.5 * st), coolC.g * (1 - 0.48 * st), coolC.b * (1 - 0.42 * st));
+      P.uGlow.value.setRGB((hC.r - coolC.r) * (1 - 0.5 * st), (hC.g - coolC.g) * (1 - 0.48 * st), (hC.b - coolC.b) * (1 - 0.42 * st));
+      P.uVeil.value = (0.06 + 0.5 * eve) * dim;
     }
     // Tunnel: warmweiße Leuchten, an den Portalen Tageslicht in der Farbe des Dunstes
     // Augen gewöhnen sich an das Dunkel: im Tunnel heller belichten – die Röhre bleibt gleich, draußen

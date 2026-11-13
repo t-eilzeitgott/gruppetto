@@ -19,9 +19,12 @@ export interface PeakLight {
   uGroundC: { value: THREE.Color };
   uFillDir: { value: THREE.Vector3 };
   uFillC: { value: THREE.Color };
+  /** Dunst von der Sonne weg: die Farbe des Himmels am Horizont dort */
   uHaze: { value: THREE.Color };
-  /** Dunst zur Sonne hin in ihrer Farbe (dasselbe wie ATMO.fogSunCol in grade.ts) */
+  /** … und was zur Sonne hin dazukommt (Horizont dort minus uHaze) – ferne Berge gehen in den Himmel dahinter über */
   uGlow: { value: THREE.Color };
+  /** Schleier gegen die Sonne: so viel dichter liegt der Dunst vor Bergen in ihrer Richtung (abends viel) */
+  uVeil: { value: number };
   uNoise: { value: THREE.Texture | null };
 }
 
@@ -30,7 +33,8 @@ export function peakLight(): PeakLight {
     uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uSunC: { value: new THREE.Color(1, 1, 1) },
     uSkyC: { value: new THREE.Color(0.4, 0.45, 0.5) }, uGroundC: { value: new THREE.Color(0.3, 0.3, 0.25) },
     uFillDir: { value: new THREE.Vector3(0, 1, 0) }, uFillC: { value: new THREE.Color(0, 0, 0) },
-    uHaze: { value: new THREE.Color(0.8, 0.85, 0.9) }, uGlow: { value: new THREE.Color(0, 0, 0) }, uNoise: { value: null },
+    uHaze: { value: new THREE.Color(0.8, 0.85, 0.9) }, uGlow: { value: new THREE.Color(0, 0, 0) }, uVeil: { value: 0.1 },
+    uNoise: { value: null },
   };
 }
 
@@ -60,7 +64,7 @@ void main() {
 
 const FRAG = /* glsl */ `
 uniform vec3 uSunDir; uniform vec3 uSunC; uniform vec3 uSkyC; uniform vec3 uGroundC;
-uniform vec3 uFillDir; uniform vec3 uFillC; uniform vec3 uHaze; uniform vec3 uGlow; uniform sampler2D uNoise;
+uniform vec3 uFillDir; uniform vec3 uFillC; uniform vec3 uHaze; uniform vec3 uGlow; uniform float uVeil; uniform sampler2D uNoise;
 uniform vec3 uRock; uniform vec3 uRockD; uniform vec3 uForest; uniform vec3 uMeadow; uniform vec3 uSnowC; uniform vec3 uSnowS;
 uniform float uAmp; uniform float uSnow; uniform float uTree; uniform float uOpacity;
 uniform float uR0; uniform float uR1;
@@ -150,10 +154,13 @@ void main() {
   // Luftperspektive: mit der Entfernung und zum Tal hin mehr Dunst, Gipfel bleiben klarer
   float far = smoothstep(uR0, uR1, r);
   float low = 1.0 - smoothstep(-80.0, uAmp * 0.45, h);
-  float hz = clamp(0.1 + far * 0.55 + low * 0.2, 0.0, 0.9);
-  // Dunst von der Sonne weg kühl, zu ihr hin in ihrer Farbe (wie der Nebel der Landschaft, grade.ts)
-  float hzS = dot(normalize(vP), uSunDir) * 0.5 + 0.5;
-  col = mix(col, uHaze + uGlow * (hzS * hzS * hzS), hz);
+  // Dunst in der Farbe des Himmels dahinter: von der Sonne weg kühl, zu ihr hin die Farbe des Horizonts dort – dieselbe
+  // Mischung wie im Himmel (sky.ts), ferne Berge gehen so in ihn über. Gegen die tiefe Sonne liegt der Schleier
+  // dichter (uVeil): dort verschwimmen sie, statt als weißer Zahn vor dem Abendrot zu stehen. (Gleich viele
+  // Rechenschritte wie zuvor: eine Potenz weniger, dafür der Schleier; die untere Grenze des Dunstes war nie erreicht.)
+  float hzS = clamp(dot(normalize(vP), uSunDir) * 0.6 + 0.62, 0.0, 1.0);
+  float hz = min(0.1 + far * 0.55 + low * 0.2 + hzS * hzS * uVeil, 0.9);
+  col = mix(col, uHaze + uGlow * hzS, hz);
   gl_FragColor = vec4(col, uOpacity);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

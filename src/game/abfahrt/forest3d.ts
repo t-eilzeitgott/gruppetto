@@ -190,8 +190,9 @@ function olive(hd: boolean, seed: number): THREE.BufferGeometry {
     const s = i ? -1 : 1;
     b.addFn(new THREE.CylinderGeometry(0.12, 0.26, 2.3, hd ? 7 : 5), M(s * 0.25, 1.1, 0, 1, 1, 1, 0, 0, s * 0.28), (p) => mulC(trunk, 0.75 + 0.15 * p.y));
   }
-  const D = lin('#5d6b45');
-  const Lc = lin('#a9b48a');
+  // (silbriges Graugrün – heller standen die Kronen im Kiefernwald und auf der Wiese wie weiße Tupfen)
+  const D = lin('#4b5939');
+  const Lc = lin('#7d8b63');
   const n = hd ? 22 : 7;
   for (let i = 0; i < n; i++) {
     const a = r() * Math.PI * 2;
@@ -334,9 +335,58 @@ void main() {
 }`;
 
 /**
+ * Büschel: ein Zufallswert je Stelle im Baum für die Jahreszeit – das Laub fällt büschelweise, Blüten sitzen in
+ * Dolden, der Schnee hat einen unruhigen Rand. Grobe Flecken (ein, zwei Handbreit), darin feiner, gleichverteilt
+ * (ein Schwellwert t trifft den Anteil t der Fläche). Liegt im sonst freien Alpha der Normalen: so hängt das Muster
+ * am Baum und mittelt sich in der Ferne über die Mipmaps. (Vorher ein Zufall je Bildpunkt des Vorrats, im Shader
+ * gerechnet – ab mittlerer Entfernung war das ein Zufall je Bildpunkt des Bildschirms: gesprenkelte, in der Fahrt
+ * flimmernde Kronen.) Eine kleine kachelbare Kachel (n × n, über die Zellbreite gespannt); die Grafikkarte legt
+ * sie beim Zeichnen des Vorrats ins Alpha.
+ */
+const TUFT = 96;
+function tuftNoise(n: number): Uint8Array {
+  const r = mulberry32(90210);
+  const f = new Float32Array(n * n);
+  // grobes Gitter aus Zufallswerten (c Punkte über die Breite), weich überblendet
+  const c = n / 3;
+  const g = new Float32Array(c * c);
+  for (let i = 0; i < g.length; i++) g[i] = r() * 0.55;
+  for (let y = 0, o = 0; y < n; y++) {
+    const fy = (y * c) / n;
+    const y0 = Math.floor(fy);
+    let ty = fy - y0;
+    ty = ty * ty * (3 - 2 * ty);
+    const r0 = (y0 % c) * c;
+    const r1 = ((y0 + 1) % c) * c;
+    for (let x = 0; x < n; x++, o++) {
+      const fx = (x * c) / n;
+      const x0 = Math.floor(fx);
+      let tx = fx - x0;
+      tx = tx * tx * (3 - 2 * tx);
+      const xa = x0 % c;
+      const xb = (x0 + 1) % c;
+      const a = g[r0 + xa] + (g[r0 + xb] - g[r0 + xa]) * tx;
+      const b = g[r1 + xa] + (g[r1 + xb] - g[r1 + xa]) * tx;
+      // … dazu feines Rauschen je Punkt
+      f[o] = a + (b - a) * ty + r() * 0.45;
+    }
+  }
+  // gleichverteilen: Rang jedes Werts über ein feines Histogramm
+  const H = 2048;
+  const bin = (v: number) => Math.min(H - 1, Math.floor(v * H));
+  const hist = new Uint32Array(H + 1);
+  for (let i = 0; i < f.length; i++) hist[bin(f[i]) + 1]++;
+  for (let i = 0; i < H; i++) hist[i + 1] += hist[i];
+  const out = new Uint8Array(f.length);
+  for (let i = 0; i < f.length; i++) out[i] = Math.min(255, Math.floor((hist[bin(f[i])] / f.length) * 256));
+  return out;
+}
+
+/**
  * Vorrat zeichnen: fein modellierte Bäume von der Seite, Farbe (Wurzel – genauer in dunklen Grüns) und Normale
  * in zwei Bildern. Jede Zelle wird einzeln mit Kantenglättung gezeichnet (kleines Ziel, wenig Speicher) und in
- * den großen Vorrat kopiert. Die Ränder sind mit der Abdeckung vormultipliziert.
+ * den großen Vorrat kopiert. Die Ränder sind mit der Abdeckung vormultipliziert. Im Alpha der Normalen liegen
+ * die Büschel der Jahreszeit (tuftNoise).
  */
 /** scale: Auflösung des Bildvorrats (PC-Grafik 1,5: nahe Bäume am Straßenrand bleiben scharf) */
 export function bakeTreeAtlas(gl: THREE.WebGLRenderer, scale = 1): TreeAtlas {
@@ -353,16 +403,33 @@ export function bakeTreeAtlas(gl: THREE.WebGLRenderer, scale = 1): TreeAtlas {
   const albedoPx = new Uint8Array(AW * AH * 4);
   const normalPx = new Uint8Array(NW * NH * 4);
   const cells: Cell[] = [];
+  const tuftTex = new THREE.DataTexture(tuftNoise(TUFT), TUFT, TUFT, THREE.RedFormat);
+  tuftTex.wrapS = tuftTex.wrapT = THREE.RepeatWrapping;
+  tuftTex.magFilter = tuftTex.minFilter = THREE.LinearFilter;
+  tuftTex.needsUpdate = true;
+  const tuftU = { uTuft: { value: tuftTex }, uTuftS: { value: 1 / NPX } };
+  const TUFT_GLSL = 'uniform sampler2D uTuft; uniform float uTuftS; float tuft() { return texture2D(uTuft, gl_FragCoord.xy * uTuftS).r; }';
   const mkMat = (pass: number) => new THREE.ShaderMaterial({
     vertexColors: true,
     side: THREE.DoubleSide,
     blending: THREE.NoBlending,
     vertexShader: BAKE_VERT,
+    uniforms: pass === 0 ? {} : tuftU,
     fragmentShader: pass === 0
       ? 'varying vec3 vCol; varying vec3 vN; void main() { gl_FragColor = vec4(sqrt(max(vCol, 0.0)), 1.0); }'
-      : 'varying vec3 vCol; varying vec3 vN; void main() { vec3 n = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0); gl_FragColor = vec4(n * 0.5 + 0.5, 1.0); }',
+      : `varying vec3 vCol; varying vec3 vN; ${TUFT_GLSL} void main() { vec3 n = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0); gl_FragColor = vec4(n * 0.5 + 0.5, tuft()); }`,
   });
   const mats = [mkMat(0), mkMat(1)];
+  // Büschel hinter dem Baum über die ganze Zelle (Normale 0 wie der leere Rand, nur das Alpha): auch am Umriss und
+  // in den kleinen Mipmap-Stufen bleibt das Muster unverdünnt
+  const tuftBg = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), new THREE.ShaderMaterial({
+    blending: THREE.NoBlending,
+    uniforms: tuftU,
+    vertexShader: 'void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `${TUFT_GLSL} void main() { gl_FragColor = vec4(0.0, 0.0, 0.0, tuft()); }`,
+  }));
+  tuftBg.position.set(0, 0.95, -50);
+  tuftBg.frustumCulled = false;
   const rt = (w: number, h: number) => {
     const r = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: true, generateMipmaps: false });
     r.texture.colorSpace = THREE.NoColorSpace;
@@ -376,6 +443,7 @@ export function bakeTreeAtlas(gl: THREE.WebGLRenderer, scale = 1): TreeAtlas {
   const cam = new THREE.OrthographicCamera(-0.5, 0.5, 1.95, -0.05, 0.1, 100);
   cam.position.set(0, 0, 40);
   const scene = new THREE.Scene();
+  scene.add(tuftBg);
   const prevRT = gl.getRenderTarget();
   const prevC = gl.getClearColor(new THREE.Color());
   const prevA = gl.getClearAlpha();
@@ -401,6 +469,7 @@ export function bakeTreeAtlas(gl: THREE.WebGLRenderer, scale = 1): TreeAtlas {
     scene.add(m);
     for (let pass = 0; pass < 2; pass++) {
       m.material = mats[pass];
+      tuftBg.visible = pass === 1;
       const target = pass ? rtN : rtA;
       gl.setRenderTarget(target);
       gl.clear(true, true, false);
@@ -435,6 +504,9 @@ export function bakeTreeAtlas(gl: THREE.WebGLRenderer, scale = 1): TreeAtlas {
   rtA.dispose();
   rtN.dispose();
   for (const m of mats) m.dispose();
+  tuftBg.geometry.dispose();
+  (tuftBg.material as THREE.Material).dispose();
+  tuftTex.dispose();
   const albedo = bakedTexture(albedoPx, AW, AH);
   const normal = bakedTexture(normalPx, NW, NH);
   return { albedo, normal, cells, dispose: () => { albedo.dispose(); normal.dispose(); } };
@@ -525,6 +597,7 @@ attribute vec4 aT4; // Umriss: halbe Breiten, Baumklasse (Jahreszeit)
 uniform float uTime;
 uniform vec4 uMorph;
 uniform vec2 uFade;
+uniform vec4 uSeason;
 varying vec2 vUv;
 varying vec3 vTint;
 varying vec3 vR;
@@ -533,6 +606,7 @@ varying vec3 vF;
 varying float vFade;
 varying float vCls;
 varying float vRnd;
+varying vec4 vBare;
 ${AP_HEAD}
 void main() {
   ${AP_VERT}
@@ -544,6 +618,12 @@ void main() {
   vec2 toC = cameraPosition.xz - P.xz;
   float d = max(length(toC), 0.01);
   vFade = 1.0 - smoothstep(uFade.x, uFade.y, d);
+  // kahle Bäume (Fragment): Schwellen für Lücken und Zweige im Büschelmuster – je Baum etwas anders, im Winter ganz
+  // kahl. Nah mit klaren Rändern (Härte 25), ab 50 m weicher, ab 170 m der gemittelte Anteil; dazu, wie sehr die
+  // Zweige durchkommen (im Herbst welkes Laub, im Winter das blanke Holz)
+  float hard = 1.0 / clamp((d - 45.0) * 0.008, 0.04, 1.0);
+  float twig = uSeason.y * (0.62 + 0.3 * vRnd + uSeason.y * (0.4 - 0.3 * vRnd));
+  vBare = vec4(uSeason.y * 0.45 * hard + 0.5, twig * hard + 0.5, hard, 0.3 + 0.7 * uSeason.y);
   float s = aT0.w;
   if (vFade <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 dC = toC / d;
@@ -611,6 +691,7 @@ varying vec3 vF;
 varying float vFade;
 varying float vCls;
 varying float vRnd;
+varying vec4 vBare;
 ${AP_HEAD}
 void main() {
   ${AP_FRAG}
@@ -631,14 +712,16 @@ void main() {
   float ic = 1.0 / max(cov, 0.004);
   vec3 alb = a.rgb * ic;
   alb *= alb;
-  vec3 nn = texture2D(uN, vUv).rgb * ic * 2.0 - 1.0;
+  vec4 nT = texture2D(uN, vUv);
+  vec3 nn = nT.rgb * ic * 2.0 - 1.0;
   vec3 n = normalize(vR * nn.x + vU * nn.y + vF * nn.z);
   // Jahreszeit (season.ts; uSeason = Laubfärbung, kahl, Schnee, Blüte): nur Laub (grün bis gelbgrün – Stamm und
-  // Äste sind braun), fester Zufall je Bildpunkt des Vorrats (flimmert nicht) und je Baum
+  // Äste sind braun), Zufall je Baum und je Stelle im Baum: Büschel aus dem Bildvorrat (tuftNoise – hängt am Baum,
+  // in der Ferne gemittelt; kein Flimmern)
   if (dot(uSeason, vec4(1.0)) > 0.0) {
     float leaf = smoothstep(0.85, 1.0, alb.g / max(alb.r, 1e-4)) * smoothstep(1.1, 1.4, alb.g / max(alb.b, 1e-4));
     float lum = dot(alb, vec3(0.2126, 0.7152, 0.0722));
-    float px = fract(sin(dot(floor(vUv * 1024.0), vec2(12.9898, 78.233))) * 43758.5453);
+    float px = nT.a;
     if (vCls > 0.5) {
       // Herbst: je Baum ein Ton von Goldgelb bis Rostrot (Lärchen golden), einzelne Bäume noch grün
       float on = smoothstep(0.0, 0.3, uSeason.x * 1.25 - vRnd * 0.4) * min(1.0, uSeason.x * 1.5);
@@ -646,14 +729,22 @@ void main() {
       hue = mix(hue, vec3(0.62, 0.36, 0.12), step(0.82, fract(vRnd * 3.17)) * 0.8);
       if (vCls > 1.5 && vCls < 2.5) hue = vec3(0.96, 0.66, 0.16);
       alb = mix(alb, hue * lum * 3.0, leaf * on);
-      // kahl: Laub fällt (fest je Bildpunkt), übrig bleiben graubraune Zweige
-      if (leaf > 0.5 && px < uSeason.y * (0.62 + 0.3 * vRnd)) {
-        if (px < uSeason.y * 0.45) discard;
-        alb = vec3(0.085, 0.07, 0.058) * (0.75 + px);
+      // kahl: das Laub fällt büschelweise – Lücken, in denen die Äste frei stehen, darum welkes Laub und graubraune
+      // Zweige (Schwellen je Baum: vBare, siehe oben). Nah mit klaren Rändern; in der Ferne (dort ist das Muster
+      // gemittelt) derselbe Anteil als Mischung: die Krone wird lichter und brauner, statt zu sprenkeln
+      if (leaf > 0.5 && uSeason.y > 0.0) {
+        float hole = clamp(vBare.x - px * vBare.z, 0.0, 1.0);
+#ifdef BB_A2C
+        if (hole >= 1.0) discard;
+        fq *= 1.0 - hole;
+#else
+        if (dth < hole) discard;
+#endif
+        alb = mix(alb, vec3(0.085, 0.07, 0.058) * (0.75 + px), clamp(vBare.y - px * vBare.z, 0.0, 1.0) * vBare.w);
       }
       // Blüten: viel an Obstbäumen, sonst nur an manchen Bäumen; Frühling: frischeres Grün
       float bl = uSeason.w * (vCls > 2.5 ? 0.5 : 0.1 * step(0.65, vRnd));
-      if (leaf > 0.3 && px > 1.0 - bl) alb = mix(vec3(0.95, 0.66, 0.78), vec3(0.97, 0.96, 0.93), fract(px * 13.0));
+      if (leaf > 0.3 && px > 1.0 - bl) alb = mix(vec3(0.95, 0.66, 0.78), vec3(0.97, 0.96, 0.93), fract(px * 97.0));
       alb = mix(alb, alb * vec3(1.04, 1.2, 0.8), leaf * uSeason.w * 0.6);
     }
     // Schnee auf allem, was nach oben schaut (Nadelbäume dichter)
