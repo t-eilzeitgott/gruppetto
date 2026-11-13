@@ -20,8 +20,10 @@ const SUBJECT = 'https://gruppetto.talfahrt.dev';
 
 class Db {
   private readonly url: string;
-  constructor(url: string, private readonly key: string) {
+  private readonly key: string;
+  constructor(url: string, key: string) {
     this.url = url.replace(/\/+$/, '');
+    this.key = key;
   }
   async req<T>(path: string, init: { method?: string; body?: unknown; prefer?: string } = {}): Promise<T> {
     const headers: Record<string, string> = { apikey: this.key, 'Content-Type': 'application/json' };
