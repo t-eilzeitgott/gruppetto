@@ -621,6 +621,10 @@ export class Human {
     P.pelvis.set(shift * 0.028, PELVIS_Y - 0.012 * Math.abs(shift), 0);
     P.lean = 0.03 + breath * 0.006;
     P.twist = 0;
+    // Kopf jedes Bild neu (der Blick unten addiert die Neigung – ohne das lief sie bei jedem, der den Fahrer
+    // anschaut, Bild für Bild weiter: der Kopf drehte sich endlos von unten nach oben im Kreis)
+    P.headYaw = 0;
+    P.headPitch = 0;
     P.roll = -shift * 0.03;
     P.feet[0].set(-0.11, ANKLE_Y, 0.01);
     P.feet[1].set(0.12, ANKLE_Y, -0.03);

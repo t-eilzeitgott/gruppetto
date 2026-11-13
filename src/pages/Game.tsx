@@ -240,7 +240,6 @@ export function GamePage() {
         break;
       case 'pile':
         setBanner(null);
-    setPile(null);
         setPile({ n: e.n, slow: e.slow });
         break;
     }
@@ -248,6 +247,7 @@ export function GamePage() {
 
   const onOver = (r: RunResult) => {
     setResult(r);
+    setPile(null);
     setUi('over');
     // Messfahrt: mit dem Ende der Fahrt beenden und den Bericht zeigen
     if (perfRef.current.rec) stopMeasure();
@@ -592,6 +592,8 @@ export function GamePage() {
     setResult(null);
     setShowBoard(false);
     setBanner(null);
+    // Bauchbinde vom Sturz der letzten Fahrt weg (sie blieb sonst nach dem Neustart stehen)
+    setPile(null);
     last.current = {};
     let learned = new Set<Step>();
     try { learned = new Set(JSON.parse(lsGet(LS_LEARN) ?? '[]') as Step[]); } catch { /* neu anfangen */ }

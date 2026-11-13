@@ -1,7 +1,7 @@
 {
   "name": "gruppetto",
   "private": true,
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Grand-Tour-Tippspiel für Giro, Tour und Vuelta",
   "type": "module",
   "scripts": {
