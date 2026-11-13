@@ -40,12 +40,14 @@ export function Datenschutz() {
           <li>E‑Mail-Adresse – für die Anmeldung per Code</li>
           <li>Anzeigename und Profilfarbe – sichtbar für die anderen Mitglieder</li>
           <li>Deine Tipps – bis zum Etappenstart nur für dich sichtbar, danach für alle Mitglieder</li>
+          <li>Nur wenn du Benachrichtigungen einschaltest: die Adresse deines Geräts beim Push-Dienst deines Browsers bzw. Handys (Apple, Google oder Mozilla) samt Schlüssel, damit wir dir Nachrichten schicken können. Die Nachrichten sind verschlüsselt. Ausschalten im Profil löscht den Eintrag.</li>
         </ul>
         <p>Rechtsgrundlage ist die Teilnahme am Tippspiel (Art. 6 Abs. 1 lit. b DSGVO). Es gibt keine Werbung, kein Tracking und keine Analyse-Cookies.</p>
         <h2>Dienstleister</h2>
         <ul>
           <li>Supabase Inc. (Datenbank und Anmeldung, Serverstandort Frankfurt am Main)</li>
           <li>Google (Versand der Anmelde-Codes über Gmail)</li>
+          <li>Apple, Google bzw. Mozilla als Push-Dienst deines Geräts (nur bei eingeschalteten Benachrichtigungen)</li>
           <li>GitHub Inc. (Bereitstellung der Webseite; dabei werden technisch bedingt IP-Adressen in Server-Logs verarbeitet)</li>
         </ul>
         <h2>Speicherung im Browser</h2>

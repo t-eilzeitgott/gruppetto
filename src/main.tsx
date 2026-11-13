@@ -6,6 +6,7 @@ import './lib/install'; // Installations-Ereignis früh abfangen
 import { BUILD_ID, source } from './app/config';
 import { persistQueries } from './app/query';
 import { installFixedHeal } from './ui/fixedHeal';
+import { watchPushRenew } from './app/push';
 import './styles.css';
 
 applyTheme();
@@ -14,6 +15,7 @@ installFixedHeal();
 if (source.mode !== 'demo') persistQueries(`gruppetto.cache.${BUILD_ID}`, /^(me:|tours$|tour:|members$|group$|game:|tippers:|news$|favorites$|emblems:)/);
 document.documentElement.dataset.tour = document.documentElement.dataset.tour ?? 'neutral';
 
+watchPushRenew();
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

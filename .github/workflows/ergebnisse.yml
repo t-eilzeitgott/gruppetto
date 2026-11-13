@@ -90,6 +90,14 @@ jobs:
             if [ "$SOFORT" = "true" ]; then args+=(--sofort); fi
           fi
           node --no-warnings scripts/sync/run.ts "${args[@]}"
+      # frisch veröffentlichte Ergebnisse gleich melden (sonst beim nächsten Lauf von „Benachrichtigungen“)
+      - name: Benachrichtigungen
+        if: success() && github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: node --no-warnings scripts/push/run.ts
       - name: Abgerufene Seiten aufbewahren
         if: always() && (github.event_name == 'workflow_dispatch' || failure())
         uses: actions/upload-artifact@v4

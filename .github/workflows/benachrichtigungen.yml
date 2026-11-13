@@ -1,0 +1,63 @@
+name: Benachrichtigungen
+
+# Schickt Push-Benachrichtigungen an alle, die sie im Profil eingeschaltet haben (scripts/push):
+#  - Erinnerung 2 Stunden vor Tippschluss, wenn noch kein Tipp abgegeben ist
+#  - Ergebnis einer Etappe (deine Punkte, Tagesbester der Gruppe), sobald es veröffentlicht ist
+# Jede Nachricht geht je Mitglied und Etappe nur einmal raus (Tabelle push_log). Nach jedem Ergebnis-Abgleich
+# läuft der Versand zusätzlich (Workflow „Ergebnisse“), damit Ergebnisse ohne Wartezeit ankommen.
+#
+# Braucht: Variable VITE_SUPABASE_URL und Secret SUPABASE_SECRET_KEY; das VAPID-Schlüsselpaar liegt in der Tabelle
+# push_keys (nur mit dem Secret Key lesbar). Ohne passiert nichts.
+
+on:
+  schedule:
+    # alle 15 Minuten von 5 bis 22 Uhr (Winterzeit; Sommerzeit eine Stunde später)
+    - cron: '7,22,37,52 4-20 * * *'
+  workflow_dispatch:
+    inputs:
+      art:
+        description: Was soll passieren?
+        type: choice
+        default: Probelauf (nichts verschicken)
+        options:
+          - Probelauf (nichts verschicken)
+          - Echt (verschicken)
+          - Testnachricht
+      wer:
+        description: Für die Testnachricht – Anzeigename des Mitglieds
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benachrichtigungen
+  cancel-in-progress: false
+
+jobs:
+  push:
+    name: Benachrichtigungen verschicken
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verschicken
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          EVENT: ${{ github.event_name }}
+          ART: ${{ inputs.art }}
+          WER: ${{ inputs.wer }}
+        run: |
+          args=()
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            case "$ART" in
+              Echt*) ;;
+              Test*) if [ -z "$WER" ]; then echo "::error::Für die Testnachricht einen Anzeigenamen angeben"; exit 1; fi; args+=(--test "$WER") ;;
+              *) args+=(--probelauf) ;;
+            esac
+          fi
+          node --no-warnings scripts/push/run.ts "${args[@]}"

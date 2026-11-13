@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useApp } from '../app/context';
 import { useTourData } from '../app/hooks';
 import { source, BUILD_ID } from '../app/config';
@@ -14,6 +14,7 @@ import { InstallSteps } from '../ui/InstallSteps';
 import { useInstall } from '../lib/install';
 import { GfxSliders } from './gameKit';
 import { EmblemCase } from '../ui/Emblems';
+import { disablePush, enablePush, pushEnabled, pushSupport } from '../app/push';
 
 /** Spielgrafik für alle 3D-Spiele: dieselben Schieberegler wie im Pausenmenü */
 function GameGfx() {
@@ -85,6 +86,7 @@ export function Profile() {
               options={[{ value: 'system', label: 'System' }, { value: 'light', label: 'Hell' }, { value: 'dark', label: 'Dunkel' }]}
             />
           </div>
+          <NotifySetting />
           <GameGfx />
           <InstallHint />
         </section>
@@ -172,6 +174,58 @@ function EditProfile({ onDone }: { onDone: () => void }) {
         <Button type="submit" busy={save.busy} disabled={name.trim().length < 2}>Speichern</Button>
       </div>
     </form>
+  );
+}
+
+/** Benachrichtigungen an/aus: Ergebnis da, Tippschluss naht ohne Tipp (src/app/push.ts) */
+function NotifySetting() {
+  const [support, setSupport] = useState(pushSupport);
+  const [on, setOn] = useState<boolean | null>(null);
+  const act = useAction();
+  useEffect(() => {
+    let live = true;
+    pushEnabled().then((v) => { if (live) setOn(v); }, () => { if (live) setOn(false); });
+    return () => { live = false; };
+  }, []);
+  const toggle = () => act.run(async () => {
+    try {
+      if (on) {
+        await disablePush();
+        setOn(false);
+        toast('Benachrichtigungen aus');
+      } else {
+        await enablePush();
+        setOn(true);
+        toast('Benachrichtigungen an');
+      }
+    } finally {
+      setSupport(pushSupport());
+    }
+  });
+  return (
+    <div className="setting">
+      {support === 'ok' || (support === 'denied' && on) ? (
+        <button type="button" role="switch" aria-checked={!!on} disabled={on === null || act.busy} className={cx('abf-switch', 'notify-switch', on && 'is-on')} onClick={toggle}>
+          <span className="abf-switch__text">
+            <span>Benachrichtigungen</span>
+            <small>Wenn das Ergebnis einer Etappe da ist – und 2 Stunden vor Tippschluss, falls du noch nicht getippt hast.</small>
+          </span>
+          <span className="abf-switch__track" aria-hidden="true"><span className="abf-switch__knob" /></span>
+        </button>
+      ) : (
+        <>
+          <span className="setting__label">Benachrichtigungen</span>
+          <p className="hint">
+            {support === 'install'
+              ? 'Auf dem iPhone gehen Benachrichtigungen nur in der App vom Home-Bildschirm (ab iOS 16.4). Leg gruppetto dort ab, öffne es von da und schalte sie hier ein.'
+              : support === 'denied'
+                ? 'Benachrichtigungen sind für gruppetto blockiert. Erlaube sie in den Einstellungen (iPhone: Einstellungen → Mitteilungen → gruppetto) und komm dann wieder hierher.'
+                : 'Dieser Browser kann keine Benachrichtigungen empfangen.'}
+          </p>
+        </>
+      )}
+      {act.error ? <ErrorBox error={act.error} /> : null}
+    </div>
   );
 }
 

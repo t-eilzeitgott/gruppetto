@@ -11,7 +11,7 @@ import { REACTIONS, type ReactionEmoji, type StageReaction } from '../lib/reacti
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
   type StageInput, type TourInput, type GameId, type GameBest, type GameRun, type RunStats, cleanStats,
-  type LivePeer, type LivePing, type LiveSnapshot, type GroupInput,
+  type LivePeer, type LivePing, type LiveSnapshot, type GroupInput, type PushSubscriptionData,
 } from './source';
 import {
   DEMO_BONUS_RESULTS, DEMO_BONUS_TIPS, DEMO_ME, DEMO_NOW, DEMO_PROFILES, DEMO_RESULTS, DEMO_RIDERS, DEMO_STAGES,
@@ -603,6 +603,23 @@ export class DemoSource implements DataSource {
     const me = this.profiles.find((p) => p.id === DEMO_ME)!;
     me.display_name = name.trim();
     me.avatar_color = color;
+  }
+
+  private pushEndpoints = new Set<string>();
+
+  async pushSubscribe(sub: PushSubscriptionData): Promise<void> {
+    await wait();
+    this.pushEndpoints.add(sub.endpoint);
+  }
+
+  async pushUnsubscribe(endpoint: string): Promise<void> {
+    await wait();
+    this.pushEndpoints.delete(endpoint);
+  }
+
+  async pushStatus(endpoint: string): Promise<boolean> {
+    await wait();
+    return this.pushEndpoints.has(endpoint);
   }
 
   async requestPro(request: boolean): Promise<void> {

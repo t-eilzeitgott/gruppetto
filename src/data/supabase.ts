@@ -9,7 +9,7 @@ import { DEFAULT_RULES, scaleOf } from '../lib/scoring';
 import {
   ApiError, type BonusResultInput, type DataSource, type RiderInput, type RiderPatch, type SessionUser,
   type StageInput, type TourInput, type GameId, type GameBest, type GameRun, type RunStats, cleanStats,
-  type LivePing, type LiveSnapshot, type GroupInput,
+  type LivePing, type LiveSnapshot, type GroupInput, type PushSubscriptionData,
 } from './source';
 
 /** Regeln aus der Antwort der Datenbank – lückenhafte Angaben fallen auf die Standardregeln zurück */
@@ -490,6 +490,18 @@ export class SupabaseSource implements DataSource {
 
   async requestPro(request: boolean): Promise<void> {
     await this.rpc('request_pro', { p_request: request });
+  }
+
+  async pushSubscribe(sub: PushSubscriptionData): Promise<void> {
+    await this.rpc('push_subscribe', { p_endpoint: sub.endpoint, p_p256dh: sub.p256dh, p_auth: sub.auth });
+  }
+
+  async pushUnsubscribe(endpoint: string): Promise<void> {
+    await this.rpc('push_unsubscribe', { p_endpoint: endpoint });
+  }
+
+  async pushStatus(endpoint: string): Promise<boolean> {
+    return (await this.rpc<boolean>('push_status', { p_endpoint: endpoint })) === true;
   }
 
   async deleteAccount(): Promise<void> {

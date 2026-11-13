@@ -1,13 +1,13 @@
 {
   "name": "gruppetto",
   "private": true,
-  "version": "1.4.3",
+  "version": "1.5.0",
   "description": "Grand-Tour-Tippspiel für Giro, Tour und Vuelta",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --serve",
-    "test": "TSX_TSCONFIG_PATH=tsconfig.test.json node --import tsx --test src/intro/*.test.ts src/lib/*.test.ts src/game/*.test.ts src/game/abfahrt/*.test.ts src/pages/*.test.ts src/game/akku/*.test.ts scripts/sync/*.test.ts scripts/news/*.test.ts",
+    "test": "TSX_TSCONFIG_PATH=tsconfig.test.json node --import tsx --test src/intro/*.test.ts src/lib/*.test.ts src/game/*.test.ts src/game/abfahrt/*.test.ts src/pages/*.test.ts src/game/akku/*.test.ts scripts/sync/*.test.ts scripts/news/*.test.ts scripts/push/*.test.ts",
     "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.sync.json",
     "test:db": "bash supabase/tests/run.sh",
     "sync": "node --no-warnings scripts/sync/run.ts"

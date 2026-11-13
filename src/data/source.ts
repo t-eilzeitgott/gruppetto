@@ -163,6 +163,13 @@ export interface LivePing {
 }
 
 /** Gemeinsame Schnittstelle für Supabase und den Demo-Modus. */
+/** Push-Abo eines Geräts (aus PushSubscription.toJSON()) */
+export interface PushSubscriptionData {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+}
+
 export interface DataSource {
   readonly mode: 'live' | 'demo';
   now(): number;
@@ -246,6 +253,10 @@ export interface DataSource {
   updateProfile(name: string, color: string): Promise<void>;
   deleteAccount(): Promise<void>;
   requestPro(request: boolean): Promise<void>;
+  /** Benachrichtigungen: dieses Gerät (Push-Abo) an- und abmelden, Stand abfragen */
+  pushSubscribe(sub: PushSubscriptionData): Promise<void>;
+  pushUnsubscribe(endpoint: string): Promise<void>;
+  pushStatus(endpoint: string): Promise<boolean>;
   saveStageTip(stageId: number, riderId: number): Promise<void>;
   deleteStageTip(stageId: number): Promise<void>;
   saveBonusTip(tourId: string, category: BonusCategory, riderId: number | null, team: string | null): Promise<void>;

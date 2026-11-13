@@ -101,6 +101,16 @@ Läuft an Renntagen alle 10 Minuten von 13 bis 22 Uhr, dazu morgens und vor dem 
 
 GitHub schaltet Zeitpläne in Repos ohne Aktivität nach 60 Tagen ab – vor einer Rundfahrt unter *Actions → Ergebnisse* prüfen und gegebenenfalls wieder einschalten.
 
+## Benachrichtigungen
+
+Im Profil schaltet jeder Benachrichtigungen für sein Gerät an oder aus. Dann kommt eine Nachricht,
+- **2 Stunden vor Tippschluss**, wenn für die Etappe noch kein Tipp abgegeben ist (Antippen öffnet den Tipp),
+- **sobald das Ergebnis einer Etappe veröffentlicht ist** – mit deinem Fahrer, deinen Punkten (nach den Regeln deiner Gruppe, inkl. Außenseiter-Bonus) und dem Tagesbesten der Gruppe (Antippen öffnet die Etappe).
+
+Technik: Web Push. `public/sw.js` (Service Worker, nur für Nachrichten – kein Zwischenspeicher) zeigt sie an; `src/app/push.ts` meldet das Gerät an (`push_subscribe`/`push_unsubscribe`/`push_status`, Tabelle `push_subscriptions`). Verschickt wird von `scripts/push/run.ts` (eigene Verschlüsselung nach RFC 8291 und VAPID-Anmeldung, nur `node:crypto`): Workflow **Benachrichtigungen** alle 15 Minuten von 5 bis 22 Uhr, zusätzlich direkt nach jedem Ergebnis-Abgleich. `push_log` sorgt dafür, dass jede Nachricht je Mitglied und Etappe nur einmal rausgeht; abgemeldete Geräte (404/410 vom Push-Dienst) werden gelöscht. Das VAPID-Schlüsselpaar liegt in der Tabelle `push_keys` (nur mit dem Secret Key lesbar), der öffentliche Schlüssel zusätzlich in `src/app/push.ts`.
+
+iPhone/iPad: nur in der App vom Home-Bildschirm (ab iOS 16.4); in Safari zeigt das Profil einen Hinweis. Testnachricht: Workflow „Benachrichtigungen“ von Hand starten, „Testnachricht“ und den Anzeigenamen wählen. Probelauf zeigt, was verschickt würde.
+
 ## Unterstützen
 
 Spenden-Link (Ko-fi oder Buy Me a Coffee) in `src/app/support.ts` eintragen: `SUPPORT_URL`. Solange der Wert leer ist, zeigt die App nichts an. Mit Link erscheint auf „Heute“ unter den Spielen und im Profil eine Karte „Gefällt dir gruppetto?“ (`src/ui/SupportCard.tsx`); sie öffnet ein Sheet im App-Look mit dem eingebetteten Ko-fi-Formular und einem Link zur Ko-fi-Seite. Es wird nichts freigeschaltet, der Link ist eine freiwillige Unterstützung ohne Gegenleistung.

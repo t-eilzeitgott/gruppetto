@@ -1601,3 +1601,75 @@ revoke insert, update, delete on public.news from anon, authenticated;
 drop policy if exists news_select on public.news;
 create policy news_select on public.news
   for select to authenticated using (public.is_member() or public.is_admin());
+
+-- ---------------------------------------------------------------------
+-- 10. Benachrichtigungen (Web Push): wer sie im Profil einschaltet, bekommt Bescheid, wenn das Ergebnis einer
+-- Etappe da ist und wenn kurz vor dem Tippschluss noch kein Tipp abgegeben ist. Ein Eintrag je Gerät
+-- (endpoint = Adresse beim Push-Dienst von Apple/Google/Mozilla). Kein direkter Zugriff: Ein- und Ausschalten über
+-- die Funktionen unten, der Versand (scripts/push, Workflow „Benachrichtigungen“) liest mit dem Secret Key.
+-- push_log merkt sich, was verschickt ist (je Mitglied, Art und Etappe genau einmal).
+-- ---------------------------------------------------------------------
+create table if not exists public.push_subscriptions (
+  endpoint   text primary key check (endpoint ~ '^https://' and length(endpoint) <= 1000),
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  p256dh     text not null check (length(p256dh) between 40 and 200),
+  auth       text not null check (length(auth) between 10 and 100),
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id);
+alter table public.push_subscriptions enable row level security;
+revoke all on public.push_subscriptions from anon, authenticated;
+
+create table if not exists public.push_log (
+  user_id  uuid   not null references public.profiles (id) on delete cascade,
+  kind     text   not null check (kind in ('result', 'remind')),
+  stage_id bigint not null references public.stages (id) on delete cascade,
+  sent_at  timestamptz not null default now(),
+  primary key (user_id, kind, stage_id)
+);
+alter table public.push_log enable row level security;
+revoke all on public.push_log from anon, authenticated;
+
+-- VAPID-Schlüsselpaar für den Versand (statt GitHub-Secret; nur mit dem Secret Key lesbar). Der öffentliche Schlüssel
+-- steht auch in src/app/push.ts. Neues Paar: node scripts/push/run.ts --schluessel, dann hier eintragen und in der App
+-- tauschen (alle müssen Benachrichtigungen danach einmal neu einschalten).
+create table if not exists public.push_keys (
+  id          int primary key default 1 check (id = 1),
+  public_key  text not null,
+  private_key text not null
+);
+alter table public.push_keys enable row level security;
+revoke all on public.push_keys from anon, authenticated;
+
+-- Gerät anmelden (dasselbe Gerät mit einem anderen Konto: gehört dann diesem)
+create or replace function public.push_subscribe(p_endpoint text, p_p256dh text, p_auth text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then
+    raise exception 'not_authenticated' using errcode = 'P0001';
+  end if;
+  insert into public.push_subscriptions (endpoint, user_id, p256dh, auth)
+  values (p_endpoint, auth.uid(), p_p256dh, p_auth)
+  on conflict (endpoint) do update
+    set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, created_at = now();
+end;
+$$;
+
+-- Gerät abmelden
+create or replace function public.push_unsubscribe(p_endpoint text)
+returns void language sql security definer set search_path = public as $$
+  delete from public.push_subscriptions where endpoint = p_endpoint and user_id = auth.uid();
+$$;
+
+-- Ist dieses Gerät für mich angemeldet?
+create or replace function public.push_status(p_endpoint text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.push_subscriptions where endpoint = p_endpoint and user_id = auth.uid());
+$$;
+
+revoke execute on function public.push_subscribe(text, text, text) from public, anon;
+revoke execute on function public.push_unsubscribe(text)           from public, anon;
+revoke execute on function public.push_status(text)                from public, anon;
+grant execute on function public.push_subscribe(text, text, text) to authenticated;
+grant execute on function public.push_unsubscribe(text)           to authenticated;
+grant execute on function public.push_status(text)                to authenticated;

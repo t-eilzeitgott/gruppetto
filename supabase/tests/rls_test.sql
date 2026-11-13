@@ -227,6 +227,31 @@ select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000a
 select pg_temp.expect_eq((select count(*) from public.admin_list_users() where pro_requested_at is not null), 1, 'Admin sieht Pro-Anfrage');
 commit;
 
+-- ---------- Benachrichtigungen ----------
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+select public.push_subscribe('https://push.example/geraet-1', repeat('k', 87), repeat('a', 22));
+select public.push_subscribe('https://push.example/geraet-1', repeat('n', 87), repeat('a', 22));
+select pg_temp.expect_eq(public.push_status('https://push.example/geraet-1')::int, 1, 'Gerät angemeldet');
+select pg_temp.expect_error($q$ select count(*) from public.push_subscriptions $q$, 'permission denied');
+select pg_temp.expect_error($q$ select count(*) from public.push_log $q$, 'permission denied');
+commit;
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000c', true);
+select pg_temp.expect_eq(public.push_status('https://push.example/geraet-1')::int, 0, 'Fremdes Gerät nicht als meins');
+select public.push_unsubscribe('https://push.example/geraet-1');
+commit;
+select pg_temp.expect_eq((select count(*) from public.push_subscriptions), 1, 'Fremder kann nicht abmelden, doppelt anmelden = ein Eintrag');
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-00000000000b', true);
+select public.push_unsubscribe('https://push.example/geraet-1');
+select pg_temp.expect_eq(public.push_status('https://push.example/geraet-1')::int, 0, 'Gerät abgemeldet');
+commit;
+select pg_temp.expect_error($q$ select public.push_subscribe('http://unsicher', repeat('k', 87), repeat('a', 22)) $q$, 'not_authenticated');
+
 -- ---------- Lieblingsfahrer + Stammdaten ----------
 select pg_temp.expect_eq((select count(*) from public.riders where cyclist_id is null), 0, 'Alle Fahrer mit Stammdaten verknüpft');
 begin;
