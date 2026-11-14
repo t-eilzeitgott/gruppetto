@@ -67,7 +67,8 @@ const IOS = typeof navigator !== 'undefined' && (/iP(hone|ad|od)/.test(navigator
 const ORDER: HomeTab[] = ['heute', 'news'];
 
 /**
- * Heute und News als Pager mit dem echten Scrollen des Systems (scroll-snap): Wischen, Mitziehen, Schwung,
+ * Heute und News als Pager mit dem echten Scrollen des Systems (scroll-snap; Wischen ist aus – gewechselt wird nur
+ * über die Titel, overflow-x: hidden in styles.css): Mitziehen, Schwung,
  * Einrasten und Nachfedern am Rand macht das iPhone selbst – mit voller Bildrate (120 Hz) und unabhängig davon, ob
  * die Seite gerade rechnet. Genau so fühlen sich native Apps an. Tippen auf einen Titel scrollt weich dorthin.
  *
