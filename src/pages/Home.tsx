@@ -68,7 +68,7 @@ const ORDER: HomeTab[] = ['heute', 'news'];
 
 /**
  * Heute und News als Pager mit dem echten Scrollen des Systems (scroll-snap; Wischen ist aus – gewechselt wird nur
- * über die Titel, overflow-x: hidden in styles.css): Mitziehen, Schwung,
+ * über die Titel, touch-action: pan-y in styles.css): Schwung,
  * Einrasten und Nachfedern am Rand macht das iPhone selbst – mit voller Bildrate (120 Hz) und unabhängig davon, ob
  * die Seite gerade rechnet. Genau so fühlen sich native Apps an. Tippen auf einen Titel scrollt weich dorthin.
  *
@@ -147,7 +147,40 @@ function usePager(tab: HomeTab, commit: (t: HomeTab) => void, tabs: RefObject<Ta
       timer = window.setTimeout(check, 140);
     };
     const onEnd = () => check();
-    const onDown = () => { touching = true; wantNews(); };
+    // Wischen zwischen Heute und News ist aus (nur über die Titel): waagrechtes Schieben auf dem Pager abfangen –
+    // zusätzlich zu touch-action: pan-y (styles.css), auf das sich ältere WebKit-Versionen nicht verlassen lassen.
+    // Seitlich scrollende Leisten in den Seiten bleiben frei.
+    let sx = 0;
+    let sy = 0;
+    let lock: 'x' | 'y' | 'free' | null = null;
+    const ownScrollerX = (t: EventTarget | null) => {
+      for (let n = t as HTMLElement | null; n && n !== el; n = n.parentElement) {
+        if (n.scrollWidth > n.clientWidth + 1) {
+          const ox = getComputedStyle(n).overflowX;
+          if (ox === 'auto' || ox === 'scroll') return true;
+        }
+      }
+      return false;
+    };
+    const onDown = (e: TouchEvent) => {
+      touching = true;
+      wantNews();
+      const t = e.touches[0];
+      sx = t?.clientX ?? 0;
+      sy = t?.clientY ?? 0;
+      lock = ownScrollerX(e.target) ? 'free' : null;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (lock === 'free' || lock === 'y' || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const dx = Math.abs(t.clientX - sx);
+      const dy = Math.abs(t.clientY - sy);
+      if (lock === null) {
+        if (dx < 4 && dy < 4) return;
+        lock = dx > dy ? 'x' : 'y';
+      }
+      if (lock === 'x' && e.cancelable) e.preventDefault();
+    };
     const onUp = () => { touching = false; };
     const onWinScroll = () => {
       if (raf) return;
@@ -172,6 +205,7 @@ function usePager(tab: HomeTab, commit: (t: HomeTab) => void, tabs: RefObject<Ta
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('scrollend', onEnd);
     el.addEventListener('touchstart', onDown, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
     el.addEventListener('touchend', onUp, { passive: true });
     el.addEventListener('touchcancel', onUp, { passive: true });
     window.addEventListener('scroll', onWinScroll, { passive: true });
@@ -187,6 +221,7 @@ function usePager(tab: HomeTab, commit: (t: HomeTab) => void, tabs: RefObject<Ta
       el.removeEventListener('scroll', onScroll);
       el.removeEventListener('scrollend', onEnd);
       el.removeEventListener('touchstart', onDown);
+      el.removeEventListener('touchmove', onMove);
       el.removeEventListener('touchend', onUp);
       el.removeEventListener('touchcancel', onUp);
       window.removeEventListener('scroll', onWinScroll);
