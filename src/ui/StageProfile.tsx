@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { Climb, Sprint, Stage, Tour } from '../lib/types';
-import { KIND_LABEL, fmtKm } from '../lib/time';
+import { KIND_LABEL, fmtKm, sortStages } from '../lib/time';
+import { AppContext } from '../app/context';
+import { useTourData } from '../app/hooks';
 import { Icon } from './Icon';
 import { cx, Link } from './kit';
 import { useQuery } from '../app/query';
@@ -71,6 +73,54 @@ export function climbMetrics(c: Climb, stage?: Stage): ClimbMetrics {
   return { gain, foot, toGo, footAlt, difficulty, finish: toGo !== null && toGo < 0.5 };
 }
 
+/**
+ * Gemeinsamer Höhenmaßstab einer Rundfahrt: jede Etappe wird so hoch gezeichnet, als hätte sie mindestens den
+ * Höhenunterschied der härtesten Etappen (Mittel der drei größten). So bleibt eine flache Etappe mit vielen kleinen
+ * Hügeln flach, und die großen Bergetappen sehen nach dem aus, was sie sind. (Vorher wurde jede Etappe auf ihren
+ * eigenen Höhenunterschied gestreckt – 300 m sahen so wild aus wie 3.000 m.) Wer darüber liegt, bekommt seinen eigenen.
+ */
+const RELIEF_FALLBACK = 1500;
+const RELIEF_MIN = 600;
+
+/** Höhenunterschied einer Etappe (höchster minus tiefster Punkt): echtes Profil, sonst aus den Bergwertungen */
+export function stageRelief(stage: Stage, points?: ProfilePoint[] | null): number {
+  if (points && points.length > 1) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const p of points) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
+    return hi - lo;
+  }
+  return Math.max(0, ...(stage.climbs ?? []).map((c) => climbMetrics(c).gain ?? CAT_GAIN[c.cat] ?? 200));
+}
+
+/** Maßstab aus allen Etappen: Mittel der drei größten Höhenunterschiede */
+export function reliefScale(stages: Stage[], profiles: Record<number, ProfilePoint[]>): number {
+  const r = stages.map((st) => stageRelief(st, profiles[st.id])).filter((v) => v > 0).sort((a, b) => b - a).slice(0, 3);
+  if (!r.length) return RELIEF_FALLBACK;
+  return Math.max(RELIEF_MIN, r.reduce((a, b) => a + b, 0) / r.length);
+}
+
+/** Maßstab der Rundfahrt dieser Etappe (Profile kommen aus demselben Zwischenspeicher wie in der Etappenliste) */
+export function useReliefScale(stage: Stage): number {
+  const tours = useContext(AppContext)?.tours ?? [];
+  const tour = tours.find((t) => t.id === stage.tour_id) ?? null;
+  const data = useTourData(tour).data;
+  const stages = useMemo(() => (data ? sortStages(data.stages) : []), [data]);
+  return useTourReliefScale(stages);
+}
+
+/** Maßstab aus einer Etappenliste (lädt die Profile der Rundfahrt, falls noch nicht da) */
+export function useTourReliefScale(stages: Stage[]): number {
+  const ids = stages.map((st) => st.id);
+  const profiles = useTourProfiles(ids);
+  return useMemo(() => (stages.length && profiles ? reliefScale(stages, profiles) : RELIEF_FALLBACK), [stages, profiles]);
+}
+
+/** Profile aller Etappen (Schlüssel wie in der Etappenliste: Etappen nach Nummer) */
+export function useTourProfiles(ids: number[]): Record<number, ProfilePoint[]> | null {
+  return useQuery<Record<number, ProfilePoint[]>>(ids.length ? `profiles-mini:${ids.join(',')}` : null, () => source.loadProfilesFor(ids)).data ?? null;
+}
+
 const H = 176;
 const PAD_L = 40;
 const PAD_R = 12;
@@ -99,7 +149,7 @@ function useWidth(initial = 340) {
  * Etappenprofil: jede Bergwertung mit ihren echten Höhenmetern (Länge × Steigung) über der Strecke.
  * Die Täler dazwischen sind vereinfacht – die Grafik zeigt, wo und wie hart geklettert wird.
  */
-function SchematicChart({ stage }: { stage: Stage }) {
+function SchematicChart({ stage, relief }: { stage: Stage; relief: number }) {
   const { ref, w: W } = useWidth();
   const climbs = [...(stage.climbs ?? [])].sort((a, b) => a.km - b.km);
   const sprints = stage.sprints ?? [];
@@ -110,7 +160,7 @@ function SchematicChart({ stage }: { stage: Stage }) {
     len: Math.max(c.len ?? CAT_LEN[c.cat] ?? 5, km * 0.025),
   }));
   const maxGain = Math.max(0, ...peaks.map((p) => p.gain));
-  const yMax = Math.max(1000, Math.ceil((maxGain * 1.08) / 250) * 250);
+  const yMax = Math.ceil((Math.max(relief, maxGain) * 1.08) / 250) * 250;
   const plotW = W - PAD_L - PAD_R;
   const plotH = H - TOP - BOTTOM;
   const x = (k: number) => PAD_L + (Math.min(Math.max(k, 0), km) / km) * plotW;
@@ -209,11 +259,12 @@ function SchematicChart({ stage }: { stage: Stage }) {
 /** Etappenprofil: echtes Höhenprofil aus GPX, sonst schematisch aus den Bergwertungen */
 export function StageProfileChart({ stage }: { stage: Stage }) {
   const points = useStageProfile(stage.id);
-  return points && points.length > 1 ? <RealChart stage={stage} points={points} /> : <SchematicChart stage={stage} />;
+  const relief = useReliefScale(stage);
+  return points && points.length > 1 ? <RealChart stage={stage} points={points} relief={relief} /> : <SchematicChart stage={stage} relief={relief} />;
 }
 
 /** Echtes Höhenprofil, Fläche nach Steigung eingefärbt, mit Bergwertungen und Sprints */
-function RealChart({ stage, points }: { stage: Stage; points: ProfilePoint[] }) {
+function RealChart({ stage, points, relief }: { stage: Stage; points: ProfilePoint[]; relief: number }) {
   const { ref, w: W } = useWidth();
   const waypoints = useStageWaypoints(stage.id) ?? [];
   const climbs = [...(stage.climbs ?? [])].sort((a, b) => a.km - b.km);
@@ -225,10 +276,11 @@ function RealChart({ stage, points }: { stage: Stage; points: ProfilePoint[] }) 
   const eles = points.map((p) => p[1]);
   const minE = Math.min(...eles);
   const maxE = Math.max(...eles);
-  const span = Math.max(300, maxE - minE);
+  // Höhe nach dem Maßstab der Rundfahrt (useReliefScale): flache Etappen bleiben flach
+  const span = Math.max(relief, maxE - minE);
   const yStep = span > 1500 ? 500 : span > 600 ? 250 : 100;
   const yMin = Math.max(0, Math.floor((minE - span * 0.05) / yStep) * yStep);
-  const yMax = Math.ceil((maxE + span * 0.12) / yStep) * yStep;
+  const yMax = Math.ceil((Math.max(maxE, minE + span) + span * 0.12) / yStep) * yStep;
   const plotW = W - PAD_L - PAD_R;
   const plotH = H - TOP - BOTTOM;
   const x = (k: number) => PAD_L + (Math.min(Math.max(k, 0), gpxKm) / gpxKm) * plotW;
@@ -706,7 +758,7 @@ export function StageRouteCard({ stage }: { stage: Stage }) {
 }
 
 /** Kleines Profil für Listen: echtes Höhenprofil, sonst grob aus den Bergwertungen */
-export function MiniProfile({ stage, points }: { stage: Stage; points?: ProfilePoint[] | null }) {
+export function MiniProfile({ stage, points, relief = RELIEF_FALLBACK }: { stage: Stage; points?: ProfilePoint[] | null; relief?: number }) {
   const W = 100;
   const H = 24;
   const km = stage.distance_km ?? (points?.length ? points[points.length - 1][0] : 0);
@@ -731,8 +783,8 @@ export function MiniProfile({ stage, points }: { stage: Stage; points?: ProfileP
     });
   }
   const min = Math.min(...vals);
-  // gemeinsamer Maßstab: 2.000 Höhenmeter füllen die Höhe, flache Etappen bleiben flach
-  const span = Math.max(2000, Math.max(...vals) - min);
+  // gemeinsamer Maßstab der Rundfahrt (reliefScale) füllt die Höhe, flache Etappen bleiben flach
+  const span = Math.max(relief, Math.max(...vals) - min);
   const y = (v: number) => H - 1.5 - ((v - min) / span) * (H - 3);
   const d = vals.map((v, i) => `${((i / n) * W).toFixed(2)},${y(v).toFixed(2)}`).join(' L');
   return (

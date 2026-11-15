@@ -8,7 +8,7 @@ import { Empty, ErrorBox, Link, Loading, PageTitle, cx, useTitle } from '../ui/k
 import { TourPicker } from '../ui/Shell';
 import { lastName, riderName, stageRoute, useRefreshAtStart } from '../ui/bits';
 import { Icon } from '../ui/Icon';
-import { MiniProfile } from '../ui/StageProfile';
+import { MiniProfile, reliefScale } from '../ui/StageProfile';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import type { ProfilePoint } from '../lib/gpx';
@@ -39,6 +39,8 @@ function StageList({ data, me, now }: { data: TourData; me: Profile; now: number
   const stages = sortStages(data.stages);
   const ids = stages.map((s) => s.id);
   const profiles = useQuery<Record<number, ProfilePoint[]>>(ids.length ? `profiles-mini:${ids.join(',')}` : null, () => source.loadProfilesFor(ids));
+  // gemeinsamer Höhenmaßstab aller Etappen (wie in der Detailansicht)
+  const relief = useMemo(() => (profiles.data ? reliefScale(stages, profiles.data) : null), [stages, profiles.data]);
   const myPoints = useMemo(() => {
     const map = new Map<number, number>();
     for (const s of stages) {
@@ -72,7 +74,7 @@ function StageList({ data, me, now }: { data: TourData; me: Profile; now: number
           return (
             <Fragment key={s.id}>
               {gap > 0 ? <li className="rest-day" aria-label="Ruhetag"><span>{gap === 1 ? 'Ruhetag' : `${gap} Ruhetage`}</span></li> : null}
-              <StageRow stage={s} data={data} me={me} now={now} points={myPoints.get(s.id)} profile={profiles.data?.[s.id]} />
+              <StageRow stage={s} data={data} me={me} now={now} points={myPoints.get(s.id)} profile={profiles.data?.[s.id]} relief={relief} />
             </Fragment>
           );
         })}
@@ -81,7 +83,7 @@ function StageList({ data, me, now }: { data: TourData; me: Profile; now: number
   );
 }
 
-function StageRow({ stage, data, me, now, points, profile }: { stage: Stage; data: TourData; me: Profile; now: number; points?: number; profile?: ProfilePoint[] }) {
+function StageRow({ stage, data, me, now, points, profile, relief }: { stage: Stage; data: TourData; me: Profile; now: number; points?: number; profile?: ProfilePoint[]; relief: number | null }) {
   const state = stageState(stage, now);
   const d = new Date(stage.starts_at);
   const myTip = data.tips.find((t) => t.stage_id === stage.id && t.user_id === me.id);
@@ -117,7 +119,7 @@ function StageRow({ stage, data, me, now, points, profile }: { stage: Stage; dat
               {[stage.distance_km ? fmtKm(stage.distance_km) : null, stage.elevation_m ? `${stage.elevation_m.toLocaleString('de-DE')}\u00a0Hm` : null].filter(Boolean).join(' · ')}
               {stage.info.stars ? <Stars n={stage.info.stars} /> : null}
             </span>
-          ) : <MiniProfile stage={stage} points={profile} />}
+          ) : relief === null ? <span className="mini-profile" aria-hidden="true" /> : <MiniProfile stage={stage} points={profile} relief={relief} />}
           <span className={cx('stage-row__detail', state === 'open' && !myTip && isToday && 'accent')}>{detail}</span>
         </span>
         <span className="stage-row__side">
