@@ -9,10 +9,11 @@ import type { Profile } from '../lib/types';
 import { BIKES } from '../game/bikes';
 import { Avatar, Segmented, cx } from '../ui/kit';
 import { Icon } from '../ui/Icon';
+import { LOCALE } from '../lib/i18n';
 
 export type Board = 'day' | 'season';
 
-const kmh = (v: number) => v.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const kmh = (v: number) => v.toLocaleString(LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const pct = (k: number) => `${Math.round(k * 100)} %`;
 const bikeName = (id?: string) => (id ? BIKES.find((b) => b.id === id)?.name ?? null : null);
 
@@ -21,12 +22,12 @@ function when(iso?: string): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  const day = (x: Date) => x.toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin' });
+  const day = (x: Date) => x.toLocaleDateString(LOCALE, { timeZone: 'Europe/Berlin' });
   const now = new Date();
-  const time = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
+  const time = d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
   if (day(d) === day(now)) return `heute, ${time}`;
   if (day(d) === day(new Date(now.getTime() - 864e5))) return `gestern, ${time}`;
-  return d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric', timeZone: 'Europe/Berlin' });
+  return d.toLocaleDateString(LOCALE, { weekday: 'short', day: 'numeric', month: 'numeric', timeZone: 'Europe/Berlin' });
 }
 
 /** Kraftanzeige als kleine Batterie (wie viel im Ziel noch drin war) */

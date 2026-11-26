@@ -5,6 +5,7 @@ import type { Climb, Stage } from '../lib/types';
 import { Empty, ErrorBox, Link, Loading, TopBar, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { CAT_SHORT, ClimbSheet, catClass, climbMetrics } from '../ui/StageProfile';
+import { LOCALE } from '../lib/i18n';
 
 type Sort = 'route' | 'difficulty' | 'gain' | 'max' | 'alt';
 const SORTS: { value: Sort; label: string }[] = [
@@ -55,7 +56,7 @@ export function ClimbsPage() {
           <div className="stat"><strong>{Math.round(totalLen)}</strong><span>Kletter-km</span></div>
           <div className="stat"><strong>{summitFinishes}</strong><span>Bergziele</span></div>
         </div>
-        <p className="muted small">Zusammen ≈ {totalGain.toLocaleString('de-DE')} Höhenmeter allein in den gewerteten Anstiegen.</p>
+        <p className="muted small">Zusammen ≈ {totalGain.toLocaleString(LOCALE)} Höhenmeter allein in den gewerteten Anstiegen.</p>
 
         <div className="filter-row" role="group" aria-label="Kategorie">
           <button type="button" className={cx('toggle', cat === 'all' && 'is-on')} aria-pressed={cat === 'all'} onClick={() => setCat('all')}>Alle</button>
@@ -83,9 +84,9 @@ export function ClimbsPage() {
                   <span className="profile-points__main">
                     <strong>{c.name}</strong>
                     <span className="muted">
-                      {[c.len ? `${c.len.toLocaleString('de-DE')}\u00a0km` : null, c.grad ? `Ø\u00a0${c.grad.toLocaleString('de-DE')}\u00a0%` : null,
-                        c.max ? `max.\u00a0${c.max}\u00a0%` : null, c.alt ? `${c.alt.toLocaleString('de-DE')}\u00a0m` : null,
-                        m.difficulty !== null ? `Härte\u00a0${m.difficulty.toLocaleString('de-DE', { maximumFractionDigits: 1 })}` : null].filter(Boolean).join(' · ')}
+                      {[c.len ? `${c.len.toLocaleString(LOCALE)}\u00a0km` : null, c.grad ? `Ø\u00a0${c.grad.toLocaleString(LOCALE)}\u00a0%` : null,
+                        c.max ? `max.\u00a0${c.max}\u00a0%` : null, c.alt ? `${c.alt.toLocaleString(LOCALE)}\u00a0m` : null,
+                        m.difficulty !== null ? `Härte\u00a0${m.difficulty.toLocaleString(LOCALE, { maximumFractionDigits: 1 })}` : null].filter(Boolean).join(' · ')}
                     </span>
                   </span>
                   <Icon name="chevron" size={16} className={cx('profile-points__chev', open === key && 'is-open')} />

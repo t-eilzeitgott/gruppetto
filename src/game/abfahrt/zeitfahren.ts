@@ -26,6 +26,7 @@ import { crossOffset, photoFinish, type PhotoResult, type PhotoRider } from '../
 import { ghostKit, liveRider } from './ghosts';
 import type { Wreck } from './wreck';
 import { canRise, crashBurst, makeWreck, slideOn } from './crash';
+import { LOCALE } from '../../lib/i18n';
 
 export interface TtOptions {
   dayKey: string;
@@ -373,7 +374,7 @@ export class TimeTrial {
         this.time = 0;
         this.sample();
         const ref = this.track.ref;
-        this.opts.onEvent?.({ type: 'banner', title: this.track.title, sub: `${(TT_FINISH / 1000).toLocaleString('de-DE', { minimumFractionDigits: 1 })} km gegen die Uhr${ref && !ref.preview ? ` · ${ref.tour}` : ''}` });
+        this.opts.onEvent?.({ type: 'banner', title: this.track.title, sub: `${(TT_FINISH / 1000).toLocaleString(LOCALE, { minimumFractionDigits: 1 })} km gegen die Uhr${ref && !ref.preview ? ` · ${ref.tour}` : ''}` });
       }
     }
     if (this.phase === 'playing') this.time += dt;
@@ -703,7 +704,7 @@ export class TimeTrial {
     const at = (z: number) => z0 < z && p.z >= z;
     const ref = this.track.ref;
     const real = ref?.climb;
-    if (at(1000)) once('cote', () => this.opts.onEvent?.({ type: 'banner', title: `Gleich: ${this.track.climbName}`, sub: real?.grad && real.len ? `${real.len.toLocaleString('de-DE', { maximumFractionDigits: 1 })} km mit ${real.grad.toLocaleString('de-DE', { maximumFractionDigits: 1 })} % – hier zählt der Vorrat` : '460 m mit bis zu 8,5 % – hier zählt der Vorrat' }));
+    if (at(1000)) once('cote', () => this.opts.onEvent?.({ type: 'banner', title: `Gleich: ${this.track.climbName}`, sub: real?.grad && real.len ? `${real.len.toLocaleString(LOCALE, { maximumFractionDigits: 1 })} km mit ${real.grad.toLocaleString(LOCALE, { maximumFractionDigits: 1 })} % – hier zählt der Vorrat` : '460 m mit bis zu 8,5 % – hier zählt der Vorrat' }));
     if (at(TT_TOP)) once('top', () => this.opts.onEvent?.({ type: 'banner', title: 'Kuppe – Abfahrt!', sub: 'Rechts halten = ducken · vor engen Kurven loslassen', tone: 'accent' }));
     if (at(2000)) once('1k', () => this.opts.onEvent?.({ type: 'banner', title: 'Letzter Kilometer', sub: this.energy > 0.25 ? 'Alles raus – der Vorrat zählt nicht mehr' : 'Durchhalten bis zur Linie', tone: 'red' }));
     if (at(TT_FINISH - 250)) once('final', () => this.opts.onEvent?.({ type: 'banner', title: 'Zielgerade', sub: 'Rechts halten bis zur Linie', tone: 'accent' }));

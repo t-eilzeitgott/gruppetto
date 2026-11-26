@@ -21,6 +21,7 @@ import { Avatar, Link, cx } from './kit';
 import { Icon, type IconName } from './Icon';
 import { Skel, SkelText } from './skeleton';
 import { lastName } from './bits';
+import { LANG } from '../lib/i18n';
 
 // ------------------------------------------------------------------ Daten
 
@@ -153,12 +154,12 @@ function Kicker({ item, now, clock }: { item: FeedNews; now: number; clock?: boo
 
 function Badges({ item }: { item: FeedNews }) {
   const n = Math.max(item.sources, item.also.length + 1);
-  if (!isImportant(item) && n < 2 && item.lang === 'de') return null;
+  if (!isImportant(item) && n < 2 && item.lang === LANG) return null;
   return (
     <span className="news-badges">
       {isImportant(item) ? <span className="news-badge news-badge--hot"><Icon name="flame" size={12} />Wichtig</span> : null}
       {n > 1 ? <span className="news-badge" title={item.also.length ? `auch bei ${item.also.map(sourceName).join(', ')}` : undefined}>{n} Quellen</span> : null}
-      {item.lang !== 'de' ? <span className="news-badge news-badge--lang" title="Meldung auf Englisch">{item.lang.toUpperCase()}</span> : null}
+      {item.lang !== LANG ? <span className="news-badge news-badge--lang" title={item.lang === 'en' ? 'Meldung auf Englisch' : 'Story in German'} translate="no">{item.lang.toUpperCase()}</span> : null}
     </span>
   );
 }
@@ -171,8 +172,8 @@ function Lead({ item, marks, now }: { item: FeedNews; marks: NameMark[]; now: nu
       </Cover>
       <span className="news-lead__body">
         <Kicker item={item} now={now} />
-        <h2 className="news-lead__title"><Marked text={item.title} marks={marks} /></h2>
-        {item.summary ? <p className="news-lead__sum">{item.summary}</p> : null}
+        <h2 className="news-lead__title" translate="no"><Marked text={item.title} marks={marks} /></h2>
+        {item.summary ? <p className="news-lead__sum" translate="no">{item.summary}</p> : null}
         <span className="news-lead__foot">
           <Badges item={item} />
           {item.source !== 'beispiel' ? <span className="news-lead__more">Weiterlesen<Icon name="external" size={14} /></span> : null}
@@ -188,7 +189,7 @@ function StoryCard({ item, marks, now }: { item: FeedNews; marks: NameMark[]; no
       <Cover id={item.id} kind={storyKind(item)} size="card" />
       <span className="news-card__body">
         <Kicker item={item} now={now} />
-        <span className="news-card__title"><Marked text={item.title} marks={marks} /></span>
+        <span className="news-card__title" translate="no"><Marked text={item.title} marks={marks} /></span>
         <Badges item={item} />
       </span>
     </Out>
@@ -236,7 +237,7 @@ function NewsRow({ item, marks, now }: { item: FeedNews; marks: NameMark[]; now:
         <Cover id={item.id} kind={storyKind(item)} size="tile" />
         <span className="news-row__main">
           <Kicker item={item} now={now} clock />
-          <span className="news-row__title"><Marked text={item.title} marks={marks} /></span>
+          <span className="news-row__title" translate="no"><Marked text={item.title} marks={marks} /></span>
           {item.summary ? <span className="news-row__sum">{item.summary}</span> : null}
           <Badges item={item} />
         </span>

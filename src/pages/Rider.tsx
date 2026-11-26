@@ -7,6 +7,7 @@ import { leaderLabel, riderStats, teamStats } from '../lib/riderStats';
 import { KIND_SHORT, sortStages } from '../lib/time';
 import { Avatar, Empty, ErrorBox, Link, Loading, TopBar, cx, useTitle } from '../ui/kit';
 import { FavStar, GcSpark } from '../ui/RiderSheet';
+import { LOCALE } from '../lib/i18n';
 
 /** Fahrerprofil: Stammdaten, Rennverlauf, Wertungen, Team und Tipps der Runde. */
 export function RiderPage({ id }: { id: number }) {
@@ -144,7 +145,7 @@ export function RiderPage({ id }: { id: number }) {
         <section className="card">
           <span className="eyebrow">Team {rider.team}</span>
           <p className="muted small">
-            {[`${team.active}/${team.riders.length} im Rennen`, team.avgAge ? `Ø ${team.avgAge.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Jahre` : null,
+            {[`${team.active}/${team.riders.length} im Rennen`, team.avgAge ? `Ø ${team.avgAge.toLocaleString(LOCALE, { maximumFractionDigits: 1 })} Jahre` : null,
               team.wins ? `${team.wins} ${team.wins === 1 ? 'Etappensieg' : 'Etappensiege'}` : null].filter(Boolean).join(' · ')}
           </p>
           <ul className="list">

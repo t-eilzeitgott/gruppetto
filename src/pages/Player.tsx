@@ -9,6 +9,7 @@ import { Avatar, ProBadge, Empty, ErrorBox, JerseyTile, Link, Loading, TopBar, c
 import { Icon } from '../ui/Icon';
 import { lastName, riderName } from '../ui/bits';
 import { PlayerGames } from '../ui/PlayerGames';
+import { LOCALE } from '../lib/i18n';
 
 export function Player({ id }: { id: string }) {
   const { me, data, members, loading, error, reload } = useTourContext();
@@ -51,7 +52,7 @@ export function Player({ id }: { id: string }) {
 
         <div className="stat-grid">
           <div className="stat"><strong>{row?.winnersHit ?? 0}</strong><span>Sieger getippt</span></div>
-          <div className="stat"><strong>{avg.toLocaleString('de-DE', { maximumFractionDigits: 1 })}</strong><span>Ø pro Etappe</span></div>
+          <div className="stat"><strong>{avg.toLocaleString(LOCALE, { maximumFractionDigits: 1 })}</strong><span>Ø pro Etappe</span></div>
           <div className="stat"><strong>{row?.underdogHits ?? 0}×</strong><span>Außenseiter-Bonus</span></div>
         </div>
         {favorites.length ? (

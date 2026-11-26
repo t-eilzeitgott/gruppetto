@@ -11,6 +11,7 @@ import { finaleGrade, type FinaleSpec } from './finale';
 import { LOOKS, pickWeighted, type Region } from './region';
 import { applyEditsRange, bumpsOf, deriveForSection, emptyDerived, type Derived, type TerrainBump, type WorldEdits } from './worldEdits';
 import { localName, type Scape, type Venue } from './venue';
+import { LOCALE } from '../../lib/i18n';
 
 export const SEG = 2;            // Segmentlänge in m
 export const ROAD_HALF = 2.8;    // halbe Fahrbahnbreite in m
@@ -1953,7 +1954,7 @@ export class Track {
     // Passhöhe: Passschild, GPM-Banner, Zuschauer (nicht an der Spitzkehre nach dem Startort – dort zählt der Blick)
     if (biome === 'pass' && this.sections[sec].role !== 'reveal') {
       // im Bergfinale steht das GPM-Banner genau auf der Passhöhe (Bergwertung)
-      S(this.kind === 'mountain' ? start : start + 4).banner = { kind: 'gpm', text: name, sub: `${this.sections[sec].alt.toLocaleString('de-DE')} m` };
+      S(this.kind === 'mountain' ? start : start + 4).banner = { kind: 'gpm', text: name, sub: `${this.sections[sec].alt.toLocaleString(LOCALE)} m` };
       put(start + 10, 1, 'passSign', 1.2, { s: 1, f: false, text: name });
       for (let i = start; i < start + 60; i++) {
         this.crowdZone(S(i));

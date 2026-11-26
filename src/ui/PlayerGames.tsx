@@ -9,8 +9,9 @@ import type { GameBest } from '../data/source';
 import { GAMES, fmtBest, type GameInfo } from '../game/games';
 import { Link } from './kit';
 import { GameBadge } from './GameIcon';
+import { LOCALE } from '../lib/i18n';
 
-const nf = (n: number) => Math.round(n).toLocaleString('de-DE');
+const nf = (n: number) => Math.round(n).toLocaleString(LOCALE);
 
 interface Entry { game: GameInfo; best: GameBest | null; place: number; players: number }
 

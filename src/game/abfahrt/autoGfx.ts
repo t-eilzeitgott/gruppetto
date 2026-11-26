@@ -36,6 +36,7 @@
 import { gfxAuto, gfxLevel, gfxOn, gfxRes } from './gfxOpts';
 import { autoRangeDrop, rangeDropMax, setAutoRangeDrop, viewRange } from './viewRange';
 import { setShadowEvery, shadowEveryN } from './shadowRate';
+import { LOCALE } from '../../lib/i18n';
 
 /** Auflösung: Faktoren auf die gewählte – höchstens bis zur Hälfte (2-fach → 1-fach) */
 export const RES_STEPS = [1, 0.875, 0.75, 0.625, 0.5];
@@ -164,7 +165,7 @@ function publish(v: AutoView) {
 
 /** Pixeldichte in Worten: „1,75-fach“ */
 export function fmtRes(d: number): string {
-  return `${(Math.round(d * 100) / 100).toLocaleString('de-DE', { maximumFractionDigits: 2 })}-fach`;
+  return `${(Math.round(d * 100) / 100).toLocaleString(LOCALE, { maximumFractionDigits: 2 })}-fach`;
 }
 
 const shadowText = (every: number) => (every <= 1 ? 'jedes Bild' : `alle ${every} Bilder`);

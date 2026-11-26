@@ -8,6 +8,7 @@ import { persistQueries } from './app/query';
 import { installFixedHeal } from './ui/fixedHeal';
 import { watchPushRenew } from './app/push';
 import './styles.css';
+import { LANG, loadDict, translateDom } from './lib/i18n';
 
 applyTheme();
 installFixedHeal();
@@ -16,8 +17,11 @@ if (source.mode !== 'demo') persistQueries(`gruppetto.cache.${BUILD_ID}`, /^(me:
 document.documentElement.dataset.tour = document.documentElement.dataset.tour ?? 'neutral';
 
 watchPushRenew();
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+const render = () =>
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+if (LANG === 'de') render();
+else loadDict().then(translateDom, () => undefined).finally(render);

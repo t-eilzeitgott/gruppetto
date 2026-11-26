@@ -12,8 +12,9 @@ import { MY_TEAM } from '../game/teams';
 import { Icon } from '../ui/Icon';
 import { cx } from '../ui/kit';
 import { Kraft } from './runBoard';
+import { LOCALE } from '../lib/i18n';
 
-export const fmtKmh = (v: number) => v.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+export const fmtKmh = (v: number) => v.toLocaleString(LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 export interface Tile { key: string; label: string; value: ReactNode; unit?: string; note?: ReactNode; tone?: 'good' | 'bad' }
 

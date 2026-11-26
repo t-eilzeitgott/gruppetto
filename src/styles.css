@@ -895,6 +895,7 @@ tr.is-me > * { background: var(--accent-soft); }
   padding: calc(var(--safe-t) + 22px) calc(22px + var(--safe-r)) calc(var(--safe-b) + 28px) calc(22px + var(--safe-l));
 }
 .auth__top { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.auth__lang { min-width: 44px; min-height: 44px; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; color: var(--muted, inherit); }
 .auth__hero { display: flex; flex-direction: column; gap: 14px; margin-top: auto; }
 .display { font-size: clamp(29px, 9vw, 42px); line-height: 1.06; letter-spacing: -0.04em; }
 .display > span { display: block; }

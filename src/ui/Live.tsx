@@ -22,9 +22,10 @@ import type { Profile } from '../lib/types';
 import { Avatar, cx, toast } from './kit';
 import { Icon } from './Icon';
 import { GameBadge } from './GameIcon';
+import { LOCALE } from '../lib/i18n';
 
 const first = (name: string | null | undefined) => (name ?? 'Jemand').split(/\s+/)[0];
-const km = (m: number) => (m < 995 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`);
+const km = (m: number) => (m < 995 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toLocaleString(LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`);
 /** Streckenmeter der letzten Probe einer Meldung */
 const peerZ = (p: LivePeer) => (p.tail && p.tail.length >= 3 ? p.tail[p.tail.length - 3] / 10 : 0);
 /** Namen aufzählen: „Lena“, „Lena und Felix“, „Lena, Felix und Max“ */

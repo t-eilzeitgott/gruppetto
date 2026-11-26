@@ -14,6 +14,7 @@ import { EMBLEM_SINCE, RARITY_LABEL, emblemsFor, shelf, type Emblem, type ShelfI
 import type { Profile, TourTheme } from '../lib/types';
 import { EmblemArt, TONES } from './EmblemArt';
 import { cx } from './kit';
+import { LOCALE } from '../lib/i18n';
 
 // ------------------------------------------------------------------ Daten
 
@@ -41,7 +42,7 @@ function writeSeen(uid: string, keys: Set<string>) {
 }
 
 const CEREMONY_ORDER: Record<Emblem['rarity'], number> = { klassisch: 0, selten: 1, episch: 2, legendaer: 3, medaille: 4 };
-const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
 const calm = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 // ------------------------------------------------------------------ Bewegung

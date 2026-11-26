@@ -28,6 +28,7 @@ import { photoFinish, type PhotoResult, type PhotoRider } from '../photo';
 import type { GhostRider } from '../tt';
 import type { Wreck } from './wreck';
 import { canRise, crashBurst, dodge, downOf, hitDown, makeWreck, slideOn, type Down } from './crash';
+import { LOCALE } from '../../lib/i18n';
 
 /** Fahrertypen im Bergfinale: Dauerleistung (W/kg), Antritt (W/kg darüber), Abfahrtskönnen, Punktebonus */
 export const BERG_STATS: Record<RiderType, { label: string; cp: number; kick: number; desc: number; bonus: number }> = {
@@ -427,7 +428,7 @@ export class BergRace {
         this.opts.onEvent?.({
           type: 'banner',
           title: real ? real.name : 'Schlussanstieg',
-          sub: real?.grad ? `Die letzten ${MOUNTAIN_TOP} m · Ø ${real.grad.toLocaleString('de-DE')} %` : `${MOUNTAIN_TOP} m bis zum Gipfel`,
+          sub: real?.grad ? `Die letzten ${MOUNTAIN_TOP} m · Ø ${real.grad.toLocaleString(LOCALE)} %` : `${MOUNTAIN_TOP} m bis zum Gipfel`,
         });
         if (mate && this.opts.mate) this.mateIntro = 4;
       }

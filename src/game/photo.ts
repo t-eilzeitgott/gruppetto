@@ -1,3 +1,4 @@
+import { LOCALE } from '../lib/i18n';
 /**
  * Fotofinish: Wer im Ziel weniger als PHOTO_CLOSE Sekunden vor oder hinter einem war, kommt aufs Zielfoto – Fahrer
  * im Feld (genaue Zielzeit), Geister und Live-Mitspieler (aus der Lage im Moment, in dem man selbst die Linie
@@ -50,5 +51,5 @@ export function photoFinish(others: PhotoRider[], me: { name: string; color: str
 export function photoGap(dt: number, v: number): string {
   const m = Math.abs(dt) * v;
   if (m < 1) return `${Math.max(1, Math.round(m * 100))} cm`;
-  return `${m.toLocaleString('de-DE', { maximumFractionDigits: 1 })} m`;
+  return `${m.toLocaleString(LOCALE, { maximumFractionDigits: 1 })} m`;
 }

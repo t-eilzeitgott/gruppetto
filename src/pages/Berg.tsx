@@ -36,6 +36,7 @@ import {
   FinaleBoard, HowTo, Podium, RiderPicker, dist, lsGet, lsSet, nf,
   againWithIntro, useGameLock, usePreparedRace, useRaceKeys, useRaceLoop, type Board, type Ui, venueItems,
 } from './finale';
+import { LOCALE } from '../lib/i18n';
 
 const LS_RIDER = 'gruppetto.berg.rider';
 const LS_RUNS = 'gruppetto.berg.runs';
@@ -401,7 +402,7 @@ function BergProfile({ track }: { track: Track }) {
       </svg>
       <span className="brg-profile__gpm" style={{ left: `${topX}%` }}>
         <i aria-hidden="true" />
-        <span>GPM · {summit.alt.toLocaleString('de-DE')} m</span>
+        <span>GPM · {summit.alt.toLocaleString(LOCALE)} m</span>
       </span>
       <span className="brg-profile__finish">Ziel</span>
     </figure>

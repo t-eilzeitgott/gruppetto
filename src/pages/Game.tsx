@@ -43,6 +43,7 @@ import { RecBadge, VenuePick } from './measure';
 import { healFixedSoon } from '../ui/fixedHeal';
 import { teamKit } from '../game/teams';
 import { RaceControls, controlsHowTo, type ControlsHandle } from './controls';
+import { LOCALE } from '../lib/i18n';
 
 export { PauseIcon, PlayIcon, useCountUp };
 
@@ -72,7 +73,7 @@ const FIELD = (() => { try { return Number(/[?&]field=(\d+)/.exec(window.locatio
 type Ui = 'ready' | 'countdown' | 'playing' | 'paused' | 'over';
 type Board = 'day' | 'season';
 
-const nf = (n: number) => Math.round(n).toLocaleString('de-DE');
+const nf = (n: number) => Math.round(n).toLocaleString(LOCALE);
 const km = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(m)} m`);
 
 /** Ränge nach Gesamtstrecke über die Saison */
@@ -214,7 +215,7 @@ export function GamePage() {
         break;
       case 'section':
         bannerKey.current += 1;
-        setBanner({ key: bannerKey.current, title: e.name, sub: `${e.alt.toLocaleString('de-DE')} m` });
+        setBanner({ key: bannerKey.current, title: e.name, sub: `${e.alt.toLocaleString(LOCALE)} m` });
         break;
       case 'mission':
         bannerKey.current += 1;

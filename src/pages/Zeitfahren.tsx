@@ -38,6 +38,7 @@ import {
 } from './finale';
 import type { Profile } from '../lib/types';
 import { teamKit } from '../game/teams';
+import { LOCALE } from '../lib/i18n';
 
 const LS_RUNS = 'gruppetto.zeitfahren.runs';
 const LS_BEST = 'gruppetto.zeitfahren.best';
@@ -492,7 +493,7 @@ function TtProfile({ track, ref_ }: { track: Track; ref_: StageRef | null }) {
     return ys.map((y, i) => [(i / n) * W, 4 + ((top - y) / Math.max(1, top - low)) * (H - 10)] as [number, number]);
   }, [track]);
   const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-  const climb = ref_?.climb?.grad ? `${ref_.climb.grad.toLocaleString('de-DE', { maximumFractionDigits: 1 })} %` : 'bis 8,5 %';
+  const climb = ref_?.climb?.grad ? `${ref_.climb.grad.toLocaleString(LOCALE, { maximumFractionDigits: 1 })} %` : 'bis 8,5 %';
   return (
     <figure className="abf-profile tt-profile" aria-label={`Profil: Start in ${track.startTown}, Zwischenzeiten bei 1 und 2 km, ${track.climbName} bei 1,5 km, Ziel in ${track.finishTown}`}>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">

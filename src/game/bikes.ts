@@ -10,6 +10,7 @@
  * (auch die Fahrten im Zeitfahren) seit Eröffnung der Garage (gilt so auf jedem Gerät).
  */
 import type { GameBest, GameId } from '../data/source';
+import { LOCALE } from '../lib/i18n';
 
 export type FrameKind = 'modern' | 'steel' | 'alu' | 'climb' | 'aero' | 'ti' | 'tt' | 'cross' | 'gravel' | 'track' | 'cargo'
   | 'post' | 'bamboo' | 'bonanza' | 'lowrider' | 'ordinary'
@@ -464,7 +465,7 @@ export interface Progress {
   after?: string;
 }
 
-const nf = (n: number) => Math.floor(n).toLocaleString('de-DE');
+const nf = (n: number) => Math.floor(n).toLocaleString(LOCALE);
 
 function single(u: Unlock, s: BikeStats): Progress {
   switch (u.kind) {

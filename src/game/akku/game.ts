@@ -6,6 +6,7 @@
 import { World, type Body } from './physics';
 import { LEVEL, type BlockDef, type EnemyType, type LevelDef, type Mat, type RiderType } from './level';
 import { P, Particles } from './particles';
+import { LOCALE } from '../../lib/i18n';
 
 export const STEP = 1 / 120;
 export const GRAVITY = 11;
@@ -1186,5 +1187,5 @@ export function standY(type: RiderType): number {
 export const CONFETTI = ['#ffd23f', '#2fb24c', '#e5484d', '#3aa8ff', '#ffffff', '#ff8fb1'];
 
 export function nfmt(n: number): string {
-  return Math.round(n).toLocaleString('de-DE');
+  return Math.round(n).toLocaleString(LOCALE);
 }

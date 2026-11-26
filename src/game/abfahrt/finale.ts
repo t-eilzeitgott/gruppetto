@@ -1,3 +1,4 @@
+import { LOCALE } from '../../lib/i18n';
 /**
  * Das echte Finale einer Etappe aus dem Streckentext (stages.info.finale), wie ihn die Rennleitung
  * veröffentlicht: „Linkskurve 650 m vor dem Ziel in einen leichten Anstieg (4 %) über die gepflasterte
@@ -131,15 +132,15 @@ export function parseFinale(text: string | null | undefined): FinaleSpec | null 
   if (straight !== null && straight !== lastCorner) bits.push(`Zielgerade ${fmtM(straight)}`);
   const gw = grade === null ? '' : grade >= 0.03 ? `${fmtPct(grade)} Steigung` : grade > 0.005 ? 'leicht ansteigend' : grade < -0.005 ? 'leicht abfallend' : 'flach';
   if (gw) bits.push(gw);
-  if (width !== null) bits.push(`${width.toLocaleString('de-DE')} m breit`);
+  if (width !== null) bits.push(`${width.toLocaleString(LOCALE)} m breit`);
   if (cobblesFrom !== null) bits.push('Pflaster');
   const line = bits.join(' · ');
 
   return { corners, lastCorner, straight, width, grade, lastKmGrade, cobblesFrom, roundabouts, waterfront, line };
 }
 
-const fmtM = (m: number) => (m >= 1000 ? `${(m / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1 })} km` : `${m} m`);
-const fmtPct = (g: number) => `${(g * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %`;
+const fmtM = (m: number) => (m >= 1000 ? `${(m / 1000).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} km` : `${m} m`);
+const fmtPct = (g: number) => `${(g * 100).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} %`;
 
 /**
  * Steigung an einer Stelle (Meter vor dem Ziel) nach dem Bauplan: Zielgerade mit ihrer Steigung,

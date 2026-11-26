@@ -11,6 +11,7 @@ import { parseFinale, type FinaleSpec } from './finale';
 import { LOOKS, regionOf, type Region } from './region';
 import { berlinDayKey, hashStr } from './rng';
 import { forcedVenue, tourIdOf, venueOf, type Venue } from './venue';
+import { LOCALE } from '../../lib/i18n';
 
 export type FinaleKind = 'sprint' | 'mountain' | 'tt';
 
@@ -167,13 +168,13 @@ export function stageRef(kind: FinaleKind, tourName: string | null | undefined, 
   return make(kind, t.name, { number: s.n, date: s.date, from: s.from ?? '', to: s.to ?? '', km: s.km, climbs: s.climbs, finale: s.finale, kind: s.kind }, true);
 }
 
-const fmt1 = (x: number) => x.toLocaleString('de-DE', { maximumFractionDigits: 1 });
+const fmt1 = (x: number) => x.toLocaleString(LOCALE, { maximumFractionDigits: 1 });
 
 /** „Montée de Bisanne · 12,4 km mit 8,3 % · 1.723 m“ */
 export function climbLine(c: Climb): string {
   const parts = [c.name];
   if (c.len && c.grad) parts.push(`${fmt1(c.len)} km mit ${fmt1(c.grad)} %`);
-  if (c.alt) parts.push(`${c.alt.toLocaleString('de-DE')} m`);
+  if (c.alt) parts.push(`${c.alt.toLocaleString(LOCALE)} m`);
   return parts.join(' · ');
 }
 

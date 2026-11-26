@@ -5,6 +5,7 @@
  * und die Geister: die beste Fahrt des Tages je Mitglied als Fahrspur, mit dem Rad, auf dem sie gefahren wurde.
  */
 import type { LiveFeed } from './live';
+import { isEn } from '../lib/i18n';
 
 /** Zeiten als Punktzahl in game_scores: 1.000.000 minus Millisekunden (eine Stunde Luft) */
 export const TT_SCORE_BASE = 1_000_000;
@@ -130,7 +131,7 @@ export function ghostDayLabel(day: string, today: string): string {
   const diff = Math.round((t.getTime() - d.getTime()) / 864e5);
   if (diff <= 0) return 'heute';
   if (diff === 1) return 'gestern';
-  if (diff < 7) return `${['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][d.getUTCDay()]}.`;
+  if (diff < 7) return isEn ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()] : `${['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][d.getUTCDay()]}.`;
   return `${d.getUTCDate()}.${d.getUTCMonth() + 1}.`;
 }
 

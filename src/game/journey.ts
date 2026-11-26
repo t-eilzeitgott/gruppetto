@@ -1,3 +1,4 @@
+import { LOCALE } from '../lib/i18n';
 /**
  * Die Europareise: alle Kilometer aus allen Minispielen (seit Eröffnung der Radgarage) landen auf einer
  * Route von Wuppertal den Rhein hinauf, über den Gotthard, durch die Po-Ebene und den Apennin, über Rom
@@ -123,4 +124,4 @@ export function mapXY(lon: number, lat: number): [number, number] {
   return [x, y];
 }
 
-export const fmtKm = (km: number) => `${Math.floor(km).toLocaleString('de-DE')} km`;
+export const fmtKm = (km: number) => `${Math.floor(km).toLocaleString(LOCALE)} km`;

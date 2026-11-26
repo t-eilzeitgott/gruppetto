@@ -8,6 +8,7 @@ import { cx, Link } from './kit';
 import { useQuery } from '../app/query';
 import { source } from '../app/config';
 import { eleAt, kmSegments, type ProfilePoint, type StageProfileData, type Waypoint } from '../lib/gpx';
+import { LOCALE } from '../lib/i18n';
 
 function useProfileData(stageId: number | null | undefined): StageProfileData | null {
   const q = useQuery<StageProfileData | null>(stageId ? `profile:${stageId}` : null, () => source.loadStageProfile(stageId!));
@@ -51,7 +52,7 @@ export function catClass(cat: string): string {
   return `cat cat--${cat === '?' ? 'tbd' : cat.toLowerCase()}`;
 }
 
-const nf = (n: number, d = 1) => n.toLocaleString('de-DE', { maximumFractionDigits: d });
+const nf = (n: number, d = 1) => n.toLocaleString(LOCALE, { maximumFractionDigits: d });
 
 export interface ClimbMetrics {
   gain: number | null;      // Höhenmeter der Bergwertung
@@ -431,7 +432,7 @@ function KmBars({ c, stage, points }: { c: Climb; stage: Stage; points: ProfileP
         })}
       </svg>
       <p className="muted small">
-        Steigung {dense ? 'je km' : 'je Abschnitt zwischen den Durchfahrtsorten'} (in %) · von {startE.toLocaleString('de-DE')}&nbsp;m auf {endE.toLocaleString('de-DE')}&nbsp;m
+        Steigung {dense ? 'je km' : 'je Abschnitt zwischen den Durchfahrtsorten'} (in %) · von {startE.toLocaleString(LOCALE)}&nbsp;m auf {endE.toLocaleString(LOCALE)}&nbsp;m
       </p>
     </div>
   );
@@ -488,9 +489,9 @@ export function ClimbSheet({ c, stage, tour }: { c: Climb; stage?: Stage; tour?:
   facts.push(['Gipfel', `km\u00a0${nf(c.km)}${m.finish ? ' · Ziel' : m.toGo !== null ? ` · noch ${nf(m.toGo)}\u00a0km` : ''}`]);
   if (m.foot !== null) facts.push(['Fuß', `km\u00a0${nf(m.foot)}`]);
   if (c.len) facts.push(['Länge', `${nf(c.len)}\u00a0km`]);
-  if (m.gain) facts.push(['Höhenmeter', `≈\u00a0${m.gain.toLocaleString('de-DE')}\u00a0m`]);
-  if (alt) facts.push(['Gipfelhöhe', `${alt.toLocaleString('de-DE')}\u00a0m`]);
-  if (m.footAlt) facts.push(['Höhe am Fuß', `≈\u00a0${m.footAlt.toLocaleString('de-DE')}\u00a0m`]);
+  if (m.gain) facts.push(['Höhenmeter', `≈\u00a0${m.gain.toLocaleString(LOCALE)}\u00a0m`]);
+  if (alt) facts.push(['Gipfelhöhe', `${alt.toLocaleString(LOCALE)}\u00a0m`]);
+  if (m.footAlt) facts.push(['Höhe am Fuß', `≈\u00a0${m.footAlt.toLocaleString(LOCALE)}\u00a0m`]);
   if (m.difficulty !== null) facts.push(['Härte (FIETS)', nf(m.difficulty, 1)]);
   return (
     <div className="climb-sheet">
@@ -541,7 +542,7 @@ export function StageProfileCard({ stage, tour }: { stage: Stage; tour: Tour }) 
       </div>
       {pending ? (
         <div className="profile-pending">
-          {stage.elevation_m ? <strong>{stage.elevation_m.toLocaleString('de-DE')}&nbsp;Hm</strong> : null}
+          {stage.elevation_m ? <strong>{stage.elevation_m.toLocaleString(LOCALE)}&nbsp;Hm</strong> : null}
           <span>{stage.distance_km ? `auf ${fmtKm(stage.distance_km)} · ` : ''}das Höhenprofil folgt mit dem Roadbook</span>
         </div>
       ) : <StageProfileChart stage={stage} />}
@@ -637,14 +638,14 @@ export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
   const rows: [string, string][] = [];
   rows.push(['Typ', KIND_LABEL[stage.kind]]);
   if (stage.distance_km) rows.push(['Distanz', fmtKm(stage.distance_km)]);
-  if (stage.elevation_m) rows.push(['Höhenmeter', `${stage.elevation_m.toLocaleString('de-DE')}\u00a0m`]);
+  if (stage.elevation_m) rows.push(['Höhenmeter', `${stage.elevation_m.toLocaleString(LOCALE)}\u00a0m`]);
   if (stage.elevation_m && stage.distance_km) rows.push(['Hm pro km', nf(stage.elevation_m / stage.distance_km, 1)]);
   if (profile && profile.length > 1) {
     const eles = profile.map((p) => p[1]);
-    rows.push(['Start auf', `${profile[0][1].toLocaleString('de-DE')}\u00a0m`]);
-    rows.push(['Ziel auf', `${profile[profile.length - 1][1].toLocaleString('de-DE')}\u00a0m`]);
-    rows.push(['Höchster Punkt (GPX)', `${Math.max(...eles).toLocaleString('de-DE')}\u00a0m`]);
-    rows.push(['Tiefster Punkt (GPX)', `${Math.min(...eles).toLocaleString('de-DE')}\u00a0m`]);
+    rows.push(['Start auf', `${profile[0][1].toLocaleString(LOCALE)}\u00a0m`]);
+    rows.push(['Ziel auf', `${profile[profile.length - 1][1].toLocaleString(LOCALE)}\u00a0m`]);
+    rows.push(['Höchster Punkt (GPX)', `${Math.max(...eles).toLocaleString(LOCALE)}\u00a0m`]);
+    rows.push(['Tiefster Punkt (GPX)', `${Math.min(...eles).toLocaleString(LOCALE)}\u00a0m`]);
   }
   if (info.stars) rows.push(['Schwierigkeit', `${'★'.repeat(info.stars)}${'☆'.repeat(Math.max(0, 5 - info.stars))}\u00a0${info.stars}/5`]);
   // vor dem Roadbook sind nur die Bergankünfte bekannt – dann keine (zu kleine) Zahl
@@ -652,9 +653,9 @@ export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
     if (last && climbMetrics(last, stage).finish) rows.push(['Bergankunft', last.name]);
   } else rows.push(['Bergwertungen', String(climbs.length)]);
   if (lenSum) rows.push(['Kletter-km (gewertet)', `${nf(lenSum)}\u00a0km`]);
-  if (gainSum) rows.push(['Hm in Bergwertungen', `≈\u00a0${gainSum.toLocaleString('de-DE')}\u00a0m`]);
+  if (gainSum) rows.push(['Hm in Bergwertungen', `≈\u00a0${gainSum.toLocaleString(LOCALE)}\u00a0m`]);
   if (steep) rows.push(['Steilste Rampe', `${nf(steep.max ?? 0)}\u00a0% · ${steep.name}`]);
-  if (high) rows.push(['Höchster Punkt', `${(high.alt ?? 0).toLocaleString('de-DE')}\u00a0m · ${high.name}`]);
+  if (high) rows.push(['Höchster Punkt', `${(high.alt ?? 0).toLocaleString(LOCALE)}\u00a0m · ${high.name}`]);
   if (hardest) rows.push(['Härtester Anstieg', `${hardest.c.name} (${nf(hardest.m.difficulty ?? 0)})`]);
   if (last && stage.distance_km && !info.climbs_note) rows.push(['Letzte Bergwertung', `${last.name} · ${climbMetrics(last, stage).finish ? 'im Ziel' : `${nf(stage.distance_km - last.km)} km vor dem Ziel`}`]);
   if (komTotal) rows.push(['Bergpunkte für Sieger', `${komTotal} Punkte`]);
@@ -666,7 +667,7 @@ export function StageFactsCard({ stage, tour }: { stage: Stage; tour: Tour }) {
   const rules: [string, string][] = [];
   if (info.original_date) {
     const d = new Date(`${info.original_date}T12:00:00`);
-    rules.push(['Original', `${WEEKDAY[d.getDay()]}, ${d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' })}`]);
+    rules.push(['Original', `${WEEKDAY[d.getDay()]}, ${d.toLocaleDateString(LOCALE, { day: 'numeric', month: 'long', year: 'numeric' })}`]);
   }
   if (info.start_real) rules.push(['Start damals', `${info.start_real} Uhr (km 0)`]);
   if (info.finish_real) rules.push(['Ziel damals', `${info.finish_real} Uhr`]);
@@ -727,7 +728,7 @@ function Waypoints({ stage }: { stage: Stage }) {
               <tr key={i}>
                 <td className="num">{nf(w.km)}</td>
                 <th scope="row" className="waypoints__name">{w.name}</th>
-                <td className="num">{w.alt.toLocaleString('de-DE')}&nbsp;m</td>
+                <td className="num">{w.alt.toLocaleString(LOCALE)}&nbsp;m</td>
                 <td className="num muted">{nf(Math.max(0, total - w.km))}</td>
               </tr>
             ))}

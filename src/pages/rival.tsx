@@ -9,6 +9,7 @@ import type { GameBest, GameId } from '../data/source';
 import { gameInfo } from '../game/games';
 import type { Profile } from '../lib/types';
 import { Avatar } from '../ui/kit';
+import { LOCALE } from '../lib/i18n';
 
 export interface Rival {
   userId: string;
@@ -57,9 +58,9 @@ export function useRival(season: GameBest[] | undefined, meId: string, members: 
 export function rivalGap(game: GameId, gap: number): string {
   if (gameInfo(game).scoring === 'time') {
     const s = Math.abs(gap) / 1000;
-    return `${s.toLocaleString('de-DE', { minimumFractionDigits: s < 0.1 ? 2 : 1, maximumFractionDigits: s < 0.1 ? 2 : 1 })} s`;
+    return `${s.toLocaleString(LOCALE, { minimumFractionDigits: s < 0.1 ? 2 : 1, maximumFractionDigits: s < 0.1 ? 2 : 1 })} s`;
   }
-  return `${Math.round(Math.abs(gap)).toLocaleString('de-DE')} Pkt`;
+  return `${Math.round(Math.abs(gap)).toLocaleString(LOCALE)} Pkt`;
 }
 
 /** nach dem Lauf: Rivale geschlagen – oder wie knapp es war (für Beppe, report.tsx) */

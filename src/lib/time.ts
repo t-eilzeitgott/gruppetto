@@ -1,11 +1,13 @@
 import type { Stage, StageKind, Tour } from './types';
+import { isEn } from './i18n';
 
-const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const WEEKDAYS = isEn ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] : ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
 export function fmtDay(iso: string | Date): string {
   const d = new Date(iso);
+  if (isEn) return `${WEEKDAYS[d.getDay()]}\u00a0${d.getDate()}\u00a0${MONTHS[d.getMonth()]}`;
   return `${WEEKDAYS[d.getDay()]}\u00a0${pad(d.getDate())}.${pad(d.getMonth() + 1)}.`;
 }
 
@@ -16,25 +18,27 @@ export function fmtTime(iso: string | Date): string {
 
 /** „12:15 Uhr“ mit geschütztem Leerzeichen */
 export function fmtClock(iso: string | Date): string {
-  return `${fmtTime(iso)}\u00a0Uhr`;
+  return isEn ? fmtTime(iso) : `${fmtTime(iso)}\u00a0Uhr`;
 }
 
 export function fmtDayTime(iso: string | Date): string {
-  return `${fmtDay(iso)}, ${fmtTime(iso)}\u00a0Uhr`;
+  return isEn ? `${fmtDay(iso)}, ${fmtTime(iso)}` : `${fmtDay(iso)}, ${fmtTime(iso)}\u00a0Uhr`;
 }
 
 /** 'YYYY-MM-DD' → '8. Mai' */
-const MONTHS = ['Jan.', 'Feb.', 'März', 'Apr.', 'Mai', 'Juni', 'Juli', 'Aug.', 'Sep.', 'Okt.', 'Nov.', 'Dez.'];
+const MONTHS = isEn
+  ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  : ['Jan.', 'Feb.', 'März', 'Apr.', 'Mai', 'Juni', 'Juli', 'Aug.', 'Sep.', 'Okt.', 'Nov.', 'Dez.'];
 export function fmtDateShort(date: string): string {
   const [, m, d] = date.split('-').map(Number);
-  return `${d}. ${MONTHS[m - 1]}`;
+  return isEn ? `${d} ${MONTHS[m - 1]}` : `${d}. ${MONTHS[m - 1]}`;
 }
 
 export function fmtRange(start: string, end: string): string {
   const [, sm] = start.split('-').map(Number);
   const [, em, ed] = end.split('-').map(Number);
   const sd = Number(start.split('-')[2]);
-  if (sm === em) return `${sd}.–${ed}. ${MONTHS[em - 1]}`;
+  if (sm === em) return isEn ? `${sd}–${ed} ${MONTHS[em - 1]}` : `${sd}.–${ed}. ${MONTHS[em - 1]}`;
   return `${fmtDateShort(start)} – ${fmtDateShort(end)}`;
 }
 

@@ -15,6 +15,13 @@ import { useInstall } from '../lib/install';
 import { GfxSliders } from './gameKit';
 import { EmblemCase } from '../ui/Emblems';
 import { disablePush, enablePush, pushEnabled, pushSupport } from '../app/push';
+import { LANG, setLang, type Lang } from '../lib/i18n';
+
+function pickLang(l: Lang) {
+  if (l === LANG) return;
+  setLang(l);
+  location.reload();
+}
 
 /** Spielgrafik für alle 3D-Spiele: dieselben Schieberegler wie im Pausenmenü */
 function GameGfx() {
@@ -84,6 +91,15 @@ export function Profile() {
               value={theme}
               onChange={setThemePref}
               options={[{ value: 'system', label: 'System' }, { value: 'light', label: 'Hell' }, { value: 'dark', label: 'Dunkel' }]}
+            />
+          </div>
+          <div className="setting" translate="no">
+            <span className="setting__label">{LANG === 'de' ? 'Sprache' : 'Language'}</span>
+            <Segmented<Lang>
+              label={LANG === 'de' ? 'Sprache wählen' : 'Choose language'}
+              value={LANG}
+              onChange={pickLang}
+              options={[{ value: 'de', label: 'Deutsch' }, { value: 'en', label: 'English' }]}
             />
           </div>
           <NotifySetting />

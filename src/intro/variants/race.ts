@@ -7,7 +7,24 @@
 import { demoRace } from '../schedule';
 import { at, bezier, h, ROLL, wordCover, wordCoverBox, type Ctx, type Variant } from '../engine';
 
-const KIND: Record<string, string> = { flat: 'Flachetappe', hilly: 'Hügelig', mountain: 'Bergetappe', itt: 'Einzelzeitfahren', ttt: 'Mannschaftszeitfahren' };
+const EN = (() => {
+  try {
+    const v = new URLSearchParams(location.search).get('lang') ?? localStorage.getItem('gruppetto.lang');
+    if (v === 'de' || v === 'en') return v === 'en';
+  } catch {
+    /* no storage */
+  }
+  for (const l of navigator.languages?.length ? navigator.languages : [navigator.language]) {
+    const p = String(l || '').slice(0, 2).toLowerCase();
+    if (p === 'de') return false;
+    if (p === 'en') return true;
+  }
+  return true;
+})();
+
+const KIND: Record<string, string> = EN
+  ? { flat: 'Flat stage', hilly: 'Hilly', mountain: 'Mountain stage', itt: 'Individual time trial', ttt: 'Team time trial' }
+  : { flat: 'Flachetappe', hilly: 'Hügelig', mountain: 'Bergetappe', itt: 'Einzelzeitfahren', ttt: 'Mannschaftszeitfahren' };
 const START: Record<string, string> = { giro: 'Grande Partenza', tour: 'Grand Départ', vuelta: 'La Salida' };
 
 const once = new Set<string>();
@@ -118,9 +135,9 @@ export const renntag: Variant = (c) => {
     return [P[i - 1][0] + (P[i][0] - P[i - 1][0]) * f, P[i - 1][1] + (P[i][1] - P[i - 1][1]) * f];
   };
   // ---- Text darunter
-  const first = race.n === 1 ? START[race.t] : race.last ? 'Schlussetappe' : race.tour ?? '';
+  const first = race.n === 1 ? START[race.t] : race.last ? (EN ? 'Final stage' : 'Schlussetappe') : race.tour ?? '';
   const l1 = at(c.back, h('div', 'ix-rt-1', 'opacity:0'), vw / 2, baseY + fs * 0.5, vw * 0.9, fs * 0.36);
-  l1.textContent = `${first ? `${first} · ` : ''}Etappe ${race.n}${tt ? ` · ${KIND[race.k]}` : ''}`;
+  l1.textContent = `${first ? `${first} · ` : ''}${EN ? 'Stage' : 'Etappe'} ${race.n}${tt ? ` · ${KIND[race.k]}` : ''}`;
   const route = race.from && race.to ? (race.from === race.to ? race.from : `${race.from} → ${race.to}`) : KIND[race.k] ?? '';
   const l2 = at(c.back, h('div', 'ix-rt-2', 'opacity:0'), vw / 2, baseY + fs * 0.92, vw * 0.88, fs * 0.42);
   l2.textContent = `${route}${race.km ? ` · ${Math.round(race.km)} km` : ''}`;

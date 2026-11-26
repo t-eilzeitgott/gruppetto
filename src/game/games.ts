@@ -1,6 +1,7 @@
 import type { StageKind } from '../lib/types';
 import type { GameId } from '../data/source';
 import { fmtTime, ttMs } from './tt';
+import { LOCALE } from '../lib/i18n';
 
 /** Alle Minispiele – ein neues Spiel braucht hier einen Eintrag (plus Symbol in GameBadge) */
 export interface GameInfo {
@@ -28,7 +29,7 @@ export function gameInfo(id: GameId): GameInfo {
 /** Bestwert eines Spiels als Text: Punkte, im Zeitfahren die Zeit */
 export function fmtBest(game: GameInfo | GameId, best: number): string {
   const g = typeof game === 'string' ? gameInfo(game) : game;
-  return g.scoring === 'time' ? fmtTime(ttMs(best)) : Math.round(best).toLocaleString('de-DE');
+  return g.scoring === 'time' ? fmtTime(ttMs(best)) : Math.round(best).toLocaleString(LOCALE);
 }
 
 /**

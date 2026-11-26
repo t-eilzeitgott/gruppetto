@@ -8,6 +8,7 @@ import type { Rider, TourData } from '../lib/types';
 import { Empty, ErrorBox, Loading, TopBar, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { FavStar, RiderSheet } from '../ui/RiderSheet';
+import { LOCALE } from '../lib/i18n';
 
 type Sort = 'team' | 'bib' | 'name' | 'age' | 'results';
 const SORTS: { value: Sort; label: string }[] = [
@@ -146,7 +147,7 @@ function TeamHead({ data, team }: { data: TourData; team: string }) {
     <div className="team-head">
       <h2 className="card__h">{team}</h2>
       <p className="muted small">
-        {[`${t.active}/${t.riders.length} im Rennen`, t.avgAge ? `Ø ${t.avgAge.toLocaleString('de-DE', { maximumFractionDigits: 1 })} J.` : null,
+        {[`${t.active}/${t.riders.length} im Rennen`, t.avgAge ? `Ø ${t.avgAge.toLocaleString(LOCALE, { maximumFractionDigits: 1 })} J.` : null,
           t.nations ? `${t.nations} ${t.nations === 1 ? 'Nation' : 'Nationen'}` : null, t.young ? `${t.young} U25` : null,
           t.wins ? `${t.wins} ${t.wins === 1 ? 'Sieg' : 'Siege'}` : null, t.top10 ? `${t.top10}× Top 10` : null]
           .filter(Boolean).join(' · ')}

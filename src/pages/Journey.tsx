@@ -16,6 +16,7 @@ import { fmtKm, journeyAt, MAP, mapXY, ROUTE, ROUTE_KM, type JourneyPos } from '
 import { useJourney } from '../ui/useJourney';
 import { Avatar, cx, useTitle } from '../ui/kit';
 import { Icon } from '../ui/Icon';
+import { LOCALE } from '../lib/i18n';
 
 const LAND: Record<string, string> = { DE: 'Deutschland', CH: 'Schweiz', IT: 'Italien' };
 const fmtDate = (day: string) => { const [y, m, d] = day.split('-'); return `${Number(d)}.${Number(m)}.${y.slice(2)}`; };
@@ -63,7 +64,7 @@ export function JourneyPage() {
               ) : pos.meters === 0 ? (
                 <p className="journey__line">Noch nicht losgefahren. Jeder Lauf in Abfahrt, Sprint- und Bergfinale bringt dich weiter – der erste Ort ist <b>{ROUTE[1].name}</b>, {fmtKm(ROUTE[1].km)} von hier.</p>
               ) : (
-                <p className="journey__line">Zuletzt in <b>{atStop.name}</b>{atStop.alt ? ` (${atStop.alt.toLocaleString('de-DE')} m)` : ''} · noch <b>{fmtKm(pos.toNext)}</b> bis {nextStop.name}</p>
+                <p className="journey__line">Zuletzt in <b>{atStop.name}</b>{atStop.alt ? ` (${atStop.alt.toLocaleString(LOCALE)} m)` : ''} · noch <b>{fmtKm(pos.toNext)}</b> bis {nextStop.name}</p>
               )}
               <div className="journey__bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((pos.km / ROUTE_KM) * 100)} aria-label="Anteil der Reise">
                 <span style={{ width: `${Math.min(100, (pos.km / ROUTE_KM) * 100)}%` }} />
@@ -82,12 +83,12 @@ export function JourneyPage() {
             <p className="journey__muted">Noch kein Stempel. Jede Passhöhe in der Abfahrt und jeder Schlussanstieg im Bergfinale kommt hier hinein.</p>
           ) : (
             <>
-              <p className="journey__pass-sum"><b>{stamps.length}</b> {stamps.length === 1 ? 'Pass' : 'Pässe'} · {stamps.reduce((a, s) => a + s.count, 0)} Überquerungen · {stampMeters(stamps).toLocaleString('de-DE')} Höhenmeter gestempelt</p>
+              <p className="journey__pass-sum"><b>{stamps.length}</b> {stamps.length === 1 ? 'Pass' : 'Pässe'} · {stamps.reduce((a, s) => a + s.count, 0)} Überquerungen · {stampMeters(stamps).toLocaleString(LOCALE)} Höhenmeter gestempelt</p>
               <ul className="journey__stamps">
                 {stamps.map((s, i) => (
                   <li key={s.name} className={cx('journey__stampcard', s.real && 'is-real')} style={{ transform: `rotate(${((i * 7) % 5) - 2}deg)` }}>
                     <span className="journey__stampcard-name">{s.name}</span>
-                    <span className="journey__stampcard-alt">{s.alt.toLocaleString('de-DE')} m</span>
+                    <span className="journey__stampcard-alt">{s.alt.toLocaleString(LOCALE)} m</span>
                     <span className="journey__stampcard-meta">{s.count > 1 ? `${s.count}× · ` : ''}{s.real ? 'echte Etappe' : fmtDate(s.first)}</span>
                   </li>
                 ))}
@@ -107,7 +108,7 @@ export function JourneyPage() {
                 <li key={s.name} className={cx('journey__stop', reached && 'is-reached', current && 'is-current', isNext && 'is-next', !!s.alt && 'is-pass')}>
                   <span className="journey__dot" aria-hidden="true">{s.alt ? <Icon name="mountain" size={12} stroke={2.4} /> : reached ? <Icon name="check" size={12} stroke={2.6} /> : null}</span>
                   <span className="journey__stop-main">
-                    <span className="journey__stop-name">{s.name}{s.alt ? <small> {s.alt.toLocaleString('de-DE')} m</small> : null}</span>
+                    <span className="journey__stop-name">{s.name}{s.alt ? <small> {s.alt.toLocaleString(LOCALE)} m</small> : null}</span>
                     <span className="journey__stop-sub">{fmtKm(s.km)} · {LAND[s.land]}{reached ? ` · ${s.note}` : isNext ? ` · noch ${fmtKm(pos.toNext)}` : ''}</span>
                   </span>
                   {reached ? <span className="journey__stamp" aria-label="erreicht">Postkarte</span> : null}

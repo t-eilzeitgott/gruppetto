@@ -111,6 +111,15 @@ Technik: Web Push. `public/sw.js` (Service Worker, nur für Nachrichten – kein
 
 iPhone/iPad: nur in der App vom Home-Bildschirm (ab iOS 16.4); in Safari zeigt das Profil einen Hinweis. Testnachricht: Workflow „Benachrichtigungen“ von Hand starten, „Testnachricht“ und den Anzeigenamen wählen. Probelauf zeigt, was verschickt würde.
 
+## Sprachen
+
+Die App gibt es auf Deutsch und Englisch. Ohne Wahl entscheidet die Browsersprache (Deutsch für `de`, sonst Englisch); `?lang=en` bzw. `?lang=de` setzt die Sprache und merkt sie sich, umschalten geht unter *Profil → Sprache* und auf der Anmeldeseite (`EN`/`DE` oben rechts).
+
+- Quelltexte bleiben deutsch. Auf Englisch übersetzt `src/lib/i18n.ts` die fertige Oberfläche: Text und `aria-label`/`title`/`placeholder` im DOM (auch alles, was später dazukommt), Canvas-Texte, `confirm`/`alert`, Teilen und Kopieren. Zahlen und Daten formatieren über `LOCALE` (`de-DE` bzw. `en-GB`).
+- Die Übersetzungen stehen in `src/lib/i18n/dict.ts` als Paare `[deutsch, englisch]`; `{0}`, `{1}` … sind Platzhalter für Zahlen und Namen. Das Wörterbuch wird nur geladen, wenn die Oberfläche englisch ist.
+- Neue Texte: Paar ergänzen. Was fehlt, sammelt `window.__i18n.MISSES` in der englischen Ansicht.
+- Nicht übersetzt werden Meldungen aus den News-Quellen (`translate="no"`), Schilder und Banner in den 3D-Welten und der Admin-Bereich.
+
 ## Unterstützen
 
 Spenden-Link (Ko-fi oder Buy Me a Coffee) in `src/app/support.ts` eintragen: `SUPPORT_URL`. Solange der Wert leer ist, zeigt die App nichts an. Mit Link erscheint auf „Heute“ unter den Spielen und im Profil eine Karte „Gefällt dir gruppetto?“ (`src/ui/SupportCard.tsx`); sie öffnet ein Sheet im App-Look mit dem eingebetteten Ko-fi-Formular und einem Link zur Ko-fi-Seite. Es wird nichts freigeschaltet, der Link ist eine freiwillige Unterstützung ohne Gegenleistung.

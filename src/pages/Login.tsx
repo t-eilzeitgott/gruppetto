@@ -6,6 +6,26 @@ import { Wordmark } from '../ui/Shell';
 import { InstallSteps } from '../ui/InstallSteps';
 import { Icon } from '../ui/Icon';
 import { APP_HOST, OLD_APP_HOST, shouldGateLogin, skipInstall, useInstall } from '../lib/install';
+import { LANG, setLang } from '../lib/i18n';
+
+function LangSwitch() {
+  const next = LANG === 'de' ? 'en' : 'de';
+  return (
+    <button
+      type="button"
+      className="text-btn auth__lang"
+      translate="no"
+      lang={next}
+      aria-label={next === 'en' ? 'Switch to English' : 'Auf Deutsch wechseln'}
+      onClick={() => {
+        setLang(next);
+        location.reload();
+      }}
+    >
+      {next.toUpperCase()}
+    </button>
+  );
+}
 
 /**
  * Auf dem Handy im Browser zuerst „Zum Home-Bildschirm“: Die installierte App hat (vor allem auf dem iPhone)
@@ -82,6 +102,7 @@ function InstallFirst() {
     <div className="auth">
       <div className="auth__top">
         <Wordmark />
+        <LangSwitch />
       </div>
       <div className="auth__hero">
         <h1 className="display"><span>Erst aufs Handy,</span> <span>dann los.</span></h1>
@@ -143,6 +164,7 @@ function LoginForm() {
     <div className="auth">
       <div className="auth__top">
         <Wordmark />
+        <LangSwitch />
       </div>
       <div className="auth__hero">
         <h1 className="display"><span>Ein Tipp pro Etappe.</span> <span>Drei Grand Tours.</span></h1>

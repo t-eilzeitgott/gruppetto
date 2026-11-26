@@ -61,6 +61,7 @@ import { gfxAA, gfxOn, gfxRes, onGfxChange, onGfxSettings } from './gfxOpts';
 import { buildHouse, roofPitch, rowUnits, roofColor, roofKind, setTownLook, townLook, wallSet, type At, type Town } from './house3d';
 import { TEAMS } from '../teams';
 import { menuInset } from '../menuView';
+import { LOCALE } from '../../lib/i18n';
 
 /** geplantes Wahrzeichen: Segment, Lage quer/längs dazu und der Rahmen des Segments (Welt) */
 interface VenueMark {
@@ -6835,7 +6836,7 @@ export class Renderer3D {
     }
     if (sp.k === 'tornante' || sp.k === 'townSign' || sp.k === 'passSign') {
       const sec = this.track!.sections[s.sec];
-      const sub = sp.k === 'passSign' ? `${sec.alt.toLocaleString('de-DE')} m` : '';
+      const sub = sp.k === 'passSign' ? `${sec.alt.toLocaleString(LOCALE)} m` : '';
       const key = `${sp.k}:${sp.text}:${sub}`;
       let tex = this.labelTex.get(key);
       const img = this.bank.label(sp.k, sp.text ?? '', sub);

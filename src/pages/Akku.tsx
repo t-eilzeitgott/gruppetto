@@ -16,12 +16,13 @@ import { AkkuRenderer } from '../game/akku/render';
 import { LEVEL, type RiderType } from '../game/akku/level';
 import { drawRider } from '../game/akku/chars';
 import { FpsSwitch, PauseIcon, PlayIcon, lsGet, lsSet, useCountUp, useGameLock } from './gameKit';
+import { LOCALE } from '../lib/i18n';
 
 type Ui = 'ready' | 'playing' | 'paused' | 'over';
 
 const LS_BEST = 'gruppetto.akku.best';
 const LS_RUNS = 'gruppetto.akku.runs';
-const nf = (n: number) => Math.round(n).toLocaleString('de-DE');
+const nf = (n: number) => Math.round(n).toLocaleString(LOCALE);
 const accent = () => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#7ab8ff';
 const isDark = () => document.documentElement.dataset.theme === 'dark';
 

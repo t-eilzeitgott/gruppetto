@@ -26,6 +26,7 @@ import type { RiderOption } from '../game/abfahrt/sprintRiders';
 import { Avatar, cx } from '../ui/kit';
 import { Icon } from '../ui/Icon';
 import { readAccent } from './Game';
+import { LOCALE } from '../lib/i18n';
 
 export { lsGet, lsSet, useGameLock } from './gameKit';
 
@@ -33,7 +34,7 @@ export type Ui = 'ready' | 'countdown' | 'playing' | 'paused' | 'over';
 export type { Board } from './runBoard';
 import type { Board } from './runBoard';
 
-export const nf = (n: number) => Math.round(n).toLocaleString('de-DE');
+export const nf = (n: number) => Math.round(n).toLocaleString(LOCALE);
 export const dist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(m)} m`);
 
 /** was die Schleife von einem Rennen braucht */
