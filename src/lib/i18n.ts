@@ -132,7 +132,7 @@ function lookup(core: string): string | undefined {
   for (const p of patterns) {
     const m = p.re.exec(core);
     if (!m) continue;
-    if (m.slice(1).some((g) => BREAK.test(g) || !/[\p{L}\p{N}]/u.test(g))) continue;
+    if (m.slice(1).some((g) => BREAK.test(g) || g.includes(' · ') || !/[\p{L}\p{N}]/u.test(g))) continue;
     return p.out.replace(/\{(\d+)\}/g, (_, n: string) => {
       const g = m[p.order.indexOf(n) + 1] ?? '';
       return g.length < core.length ? part(g) : g;
