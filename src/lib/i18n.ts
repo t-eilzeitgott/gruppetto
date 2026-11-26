@@ -216,7 +216,7 @@ export function tr(s: string): string {
 }
 
 const ATTRS = ['aria-label', 'title', 'placeholder', 'alt', 'aria-description', 'aria-valuetext'];
-const SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'CODE', 'PRE', 'NOSCRIPT']);
+const SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'CODE', 'PRE', 'NOSCRIPT']);
 
 const src = new WeakMap<Text, string>();
 const shown = new WeakMap<Text, string>();
